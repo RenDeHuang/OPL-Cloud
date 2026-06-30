@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "states": [
+    "draft",
+    "freezing_storage_balance",
+    "creating_server",
+    "creating_disk",
+    "deploying_docker",
+    "configuring_url",
+    "running",
+    "stopping_server",
+    "stopped_server_disk_retained",
+    "restarting_server",
+    "destroying_server",
+    "server_destroyed_disk_retained",
+    "destroying_disk",
+    "destroyed",
+    "failed",
+    "cleanup_required"
+  ],
+  "rules": [
+    "server_stop_stops_server_billing_only",
+    "server_destroy_does_not_destroy_disk",
+    "disk_destroy_requires_explicit_confirmation",
+    "disk_destroy_is_the_only_action_that_stops_storage_billing",
+    "stable_url_should_survive_restart_or_server_recreation_when_possible"
+  ]
+}

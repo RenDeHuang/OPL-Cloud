@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "billingUnit": "hour",
+  "markup": 0.1,
+  "ledgerEntryTypes": [
+    "credit",
+    "storage_hold",
+    "server_debit",
+    "storage_debit",
+    "server_billing_stopped",
+    "server_destroyed",
+    "storage_destroyed",
+    "token_reset",
+    "token_deleted"
+  ],
+  "requiredFields": [
+    "id",
+    "workspaceId",
+    "type",
+    "amount",
+    "currency",
+    "sourceEventId",
+    "createdAt"
+  ],
+  "storagePreFreeze": {
+    "days": 7,
+    "requiredBefore": [
+      "open_workspace",
+      "resume_workspace"
+    ],
+    "unpaidStorageOperationAllowed": false
+  }
+}

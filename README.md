@@ -2,7 +2,7 @@
 
 OPL Cloud is the online hosted version of OPL.
 
-This repository currently holds the v1 product design and confirmed business flow.
+This repository holds the v1 product design and a compact OPL Console MVP.
 
 ## Product Names
 
@@ -73,3 +73,40 @@ Storage must not operate unpaid. OPL Cloud freezes enough balance for 7 days of 
 ## Product Design
 
 See [PRODUCT_DESIGN.md](./PRODUCT_DESIGN.md) for the frozen v1 product design.
+
+## Current Implementation
+
+The current app implements Phase 1 with a fake runtime provider:
+
+- OPL Console UI
+- Basic and Pro Workspace creation
+- permanent workspace URL token
+- server stop/restart/destroy controls
+- disk destroy with explicit confirmation
+- 7-day storage pre-freeze
+- billing ledger
+- audit receipts
+
+Phase 2 and Phase 3 provider stubs are present for Local Docker and Tencent CVM. See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md).
+
+## Run Locally
+
+```bash
+npm install
+npm test
+npm run build
+PORT=8787 npm start
+```
+
+For development UI:
+
+```bash
+npm start
+npm run dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173
+```

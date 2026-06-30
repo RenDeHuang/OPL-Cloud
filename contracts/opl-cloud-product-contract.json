@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "product": "OPL Cloud",
+  "console": "OPL Console",
+  "workspace": "OPL Workspace",
+  "resourceMapping": {
+    "workspace": 1,
+    "server": 1,
+    "onePersonLabAppDocker": 1,
+    "cloudDisk": 1,
+    "url": 1
+  },
+  "access": {
+    "urlPattern": "https://<workspace-slug>.oplcloud.cn/?token=<share-token>",
+    "requiresLogin": false,
+    "tokenLifetime": "permanent_until_owner_reset_or_delete"
+  },
+  "defaultPackages": [
+    {
+      "id": "basic",
+      "name": "Basic Workspace",
+      "server": "2c4g",
+      "diskGb": 10
+    },
+    {
+      "id": "pro",
+      "name": "Pro Workspace",
+      "server": "8c16g",
+      "diskGb": 100
+    }
+  ],
+  "nonGoals": [
+    "member_login_for_shared_urls",
+    "automatic_cloud_disk_delete_when_server_stops_or_is_destroyed",
+    "kubernetes_default_runtime",
+    "external_payment_settlement"
+  ]
+}
