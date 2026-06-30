@@ -3,10 +3,7 @@ import { TencentCvmProvider } from "./runtime-providers/tencent-cvm.js";
 
 export function createRuntimeProvider({ env = process.env, rootDir = ".runtime/workspaces" } = {}) {
   const provider = env.OPL_RUNTIME_PROVIDER || "local-docker";
-  if (provider === "fake") {
-    throw new Error("fake_provider_disabled");
-  }
-if (provider === "local-docker") {
+  if (provider === "local-docker") {
     return new LocalDockerProvider({
       rootDir,
       baseUrl: env.OPL_PUBLIC_URL || "http://127.0.0.1:8787",

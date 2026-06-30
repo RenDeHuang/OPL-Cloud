@@ -13,10 +13,10 @@ test("server default runtime provider is local Docker", () => {
   assert.equal(provider.name, "local-docker");
 });
 
-test("simulation provider is not selectable for runtime execution", () => {
+test("unknown provider is not selectable for runtime execution", () => {
   assert.throws(
-    () => createRuntimeProvider({ env: { OPL_RUNTIME_PROVIDER: "fake" }, rootDir: ".runtime/test-provider" }),
-    /fake_provider_disabled/
+    () => createRuntimeProvider({ env: { OPL_RUNTIME_PROVIDER: "simulation" }, rootDir: ".runtime/test-provider" }),
+    /unknown_runtime_provider:simulation/
   );
 });
 
