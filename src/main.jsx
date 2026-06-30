@@ -205,6 +205,12 @@ function App() {
                 <button onClick={() => run(() => api("/api/workspaces/restart-server", { accountId, workspaceId: selected.id }))}><RotateCw size={16} /> Restart</button>
                 <button className="danger" onClick={() => run(() => api("/api/workspaces/destroy-server", { accountId, workspaceId: selected.id, confirm: true }))}><Trash2 size={16} /> Destroy server</button>
                 <button className="danger strong" onClick={() => run(() => api("/api/workspaces/destroy-disk", { accountId, workspaceId: selected.id, confirmDataLoss: true }))}><Trash2 size={16} /> Destroy disk</button>
+                <button onClick={() => run(() => api("/api/billing/settle", {
+                  accountId,
+                  workspaceId: selected.id,
+                  hours: 1,
+                  sourceEventId: `console_meter_tick_${Date.now()}`
+                }))}><CreditCard size={16} /> Settle 1h</button>
               </div>
             </>
           ) : <div className="empty">No resource binding yet.</div>}

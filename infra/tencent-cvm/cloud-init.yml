@@ -1,0 +1,21 @@
+#cloud-config
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+write_files:
+  - path: /opt/opl-cloud/workspace.env
+    permissions: "0600"
+    content: |
+      OPL_WORKSPACE_ID=${workspace_id}
+      OPL_WORKSPACE_SLUG=${workspace_slug}
+      OPL_SHARE_TOKEN=${workspace_token}
+      OPL_IMAGE=${opl_image}
+
+runcmd:
+  - mkdir -p /opt/opl-cloud /data/opl
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker

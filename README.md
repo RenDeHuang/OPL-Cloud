@@ -2,7 +2,7 @@
 
 OPL Cloud is the online hosted version of OPL.
 
-This repository holds the v1 product design and a compact OPL Console MVP.
+This repository holds the v1 product design and a compact OPL Console implementation for the Workspace provisioning flow.
 
 ## Product Names
 
@@ -76,7 +76,7 @@ See [PRODUCT_DESIGN.md](./PRODUCT_DESIGN.md) for the frozen v1 product design.
 
 ## Current Implementation
 
-The current app implements Phase 1 with a fake runtime provider:
+The current app implements the local business-chain loop with the Local Docker provider:
 
 - OPL Console UI
 - Basic and Pro Workspace creation
@@ -84,10 +84,16 @@ The current app implements Phase 1 with a fake runtime provider:
 - server stop/restart/destroy controls
 - disk destroy with explicit confirmation
 - 7-day storage pre-freeze
+- Local Docker Compose workspace artifacts under `.runtime/workspaces`
+- real OPL WebUI image default: `ghcr.io/gaofeng21cn/one-person-lab-webui:latest`
+- bind-mounted Workspace disk path mapped to `/data`
+- Workspace URL route with token validation
+- optional real local Docker execution with `OPL_LOCAL_DOCKER_EXECUTE=1`
+- hourly billing settlement endpoint
 - billing ledger
 - audit receipts
 
-Phase 2 and Phase 3 provider stubs are present for Local Docker and Tencent CVM. See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md).
+Production Tencent CVM handoff files are in [infra/tencent-cvm](./infra/tencent-cvm). They define the OpenTofu, Ansible, and Caddy shape for route A, but the cloud execution runner still needs to apply the plan, run Ansible, and write outputs back to the API.
 
 ## Run Locally
 
@@ -95,6 +101,14 @@ Phase 2 and Phase 3 provider stubs are present for Local Docker and Tencent CVM.
 npm install
 npm test
 npm run build
+PORT=8787 npm start
+```
+
+To also start the local OPL Docker container when a Workspace is created:
+
+```bash
+OPL_LOCAL_DOCKER_EXECUTE=1 \
+OPL_WORKSPACE_IMAGE=ghcr.io/gaofeng21cn/one-person-lab-webui:latest \
 PORT=8787 npm start
 ```
 

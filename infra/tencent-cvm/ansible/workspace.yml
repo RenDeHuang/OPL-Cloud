@@ -1,0 +1,57 @@
+- name: Configure one OPL Workspace server
+  hosts: all
+  become: true
+  vars:
+    workspace_id: "{{ workspace_id }}"
+    workspace_slug: "{{ workspace_slug }}"
+    workspace_token: "{{ workspace_token }}"
+    workspace_domain: "{{ workspace_domain }}"
+    opl_image: "{{ opl_image | default('ghcr.io/gaofeng21cn/one-person-lab-webui:latest') }}"
+  tasks:
+    - name: Ensure runtime directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /opt/opl-cloud
+        - /data/opl
+        - /etc/caddy/conf.d
+
+    - name: Write Docker Compose file
+      ansible.builtin.copy:
+        dest: /opt/opl-cloud/docker-compose.yml
+        mode: "0644"
+        content: |
+          services:
+            opl:
+              image: {{ opl_image }}
+              restart: unless-stopped
+              environment:
+                OPL_WORKSPACE_ID: "{{ workspace_id }}"
+                OPL_WORKSPACE_NAME: "{{ workspace_slug }}"
+                OPL_SHARE_TOKEN: "{{ workspace_token }}"
+                DATA_DIR: /data
+                ALLOW_REMOTE: "true"
+              ports:
+                - "127.0.0.1:3000:3000"
+              volumes:
+                - /data/opl:/data
+
+    - name: Start OPL Docker runtime
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: /opt/opl-cloud
+      changed_when: true
+
+    - name: Write Caddy workspace route
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: /etc/caddy/conf.d/opl-workspace.caddy
+        mode: "0644"
+
+    - name: Reload Caddy when installed
+      ansible.builtin.command: caddy reload --config /etc/caddy/Caddyfile
+      register: caddy_reload
+      failed_when: false
+      changed_when: caddy_reload.rc == 0
