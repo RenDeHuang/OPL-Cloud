@@ -78,6 +78,53 @@ function assertWorkspaceShape(checks, workspace) {
   ), { workspaceId: workspace?.id });
 }
 
+async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, workspaceId, workspaceDiskId, checks = null }) {
+  const cleanupErrors = [];
+
+  try {
+    const cleanupServerDestroyed = await requestJson({
+      fetchImpl,
+      origin,
+      path: "/api/workspaces/destroy-server",
+      method: "POST",
+      body: { accountId, workspaceId, confirm: true }
+    });
+    if (checks) {
+      addCheck(checks, "verification_server_destroyed", Boolean(
+        cleanupServerDestroyed.server?.status === "destroyed" &&
+        cleanupServerDestroyed.server?.billingStatus === "stopped" &&
+        cleanupServerDestroyed.disk?.id === workspaceDiskId &&
+        cleanupServerDestroyed.disk?.billingStatus === "active"
+      ));
+    }
+  } catch (error) {
+    cleanupErrors.push(`destroy_server:${error.message}`);
+  }
+
+  try {
+    const cleanupDiskDestroyed = await requestJson({
+      fetchImpl,
+      origin,
+      path: "/api/workspaces/destroy-disk",
+      method: "POST",
+      body: { accountId, workspaceId, confirmDataLoss: true }
+    });
+    if (checks) {
+      addCheck(checks, "verification_disk_destroyed", Boolean(
+        cleanupDiskDestroyed.state === "destroyed" &&
+        cleanupDiskDestroyed.server?.status === "destroyed" &&
+        cleanupDiskDestroyed.server?.billingStatus === "stopped" &&
+        cleanupDiskDestroyed.disk?.status === "destroyed" &&
+        cleanupDiskDestroyed.disk?.billingStatus === "stopped"
+      ));
+    }
+  } catch (error) {
+    cleanupErrors.push(`destroy_disk:${error.message}`);
+  }
+
+  return cleanupErrors;
+}
+
 export async function verifyProductionChain({
   origin,
   accountId = DEFAULT_ACCOUNT_ID,
@@ -91,158 +138,157 @@ export async function verifyProductionChain({
   if (typeof fetchImpl !== "function") throw new Error("fetch_required");
   const checks = [];
   const normalizedOrigin = normalizeOrigin(origin);
+  let workspace = null;
 
-  const productionReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/production/readiness" });
-  assertReady({ checks, name: "production_readiness", payload: productionReadiness });
+  try {
+    const productionReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/production/readiness" });
+    assertReady({ checks, name: "production_readiness", payload: productionReadiness });
 
-  const runtimeReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/runtime/readiness" });
-  assertReady({ checks, name: "runtime_readiness", payload: runtimeReadiness });
+    const runtimeReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/runtime/readiness" });
+    assertReady({ checks, name: "runtime_readiness", payload: runtimeReadiness });
 
-  await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/accounts/credit",
-    method: "POST",
-    body: { accountId, amount: creditAmount, reason: "production_verification_credit" }
-  });
+    await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/accounts/credit",
+      method: "POST",
+      body: { accountId, amount: creditAmount, reason: "production_verification_credit" }
+    });
 
-  const workspace = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces",
-    method: "POST",
-    body: { accountId, workspaceName, packageId }
-  });
-  assertWorkspaceShape(checks, workspace);
+    workspace = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/workspaces",
+      method: "POST",
+      body: { accountId, workspaceName, packageId }
+    });
+    assertWorkspaceShape(checks, workspace);
 
-  const workspaceUrlResult = await requestWorkspaceUrl({
-    fetchImpl,
-    url: workspace.url,
-    attempts: workspaceUrlAttempts,
-    retryDelayMs
-  });
-  addCheck(checks, "workspace_url", true, { url: workspace.url, attempts: workspaceUrlResult.attempts });
+    const workspaceUrlResult = await requestWorkspaceUrl({
+      fetchImpl,
+      url: workspace.url,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs
+    });
+    addCheck(checks, "workspace_url", true, { url: workspace.url, attempts: workspaceUrlResult.attempts });
 
-  const stopped = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces/stop-server",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id, confirm: true }
-  });
-  addCheck(checks, "server_stopped_storage_retained", Boolean(
-    stopped.server?.status === "stopped" &&
-    stopped.server?.billingStatus === "stopped" &&
-    stopped.disk?.status === "attached_retained" &&
-    stopped.disk?.billingStatus === "active"
-  ));
+    const stopped = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/workspaces/stop-server",
+      method: "POST",
+      body: { accountId, workspaceId: workspace.id, confirm: true }
+    });
+    addCheck(checks, "server_stopped_storage_retained", Boolean(
+      stopped.server?.status === "stopped" &&
+      stopped.server?.billingStatus === "stopped" &&
+      stopped.disk?.status === "attached_retained" &&
+      stopped.disk?.billingStatus === "active"
+    ));
 
-  const restarted = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces/restart-server",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id }
-  });
-  addCheck(checks, "server_restarted", Boolean(
-    restarted.state === "running" &&
-    restarted.server?.status === "running" &&
-    restarted.disk?.id === workspace.disk.id &&
-    restarted.url === workspace.url &&
-    restarted.access?.token === workspace.access.token
-  ));
+    const restarted = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/workspaces/restart-server",
+      method: "POST",
+      body: { accountId, workspaceId: workspace.id }
+    });
+    addCheck(checks, "server_restarted", Boolean(
+      restarted.state === "running" &&
+      restarted.server?.status === "running" &&
+      restarted.disk?.id === workspace.disk.id &&
+      restarted.url === workspace.url &&
+      restarted.access?.token === workspace.access.token
+    ));
 
-  const serverDestroyed = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces/destroy-server",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id, confirm: true }
-  });
-  addCheck(checks, "server_destroyed_storage_retained", Boolean(
-    serverDestroyed.state === "server_destroyed_disk_retained" &&
-    serverDestroyed.server?.status === "destroyed" &&
-    serverDestroyed.disk?.id === workspace.disk.id &&
-    serverDestroyed.disk?.status === "detached_retained" &&
-    serverDestroyed.disk?.billingStatus === "active"
-  ));
+    const serverDestroyed = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/workspaces/destroy-server",
+      method: "POST",
+      body: { accountId, workspaceId: workspace.id, confirm: true }
+    });
+    addCheck(checks, "server_destroyed_storage_retained", Boolean(
+      serverDestroyed.state === "server_destroyed_disk_retained" &&
+      serverDestroyed.server?.status === "destroyed" &&
+      serverDestroyed.disk?.id === workspace.disk.id &&
+      serverDestroyed.disk?.status === "detached_retained" &&
+      serverDestroyed.disk?.billingStatus === "active"
+    ));
 
-  const recreated = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces/restart-server",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id }
-  });
-  addCheck(checks, "server_recreated_from_retained_disk", Boolean(
-    recreated.state === "running" &&
-    recreated.server?.status === "running" &&
-    recreated.disk?.id === workspace.disk.id &&
-    recreated.disk?.status === "attached_retained" &&
-    recreated.url === workspace.url &&
-    recreated.access?.token === workspace.access.token
-  ));
+    const recreated = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/workspaces/restart-server",
+      method: "POST",
+      body: { accountId, workspaceId: workspace.id }
+    });
+    addCheck(checks, "server_recreated_from_retained_disk", Boolean(
+      recreated.state === "running" &&
+      recreated.server?.status === "running" &&
+      recreated.disk?.id === workspace.disk.id &&
+      recreated.disk?.status === "attached_retained" &&
+      recreated.url === workspace.url &&
+      recreated.access?.token === workspace.access.token
+    ));
 
-  const recreatedUrlResult = await requestWorkspaceUrl({
-    fetchImpl,
-    url: workspace.url,
-    attempts: workspaceUrlAttempts,
-    retryDelayMs
-  });
-  addCheck(checks, "workspace_url_after_recreate", true, {
-    url: workspace.url,
-    attempts: recreatedUrlResult.attempts
-  });
+    const recreatedUrlResult = await requestWorkspaceUrl({
+      fetchImpl,
+      url: workspace.url,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs
+    });
+    addCheck(checks, "workspace_url_after_recreate", true, {
+      url: workspace.url,
+      attempts: recreatedUrlResult.attempts
+    });
 
-  const settlement = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/billing/settle",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id, hours: 1, sourceEventId: "production_verification_tick" }
-  });
-  addCheck(checks, "billing_settlement", Boolean(
-    Array.isArray(settlement.entries) &&
-    settlement.entries.length > 0 &&
-    Array.isArray(settlement.metering)
-  ));
+    const settlement = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/billing/settle",
+      method: "POST",
+      body: { accountId, workspaceId: workspace.id, hours: 1, sourceEventId: "production_verification_tick" }
+    });
+    addCheck(checks, "billing_settlement", Boolean(
+      Array.isArray(settlement.entries) &&
+      settlement.entries.length > 0 &&
+      Array.isArray(settlement.metering)
+    ));
 
-  const cleanupServerDestroyed = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces/destroy-server",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id, confirm: true }
-  });
-  addCheck(checks, "verification_server_destroyed", Boolean(
-    cleanupServerDestroyed.server?.status === "destroyed" &&
-    cleanupServerDestroyed.server?.billingStatus === "stopped" &&
-    cleanupServerDestroyed.disk?.id === workspace.disk.id &&
-    cleanupServerDestroyed.disk?.billingStatus === "active"
-  ));
+    const cleanupErrors = await cleanupVerificationWorkspace({
+      fetchImpl,
+      origin: normalizedOrigin,
+      accountId,
+      workspaceId: workspace.id,
+      workspaceDiskId: workspace.disk.id,
+      checks
+    });
+    if (cleanupErrors.length > 0) {
+      const error = new Error(`production_verification_cleanup_failed:${cleanupErrors.join("|")}`);
+      error.cleanupErrors = cleanupErrors;
+      throw error;
+    }
 
-  const cleanupDiskDestroyed = await requestJson({
-    fetchImpl,
-    origin: normalizedOrigin,
-    path: "/api/workspaces/destroy-disk",
-    method: "POST",
-    body: { accountId, workspaceId: workspace.id, confirmDataLoss: true }
-  });
-  addCheck(checks, "verification_disk_destroyed", Boolean(
-    cleanupDiskDestroyed.state === "destroyed" &&
-    cleanupDiskDestroyed.server?.status === "destroyed" &&
-    cleanupDiskDestroyed.server?.billingStatus === "stopped" &&
-    cleanupDiskDestroyed.disk?.status === "destroyed" &&
-    cleanupDiskDestroyed.disk?.billingStatus === "stopped"
-  ));
-
-  return {
-    ok: true,
-    accountId,
-    workspaceId: workspace.id,
-    url: workspace.url,
-    checks
-  };
+    return {
+      ok: true,
+      accountId,
+      workspaceId: workspace.id,
+      url: workspace.url,
+      checks
+    };
+  } catch (error) {
+    if (!workspace?.id) throw error;
+    const cleanupErrors = await cleanupVerificationWorkspace({
+      fetchImpl,
+      origin: normalizedOrigin,
+      accountId,
+      workspaceId: workspace.id,
+      workspaceDiskId: workspace.disk?.id
+    });
+    if (cleanupErrors.length > 0) error.cleanupErrors = cleanupErrors;
+    throw error;
+  }
 }
 
 function cliArgs(argv) {

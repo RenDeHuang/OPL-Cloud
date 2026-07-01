@@ -232,3 +232,127 @@ test("production verifier retries the Workspace URL while Caddy and Docker becom
   assert.equal(result.checks.find((check) => check.name === "workspace_url").attempts, 2);
   assert.equal(result.checks.find((check) => check.name === "workspace_url_after_recreate").attempts, 1);
 });
+
+test("production verifier destroys verification resources when a later check fails", async () => {
+  const requests = [];
+  const workspace = {
+    id: "ws-prod003",
+    ownerAccountId: "pi-prod",
+    name: "Production Verification Lab",
+    packageId: "basic",
+    state: "running",
+    provider: "tencent-cvm",
+    server: { id: "ins-prod003", status: "running", billingStatus: "active" },
+    docker: { id: "docker-prod003", status: "running" },
+    disk: { id: "disk-prod003", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
+    slug: "production-verification-lab-prod003",
+    url: "https://production-verification-lab-prod003.oplcloud.cn/?token=share_prod_fail",
+    access: { token: "share_prod_fail", tokenStatus: "active", requiresLogin: false }
+  };
+
+  await assert.rejects(
+    verifyProductionChain({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      workspaceUrlAttempts: 1,
+      retryDelayMs: 0,
+      fetchImpl: async (url, options = {}) => {
+        const parsed = new URL(String(url));
+        const method = options.method || "GET";
+        const key = parsed.origin === "https://console.oplcloud.cn"
+          ? `${method} ${parsed.pathname}`
+          : `${method} ${String(url)}`;
+        requests.push({ key, body: options.body ? JSON.parse(options.body) : null });
+
+        if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
+        if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] });
+        if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
+        if (key === "POST /api/workspaces") return jsonResponse(workspace);
+        if (key === "GET https://production-verification-lab-prod003.oplcloud.cn/?token=share_prod_fail") return htmlResponse("bad gateway", 502);
+        if (key === "POST /api/workspaces/destroy-server") {
+          return jsonResponse({
+            ...workspace,
+            state: "server_destroyed_disk_retained",
+            server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+            docker: { ...workspace.docker, status: "destroyed" },
+            disk: { ...workspace.disk, status: "detached_retained" }
+          });
+        }
+        if (key === "POST /api/workspaces/destroy-disk") {
+          return jsonResponse({
+            ...workspace,
+            state: "destroyed",
+            server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+            docker: { ...workspace.docker, status: "destroyed" },
+            disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
+          });
+        }
+        throw new Error(`unexpected_request:${key}`);
+      }
+    }),
+    /workspace_url_failed:502:bad gateway/
+  );
+
+  assert.deepEqual(requests.map((request) => request.key), [
+    "GET /api/production/readiness",
+    "GET /api/runtime/readiness",
+    "POST /api/accounts/credit",
+    "POST /api/workspaces",
+    "GET https://production-verification-lab-prod003.oplcloud.cn/?token=share_prod_fail",
+    "POST /api/workspaces/destroy-server",
+    "POST /api/workspaces/destroy-disk"
+  ]);
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server").body.confirm, true);
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-disk").body.confirmDataLoss, true);
+});
+
+test("production verifier reports cleanup failures without hiding the original verification failure", async () => {
+  const workspace = {
+    id: "ws-prod004",
+    ownerAccountId: "pi-prod",
+    name: "Production Verification Lab",
+    packageId: "basic",
+    state: "running",
+    provider: "tencent-cvm",
+    server: { id: "ins-prod004", status: "running", billingStatus: "active" },
+    docker: { id: "docker-prod004", status: "running" },
+    disk: { id: "disk-prod004", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
+    slug: "production-verification-lab-prod004",
+    url: "https://production-verification-lab-prod004.oplcloud.cn/?token=share_prod_cleanup_fail",
+    access: { token: "share_prod_cleanup_fail", tokenStatus: "active", requiresLogin: false }
+  };
+  let caught = null;
+
+  try {
+    await verifyProductionChain({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      workspaceUrlAttempts: 1,
+      retryDelayMs: 0,
+      fetchImpl: async (url, options = {}) => {
+        const parsed = new URL(String(url));
+        const method = options.method || "GET";
+        const key = parsed.origin === "https://console.oplcloud.cn"
+          ? `${method} ${parsed.pathname}`
+          : `${method} ${String(url)}`;
+
+        if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
+        if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] });
+        if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
+        if (key === "POST /api/workspaces") return jsonResponse(workspace);
+        if (key === "GET https://production-verification-lab-prod004.oplcloud.cn/?token=share_prod_cleanup_fail") return htmlResponse("bad gateway", 502);
+        if (key === "POST /api/workspaces/destroy-server") return jsonResponse({ error: "destroy_server_failed" }, 500);
+        if (key === "POST /api/workspaces/destroy-disk") return jsonResponse({ error: "destroy_disk_failed" }, 500);
+        throw new Error(`unexpected_request:${key}`);
+      }
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.match(caught.message, /workspace_url_failed:502:bad gateway/);
+  assert.deepEqual(caught.cleanupErrors, [
+    "destroy_server:request_failed:POST:/api/workspaces/destroy-server:500:destroy_server_failed",
+    "destroy_disk:request_failed:POST:/api/workspaces/destroy-disk:500:destroy_disk_failed"
+  ]);
+});

@@ -244,6 +244,7 @@ Delivered:
 - `npm run validate:production-manifest` validates required launch variables and fails if sensitive values are inlined.
 - `npm run verify:production` runs the deployed API business-chain verifier without writing smoke artifacts to the repo.
 - The production verifier now destroys its verification server and disk after the lifecycle and billing checks complete, reducing the chance of validation resources continuing to bill after a successful run.
+- If the production verifier fails after Workspace creation, it still attempts verification server and disk cleanup before returning the original failure, and attaches cleanup errors for operator recovery.
 - `npm run reconcile:tencent` provides the Tencent bill reconciliation gate for deployment records without writing smoke artifacts to the repo.
 - `docs/PRODUCTION_RUNBOOK.md` defines launch, recovery, and artifact hygiene checks.
 - Tencent Ansible installs Caddy, imports Workspace routes from `/etc/caddy/conf.d/*.caddy`, and fails deployment when the token-gated route cannot reload.

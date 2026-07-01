@@ -284,9 +284,11 @@ destroy server while retaining CBS
 recreate server from retained CBS
 open the same Workspace URL again after recreation
 settle billing and emit OpenMeter usage
+destroy verification server
+destroy verification disk
 ```
 
-This command creates billable Tencent Cloud resources and lifecycle events. Use a dedicated verification account and destroy the verification disk from OPL Console after inspection. The command writes no smoke report or generated artifact into the repository.
+This command creates billable Tencent Cloud resources and lifecycle events, then attempts to clean up the verification server and disk on both success and post-creation failure paths. Use a dedicated verification account. If the verifier reports cleanup errors, inspect OPL Console and Tencent Cloud and explicitly destroy any remaining verification resources. The command writes no smoke report or generated artifact into the repository.
 
 Optional verifier controls:
 
