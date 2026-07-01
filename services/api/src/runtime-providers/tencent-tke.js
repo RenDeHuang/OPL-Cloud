@@ -216,6 +216,92 @@ export class TencentTkeProvider {
     };
   }
 
+  async runtimeStatus({ workspace }) {
+    const name = resourceName(workspace.server.id);
+    const pvcName = resourceName(workspace.disk.id);
+    const serviceName = resourceName(workspace.docker.service || `service/${name}`);
+    const raw = await this.runKubectl([
+      "get",
+      `deployment/${name}`,
+      `pvc/${pvcName}`,
+      `service/${serviceName}`,
+      `ingress/${name}`,
+      `endpoints/${serviceName}`,
+      "-o",
+      "json"
+    ]);
+    const list = JSON.parse(raw);
+    const items = Array.isArray(list.items) ? list.items : [list];
+    const deployment = findKubernetesItem(items, "Deployment", name);
+    const pvc = findKubernetesItem(items, "PersistentVolumeClaim", pvcName);
+    const service = findKubernetesItem(items, "Service", serviceName);
+    const ingress = findKubernetesItem(items, "Ingress", name);
+    const endpoints = findKubernetesItem(items, "Endpoints", serviceName);
+    const podLabels = deployment?.spec?.template?.metadata?.labels || {};
+    const selector = service?.spec?.selector || {};
+    const container = (deployment?.spec?.template?.spec?.containers || []).find((item) => item.name === "workspace") ||
+      deployment?.spec?.template?.spec?.containers?.[0];
+    const deploymentPvc = (deployment?.spec?.template?.spec?.volumes || [])
+      .find((volume) => volume.persistentVolumeClaim?.claimName === pvcName);
+    const ingressPath = findIngressPath({ ingress, host: this.workspaceHost(), path: `/w/${workspace.id}` });
+    const readyAddresses = (endpoints?.subsets || []).reduce((count, subset) => count + (subset.addresses || []).length, 0);
+    const deploymentReady = Number(deployment?.status?.readyReplicas || 0) > 0 &&
+      Number(deployment?.status?.availableReplicas || 0) > 0;
+    const checks = [
+      { name: "deployment_ready", ok: deploymentReady },
+      { name: "workspace_image_pulled", ok: deploymentReady && container?.image === workspace.docker.image },
+      { name: "pvc_bound", ok: pvc?.status?.phase === "Bound" },
+      { name: "deployment_uses_retained_pvc", ok: Boolean(deploymentPvc) },
+      { name: "service_targets_workspace", ok: selectorMatchesLabels(selector, podLabels) },
+      { name: "service_endpoints_ready", ok: readyAddresses > 0 },
+      {
+        name: "ingress_routes_workspace_url",
+        ok: Boolean(
+          ingressPath &&
+          ingressPath.backend?.service?.name === serviceName &&
+          Number(ingressPath.backend?.service?.port?.number) === 3000
+        )
+      }
+    ];
+
+    return {
+      provider: this.name,
+      workspaceId: workspace.id,
+      ready: checks.every((check) => check.ok),
+      checks,
+      resources: {
+        deployment: {
+          name,
+          readyReplicas: Number(deployment?.status?.readyReplicas || 0),
+          availableReplicas: Number(deployment?.status?.availableReplicas || 0),
+          image: container?.image || ""
+        },
+        pvc: {
+          name: pvcName,
+          phase: pvc?.status?.phase || "Missing",
+          storageClass: pvc?.spec?.storageClassName || ""
+        },
+        service: {
+          name: serviceName,
+          selector
+        },
+        ingress: {
+          name,
+          host: this.workspaceHost(),
+          path: ingressPath?.path || ""
+        },
+        endpoints: {
+          name: serviceName,
+          readyAddresses
+        }
+      }
+    };
+  }
+
+  workspaceHost() {
+    return String(this.env.OPL_WORKSPACE_DOMAIN || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
+
   requireExecutionBoundary() {
     const missing = this.missingEnv();
     if (missing.length > 0) {
@@ -400,4 +486,23 @@ export class TencentTkeProvider {
 
 function resourceName(resourceId) {
   return String(resourceId || "").split("/").pop();
+}
+
+function findKubernetesItem(items, kind, name) {
+  return items.find((item) => item.kind === kind && item.metadata?.name === name);
+}
+
+function selectorMatchesLabels(selector, labels) {
+  const entries = Object.entries(selector || {});
+  return entries.length > 0 && entries.every(([key, value]) => labels?.[key] === value);
+}
+
+function findIngressPath({ ingress, host, path }) {
+  for (const rule of ingress?.spec?.rules || []) {
+    if (rule.host !== host) continue;
+    for (const candidate of rule.http?.paths || []) {
+      if (candidate.path === path) return candidate;
+    }
+  }
+  return null;
 }

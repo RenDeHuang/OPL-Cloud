@@ -282,6 +282,7 @@ Only when both are ready does it create a real verification Workspace and exerci
 ```text
 credit account
 create Workspace
+verify TKE runtime status for Deployment/PVC/Service/Ingress/Endpoints
 open Workspace URL
 stop runtime compute while retaining workspace storage
 restart runtime compute

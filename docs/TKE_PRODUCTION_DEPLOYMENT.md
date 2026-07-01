@@ -134,6 +134,8 @@ The `tencent-tke` runtime provider maps one OPL Workspace to:
 
 Stopping, destroying, or recreating compute must not delete the PVC. PVC deletion is only done by the explicit storage destroy path.
 
+The production verifier also calls the read-only runtime status API for TKE Workspaces. That check verifies the Deployment is ready, the one-person-lab-app image matches the Workspace runtime image, the PVC is bound, the Deployment mounts the retained PVC, the Service has endpoints, and the Ingress route points at the expected Workspace Service path.
+
 ## Where To Put Values
 
 Use three locations:

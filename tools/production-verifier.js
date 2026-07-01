@@ -72,16 +72,73 @@ function assertReady({ checks, name, payload }) {
   addCheck(checks, name, true);
 }
 
+function providerResourceShape(workspace) {
+  if (workspace?.provider === "tencent-cvm") {
+    return Boolean(
+      workspace?.server?.id &&
+      workspace?.docker?.id &&
+      workspace?.disk?.id &&
+      workspace?.url
+    );
+  }
+  if (workspace?.provider === "tencent-tke") {
+    let url = null;
+    try {
+      url = workspace?.url ? new URL(workspace.url) : null;
+    } catch {
+      url = null;
+    }
+    return Boolean(
+      workspace?.server?.id?.startsWith("deployment/") &&
+      workspace?.docker?.id === workspace.server.id &&
+      workspace?.docker?.service?.startsWith("service/") &&
+      workspace?.docker?.image &&
+      workspace?.disk?.id?.startsWith("pvc/") &&
+      workspace?.disk?.mountPath === "/data" &&
+      workspace?.disk?.storageClass &&
+      url?.pathname === `/w/${workspace.id}` &&
+      url?.searchParams.get("token") === workspace?.access?.token
+    );
+  }
+  return false;
+}
+
 function assertWorkspaceShape(checks, workspace) {
   addCheck(checks, "workspace_created", Boolean(
     workspace?.id &&
-    workspace?.provider === "tencent-cvm" &&
+    providerResourceShape(workspace) &&
     workspace?.server?.status === "running" &&
     workspace?.docker?.status === "running" &&
     workspace?.disk?.status === "attached_retained" &&
-    workspace?.url &&
     workspace?.access?.tokenStatus === "active"
   ), { workspaceId: workspace?.id });
+}
+
+function assertBillingSettlement(checks, settlement) {
+  const entryTypes = new Set((settlement.entries || []).map((entry) => entry.type));
+  const billableDebits = (settlement.entries || []).filter((entry) => [
+    "server_debit",
+    "storage_debit"
+  ].includes(entry.type));
+  const metering = settlement.metering || [];
+  addCheck(checks, "billing_settlement", Boolean(
+    entryTypes.has("server_debit") &&
+    entryTypes.has("storage_debit") &&
+    Array.isArray(settlement.metering) &&
+    metering.length >= billableDebits.length &&
+    metering.every((result) => result.ok === true)
+  ));
+}
+
+function assertRuntimeStatus(checks, runtimeStatus) {
+  addCheck(checks, "workspace_runtime_status", Boolean(
+    runtimeStatus?.ready === true &&
+    Array.isArray(runtimeStatus.checks) &&
+    runtimeStatus.checks.length > 0 &&
+    runtimeStatus.checks.every((check) => check.ok === true)
+  ), {
+    runtimeChecks: (runtimeStatus?.checks || []).map((check) => check.name)
+  });
 }
 
 async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, workspaceId, workspaceDiskId, checks = null }) {
@@ -174,6 +231,17 @@ export async function verifyProductionChain({
     });
     assertWorkspaceShape(checks, workspace);
 
+    if (workspace.provider === "tencent-tke") {
+      const runtimeStatus = await requestJson({
+        fetchImpl,
+        origin: normalizedOrigin,
+        path: "/api/workspaces/runtime-status",
+        method: "POST",
+        body: { accountId, workspaceId: workspace.id }
+      });
+      assertRuntimeStatus(checks, runtimeStatus);
+    }
+
     const workspaceUrlResult = await requestWorkspaceUrl({
       fetchImpl,
       url: workspace.url,
@@ -260,11 +328,7 @@ export async function verifyProductionChain({
       method: "POST",
       body: { accountId, workspaceId: workspace.id, hours: 1, sourceEventId: settlementSourceEventId }
     });
-    addCheck(checks, "billing_settlement", Boolean(
-      Array.isArray(settlement.entries) &&
-      settlement.entries.length > 0 &&
-      Array.isArray(settlement.metering)
-    ));
+    assertBillingSettlement(checks, settlement);
 
     const cleanupErrors = await cleanupVerificationWorkspace({
       fetchImpl,

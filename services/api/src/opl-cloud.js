@@ -466,6 +466,34 @@ export class OplCloudService {
     };
   }
 
+  async runtimeStatus({ accountId, workspaceId }) {
+    const state = await this.store.read();
+    const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
+    if (typeof this.runtimeProvider.runtimeStatus === "function") {
+      return this.runtimeProvider.runtimeStatus({ workspace: clone(workspace) });
+    }
+    return {
+      provider: workspace.provider,
+      workspaceId: workspace.id,
+      ready: workspace.state === "running" &&
+        workspace.server.status === "running" &&
+        workspace.docker.status === "running" &&
+        workspace.disk.status === "attached_retained",
+      checks: [
+        {
+          name: "workspace_runtime_running",
+          ok: workspace.state === "running" &&
+            workspace.server.status === "running" &&
+            workspace.docker.status === "running"
+        },
+        {
+          name: "workspace_storage_attached",
+          ok: workspace.disk.status === "attached_retained"
+        }
+      ]
+    };
+  }
+
   async productionReadiness() {
     if (!this.productionReadinessCheck) {
       return {

@@ -114,3 +114,46 @@ test("production readiness route reports launch blockers without creating resour
     await close();
   }
 });
+
+test("runtime status route returns structured Workspace resource evidence without mutating resources", async () => {
+  const requests = [];
+  const appService = {
+    runtimeStatus: async (input) => {
+      requests.push(input);
+      return {
+        provider: "tencent-tke",
+        workspaceId: input.workspaceId,
+        ready: true,
+        checks: [
+          { name: "deployment_ready", ok: true },
+          { name: "pvc_bound", ok: true },
+          { name: "ingress_routes_workspace_url", ok: true }
+        ]
+      };
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const response = await fetch(`${origin}/api/workspaces/runtime-status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accountId: "pi-route", workspaceId: "ws-route001" })
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(requests, [{ accountId: "pi-route", workspaceId: "ws-route001" }]);
+    assert.deepEqual(payload, {
+      provider: "tencent-tke",
+      workspaceId: "ws-route001",
+      ready: true,
+      checks: [
+        { name: "deployment_ready", ok: true },
+        { name: "pvc_bound", ok: true },
+        { name: "ingress_routes_workspace_url", ok: true }
+      ]
+    });
+  } finally {
+    await close();
+  }
+});

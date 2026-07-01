@@ -125,6 +125,7 @@ async function handleApi(request, response, pathname, appService) {
       "POST /api/workspaces/restart-server": () => appService.restartServer(body),
       "POST /api/workspaces/destroy-server": () => appService.destroyServer(body),
       "POST /api/workspaces/destroy-disk": () => appService.destroyDisk(body),
+      "POST /api/workspaces/runtime-status": () => appService.runtimeStatus(body),
       "POST /api/workspaces/reset-token": () => appService.resetWorkspaceToken(body),
       "POST /api/workspaces/delete-token": () => appService.deleteWorkspaceToken(body),
       "POST /api/billing/settle": () => appService.settleBilling(body)
