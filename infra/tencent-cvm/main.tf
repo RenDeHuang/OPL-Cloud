@@ -80,5 +80,6 @@ output "public_ip" {
 }
 
 output "workspace_url" {
-  value = "https://${var.workspace_slug}.${var.workspace_domain}/?token=${var.workspace_token}"
+  value     = "https://${var.workspace_slug}.${var.workspace_domain}/?token=${var.workspace_token}"
+  sensitive = true
 }
