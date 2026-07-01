@@ -4,6 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createOplCloud } from "./src/opl-cloud.js";
+import { createMeterFromEnv } from "./src/openmeter.js";
 import { createRuntimeProvider } from "./src/runtime-provider-factory.js";
 import { JsonFileStore, PostgresStore } from "./src/store.js";
 
@@ -27,7 +28,8 @@ export const service = createOplCloud({
     serverHourly: { basic: 1, pro: 4 },
     diskGbMonth: 0.2,
     markup: 0.1
-  }
+  },
+  meter: createMeterFromEnv(process.env)
 });
 
 function sendJson(response, status, payload) {

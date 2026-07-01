@@ -166,7 +166,7 @@ Next production step:
 
 ## Phase 6: OpenMeter Metering
 
-Status: not implemented.
+Status: implemented at the event sink boundary.
 
 Goal:
 
@@ -180,6 +180,21 @@ Event families:
 - `workspace.storage.gb_hours`
 - `workspace.storage.hold`
 - `workspace.lifecycle.action`
+
+Delivered:
+
+- `OpenMeterClient` posts CloudEvents-style JSON usage events to `OPENMETER_ENDPOINT`.
+- API enables OpenMeter only when both `OPENMETER_ENDPOINT` and `OPENMETER_API_KEY` are configured.
+- Billing settlement emits:
+  - `workspace.server.running_hours`
+  - `workspace.storage.gb_hours`
+- OpenMeter rejection fails the settlement request instead of silently splitting ledger and usage events.
+
+Not yet delivered:
+
+- OpenMeter meter definitions and dashboards.
+- Lago invoice/subscription integration.
+- Tencent bill reconciliation.
 
 Billing rules remain:
 

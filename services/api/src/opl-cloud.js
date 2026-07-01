@@ -92,15 +92,16 @@ function hourlyServerAmount({ packagePlan, pricing, hours }) {
   return money(hourly * (1 + markup) * hours);
 }
 
-export function createOplCloud({ store, runtimeProvider, pricing }) {
-  return new OplCloudService({ store, runtimeProvider, pricing });
+export function createOplCloud({ store, runtimeProvider, pricing, meter = null }) {
+  return new OplCloudService({ store, runtimeProvider, pricing, meter });
 }
 
 export class OplCloudService {
-  constructor({ store, runtimeProvider, pricing }) {
+  constructor({ store, runtimeProvider, pricing, meter = null }) {
     this.store = store;
     this.runtimeProvider = runtimeProvider;
     this.pricing = pricing;
+    this.meter = meter;
   }
 
   packages() {
@@ -311,7 +312,7 @@ export class OplCloudService {
     const billHours = Number(hours);
     if (!Number.isFinite(billHours) || billHours <= 0) throw new Error("positive_hours_required");
 
-    return this.store.update((state) => {
+    const settlement = await this.store.update((state) => {
       const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
       const account = ensureAccount(state, accountId);
       const packagePlan = getPackage(workspace.packageId);
@@ -344,8 +345,25 @@ export class OplCloudService {
       if (entries.length > 0) {
         state.audit.push(this.auditEvent({ accountId, workspaceId, type: "billing.settled", sourceEventId }));
       }
-      return { entries: entries.map(clone), account: clone(account) };
+      return {
+        entries: entries.map(clone),
+        account: clone(account),
+        meteringEvents: this.usageEventsForSettlement({
+          accountId,
+          workspace,
+          packagePlan,
+          hours: billHours,
+          entries,
+          sourceEventId
+        })
+      };
     });
+    const metering = await this.recordUsageEvents(settlement.meteringEvents);
+    return {
+      entries: settlement.entries,
+      account: settlement.account,
+      metering
+    };
   }
 
   async billingLedger(accountId) {
@@ -388,6 +406,48 @@ export class OplCloudService {
       missingEnv: [],
       missingTools: []
     };
+  }
+
+  usageEventsForSettlement({ accountId, workspace, packagePlan, hours, entries, sourceEventId }) {
+    const events = [];
+    if (entries.some((entry) => entry.type === "server_debit")) {
+      events.push({
+        event: "workspace.server.running_hours",
+        subject: `account:${accountId}`,
+        value: hours,
+        metadata: {
+          workspaceId: workspace.id,
+          packageId: packagePlan.id,
+          provider: workspace.provider,
+          serverSpec: workspace.server.spec,
+          sourceEventId
+        }
+      });
+    }
+    if (entries.some((entry) => entry.type === "storage_debit")) {
+      events.push({
+        event: "workspace.storage.gb_hours",
+        subject: `account:${accountId}`,
+        value: packagePlan.diskGb * hours,
+        metadata: {
+          workspaceId: workspace.id,
+          packageId: packagePlan.id,
+          provider: workspace.provider,
+          diskGb: packagePlan.diskGb,
+          sourceEventId
+        }
+      });
+    }
+    return events;
+  }
+
+  async recordUsageEvents(events) {
+    if (!this.meter || events.length === 0) return [];
+    const results = [];
+    for (const event of events) {
+      results.push(await this.meter.recordUsage(event));
+    }
+    return results;
   }
 
   ledgerEntry({ workspaceId, accountId, type, amount, sourceEventId }) {

@@ -122,6 +122,21 @@ PORT=8787 npm start
 
 When `DATABASE_URL` is set, OPL Console stores accounts, Workspaces, billing ledger entries, audit events, and runtime operation scaffolding in PostgreSQL tables.
 
+For OpenMeter usage events, set:
+
+```bash
+OPENMETER_ENDPOINT=https://openmeter.example.com \
+OPENMETER_API_KEY=om_... \
+PORT=8787 npm start
+```
+
+When configured, each billing settlement emits:
+
+- `workspace.server.running_hours`
+- `workspace.storage.gb_hours`
+
+OpenMeter is a usage meter. OPL Console remains the v1 billing ledger and user-facing balance source.
+
 To also start the local OPL Docker container when a Workspace is created:
 
 ```bash
