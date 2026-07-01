@@ -112,6 +112,16 @@ npm run build
 PORT=8787 npm start
 ```
 
+By default, local development uses an ignored JSON state file under `.runtime/`.
+For PostgreSQL control-plane persistence, set:
+
+```bash
+DATABASE_URL=postgres://opl:secret@127.0.0.1:5432/opl_cloud \
+PORT=8787 npm start
+```
+
+When `DATABASE_URL` is set, OPL Console stores accounts, Workspaces, billing ledger entries, audit events, and runtime operation scaffolding in PostgreSQL tables.
+
 To also start the local OPL Docker container when a Workspace is created:
 
 ```bash

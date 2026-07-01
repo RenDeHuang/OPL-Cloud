@@ -5,15 +5,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createOplCloud } from "./src/opl-cloud.js";
 import { createRuntimeProvider } from "./src/runtime-provider-factory.js";
-import { JsonFileStore } from "./src/store.js";
+import { JsonFileStore, PostgresStore } from "./src/store.js";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const publicDir = join(root, "dist");
 const port = Number(process.env.PORT ?? 8787);
 const dataPath = process.env.OPL_CLOUD_DATA_PATH ?? join(root, ".runtime", "opl-cloud-state.json");
 
+export function createStoreFromEnv(env = process.env) {
+  if (env.DATABASE_URL) return new PostgresStore({ connectionString: env.DATABASE_URL });
+  return new JsonFileStore(env.OPL_CLOUD_DATA_PATH ?? dataPath);
+}
+
 export const service = createOplCloud({
-  store: new JsonFileStore(dataPath),
+  store: createStoreFromEnv(process.env),
   runtimeProvider: createRuntimeProvider({
     env: process.env,
     rootDir: join(root, ".runtime", "workspaces")

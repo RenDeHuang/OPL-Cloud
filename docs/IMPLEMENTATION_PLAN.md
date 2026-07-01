@@ -125,7 +125,7 @@ Implementation direction:
 
 ## Phase 5: PostgreSQL Persistence
 
-Status: not implemented.
+Status: implemented and verified against a temporary real PostgreSQL container.
 
 Goal:
 
@@ -140,11 +140,29 @@ Tables to introduce:
 - `audit_events`
 - `runtime_operations`
 
+Delivered:
+
+- `PostgresStore` uses the same store interface as local JSON storage.
+- API selects PostgreSQL automatically when `DATABASE_URL` is configured.
+- Schema creation is owned by the API startup path.
+- Accounts, Workspaces, billing ledger entries, and audit events persist to dedicated PostgreSQL tables with JSONB state payloads.
+- `runtime_operations` table exists for retry-aware cloud operations.
+
 Requirements:
 
 - Workspace state must survive API restart.
 - Workspace URL/token state must remain stable.
 - Runtime operations should be auditable and retry-aware.
+
+Verification:
+
+1. `tests/postgres-store.test.js` verifies the table contract and transaction path.
+2. A temporary `postgres:16-alpine` container verified real `PostgresStore` read/write behavior.
+3. The temporary container and files are removed after verification.
+
+Next production step:
+
+- Provide a managed production `DATABASE_URL` and run the same create/restart/readback workflow against the deployed API.
 
 ## Phase 6: OpenMeter Metering
 
