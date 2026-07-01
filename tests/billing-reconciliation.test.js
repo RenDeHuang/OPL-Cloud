@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { reconcileTencentBills } from "../services/api/src/billing-reconciliation.js";
+import { normalizeTencentBillRows, reconcileTencentBills } from "../services/api/src/billing-reconciliation.js";
 
 test("reconciles OPL ledger debits against Tencent bill totals plus platform markup", () => {
   const report = reconcileTencentBills({
@@ -83,5 +83,44 @@ test("fails closed on mixed currencies", () => {
       tencentBills: [{ workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "USD" }]
     }),
     /mixed_currency_not_supported/
+  );
+});
+
+test("normalizes Tencent billing export rows into Workspace resource bills", () => {
+  const rows = normalizeTencentBillRows([
+    {
+      InstanceType: "Cloud Virtual Machine CVM",
+      Cost: "10.00",
+      Currency: "CNY",
+      Tags: "product:opl-cloud,workspace_id:ws-alpha",
+      ResourceId: "ins-alpha"
+    },
+    {
+      ProductName: "Cloud Block Storage",
+      RealTotalCost: "2.00",
+      Currency: "CNY",
+      Tag: { product: "opl-cloud", workspace_id: "ws-alpha" },
+      ResourceId: "disk-alpha"
+    },
+    {
+      productName: "DNSPod",
+      realTotalCost: "99",
+      currency: "CNY",
+      tags: "product:opl-cloud,workspace_id:ws-alpha"
+    }
+  ]);
+
+  assert.deepEqual(rows, [
+    { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY", sourceResourceId: "ins-alpha" },
+    { workspaceId: "ws-alpha", resourceType: "storage", amount: 2, currency: "CNY", sourceResourceId: "disk-alpha" }
+  ]);
+});
+
+test("normalizing Tencent billing rows fails closed when Workspace identity is missing", () => {
+  assert.throws(
+    () => normalizeTencentBillRows([
+      { ProductName: "Cloud Virtual Machine CVM", Cost: "10.00", Currency: "CNY", ResourceId: "ins-alpha" }
+    ]),
+    /tencent_bill_workspace_id_missing:ins-alpha/
   );
 });

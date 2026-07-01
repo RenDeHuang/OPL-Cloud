@@ -35,3 +35,46 @@ test("Tencent reconciliation CLI writes JSON to stdout and returns non-zero on m
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Tencent reconciliation CLI can normalize raw Tencent export rows before reconciling", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-cloud-reconcile-"));
+  const ledgerPath = join(root, "ledger.json");
+  const tencentPath = join(root, "tencent-raw.json");
+  try {
+    await writeFile(ledgerPath, JSON.stringify([
+      { workspaceId: "ws-alpha", type: "server_debit", amount: -11, currency: "CNY" },
+      { workspaceId: "ws-alpha", type: "storage_debit", amount: -2.2, currency: "CNY" }
+    ]));
+    await writeFile(tencentPath, JSON.stringify({
+      rows: [
+        { ProductName: "Cloud Virtual Machine CVM", RealTotalCost: "10", Currency: "CNY", Tags: "workspace_id:ws-alpha", ResourceId: "ins-alpha" },
+        { ProductName: "Cloud Block Storage", RealTotalCost: "2", Currency: "CNY", Tags: "workspace_id:ws-alpha", ResourceId: "disk-alpha" }
+      ]
+    }));
+    let stdout = "";
+    let stderr = "";
+
+    const code = await runReconciliationCli({
+      argv: ["--ledger", ledgerPath, "--tencent", tencentPath, "--tencent-format", "raw"],
+      stdout: { write: (chunk) => { stdout += chunk; } },
+      stderr: { write: (chunk) => { stderr += chunk; } }
+    });
+
+    const report = JSON.parse(stdout);
+    assert.equal(code, 0);
+    assert.equal(report.ok, true);
+    assert.deepEqual(report.totals, {
+      ledgerServer: 11,
+      ledgerStorage: 2.2,
+      tencentServer: 10,
+      tencentStorage: 2,
+      expectedServer: 11,
+      expectedStorage: 2.2,
+      serverDelta: 0,
+      storageDelta: 0
+    });
+    assert.equal(stderr, "");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { reconcileTencentBills } from "../services/api/src/billing-reconciliation.js";
+import { normalizeTencentBillRows, reconcileTencentBills } from "../services/api/src/billing-reconciliation.js";
 
 function cliArgs(argv) {
   const args = {};
@@ -28,7 +28,10 @@ export async function runReconciliationCli({
   const ledgerInput = await readJsonFile(args.ledger, "ledger");
   const tencentInput = await readJsonFile(args.tencent, "tencent");
   const ledgerEntries = Array.isArray(ledgerInput) ? ledgerInput : ledgerInput.billingLedger;
-  const tencentBills = Array.isArray(tencentInput) ? tencentInput : tencentInput.tencentBills;
+  const rawTencentRows = Array.isArray(tencentInput) ? tencentInput : tencentInput.tencentBills || tencentInput.rows;
+  const tencentBills = args["tencent-format"] === "raw"
+    ? normalizeTencentBillRows(rawTencentRows)
+    : rawTencentRows;
   const report = reconcileTencentBills({
     ledgerEntries,
     tencentBills,

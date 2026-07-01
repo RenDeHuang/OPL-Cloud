@@ -206,12 +206,13 @@ Delivered:
   - `workspace.storage.gb_hours`
 - OpenMeter rejection fails the settlement request instead of silently splitting ledger and usage events.
 - `npm run reconcile:tencent` compares OPL ledger debits to Tencent bill totals plus the 10% markup and fails non-zero on mismatches.
+- `npm run reconcile:tencent -- --tencent-format raw` normalizes Tencent billing export rows when they carry a `workspace_id` tag.
 
 Not yet delivered:
 
 - OpenMeter dashboards.
 - Lago invoice/subscription integration.
-- Direct Tencent billing API export ingestion. The current reconciliation boundary accepts normalized Tencent bill JSON.
+- Direct Tencent billing API download. The current reconciliation boundary accepts normalized JSON or raw exported rows.
 
 Billing rules remain:
 

@@ -44,6 +44,11 @@
       "amount",
       "currency"
     ],
+    "rawTencentExport": {
+      "supported": true,
+      "requiredWorkspaceTag": "workspace_id",
+      "cliFlag": "--tencent-format raw"
+    },
     "resourceTypes": [
       "server",
       "storage"

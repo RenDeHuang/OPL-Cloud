@@ -156,10 +156,16 @@ To reconcile OPL ledger debits against normalized Tencent Cloud bill totals:
 npm run reconcile:tencent -- --ledger ledger.json --tencent tencent-bills.json
 ```
 
-The command expects OPL `server_debit` / `storage_debit` ledger entries and Tencent bill rows shaped like:
+The command expects OPL `server_debit` / `storage_debit` ledger entries and normalized Tencent bill rows shaped like:
 
 ```json
 { "workspaceId": "ws-alpha", "resourceType": "server", "amount": 10, "currency": "CNY" }
+```
+
+For raw Tencent billing export rows, include the Workspace identity as a `workspace_id` tag and run:
+
+```bash
+npm run reconcile:tencent -- --ledger ledger.json --tencent tencent-export.json --tencent-format raw
 ```
 
 It compares Tencent cost plus the configured 10% markup against OPL ledger debits and exits non-zero on mismatch. It writes JSON to stdout only.

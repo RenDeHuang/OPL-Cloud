@@ -39,6 +39,82 @@ function addTencentBill(workspaces, bill) {
   if (bill.resourceType === "storage") row.tencentStorage = money(row.tencentStorage + amount);
 }
 
+function firstPresent(row, keys) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
+  }
+  return undefined;
+}
+
+function parseTagString(tags) {
+  return String(tags || "")
+    .split(/[;,]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((acc, part) => {
+      const separator = part.includes(":") ? ":" : "=";
+      const [key, ...rest] = part.split(separator);
+      if (key && rest.length > 0) acc[key.trim()] = rest.join(separator).trim();
+      return acc;
+    }, {});
+}
+
+function tagsFrom(row) {
+  const raw = firstPresent(row, ["Tag", "Tags", "tag", "tags"]);
+  if (!raw) return {};
+  if (typeof raw === "object" && !Array.isArray(raw)) return raw;
+  return parseTagString(raw);
+}
+
+function workspaceIdFrom(row) {
+  const direct = firstPresent(row, ["workspaceId", "WorkspaceId", "workspace_id", "WorkspaceID"]);
+  if (direct) return String(direct);
+  const tags = tagsFrom(row);
+  return tags.workspace_id || tags.workspaceId || tags.WorkspaceId || tags.WorkspaceID || "";
+}
+
+function resourceIdFrom(row) {
+  return String(firstPresent(row, ["sourceResourceId", "ResourceId", "resourceId", "InstanceId", "DiskId"]) || "");
+}
+
+function productNameFrom(row) {
+  return String(firstPresent(row, ["resourceType", "ProductName", "productName", "InstanceType", "BusinessCode", "businessCode"]) || "").toLowerCase();
+}
+
+function resourceTypeFrom(row) {
+  const product = productNameFrom(row);
+  if (row.resourceType === "server" || product.includes("cvm") || product.includes("virtual machine") || product.includes("compute")) return "server";
+  if (row.resourceType === "storage" || product.includes("block storage") || product.includes("cbs") || product.includes("disk")) return "storage";
+  return "";
+}
+
+function amountFrom(row) {
+  return Number(firstPresent(row, ["amount", "Amount", "RealTotalCost", "realTotalCost", "Cost", "cost", "CashPayAmount", "cashPayAmount"]) || 0);
+}
+
+export function normalizeTencentBillRows(rows = []) {
+  const normalized = [];
+  for (const row of rows) {
+    const resourceType = resourceTypeFrom(row);
+    if (!resourceType) continue;
+
+    const workspaceId = workspaceIdFrom(row);
+    const sourceResourceId = resourceIdFrom(row);
+    if (!workspaceId) {
+      throw new Error(`tencent_bill_workspace_id_missing:${sourceResourceId || "unknown_resource"}`);
+    }
+
+    normalized.push({
+      workspaceId,
+      resourceType,
+      amount: money(amountFrom(row)),
+      currency: String(firstPresent(row, ["currency", "Currency"]) || "CNY"),
+      sourceResourceId
+    });
+  }
+  return normalized;
+}
+
 function summarizeWorkspace(row, { markup, tolerance }) {
   const expectedServer = money(row.tencentServer * (1 + markup));
   const expectedStorage = money(row.tencentStorage * (1 + markup));
