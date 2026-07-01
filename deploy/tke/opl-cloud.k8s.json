@@ -1,0 +1,329 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "opl-cloud-control-plane",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud"
+        }
+      },
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "metadata": {
+        "name": "opl-cloud-config",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud"
+        }
+      },
+      "data": {
+        "NODE_ENV": "production",
+        "PORT": "8787",
+        "OPL_RUNTIME_PROVIDER": "tencent-tke",
+        "OPL_PUBLIC_URL": "https://cloud.medopl.cn",
+        "OPL_CONSOLE_DOMAIN": "cloud.medopl.cn",
+        "OPL_WORKSPACE_DOMAIN": "workspace.medopl.cn",
+        "OPL_CLOUD_IMAGE": "registry.example.com/opl/opl-cloud:2026-07-01",
+        "OPL_WORKSPACE_IMAGE": "registry.example.com/opl/one-person-lab-app:2026-07-01",
+        "OPL_K8S_NAMESPACE": "opl-cloud",
+        "OPL_INGRESS_CLASS": "qcloud",
+        "OPL_IMAGE_PULL_SECRET_NAME": "tcr-pull-secret",
+        "OPL_WORKSPACE_STORAGE_CLASS": "cbs",
+        "OPL_WORKSPACE_WEBUI_PORT": "3000",
+        "OPL_WORKSPACE_DATA_DIR": "/data",
+        "OPL_WORKSPACE_PROJECTS_DIR": "/projects",
+        "OPENMETER_ENDPOINT": "http://openmeter.opl-cloud.svc.cluster.local:8888",
+        "TENCENT_DEPLOY_CLUSTER_ID": "cls-xxxxxxxx",
+        "TENCENT_TCR_REGISTRY": "registry.example.com",
+        "TENCENT_TCR_NAMESPACE": "opl",
+        "TENCENT_TCR_REGION": "ap-guangzhou",
+        "TENCENT_DEPLOY_KUBECONFIG_REF": "/var/run/opl-cloud/kubeconfig/kubeconfig"
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "opl-cloud-control-plane",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "opl-cloud"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/name": "opl-cloud"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "opl-cloud-control-plane",
+            "automountServiceAccountToken": false,
+            "imagePullSecrets": [
+              {
+                "name": "tcr-pull-secret"
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "control-plane",
+                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "name": "http",
+                    "containerPort": 8787
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "configMapRef": {
+                      "name": "opl-cloud-config"
+                    }
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-database",
+                        "key": "DATABASE_URL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "OPENMETER_API_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-openmeter",
+                        "key": "OPENMETER_API_KEY"
+                      }
+                    }
+                  }
+                ],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/api/production/readiness",
+                    "port": 8787
+                  },
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 10
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/api/state",
+                    "port": 8787
+                  },
+                  "initialDelaySeconds": 20,
+                  "periodSeconds": 20
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "768Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "name": "runtime-state",
+                    "mountPath": "/app/.runtime"
+                  },
+                  {
+                    "name": "deploy-kubeconfig",
+                    "mountPath": "/var/run/opl-cloud/kubeconfig",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "tmp",
+                    "mountPath": "/tmp"
+                  }
+                ]
+              }
+            ],
+            "volumes": [
+              {
+                "name": "runtime-state",
+                "emptyDir": {}
+              },
+              {
+                "name": "deploy-kubeconfig",
+                "secret": {
+                  "secretName": "opl-cloud-deploy-kubeconfig"
+                }
+              },
+              {
+                "name": "tmp",
+                "emptyDir": {}
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "opl-cloud-control-plane",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud"
+        }
+      },
+      "spec": {
+        "type": "NodePort",
+        "selector": {
+          "app.kubernetes.io/name": "opl-cloud"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8787,
+            "targetPort": "http"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "metadata": {
+        "name": "opl-cloud-control-plane-ingress",
+        "namespace": "opl-cloud"
+      },
+      "spec": {
+        "podSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "opl-cloud"
+          }
+        },
+        "policyTypes": [
+          "Ingress"
+        ],
+        "ingress": [
+          {
+            "ports": [
+              {
+                "protocol": "TCP",
+                "port": 8787
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "Ingress",
+      "metadata": {
+        "name": "opl-cloud",
+        "namespace": "opl-cloud",
+        "annotations": {
+          "ingress.cloud.tencent.com/listen-ports": "[{\"HTTP\":80},{\"HTTPS\":443}]",
+          "ingress.cloud.tencent.com/auto-rewrite": "true",
+          "ingress.cloud.tencent.com/rewrite-support": "true"
+        }
+      },
+      "spec": {
+        "ingressClassName": "qcloud",
+        "tls": [
+          {
+            "hosts": [
+              "cloud.medopl.cn",
+              "workspace.medopl.cn"
+            ],
+            "secretName": "opl-cloud-medopl-cn-tls"
+          }
+        ],
+        "rules": [
+          {
+            "host": "cloud.medopl.cn",
+            "http": {
+              "paths": [
+                {
+                  "path": "/",
+                  "pathType": "Prefix",
+                  "backend": {
+                    "service": {
+                      "name": "opl-cloud-control-plane",
+                      "port": {
+                        "number": 8787
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "host": "workspace.medopl.cn",
+            "http": {
+              "paths": [
+                {
+                  "path": "/",
+                  "pathType": "Prefix",
+                  "backend": {
+                    "service": {
+                      "name": "opl-cloud-control-plane",
+                      "port": {
+                        "number": 8787
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

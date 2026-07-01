@@ -67,6 +67,13 @@ Tracked template:
 
 ```text
 deploy/tke/opl-cloud-preproduction.env.example
+.env.preproduction.inputs.example
+```
+
+Ignored local file for the operator to fill:
+
+```text
+.env.preproduction.local
 ```
 
 Do not commit a filled env file. Real values belong in ignored local files, Kubernetes Secrets, GitHub environment secrets, or the cluster secret manager.
@@ -91,6 +98,18 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 - TLS secret or cert-manager issuer for `cloud.medopl.cn` and `workspace.medopl.cn`.
 - The Ingress/CLB address after deploy, then create the DNS records.
 - Confirmation that `opl-cloud` is the target namespace and `tcr-pull-secret` is the image pull secret name.
+
+## TKE Runtime Provider
+
+The `tencent-tke` runtime provider maps one OPL Workspace to:
+
+- one Deployment for the one-person-lab-app runtime compute
+- one Service
+- one Ingress path under `workspace.medopl.cn/w/<workspaceId>`
+- one Secret for the Workspace token
+- one PVC for retained workspace storage
+
+Stopping, destroying, or recreating compute must not delete the PVC. PVC deletion is only done by the explicit storage destroy path.
 
 ## Where To Put Values
 

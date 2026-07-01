@@ -67,6 +67,18 @@ npm run validate:production-manifest -- --manifest deploy/production-manifest.ex
 
 Use the example as a contract. Real secret values belong in the deployment secret manager, not in git.
 
+The TKE control-plane manifest is:
+
+```text
+deploy/tke/opl-cloud.k8s.json
+```
+
+The operator input file to fill locally is:
+
+```text
+.env.preproduction.local
+```
+
 ## Automated Chain Verification
 
 After readiness is green, run:

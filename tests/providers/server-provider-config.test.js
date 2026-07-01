@@ -4,6 +4,7 @@ import test from "node:test";
 import { createStoreFromEnv } from "../../services/api/server.js";
 import { createRuntimeProvider } from "../../services/api/src/runtime-provider-factory.js";
 import { TencentCvmProvider } from "../../services/api/src/runtime-providers/tencent-cvm.js";
+import { TencentTkeProvider } from "../../services/api/src/runtime-providers/tencent-tke.js";
 import { JsonFileStore, PostgresStore } from "../../services/api/src/store.js";
 
 test("server default runtime provider is local Docker", () => {
@@ -29,6 +30,16 @@ test("Tencent CVM provider is selectable for cloud runtime execution", () => {
   });
 
   assert.equal(provider.name, "tencent-cvm");
+});
+
+test("Tencent TKE provider is selectable for production runtime execution", () => {
+  const provider = createRuntimeProvider({
+    env: { OPL_RUNTIME_PROVIDER: "tencent-tke" },
+    rootDir: ".runtime/test-provider"
+  });
+
+  assert.ok(provider instanceof TencentTkeProvider);
+  assert.equal(provider.name, "tencent-tke");
 });
 
 test("Tencent CVM provider fails closed until required cloud environment is present", async () => {

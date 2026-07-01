@@ -87,7 +87,9 @@ Receipts:
 
 - `services/api/src/runtime-provider-factory.js`
 - `services/api/src/runtime-providers/local-docker.js`
+- `services/api/src/runtime-providers/tencent-tke.js`
 - `services/api/src/runtime-providers/tencent-cvm.js`
+- `deploy/tke/opl-cloud.k8s.json`
 - `deploy/tke/opl-cloud-preproduction.env.example`
 - `docs/TKE_PREPRODUCTION_DEPLOYMENT.md`
 - `infra/tencent-cvm/`
@@ -211,4 +213,4 @@ Do not print secret values. Do not commit `.env.preproduction*`.
 
 ## Next Step
 
-Add the TKE runtime provider/readiness path and Kubernetes deployment manifest, rerun safe verification, and leave live TKE deploy, DNS changes, and production verifier execution gated for the operator.
+Build and push the OPL Cloud control-plane image, fill the ignored preproduction input file, install Kubernetes Secrets, apply the TKE manifest, create DNS records after Ingress assigns a CLB target, then run production verification behind the operator gate.

@@ -1,5 +1,6 @@
 import { LocalDockerProvider } from "./runtime-providers/local-docker.js";
 import { TencentCvmProvider } from "./runtime-providers/tencent-cvm.js";
+import { TencentTkeProvider } from "./runtime-providers/tencent-tke.js";
 
 export function createRuntimeProvider({ env = process.env, rootDir = ".runtime/workspaces" } = {}) {
   const provider = env.OPL_RUNTIME_PROVIDER || "local-docker";
@@ -13,6 +14,9 @@ export function createRuntimeProvider({ env = process.env, rootDir = ".runtime/w
   }
   if (provider === "tencent-cvm") {
     return new TencentCvmProvider({ env });
+  }
+  if (provider === "tencent-tke") {
+    return new TencentTkeProvider({ env });
   }
   throw new Error(`unknown_runtime_provider:${provider}`);
 }
