@@ -1,0 +1,158 @@
+name: Deploy TKE Preproduction
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud_image:
+        description: OPL Cloud control-plane image ref pushed to TCR.
+        required: true
+        type: string
+      workspace_image:
+        description: one-person-lab-app workspace runtime image ref pushed to TCR.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy OPL Cloud to TKE
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    environment: preproduction
+    env:
+      OPL_RUNTIME_PROVIDER: tencent-tke
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_PUBLIC_URL: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
+      OPL_CONSOLE_DOMAIN: ${{ vars.OPL_CONSOLE_DOMAIN || 'cloud.medopl.cn' }}
+      OPL_WORKSPACE_DOMAIN: ${{ vars.OPL_WORKSPACE_DOMAIN || 'workspace.medopl.cn' }}
+      OPL_CLOUD_IMAGE: ${{ inputs.cloud_image }}
+      OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
+      OPL_IMAGE_PULL_SECRET_NAME: ${{ vars.OPL_IMAGE_PULL_SECRET_NAME || 'tcr-pull-secret' }}
+      OPL_WORKSPACE_STORAGE_CLASS: ${{ vars.OPL_WORKSPACE_STORAGE_CLASS || 'cbs' }}
+      OPL_TLS_SECRET_NAME: ${{ vars.OPL_TLS_SECRET_NAME || 'opl-cloud-medopl-cn-tls' }}
+      OPL_INGRESS_CLASS: ${{ vars.OPL_INGRESS_CLASS || 'qcloud' }}
+      OPL_WORKSPACE_WEBUI_PORT: ${{ vars.OPL_WORKSPACE_WEBUI_PORT || '3000' }}
+      OPL_WORKSPACE_DATA_DIR: ${{ vars.OPL_WORKSPACE_DATA_DIR || '/data' }}
+      OPL_WORKSPACE_PROJECTS_DIR: ${{ vars.OPL_WORKSPACE_PROJECTS_DIR || '/projects' }}
+      OPENMETER_ENDPOINT: ${{ vars.OPENMETER_ENDPOINT || 'http://openmeter.opl-cloud.svc.cluster.local:8888' }}
+      TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
+      TENCENT_TCR_REGISTRY: ${{ vars.TENCENT_TCR_REGISTRY || 'uswccr.ccs.tencentyun.com' }}
+      TENCENT_TCR_NAMESPACE: ${{ vars.TENCENT_TCR_NAMESPACE || 'oplcloud' }}
+      TENCENT_TCR_REGION: ${{ vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
+      TENCENT_DEPLOY_KUBECONFIG_REF: /var/run/opl-cloud/kubeconfig/kubeconfig
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/dev/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      OPENMETER_API_KEY: ${{ secrets.OPENMETER_API_KEY }}
+      TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+      TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          chmod 700 "$secret_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          if [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          elif [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          else
+            echo "No deploy kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+          echo "OPL_DEPLOY_SECRET_DIR=$secret_dir" >> "$GITHUB_ENV"
+
+      - name: Check deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            OPL_CLOUD_IMAGE
+            OPL_WORKSPACE_IMAGE
+            DATABASE_URL
+            OPENMETER_API_KEY
+            TCR_USERNAME
+            TCR_PASSWORD
+            TENCENT_DEPLOY_CLUSTER_ID
+          )
+          missing=()
+          for key in "${required[@]}"; do
+            if [ -z "${!key:-}" ]; then
+              missing+=("$key")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required deploy inputs: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          case "$OPL_CLOUD_IMAGE" in
+            "$TENCENT_TCR_REGISTRY"/*) ;;
+            *) echo "OPL_CLOUD_IMAGE must point to $TENCENT_TCR_REGISTRY." >&2; exit 1 ;;
+          esac
+          case "$OPL_WORKSPACE_IMAGE" in
+            "$TENCENT_TCR_REGISTRY"/*) ;;
+            *) echo "OPL_WORKSPACE_IMAGE must point to $TENCENT_TCR_REGISTRY." >&2; exit 1 ;;
+          esac
+
+      - name: Verify TKE access
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" get ns
+          kubectl --kubeconfig "$KUBECONFIG" get storageclass
+
+      - name: Install Kubernetes secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$OPL_DEPLOY_SECRET_DIR"
+          docker_config="$secret_dir/docker-config.json"
+          printf '%s' "$DATABASE_URL" > "$secret_dir/database-url"
+          printf '%s' "$OPENMETER_API_KEY" > "$secret_dir/openmeter-api-key"
+          printf '%s:%s' "$TCR_USERNAME" "$TCR_PASSWORD" | base64 | tr -d '\n' > "$secret_dir/tcr-auth"
+          cat > "$docker_config" <<JSON
+          {"auths":{"$TENCENT_TCR_REGISTRY":{"username":"$TCR_USERNAME","password":"$TCR_PASSWORD","auth":"$(cat "$secret_dir/tcr-auth")"}}}
+          JSON
+          chmod 600 "$secret_dir"/*
+
+          kubectl --kubeconfig "$KUBECONFIG" create namespace "$OPL_K8S_NAMESPACE" --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-database \
+            --from-file=DATABASE_URL="$secret_dir/database-url" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-openmeter \
+            --from-file=OPENMETER_API_KEY="$secret_dir/openmeter-api-key" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-deploy-kubeconfig \
+            --from-file=kubeconfig="$KUBECONFIG" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic "$OPL_IMAGE_PULL_SECRET_NAME" \
+            --type=kubernetes.io/dockerconfigjson \
+            --from-file=.dockerconfigjson="$docker_config" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+
+      - name: Render and apply manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/render-tke-manifest.js --manifest deploy/tke/opl-cloud.k8s.json --out "$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json"
+          kubectl --kubeconfig "$KUBECONFIG" apply -f "$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status deployment/opl-cloud-control-plane --timeout=300s
+
+      - name: Show ingress target
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o wide
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o jsonpath='{.status.loadBalancer.ingress[*].ip}{"\n"}'
