@@ -16,6 +16,8 @@ const REQUIRED_ENV = [
 const REQUIRED_TOOLS = ["kubectl"];
 const SHARED_INGRESS_NAME = "opl-cloud";
 const WORKSPACE_ROUTE_MANIFEST = "shared-ingress-route.k8s.json";
+const DEFAULT_WORKSPACE_READY_TIMEOUT_MS = 300000;
+const DEFAULT_WORKSPACE_READY_POLL_MS = 5000;
 
 function compactId(value) {
   return String(value)
@@ -102,12 +104,37 @@ export class TencentTkeProvider {
     try {
       await this.runKubectl(["apply", "-f", manifestPath]);
       await this.addWorkspaceRoute({ workspaceId, serviceName: name });
+      await this.waitForWorkspaceRuntimeReady({
+        workspace: this.runtimeFixture({
+          name,
+          workspaceId,
+          ownerAccountId,
+          workspaceName,
+          packagePlan,
+          token,
+          slug
+        })
+      });
     } catch (error) {
+      await this.cleanupWorkspaceRoute({ workspaceId });
       await this.cleanupCreatedWorkspaceResources({ name, deleteStorage: true });
       throw error;
     }
 
+    return this.runtimeFixture({
+      name,
+      workspaceId,
+      ownerAccountId,
+      workspaceName,
+      packagePlan,
+      token,
+      slug
+    });
+  }
+
+  runtimeFixture({ name, workspaceId, packagePlan, token, slug }) {
     return {
+      id: workspaceId,
       provider: this.name,
       server: {
         id: `deployment/${name}`,
@@ -165,6 +192,7 @@ export class TencentTkeProvider {
 
   async restartServer({ workspace }) {
     await this.runKubectl(["scale", workspace.server.id, "--replicas=1"]);
+    await this.waitForWorkspaceRuntimeReady({ workspace });
     return {
       ...workspace.server,
       status: "running",
@@ -192,6 +220,29 @@ export class TencentTkeProvider {
     });
     await this.runKubectl(["apply", "-f", manifestPath]);
     await this.addWorkspaceRoute({ workspaceId: workspace.id, serviceName: name });
+    await this.waitForWorkspaceRuntimeReady({
+      workspace: {
+        ...workspace,
+        server: {
+          ...workspace.server,
+          id: `deployment/${name}`,
+          status: "running",
+          billingStatus: "active"
+        },
+        docker: {
+          ...workspace.docker,
+          id: `deployment/${name}`,
+          image: this.env.OPL_WORKSPACE_IMAGE,
+          status: "running",
+          service: `service/${name}`
+        },
+        disk: {
+          ...workspace.disk,
+          id: `pvc/${name}-data`,
+          status: "attached_retained"
+        }
+      }
+    });
     return {
       ...workspace.server,
       status: "running",
@@ -425,6 +476,31 @@ export class TencentTkeProvider {
     ]);
   }
 
+  async cleanupWorkspaceRoute({ workspaceId }) {
+    try {
+      await this.removeWorkspaceRoute({ workspaceId });
+    } catch {
+      // Best-effort cleanup. The create failure path must still remove compute and storage.
+    }
+  }
+
+  async waitForWorkspaceRuntimeReady({ workspace }) {
+    const deadline = Date.now() + workspaceReadyTimeoutMs(this.env);
+    let status = await this.runtimeStatus({ workspace });
+    while (!status.ready && Date.now() < deadline) {
+      await delay(workspaceReadyPollMs(this.env));
+      status = await this.runtimeStatus({ workspace });
+    }
+    if (!status.ready) {
+      const failedChecks = status.checks
+        .filter((check) => !check.ok)
+        .map((check) => check.name)
+        .join(",");
+      throw new Error(`tencent_tke_workspace_not_ready:${failedChecks}`);
+    }
+    return status;
+  }
+
   workspaceManifest({ name, workspaceId, ownerAccountId, workspaceName, packagePlan, token }) {
     const labels = {
       "app.kubernetes.io/name": "opl-workspace",
@@ -533,7 +609,6 @@ function resourceName(resourceId) {
 function workspaceContainerResources(packagePlan) {
   const cpu = packagePlan.cpu ? String(packagePlan.cpu) : undefined;
   const memory = packagePlan.memoryGb ? `${packagePlan.memoryGb}Gi` : undefined;
-  const gpu = packagePlan.gpu ? String(packagePlan.gpu) : undefined;
   const requests = {};
   const limits = {};
   if (cpu) {
@@ -544,11 +619,21 @@ function workspaceContainerResources(packagePlan) {
     requests.memory = memory;
     limits.memory = memory;
   }
-  if (gpu) {
-    requests["nvidia.com/gpu"] = gpu;
-    limits["nvidia.com/gpu"] = gpu;
-  }
   return Object.keys(requests).length ? { requests, limits } : undefined;
+}
+
+function workspaceReadyTimeoutMs(env) {
+  const value = Number(env.OPL_TKE_WORKSPACE_READY_TIMEOUT_MS);
+  return Number.isFinite(value) && value >= 0 ? value : DEFAULT_WORKSPACE_READY_TIMEOUT_MS;
+}
+
+function workspaceReadyPollMs(env) {
+  const value = Number(env.OPL_TKE_WORKSPACE_READY_POLL_MS);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_WORKSPACE_READY_POLL_MS;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function findKubernetesItem(items, kind, name) {

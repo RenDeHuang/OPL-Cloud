@@ -103,8 +103,8 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 - `OPL_IMAGE_PULL_SECRET_NAME=tcr-pull-secret`
 - `OPL_WORKSPACE_STORAGE_CLASS=cbs`
 - `OPL_BILLING_MARKUP=0.2`
-- `OPL_BASIC_COMPUTE_HOURLY_CNY=0.47`
-- `OPL_PRO_COMPUTE_HOURLY_CNY=1.65`
+- `OPL_BASIC_COMPUTE_HOURLY_CNY=0.39`
+- `OPL_PRO_COMPUTE_HOURLY_CNY=3.09`
 - `OPL_STORAGE_GB_MONTH_CNY=0.36`
 - `DATABASE_URL`, TCR credentials, kubeconfig, and TLS certificate ids are installed as GitHub production environment secrets and Kubernetes Secrets. Do not copy their values into git.
 - `cloud.medopl.cn` and `workspace.medopl.cn` point at the OPL Cloud TKE Ingress CLB.
@@ -168,13 +168,13 @@ The tracked production manifest is a contract, not the live secret payload. Keep
 
 OPL Ledger is the v1 billing truth. Workspace pricing uses a local Tencent price catalog snapshot and applies `OPL_BILLING_MARKUP`, defaulting to `0.2`.
 
-Current production defaults were queried from Tencent Cloud in `na-siliconvalley-2` on 2026-07-02 using CVM `InquiryPriceRunInstances` and CBS `InquiryPriceCreateDisks`:
+Current production defaults were queried from Tencent Cloud in `na-siliconvalley` on 2026-07-02 using CVM `DescribeZoneInstanceConfigInfos` and the existing CBS storage price snapshot:
 
-- Basic compute cost: `S3.MEDIUM4`, `0.47 CNY/hour`; billed user price after markup: `0.564 CNY/hour`.
-- Pro compute cost: `S3.2XLARGE16`, `1.65 CNY/hour`; billed user price after markup: `1.98 CNY/hour`.
+- Basic compute cost: `SA5.MEDIUM4`, `0.39 CNY/hour`; billed user price after markup: `0.468 CNY/hour`.
+- Pro compute cost: `SA5.4XLARGE32`, `3.09 CNY/hour`; billed user price after markup: `3.708 CNY/hour`. The Pro Pod requests `8 CPU / 16Gi`; this larger CPU node class is the current capacity backing because an `8 CPU / 16GB` CVM does not expose enough Kubernetes allocatable CPU and memory for a single Pro Pod after system reservations.
 - Storage cost: `CLOUD_PREMIUM`, `0.36 CNY/GB-month`; billed user price after markup: `0.432 CNY/GB-month`.
 
-Accelerator pricing is intentionally not part of the current production package set. Accelerator Workspaces require a verified accelerator node pool before they can be exposed without drifting from the OPL Cloud product truth.
+GPU pricing is intentionally not part of the current production package set. GPU Workspaces require a verified GPU node pool before they can be exposed without drifting from the OPL Cloud product truth.
 
 The production billing chain is:
 

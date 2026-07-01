@@ -69,7 +69,7 @@ The token is permanent until the owner deletes or resets it. Opening the URL doe
 | Basic Workspace | 2 CPU / 4GB | 10GB |
 | Pro Workspace | 8 CPU / 16GB | 100GB |
 
-Accelerator Workspaces are outside the current production package list. They require a verified accelerator node pool before becoming a product package.
+GPU Workspaces are outside the current production package list. They require a verified GPU node pool before becoming a product package.
 
 ## Billing Rule
 

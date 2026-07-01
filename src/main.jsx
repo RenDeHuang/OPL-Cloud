@@ -34,8 +34,7 @@ function money(value) {
 }
 
 function packageSummary(plan) {
-  const gpu = Number(plan.gpu || 0) > 0 ? ` + ${plan.gpu} GPU` : "";
-  return `${plan.cpu} CPU / ${plan.memoryGb}GB${gpu} + ${plan.diskGb}GB storage`;
+  return `${plan.cpu} CPU / ${plan.memoryGb}GB + ${plan.diskGb}GB storage`;
 }
 
 function statusLabel(workspace) {
@@ -175,7 +174,7 @@ function App() {
           <div className="planGrid">
             {state.packages.map((plan) => (
               <article className="plan" key={plan.id}>
-                <span>{plan.accelerator === "gpu" ? "GPU" : plan.id === "basic" ? "Default" : "CPU"}</span>
+                <span>{plan.id === "basic" ? "Default" : "CPU"}</span>
                 <h3>{plan.name}</h3>
                 <p>{packageSummary(plan)}</p>
                 <p>{money(plan.price.computeHourly)}/compute hour · {money(plan.price.storageGbMonth)}/GB-month storage</p>
@@ -183,7 +182,7 @@ function App() {
                   className="primary"
                   onClick={() => run(() => api("/api/workspaces", {
                     accountId,
-                    workspaceName: plan.id === "basic" ? "Grant Lab" : plan.id === "gpu" ? "GPU Lab" : "Protein Lab",
+                    workspaceName: plan.id === "basic" ? "Grant Lab" : "Protein Lab",
                     packageId: plan.id
                   }))}
                 >
@@ -202,7 +201,7 @@ function App() {
             </div>
           </div>
           <div className="workspaceList">
-            {state.workspaces.length === 0 && <div className="empty">No OPL Workspace yet. Grant balance, then create a CPU or GPU package.</div>}
+            {state.workspaces.length === 0 && <div className="empty">No OPL Workspace yet. Grant balance, then create a CPU package.</div>}
             {state.workspaces.map((workspace) => (
               <button
                 className={`workspaceRow ${workspace.id === selected?.id ? "active" : ""}`}
