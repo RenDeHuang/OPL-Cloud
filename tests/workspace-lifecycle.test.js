@@ -360,6 +360,51 @@ test("destroying disk requires explicit confirmation and is the only action that
   }
 });
 
+test("destroying disk from a running Workspace releases server compute before deleting storage", async () => {
+  const calls = [];
+  const service = createTestService({
+    name: "ordered-destroy-provider",
+    async createWorkspaceRuntime(input) {
+      return runtimeFixture({ ...input, provider: "ordered-destroy-provider" });
+    },
+    async destroyServer({ workspace }) {
+      calls.push(`destroy-server:${workspace.server.status}:${workspace.disk.status}`);
+      return { ...workspace.server, status: "destroyed", billingStatus: "stopped" };
+    },
+    async destroyDisk({ workspace }) {
+      calls.push(`destroy-disk:${workspace.server.status}:${workspace.disk.status}`);
+      return { ...workspace.disk, status: "destroyed", billingStatus: "stopped" };
+    }
+  });
+
+  await service.creditAccount({ accountId: "pi-alpha", amount: 200, reason: "owner_credit" });
+  const workspace = await service.createWorkspace({
+    accountId: "pi-alpha",
+    workspaceName: "Immediate Archive Lab",
+    packageId: "basic"
+  });
+
+  const destroyed = await service.destroyDisk({
+    accountId: "pi-alpha",
+    workspaceId: workspace.id,
+    confirmDataLoss: true
+  });
+
+  assert.deepEqual(calls, [
+    "destroy-server:running:attached_retained",
+    "destroy-disk:destroyed:detached_retained"
+  ]);
+  assert.equal(destroyed.state, "destroyed");
+  assert.equal(destroyed.server.status, "destroyed");
+  assert.equal(destroyed.server.billingStatus, "stopped");
+  assert.equal(destroyed.disk.status, "destroyed");
+  assert.equal(destroyed.disk.billingStatus, "stopped");
+  assert.deepEqual((await service.getState("pi-alpha")).runtimeOperations.map((operation) => `${operation.operationType}:${operation.status}`), [
+    "create_workspace:succeeded",
+    "destroy_disk:succeeded"
+  ]);
+});
+
 test("restarting a server-destroyed Workspace recreates compute from the retained disk and preserves URL", async () => {
   const calls = [];
   const service = createTestService({

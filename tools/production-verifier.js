@@ -207,6 +207,35 @@ export async function verifyProductionChain({
     Array.isArray(settlement.metering)
   ));
 
+  const cleanupServerDestroyed = await requestJson({
+    fetchImpl,
+    origin: normalizedOrigin,
+    path: "/api/workspaces/destroy-server",
+    method: "POST",
+    body: { accountId, workspaceId: workspace.id, confirm: true }
+  });
+  addCheck(checks, "verification_server_destroyed", Boolean(
+    cleanupServerDestroyed.server?.status === "destroyed" &&
+    cleanupServerDestroyed.server?.billingStatus === "stopped" &&
+    cleanupServerDestroyed.disk?.id === workspace.disk.id &&
+    cleanupServerDestroyed.disk?.billingStatus === "active"
+  ));
+
+  const cleanupDiskDestroyed = await requestJson({
+    fetchImpl,
+    origin: normalizedOrigin,
+    path: "/api/workspaces/destroy-disk",
+    method: "POST",
+    body: { accountId, workspaceId: workspace.id, confirmDataLoss: true }
+  });
+  addCheck(checks, "verification_disk_destroyed", Boolean(
+    cleanupDiskDestroyed.state === "destroyed" &&
+    cleanupDiskDestroyed.server?.status === "destroyed" &&
+    cleanupDiskDestroyed.server?.billingStatus === "stopped" &&
+    cleanupDiskDestroyed.disk?.status === "destroyed" &&
+    cleanupDiskDestroyed.disk?.billingStatus === "stopped"
+  ));
+
   return {
     ok: true,
     accountId,

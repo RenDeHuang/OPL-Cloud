@@ -94,10 +94,25 @@ test("production verifier exercises the full Workspace cloud lifecycle through t
       disk: { ...workspace.disk, id: "disk-prod001", status: "attached_retained" }
     }],
     ["GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod#2", "<html>OPL Workspace restored</html>"],
-    ["POST /api/billing/settle", { entries: [{ type: "server_debit" }, { type: "storage_debit" }], metering: [{ ok: true }] }]
+    ["POST /api/billing/settle", { entries: [{ type: "server_debit" }, { type: "storage_debit" }], metering: [{ ok: true }] }],
+    ["POST /api/workspaces/destroy-server#2", {
+      ...workspace,
+      state: "server_destroyed_disk_retained",
+      server: { ...workspace.server, id: "ins-prod002", status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "detached_retained" }
+    }],
+    ["POST /api/workspaces/destroy-disk", {
+      ...workspace,
+      state: "destroyed",
+      server: { ...workspace.server, id: "ins-prod002", status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
+    }]
   ]);
   let restartCount = 0;
   let workspaceUrlCount = 0;
+  let destroyServerCount = 0;
 
   const result = await verifyProductionChain({
     origin: "https://console.oplcloud.cn",
@@ -112,6 +127,10 @@ test("production verifier exercises the full Workspace cloud lifecycle through t
       if (key === "POST /api/workspaces/restart-server") {
         restartCount += 1;
         key = `${key}#${restartCount}`;
+      }
+      if (key === "POST /api/workspaces/destroy-server") {
+        destroyServerCount += 1;
+        key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
       }
       if (key === "GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod") {
         workspaceUrlCount += 1;
@@ -136,10 +155,14 @@ test("production verifier exercises the full Workspace cloud lifecycle through t
     "POST /api/workspaces/destroy-server",
     "POST /api/workspaces/restart-server#2",
     "GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod#2",
-    "POST /api/billing/settle"
+    "POST /api/billing/settle",
+    "POST /api/workspaces/destroy-server#2",
+    "POST /api/workspaces/destroy-disk"
   ]);
   assert.equal(requests.find((request) => request.key === "POST /api/workspaces").body.workspaceName, "Production Verification Lab");
   assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server").body.confirm, true);
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server#2").body.confirm, true);
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-disk").body.confirmDataLoss, true);
   assert.equal(result.workspaceId, "ws-prod001");
   assert.equal(result.url, workspace.url);
   assert.deepEqual(result.checks.map((check) => `${check.name}:${check.ok}`), [
@@ -152,7 +175,9 @@ test("production verifier exercises the full Workspace cloud lifecycle through t
     "server_destroyed_storage_retained:true",
     "server_recreated_from_retained_disk:true",
     "workspace_url_after_recreate:true",
-    "billing_settlement:true"
+    "billing_settlement:true",
+    "verification_server_destroyed:true",
+    "verification_disk_destroyed:true"
   ]);
 });
 
@@ -196,6 +221,7 @@ test("production verifier retries the Workspace URL while Caddy and Docker becom
         "POST /api/workspaces/stop-server": { ...workspace, state: "stopped_server_disk_retained", server: { ...workspace.server, status: "stopped", billingStatus: "stopped" } },
         "POST /api/workspaces/restart-server": workspace,
         "POST /api/workspaces/destroy-server": { ...workspace, state: "server_destroyed_disk_retained", server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" }, disk: { ...workspace.disk, status: "detached_retained" } },
+        "POST /api/workspaces/destroy-disk": { ...workspace, state: "destroyed", server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" }, disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" } },
         "POST /api/billing/settle": { entries: [{ type: "server_debit" }], metering: [{ ok: true }] }
       };
       return jsonResponse(responses[`${method} ${parsed.pathname}`]);

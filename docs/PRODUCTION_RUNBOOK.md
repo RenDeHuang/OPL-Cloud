@@ -73,9 +73,9 @@ After readiness is green, run:
 OPL_CONSOLE_ORIGIN=https://<console-domain> npm run verify:production
 ```
 
-This command creates a real verification Workspace, opens its URL, stops/restarts/destroys/recreates server compute while retaining CBS storage, reopens the same URL after recreation, and runs one billing settlement. It writes results to stdout only and must not leave smoke outputs in the repository.
+This command creates a real verification Workspace, opens its URL, stops/restarts/destroys/recreates server compute while retaining CBS storage, reopens the same URL after recreation, runs one billing settlement, then destroys the verification server and disk. It writes results to stdout only and must not leave smoke outputs in the repository.
 
-Use a dedicated verification account and delete the verification disk from OPL Console after inspection to stop storage billing.
+Use a dedicated verification account. If the verifier fails before its cleanup checks, inspect OPL Console and Tencent Cloud, then explicitly destroy the verification server and disk to stop billing.
 
 ## Launch Checklist
 
@@ -99,7 +99,7 @@ Use a dedicated verification account and delete the verification disk from OPL C
 ## Recovery Notes
 
 - Server stop or destroy must never destroy the CBS disk.
-- Disk destruction is a separate user-confirmed action.
+- Disk destruction is a separate user-confirmed action. When invoked while server compute still exists, OPL Console must destroy the server first, mark the disk detached and retained, and then destroy the disk so compute and storage billing both stop.
 - Check `runtime_operations` first when a Workspace action fails. It records operation type, status, attempt count, timestamps, and error message.
 - If CVM is lost but CBS remains, restart the server-destroyed Workspace from OPL Console. The API should record `recreate_server`, call `RunInstances`, attach the retained CBS disk, rerun Ansible, and keep the existing Workspace URL/token.
 - If OpenMeter rejects usage events, settlement fails so the operator can retry without silently splitting usage and billing records.

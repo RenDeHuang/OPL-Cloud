@@ -125,6 +125,7 @@ Delivered:
 - `recreateServer` runs `tccli cvm RunInstances`, attaches the retained CBS disk, describes the new public IP, then reruns Ansible when the previous server was destroyed.
 - `destroyServer` stops the CVM if needed, detaches CBS storage, then runs `tccli cvm TerminateInstances`.
 - `destroyDisk` is the only action that runs `tccli cbs TerminateDisks`.
+- `destroyDisk` first releases server compute when a user destroys storage from a running Workspace, then destroys the retained disk.
 - Tests assert that server lifecycle actions never call disk termination.
 
 Next real-cloud verification:
@@ -242,6 +243,7 @@ Delivered:
 - `deploy/production-manifest.example.json` defines the production secretRef handoff contract.
 - `npm run validate:production-manifest` validates required launch variables and fails if sensitive values are inlined.
 - `npm run verify:production` runs the deployed API business-chain verifier without writing smoke artifacts to the repo.
+- The production verifier now destroys its verification server and disk after the lifecycle and billing checks complete, reducing the chance of validation resources continuing to bill after a successful run.
 - `npm run reconcile:tencent` provides the Tencent bill reconciliation gate for deployment records without writing smoke artifacts to the repo.
 - `docs/PRODUCTION_RUNBOOK.md` defines launch, recovery, and artifact hygiene checks.
 - Tencent Ansible installs Caddy, imports Workspace routes from `/etc/caddy/conf.d/*.caddy`, and fails deployment when the token-gated route cannot reload.

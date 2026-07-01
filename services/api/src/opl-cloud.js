@@ -315,6 +315,11 @@ export class OplCloudService {
       operationType: "destroy_disk",
       mutate: async (state, workspace, operation) => {
         workspace.state = "destroying_disk";
+        if (workspace.server.status !== "destroyed") {
+          workspace.server = await this.runtimeProvider.destroyServer({ workspace: clone(workspace) });
+          workspace.docker.status = "destroyed";
+          workspace.disk.status = workspace.disk.status === "destroyed" ? "destroyed" : "detached_retained";
+        }
         workspace.disk = await this.runtimeProvider.destroyDisk({ workspace: clone(workspace) });
         this.finishRuntimeOperation(operation, "succeeded");
         workspace.server.status = "destroyed";
