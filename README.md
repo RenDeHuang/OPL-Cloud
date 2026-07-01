@@ -150,6 +150,20 @@ When configured, each billing settlement emits:
 
 OpenMeter is a usage meter. OPL Console remains the v1 billing ledger and user-facing balance source.
 
+To reconcile OPL ledger debits against normalized Tencent Cloud bill totals:
+
+```bash
+npm run reconcile:tencent -- --ledger ledger.json --tencent tencent-bills.json
+```
+
+The command expects OPL `server_debit` / `storage_debit` ledger entries and Tencent bill rows shaped like:
+
+```json
+{ "workspaceId": "ws-alpha", "resourceType": "server", "amount": 10, "currency": "CNY" }
+```
+
+It compares Tencent cost plus the configured 10% markup against OPL ledger debits and exits non-zero on mismatch. It writes JSON to stdout only.
+
 To also start the local OPL Docker container when a Workspace is created:
 
 ```bash

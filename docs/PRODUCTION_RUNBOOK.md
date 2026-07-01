@@ -85,6 +85,7 @@ Use a dedicated verification account and delete the verification disk from OPL C
 12. Restart the server-destroyed Workspace and confirm a new CVM is created, the retained CBS disk is attached, Ansible restores the Docker runtime, and the same Workspace URL/token works.
 13. Run one billing settlement and confirm OpenMeter receives usage events.
 14. Run `npm run verify:production` against the deployed OPL Console and keep the stdout result in the deployment record, not in git.
+15. Run `npm run reconcile:tencent -- --ledger <ledger.json> --tencent <tencent-bills.json>` with normalized Tencent bill rows and keep the stdout result in the deployment record, not in git.
 
 ## Recovery Notes
 
@@ -93,6 +94,7 @@ Use a dedicated verification account and delete the verification disk from OPL C
 - Check `runtime_operations` first when a Workspace action fails. It records operation type, status, attempt count, timestamps, and error message.
 - If CVM is lost but CBS remains, restart the server-destroyed Workspace from OPL Console. The API should record `recreate_server`, call `RunInstances`, attach the retained CBS disk, rerun Ansible, and keep the existing Workspace URL/token.
 - If OpenMeter rejects usage events, settlement fails so the operator can retry without silently splitting usage and billing records.
+- If Tencent bill reconciliation fails, inspect the mismatch before issuing invoices or increasing account balances.
 - If PostgreSQL is unavailable, stop provisioning new Workspaces until control-plane persistence is restored.
 
 ## Artifact Hygiene

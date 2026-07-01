@@ -29,5 +29,24 @@
       "resume_workspace"
     ],
     "unpaidStorageOperationAllowed": false
+  },
+  "tencentBillReconciliation": {
+    "command": "npm run reconcile:tencent -- --ledger <ledger.json> --tencent <tencent-bills.json>",
+    "markup": 0.1,
+    "defaultToleranceCny": 0.01,
+    "ledgerUsageTypes": [
+      "server_debit",
+      "storage_debit"
+    ],
+    "tencentBillFields": [
+      "workspaceId",
+      "resourceType",
+      "amount",
+      "currency"
+    ],
+    "resourceTypes": [
+      "server",
+      "storage"
+    ]
   }
 }
