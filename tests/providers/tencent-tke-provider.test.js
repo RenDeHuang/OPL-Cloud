@@ -150,21 +150,25 @@ test("Tencent TKE provider applies runtime resources and registers the Workspace
 
 test("Tencent TKE provider scales compute lifecycle without deleting retained storage", async () => {
   const calls = [];
+  let ingressReadCount = 0;
   const provider = new TencentTkeProvider({
     env: requiredEnv,
     runner: async ({ command, args }) => {
       calls.push({ command, args });
+      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+        ingressReadCount += 1;
+        return JSON.stringify(ingressReadCount === 1
+          ? sharedIngressFixture({
+            workspacePaths: [{ path: "/w/ws-tke101", serviceName: "opl-ws-tke101" }]
+          })
+          : sharedIngressFixture());
+      }
       if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke101 pvc/opl-ws-tke101-data service/opl-ws-tke101 ingress/opl-cloud endpoints/opl-ws-tke101 -o json") {
         return JSON.stringify(runtimeStatusFixture({
           name: "opl-ws-tke101",
           workspaceId: "ws-tke101",
           image: requiredEnv.OPL_WORKSPACE_IMAGE,
           ready: true
-        }));
-      }
-      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
-        return JSON.stringify(sharedIngressFixture({
-          workspacePaths: [{ path: "/w/ws-tke101", serviceName: "opl-ws-tke101" }]
         }));
       }
       return "";
@@ -191,6 +195,8 @@ test("Tencent TKE provider scales compute lifecycle without deleting retained st
   assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud scale deployment/opl-ws-tke101 --replicas=0",
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud scale deployment/opl-ws-tke101 --replicas=1",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/ws-tke101/shared-ingress-route.k8s.json",
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke101 pvc/opl-ws-tke101-data service/opl-ws-tke101 ingress/opl-cloud endpoints/opl-ws-tke101 -o json",
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/ws-tke101/shared-ingress-route.k8s.json",

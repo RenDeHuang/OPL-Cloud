@@ -192,6 +192,10 @@ export class TencentTkeProvider {
 
   async restartServer({ workspace }) {
     await this.runKubectl(["scale", workspace.server.id, "--replicas=1"]);
+    await this.addWorkspaceRoute({
+      workspaceId: workspace.id,
+      serviceName: resourceName(workspace.server.id)
+    });
     await this.waitForWorkspaceRuntimeReady({ workspace });
     return {
       ...workspace.server,
