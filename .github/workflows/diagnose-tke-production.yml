@@ -58,6 +58,30 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o yaml
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get endpoints opl-cloud-control-plane -o wide
 
+      - name: Show TLS secret inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" get secrets -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,TYPE:.type' | grep 'kubernetes.io/tls' || true
+          tmp_dir="$(mktemp -d)"
+          kubectl --kubeconfig "$KUBECONFIG" get secrets -A -o json \
+            | TMP_DIR="$tmp_dir" node -e '
+                const fs = require("node:fs");
+                const path = require("node:path");
+                const tmp = process.env.TMP_DIR;
+                const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+                for (const item of payload.items || []) {
+                  if (item.type !== "kubernetes.io/tls" || !item.data?.["tls.crt"]) continue;
+                  const safeName = `${item.metadata.namespace}__${item.metadata.name}`.replace(/[^a-zA-Z0-9_.-]/g, "_");
+                  fs.writeFileSync(path.join(tmp, `${safeName}.crt`), Buffer.from(item.data["tls.crt"], "base64"));
+                }
+              '
+          for crt in "$tmp_dir"/*.crt; do
+            [ -e "$crt" ] || continue
+            echo "=== $(basename "$crt" .crt) ==="
+            openssl x509 -in "$crt" -noout -subject -ext subjectAltName || true
+          done
+
       - name: Describe control plane pods
         shell: bash
         run: |

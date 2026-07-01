@@ -14,6 +14,10 @@ test("TKE production deploy workflow runs only on the VPC self-hosted runner", a
   assert.match(workflow, /node-version: "22"/);
   assert.match(workflow, /OPL_CLOUD_IMAGE: \$\{\{ inputs\.cloud_image \}\}/);
   assert.match(workflow, /OPL_WORKSPACE_IMAGE: \$\{\{ inputs\.workspace_image \}\}/);
+  assert.match(workflow, /OPL_TLS_CRT_B64: \$\{\{ secrets\.OPL_TLS_CRT_B64 \}\}/);
+  assert.match(workflow, /OPL_TLS_KEY_B64: \$\{\{ secrets\.OPL_TLS_KEY_B64 \}\}/);
+  assert.match(workflow, /OPL_TLS_SOURCE_NAMESPACE: \$\{\{ vars\.OPL_TLS_SOURCE_NAMESPACE \|\| '' \}\}/);
+  assert.match(workflow, /OPL_TLS_SOURCE_SECRET_NAME: \$\{\{ vars\.OPL_TLS_SOURCE_SECRET_NAME \|\| '' \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_B64: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG_B64 \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
@@ -44,6 +48,11 @@ test("TKE production deploy workflow installs secrets without command-line secre
   assert.match(workflow, /--from-file=OPENMETER_API_KEY="\$secret_dir\/openmeter-api-key"/);
   assert.match(workflow, /--from-file=\.dockerconfigjson="\$docker_config"/);
   assert.match(workflow, /--from-file=kubeconfig="\$KUBECONFIG"/);
+  assert.match(workflow, /create secret tls "\$OPL_TLS_SECRET_NAME"/);
+  assert.match(workflow, /--cert="\$secret_dir\/tls\.crt"/);
+  assert.match(workflow, /--key="\$secret_dir\/tls\.key"/);
+  assert.match(workflow, /get secret "\$OPL_TLS_SECRET_NAME"/);
+  assert.match(workflow, /-checkhost "\$domain"/);
 });
 
 test("TKE manifest renderer replaces deploy-time values without rendering secrets", async () => {
@@ -107,6 +116,9 @@ test("TKE production diagnostics workflow is read-only and runs on the VPC runne
   assert.match(workflow, /describe deployment opl-cloud-control-plane/);
   assert.match(workflow, /describe ingress opl-cloud/);
   assert.match(workflow, /get endpoints opl-cloud-control-plane -o wide/);
+  assert.match(workflow, /get secrets -A/);
+  assert.match(workflow, /kubernetes\.io\/tls/);
+  assert.match(workflow, /openssl x509 -in "\$crt" -noout -subject -ext subjectAltName/);
   assert.match(workflow, /get events --sort-by=\.lastTimestamp/);
   assert.match(workflow, /logs deploy\/opl-cloud-control-plane --all-containers=true --tail=200/);
   assert.match(workflow, /port-forward service\/opl-cloud-control-plane 18787:8787/);
