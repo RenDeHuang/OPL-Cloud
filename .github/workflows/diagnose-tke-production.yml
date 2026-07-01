@@ -74,6 +74,32 @@ jobs:
                 }
               '
 
+      - name: Show ingress TLS usage
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" get ingress -A -o json \
+            | node -e '
+                const fs = require("node:fs");
+                const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+                console.log("NAMESPACE NAME READY ADDRESS HOSTS TLS_SECRETS");
+                for (const item of payload.items || []) {
+                  const annotations = item.metadata?.annotations || {};
+                  let ready = "unknown";
+                  try {
+                    const conditions = JSON.parse(annotations["ingress.cloud.tencent.com/status.conditions"] || "[]");
+                    ready = conditions.find((condition) => condition.type === "Ready")?.status || ready;
+                  } catch {}
+                  const address = (item.status?.loadBalancer?.ingress || [])
+                    .map((entry) => entry.hostname || entry.ip)
+                    .filter(Boolean)
+                    .join(",");
+                  const hosts = (item.spec?.rules || []).map((rule) => rule.host).filter(Boolean).join(",");
+                  const tlsSecrets = (item.spec?.tls || []).map((tls) => tls.secretName).filter(Boolean).join(",");
+                  console.log(`${item.metadata.namespace} ${item.metadata.name} ${ready} ${address || "-"} ${hosts || "-"} ${tlsSecrets || "-"}`);
+                }
+              '
+
       - name: Describe control plane pods
         shell: bash
         run: |
