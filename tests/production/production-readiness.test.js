@@ -28,6 +28,30 @@ const productionEnv = {
   OPL_SSH_KEY_ID: "skey-123"
 };
 
+const tkeProductionEnv = {
+  OPL_RUNTIME_PROVIDER: "tencent-tke",
+  OPL_CLOUD_IMAGE: "registry.example.com/opl/opl-cloud:2026-07-01",
+  OPL_WORKSPACE_IMAGE: "registry.example.com/opl/one-person-lab-app:2026-07-01",
+  OPL_WORKSPACE_WEBUI_PORT: "3000",
+  OPL_WORKSPACE_DATA_DIR: "/data",
+  OPL_WORKSPACE_PROJECTS_DIR: "/projects",
+  OPL_PUBLIC_URL: "https://cloud.medopl.cn",
+  OPL_CONSOLE_DOMAIN: "cloud.medopl.cn",
+  OPL_WORKSPACE_DOMAIN: "workspace.medopl.cn",
+  OPL_K8S_NAMESPACE: "opl-cloud",
+  OPL_INGRESS_CLASS: "qcloud",
+  OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
+  OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+  DATABASE_URL: "postgresql://opl:secret@db.example.com:5432/opl_cloud",
+  OPENMETER_ENDPOINT: "http://openmeter.opl-cloud.svc.cluster.local:8888",
+  OPENMETER_API_KEY: "om_secret",
+  TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig",
+  TENCENT_DEPLOY_CLUSTER_ID: "cls-123",
+  TENCENT_TCR_REGISTRY: "registry.example.com",
+  TENCENT_TCR_NAMESPACE: "opl",
+  TENCENT_TCR_REGION: "ap-guangzhou"
+};
+
 test("productionReadiness passes only when production runtime, Harbor image, persistence, metering, Tencent env, and tools are present", async () => {
   const report = await productionReadiness({
     env: productionEnv,
@@ -45,15 +69,61 @@ test("productionReadiness passes only when production runtime, Harbor image, per
     "workspace_domain:true",
     "database_url:true",
     "openmeter:true",
-    "tencent_env:true",
+    "provider_env:true",
     "tools:true"
   ]);
+});
+
+test("productionReadiness supports Tencent TKE without CVM image or SSH key fields", async () => {
+  const report = await productionReadiness({
+    env: tkeProductionEnv,
+    commandExists: (command) => command === "kubectl"
+  });
+
+  assert.equal(report.ready, true);
+  assert.deepEqual(report.missingEnv, []);
+  assert.deepEqual(report.missingTools, []);
+  assert.deepEqual(report.failedChecks, []);
+  assert.equal(JSON.stringify(report).includes("OPL_IMAGE_ID"), false);
+  assert.equal(JSON.stringify(report).includes("OPL_SSH_KEY_ID"), false);
+  assert.deepEqual(report.checks.map((check) => `${check.id}:${check.ok}`), [
+    "runtime_provider:true",
+    "registry_images:true",
+    "opl_app_contract:true",
+    "workspace_domain:true",
+    "database_url:true",
+    "openmeter:true",
+    "provider_env:true",
+    "tools:true"
+  ]);
+});
+
+test("productionReadiness reports TKE-specific blockers without requiring CVM fields", async () => {
+  const report = await productionReadiness({
+    env: {
+      ...tkeProductionEnv,
+      OPL_CLOUD_IMAGE: "",
+      OPL_WORKSPACE_STORAGE_CLASS: "",
+      OPL_IMAGE_ID: "",
+      OPL_SSH_KEY_ID: ""
+    },
+    commandExists: () => false
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.missingEnv.includes("OPL_CLOUD_IMAGE"));
+  assert.ok(report.missingEnv.includes("OPL_WORKSPACE_STORAGE_CLASS"));
+  assert.equal(report.missingEnv.includes("OPL_IMAGE_ID"), false);
+  assert.equal(report.missingEnv.includes("OPL_SSH_KEY_ID"), false);
+  assert.deepEqual(report.missingTools, ["kubectl"]);
+  assert.ok(report.failedChecks.includes("registry_images"));
+  assert.ok(report.failedChecks.includes("provider_env"));
 });
 
 test("productionReadiness reports concrete production blockers without leaking secret values", async () => {
   const report = await productionReadiness({
     env: {
-      OPL_RUNTIME_PROVIDER: "local-docker",
+      OPL_RUNTIME_PROVIDER: "tencent-cvm",
       OPL_WORKSPACE_IMAGE: "ghcr.io/gaofeng21cn/one-person-lab-webui:latest",
       OPL_WORKSPACE_DOMAIN: "localhost",
       TENCENTCLOUD_SECRET_ID: "sid"
@@ -67,7 +137,7 @@ test("productionReadiness reports concrete production blockers without leaking s
   assert.ok(report.missingEnv.includes("OPENMETER_ENDPOINT"));
   assert.ok(report.missingEnv.includes("OPENMETER_API_KEY"));
   assert.ok(report.missingEnv.includes("TENCENTCLOUD_SECRET_KEY"));
-  assert.ok(report.failedChecks.includes("runtime_provider"));
+  assert.ok(report.failedChecks.includes("provider_env"));
   assert.ok(report.failedChecks.includes("harbor_image"));
   assert.ok(report.failedChecks.includes("workspace_domain"));
   assert.equal(JSON.stringify(report).includes("sid"), false);

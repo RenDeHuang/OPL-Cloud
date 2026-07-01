@@ -12,7 +12,7 @@ This repository is the OPL Cloud implementation workspace for the OPL Console an
 - OPL Fabric
 - OPL Ledger
 
-This repository currently implements the OPL Console / OPL Workspace control plane, with early OPL Fabric and OPL Ledger boundaries.
+This repository currently implements the OPL Console / OPL Workspace control plane, with early OPL Fabric and OPL Ledger boundaries. The production-shaped deployment target is Tencent TKE.
 
 ## Development Truth
 
@@ -37,7 +37,7 @@ Support this business chain:
 ```text
 PI signs in to OPL Console
 -> creates an OPL Workspace
--> OPL Cloud creates one server, one cloud disk, one one-person-lab-app Docker runtime, and one URL
+-> OPL Cloud creates one workspace runtime compute unit, one persistent workspace storage volume, one one-person-lab-app runtime container, and one URL
 -> PI shares the URL
 -> members enter the OPL Workspace without login
 -> OPL Console manages lifecycle, billing, audit, readiness, recovery, and evidence
@@ -47,13 +47,13 @@ Resource invariant:
 
 ```text
 1 OPL Workspace
-= 1 server
-= 1 one-person-lab-app Docker container
-= 1 cloud disk
+= 1 runtime compute unit
+= 1 one-person-lab-app runtime container
+= 1 persistent workspace storage volume
 = 1 URL
 ```
 
-Server and cloud disk lifecycles stay separate. Server stop or destroy must not destroy the cloud disk. Disk destruction is explicit and is the only action that stops storage billing.
+Compute and storage lifecycles stay separate. Stopping or recreating compute must not destroy workspace storage. Storage destruction is explicit and is the only action that stops storage billing.
 
 ## Current Attempts And Receipts
 
@@ -79,14 +79,17 @@ Receipts:
 Attempt:
 
 - Keep Local Docker as the local runtime loop.
-- Keep Tencent CVM as the cloud runtime provider.
-- Hand off cloud provisioning through OpenTofu, Ansible, Caddy, Harbor image contracts, and Tencent CLI boundaries.
+- Keep Tencent TKE as the production runtime provider.
+- Keep Tencent CVM as a legacy fallback/debug provider.
+- Hand off cloud provisioning through TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy CVM contracts.
 
 Receipts:
 
 - `services/api/src/runtime-provider-factory.js`
 - `services/api/src/runtime-providers/local-docker.js`
 - `services/api/src/runtime-providers/tencent-cvm.js`
+- `deploy/tke/opl-cloud-preproduction.env.example`
+- `docs/TKE_PREPRODUCTION_DEPLOYMENT.md`
 - `infra/tencent-cvm/`
 - `tests/providers/local-docker-provider.test.js`
 - `tests/providers/tencent-cvm-provider.test.js`
@@ -178,28 +181,34 @@ The following actions require explicit human approval before execution:
 
 Preproduction launch remains blocked until the operator provides or confirms:
 
-Required missing inputs:
+Required missing or unconfirmed TKE inputs:
 
-- `DATABASE_URL`
-- `OPENMETER_ENDPOINT`
+- `OPL_CLOUD_IMAGE`
+- `OPL_WORKSPACE_IMAGE`
+- `DATABASE_URL` secret value installed for `postgresql://medopl:<password>@10.66.0.21:5432/OPLCloud`
 - `OPENMETER_API_KEY`
+- `OPL_WORKSPACE_STORAGE_CLASS`
+- TLS secret or cert-manager issuer for `cloud.medopl.cn` and `workspace.medopl.cn`
+- Ingress/CLB DNS target after TKE deploy
+
+Confirmed preproduction resource decisions:
+
+- `OPL_RUNTIME_PROVIDER=tencent-tke`
+- `OPL_PUBLIC_URL=https://cloud.medopl.cn`
+- `OPL_CONSOLE_DOMAIN=cloud.medopl.cn`
+- `OPL_WORKSPACE_DOMAIN=workspace.medopl.cn`
+- The v22 TKE cluster is the OPL Cloud preproduction cluster.
+- The v22 TCR registry/namespace continues to serve OPL Cloud.
+- The v22 kubeconfig is allowed for OPL Cloud deploy.
+- The v22 PostgreSQL service is allowed for OPL Cloud control-plane and ledger persistence.
+
+Legacy CVM-only inputs are no longer production blockers for the TKE route:
+
 - `OPL_IMAGE_ID`
 - `OPL_SSH_KEY_ID`
-
-Needs human confirmation:
-
-- `OPL_HARBOR_REGISTRY`
-- `OPL_WORKSPACE_IMAGE`
-- `OPL_WORKSPACE_DOMAIN`
-- `TENCENTCLOUD_SECRET_ID`
-- `TENCENTCLOUD_SECRET_KEY`
-- `OPL_VPC_ID`
-- `OPL_SUBNET_ID`
-- `OPL_SECURITY_GROUP_ID`
-- `OPL_AVAILABILITY_ZONE`
 
 Do not print secret values. Do not commit `.env.preproduction*`.
 
 ## Next Step
 
-Close the implementation repository around the current product truth, fix production readiness correctness, rerun safe verification, and leave real cloud verification gated for the operator.
+Add the TKE runtime provider/readiness path and Kubernetes deployment manifest, rerun safe verification, and leave live TKE deploy, DNS changes, and production verifier execution gated for the operator.

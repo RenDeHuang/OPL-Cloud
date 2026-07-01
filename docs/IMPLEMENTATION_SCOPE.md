@@ -13,13 +13,13 @@ This repository implements the OPL Cloud control-plane slice for OPL Console and
 This repository is responsible for:
 
 - OPL Console workspace provisioning and management.
-- OPL Workspace lifecycle control for local Docker and Tencent CVM runtimes.
-- OPL Fabric handoff through Local Docker, Tencent CVM, OpenTofu, Ansible, Caddy, and Harbor image contracts.
+- OPL Workspace lifecycle control for local Docker, Tencent TKE, and legacy Tencent CVM runtimes.
+- OPL Fabric handoff through Local Docker, Tencent TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy Tencent CVM contracts.
 - Workspace URL and token access.
-- Server and cloud disk lifecycle separation.
+- Compute and persistent workspace storage lifecycle separation.
 - OPL Ledger records for billing, storage hold, audit events, metering events, verifier output, and Tencent bill reconciliation.
 - Runtime readiness, production readiness, and production chain verification.
-- Deployment handoff assets for Tencent CVM, CBS, Caddy, Harbor image validation, PostgreSQL, and OpenMeter.
+- Deployment handoff assets for Tencent TKE, TCR image validation, Kubernetes Ingress, PostgreSQL, OpenMeter, and legacy Tencent CVM.
 
 ## Framework Alignment
 
@@ -27,12 +27,12 @@ The implementation should map Cloud behavior back to One Person Lab framework co
 
 | One Person Lab concept | This repository |
 | --- | --- |
-| Runtime provider | Local Docker provider and Tencent CVM provider |
+| Runtime provider | Local Docker provider, Tencent TKE production target, and Tencent CVM legacy fallback |
 | Attempt / operation ledger | `runtime_operations` |
 | Readiness gate | `/api/runtime/readiness` and `/api/production/readiness` |
 | Receipt / audit trail | billing ledger, audit events, verifier output, reconciliation output |
-| Human gate | explicit server and disk lifecycle confirmations |
-| Recovery path | restart and recreate server from retained disk |
+| Human gate | explicit compute and storage lifecycle confirmations |
+| Recovery path | restart or recreate runtime compute from retained workspace storage |
 | Machine-readable contract | `contracts/`, tests, manifests, readiness payloads |
 
 ## Out Of Scope

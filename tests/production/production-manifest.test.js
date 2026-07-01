@@ -37,10 +37,48 @@ test("production manifest requires deployment secret refs for every launch varia
   ]);
 });
 
+test("production manifest validates Tencent TKE fields without CVM image or SSH key refs", () => {
+  const report = validateProductionManifest({
+    env: {
+      OPL_RUNTIME_PROVIDER: { value: "tencent-tke" },
+      DATABASE_URL: { secretRef: "opl-cloud/database-url" },
+      OPENMETER_ENDPOINT: { value: "http://openmeter.opl-cloud.svc.cluster.local:8888" },
+      OPENMETER_API_KEY: { secretRef: "opl-cloud/openmeter-api-key" },
+      OPL_PUBLIC_URL: { value: "https://cloud.medopl.cn" },
+      OPL_CONSOLE_DOMAIN: { value: "cloud.medopl.cn" },
+      OPL_WORKSPACE_DOMAIN: { value: "workspace.medopl.cn" },
+      OPL_CLOUD_IMAGE: { value: "registry.example.com/opl/opl-cloud:2026-07-01" },
+      OPL_WORKSPACE_IMAGE: { value: "registry.example.com/opl/one-person-lab-app:2026-07-01" },
+      OPL_K8S_NAMESPACE: { value: "opl-cloud" },
+      OPL_INGRESS_CLASS: { value: "qcloud" },
+      OPL_IMAGE_PULL_SECRET_NAME: { value: "tcr-pull-secret" },
+      OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
+      TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
+      TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
+      TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
+      TENCENT_TCR_NAMESPACE: { value: "opl" },
+      TENCENT_TCR_REGION: { value: "ap-guangzhou" }
+    }
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.missingEnv, []);
+  assert.deepEqual(report.inlineSecretEnv, []);
+  assert.equal(JSON.stringify(report).includes("OPL_IMAGE_ID"), false);
+  assert.equal(JSON.stringify(report).includes("OPL_SSH_KEY_ID"), false);
+  assert.deepEqual(report.checks.map((check) => `${check.id}:${check.ok}`), [
+    "required_env:true",
+    "secret_refs:true",
+    "runtime_provider:true",
+    "registry_images:true",
+    "workspace_domain:true"
+  ]);
+});
+
 test("production manifest fails closed on missing env and inline secret values", () => {
   const report = validateProductionManifest({
     env: {
-      OPL_RUNTIME_PROVIDER: { value: "local-docker" },
+      OPL_RUNTIME_PROVIDER: { value: "tencent-cvm" },
       DATABASE_URL: { value: "postgres://opl:secret@db.example.com:5432/opl_cloud" },
       OPENMETER_API_KEY: { value: "om_secret" },
       OPL_WORKSPACE_DOMAIN: { value: "localhost" },
@@ -55,7 +93,6 @@ test("production manifest fails closed on missing env and inline secret values",
   assert.deepEqual(report.inlineSecretEnv.sort(), ["DATABASE_URL", "OPENMETER_API_KEY"]);
   assert.ok(report.failedChecks.includes("required_env"));
   assert.ok(report.failedChecks.includes("secret_refs"));
-  assert.ok(report.failedChecks.includes("runtime_provider"));
   assert.ok(report.failedChecks.includes("harbor_image"));
   assert.ok(report.failedChecks.includes("workspace_domain"));
   assert.equal(JSON.stringify(report).includes("postgres://"), false);
