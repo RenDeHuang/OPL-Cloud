@@ -83,9 +83,12 @@ function setIngress(item, values) {
   if (rules[1]) rules[1].host = values.OPL_WORKSPACE_DOMAIN;
 }
 
-export function renderTkeManifest({ manifest, values }) {
+export function renderTkeManifest({ manifest, values, skipSharedIngress = false } = {}) {
   requiredValues(values);
   const rendered = clone(manifest);
+  if (skipSharedIngress) {
+    rendered.items = (rendered.items || []).filter((item) => !(item.kind === "Ingress" && item.metadata?.name === "opl-cloud"));
+  }
   for (const item of rendered.items || []) {
     setNamespace(item, values.OPL_K8S_NAMESPACE);
     setConfigMap(item, values);
@@ -117,7 +120,11 @@ export async function runRenderTkeManifestCli({
   const outputPath = args.out;
   const manifest = JSON.parse(await readFile(args.manifest, "utf8"));
   const values = Object.fromEntries(DEPLOY_VALUE_KEYS.map((key) => [key, env[key]]));
-  const rendered = renderTkeManifest({ manifest, values });
+  const rendered = renderTkeManifest({
+    manifest,
+    values,
+    skipSharedIngress: args["skip-shared-ingress"] === "true"
+  });
   const output = `${JSON.stringify(rendered, null, 2)}\n`;
   if (outputPath) {
     await writeFile(outputPath, output, { mode: 0o600 });

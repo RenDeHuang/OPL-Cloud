@@ -26,6 +26,9 @@ test("TKE production deploy workflow runs only on the VPC self-hosted runner", a
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
   assert.match(workflow, /tools\/render-tke-manifest\.js/);
   assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG"/);
+  assert.match(workflow, /--skip-shared-ingress/);
+  assert.match(workflow, /get ingress opl-cloud/);
+  assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG" apply -f "\$OPL_DEPLOY_SECRET_DIR\/opl-cloud\.ingress-bootstrap\.json"/);
   assert.match(workflow, /rollout restart deployment\/opl-cloud-control-plane/);
   assert.match(workflow, /rollout status deployment\/opl-cloud-control-plane/);
   assert.match(workflow, /get ingress opl-cloud/);
@@ -136,6 +139,39 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
     { hosts: ["workspace.medopl.cn"], secretName: "opl-cloud-workspace-medopl-cn-tls" }
   ]);
   assert.deepEqual(ingress.spec.rules.map((rule) => rule.host), ["cloud.medopl.cn", "workspace.medopl.cn"]);
+});
+
+test("TKE manifest renderer can skip the shared Ingress during deploy so Workspace routes are not overwritten", async () => {
+  const source = await readFile("deploy/tke/opl-cloud.k8s.json", "utf8");
+  const manifest = JSON.parse(source);
+  const rendered = renderTkeManifest({
+    manifest,
+    skipSharedIngress: true,
+    values: {
+      OPL_K8S_NAMESPACE: "opl-cloud",
+      OPL_PUBLIC_URL: "https://cloud.medopl.cn",
+      OPL_CONSOLE_DOMAIN: "cloud.medopl.cn",
+      OPL_WORKSPACE_DOMAIN: "workspace.medopl.cn",
+      OPL_CLOUD_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test",
+      OPL_WORKSPACE_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
+      OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
+      OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+      OPL_BILLING_MARKUP: "0.2",
+      OPL_BASIC_COMPUTE_HOURLY_CNY: "0.39",
+      OPL_PRO_COMPUTE_HOURLY_CNY: "3.09",
+      OPL_STORAGE_GB_MONTH_CNY: "0.36",
+      OPL_CONSOLE_TLS_SECRET_NAME: "opl-cloud-console-medopl-cn-tls",
+      OPL_WORKSPACE_TLS_SECRET_NAME: "opl-cloud-workspace-medopl-cn-tls",
+      OPL_INGRESS_CLASS: "qcloud",
+      TENCENT_DEPLOY_CLUSTER_ID: "cls-oplcloud",
+      TENCENT_TCR_REGISTRY: "uswccr.ccs.tencentyun.com",
+      TENCENT_TCR_NAMESPACE: "oplcloud",
+      TENCENT_TCR_REGION: "na-siliconvalley",
+      TENCENT_DEPLOY_KUBECONFIG_REF: "/var/run/opl-cloud/kubeconfig/kubeconfig"
+    }
+  });
+
+  assert.equal(rendered.items.some((item) => item.kind === "Ingress" && item.metadata.name === "opl-cloud"), false);
 });
 
 test("TKE production diagnostics workflow is read-only and runs on the VPC runner", async () => {
