@@ -271,6 +271,7 @@
         "annotations": {
           "ingress.cloud.tencent.com/listen-ports": "[{\"HTTP\":80},{\"HTTPS\":443}]",
           "ingress.cloud.tencent.com/auto-rewrite": "true",
+          "ingress.cloud.tencent.com/direct-access": "true",
           "ingress.cloud.tencent.com/rewrite-support": "true"
         }
       },
