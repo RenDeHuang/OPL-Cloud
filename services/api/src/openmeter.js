@@ -42,3 +42,36 @@ export function createMeterFromEnv(env = process.env) {
     apiKey: env.OPENMETER_API_KEY
   });
 }
+
+export function openMeterDefinitions() {
+  return {
+    meters: [
+      {
+        slug: "opl_workspace_server_running_hours",
+        eventType: "workspace.server.running_hours",
+        valueProperty: "$.data.value",
+        aggregation: "SUM",
+        groupBy: {
+          workspaceId: "$.data.workspaceId",
+          accountId: "$.subject",
+          packageId: "$.data.packageId",
+          provider: "$.data.provider",
+          serverSpec: "$.data.serverSpec"
+        }
+      },
+      {
+        slug: "opl_workspace_storage_gb_hours",
+        eventType: "workspace.storage.gb_hours",
+        valueProperty: "$.data.value",
+        aggregation: "SUM",
+        groupBy: {
+          workspaceId: "$.data.workspaceId",
+          accountId: "$.subject",
+          packageId: "$.data.packageId",
+          provider: "$.data.provider",
+          diskGb: "$.data.diskGb"
+        }
+      }
+    ]
+  };
+}

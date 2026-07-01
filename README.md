@@ -143,6 +143,11 @@ When configured, each billing settlement emits:
 - `workspace.server.running_hours`
 - `workspace.storage.gb_hours`
 
+`openMeterDefinitions()` in `services/api/src/openmeter.js` declares the matching production meter definitions:
+
+- `opl_workspace_server_running_hours`
+- `opl_workspace_storage_gb_hours`
+
 OpenMeter is a usage meter. OPL Console remains the v1 billing ledger and user-facing balance source.
 
 To also start the local OPL Docker container when a Workspace is created:

@@ -198,6 +198,7 @@ Delivered:
 
 - `OpenMeterClient` posts CloudEvents-style JSON usage events to `OPENMETER_ENDPOINT`.
 - API enables OpenMeter only when both `OPENMETER_ENDPOINT` and `OPENMETER_API_KEY` are configured.
+- `openMeterDefinitions()` declares the production meter definitions for server running hours and storage GB-hours.
 - Billing settlement emits:
   - `workspace.server.running_hours`
   - `workspace.storage.gb_hours`
@@ -205,7 +206,7 @@ Delivered:
 
 Not yet delivered:
 
-- OpenMeter meter definitions and dashboards.
+- OpenMeter dashboards.
 - Lago invoice/subscription integration.
 - Tencent bill reconciliation.
 

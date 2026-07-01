@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createMeterFromEnv, OpenMeterClient } from "../services/api/src/openmeter.js";
+import { createMeterFromEnv, openMeterDefinitions, OpenMeterClient } from "../services/api/src/openmeter.js";
 
 test("OpenMeterClient posts usage events with bearer auth and JSON payload", async () => {
   const requests = [];
@@ -71,4 +71,37 @@ test("createMeterFromEnv enables OpenMeter only with endpoint and API key", () =
     OPENMETER_ENDPOINT: "https://meter.example.com",
     OPENMETER_API_KEY: "om_secret"
   }) instanceof OpenMeterClient);
+});
+
+test("openMeterDefinitions declares production meters for OPL Cloud billing events", () => {
+  assert.deepEqual(openMeterDefinitions(), {
+    meters: [
+      {
+        slug: "opl_workspace_server_running_hours",
+        eventType: "workspace.server.running_hours",
+        valueProperty: "$.data.value",
+        aggregation: "SUM",
+        groupBy: {
+          workspaceId: "$.data.workspaceId",
+          accountId: "$.subject",
+          packageId: "$.data.packageId",
+          provider: "$.data.provider",
+          serverSpec: "$.data.serverSpec"
+        }
+      },
+      {
+        slug: "opl_workspace_storage_gb_hours",
+        eventType: "workspace.storage.gb_hours",
+        valueProperty: "$.data.value",
+        aggregation: "SUM",
+        groupBy: {
+          workspaceId: "$.data.workspaceId",
+          accountId: "$.subject",
+          packageId: "$.data.packageId",
+          provider: "$.data.provider",
+          diskGb: "$.data.diskGb"
+        }
+      }
+    ]
+  });
 });
