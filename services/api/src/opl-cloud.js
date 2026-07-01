@@ -378,6 +378,18 @@ export class OplCloudService {
     };
   }
 
+  async runtimeReadiness() {
+    if (typeof this.runtimeProvider.readiness === "function") {
+      return this.runtimeProvider.readiness();
+    }
+    return {
+      provider: this.runtimeProvider.name,
+      ready: true,
+      missingEnv: [],
+      missingTools: []
+    };
+  }
+
   ledgerEntry({ workspaceId, accountId, type, amount, sourceEventId }) {
     return {
       id: makeId("ledger", accountId, workspaceId, type, sourceEventId, String(Date.now())),

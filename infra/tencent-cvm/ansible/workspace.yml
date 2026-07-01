@@ -33,6 +33,10 @@
                 OPL_SHARE_TOKEN: "{{ workspace_token }}"
                 DATA_DIR: /data
                 ALLOW_REMOTE: "true"
+                OPL_WEBUI_AUTH_MODE: none
+                HOME: /data
+                OPL_WORKSPACE_ROOT: /data/workspaces
+                CODEX_HOME: /data/codex
               ports:
                 - "127.0.0.1:3000:3000"
               volumes:

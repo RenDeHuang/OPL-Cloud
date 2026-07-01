@@ -1,7 +1,23 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const REQUIRED_ENV = [
+  "TENCENTCLOUD_SECRET_ID",
+  "TENCENTCLOUD_SECRET_KEY",
+  "TENCENTCLOUD_REGION",
+  "OPL_WORKSPACE_DOMAIN",
+  "OPL_VPC_ID",
+  "OPL_SUBNET_ID",
+  "OPL_SECURITY_GROUP_ID",
+  "OPL_AVAILABILITY_ZONE",
+  "OPL_IMAGE_ID",
+  "OPL_SSH_KEY_ID",
+  "OPL_WORKSPACE_IMAGE"
+];
+const REQUIRED_TOOLS = ["tofu", "ansible-playbook"];
 
 function compactId(value) {
   return String(value)
@@ -9,6 +25,11 @@ function compactId(value) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 48);
+}
+
+function workspaceSlug(workspaceName, workspaceId) {
+  const suffix = compactId(workspaceId).slice(-7);
+  return `${compactId(workspaceName)}-${suffix}`.slice(0, 63);
 }
 
 async function defaultRunner({ command, args, cwd, env }) {
@@ -54,24 +75,30 @@ export class TencentCvmProvider {
     env = process.env,
     runner = defaultRunner,
     commandExists = defaultCommandExists,
-    infraDir = join(dirname(fileURLToPath(import.meta.url)), "../../../..", "infra", "tencent-cvm")
+    infraDir = join(repoRoot, "infra", "tencent-cvm"),
+    stateRootDir = join(repoRoot, ".runtime", "tencent-cvm")
   } = {}) {
     this.name = "tencent-cvm";
     this.env = env;
     this.runner = runner;
     this.commandExists = commandExists;
     this.infraDir = infraDir;
+    this.stateRootDir = stateRootDir;
   }
 
   async createWorkspaceRuntime({ workspaceId, ownerAccountId = "unknown", workspaceName, packagePlan, token }) {
     this.requireExecutionBoundary();
-    await this.requireTools(["tofu", "ansible-playbook"]);
+    await this.requireTools(REQUIRED_TOOLS);
 
-    const slug = compactId(workspaceName);
-    const oplImage = this.env.OPL_WORKSPACE_IMAGE || "ghcr.io/gaofeng21cn/one-person-lab-webui:latest";
+    const slug = workspaceSlug(workspaceName, workspaceId);
+    const oplImage = this.env.OPL_WORKSPACE_IMAGE;
+    const statePaths = await this.prepareStatePaths(workspaceId);
     const common = {
       cwd: this.infraDir,
-      env: this.env
+      env: {
+        ...this.env,
+        TF_DATA_DIR: statePaths.dataDir
+      }
     };
     const vars = [
       ["workspace_id", workspaceId],
@@ -91,8 +118,24 @@ export class TencentCvmProvider {
     ].flatMap(([key, value]) => ["-var", `${key}=${value}`]);
 
     await this.runner({ command: "tofu", args: ["init", "-input=false"], ...common });
-    await this.runner({ command: "tofu", args: ["apply", "-auto-approve", "-input=false", ...vars], ...common });
-    const rawOutputs = await this.runner({ command: "tofu", args: ["output", "-json"], ...common });
+    await this.runner({
+      command: "tofu",
+      args: [
+        "apply",
+        "-auto-approve",
+        "-input=false",
+        `-state=${statePaths.stateFile}`,
+        `-state-out=${statePaths.stateFile}`,
+        `-backup=${statePaths.backupFile}`,
+        ...vars
+      ],
+      ...common
+    });
+    const rawOutputs = await this.runner({
+      command: "tofu",
+      args: ["output", "-json", `-state=${statePaths.stateFile}`, "-show-sensitive"],
+      ...common
+    });
     const outputs = JSON.parse(rawOutputs);
     const serverId = outputValue(outputs, "server_id");
     const diskId = outputValue(outputs, "disk_id");
@@ -149,6 +192,20 @@ export class TencentCvmProvider {
     };
   }
 
+  async readiness() {
+    const missingEnv = this.missingEnv();
+    const missingTools = [];
+    for (const command of REQUIRED_TOOLS) {
+      if (!(await this.commandExists(command))) missingTools.push(command);
+    }
+    return {
+      provider: this.name,
+      ready: missingEnv.length === 0 && missingTools.length === 0,
+      missingEnv,
+      missingTools
+    };
+  }
+
   async stopServer() {
     throw new Error("tencent_cvm_provider_not_configured");
   }
@@ -166,19 +223,25 @@ export class TencentCvmProvider {
   }
 
   requireExecutionBoundary() {
-    const required = [
-      "TENCENTCLOUD_SECRET_ID",
-      "TENCENTCLOUD_SECRET_KEY",
-      "TENCENTCLOUD_REGION",
-      "OPL_WORKSPACE_DOMAIN",
-      "OPL_VPC_ID",
-      "OPL_SUBNET_ID",
-      "OPL_SECURITY_GROUP_ID"
-    ];
-    const missing = required.filter((key) => !this.env[key]);
+    const missing = this.missingEnv();
     if (missing.length > 0) {
       throw new Error(`tencent_cvm_provider_missing_env:${missing.join(",")}`);
     }
+  }
+
+  missingEnv() {
+    return REQUIRED_ENV.filter((key) => !this.env[key]);
+  }
+
+  async prepareStatePaths(workspaceId) {
+    const stateDir = join(this.stateRootDir, compactId(workspaceId));
+    await mkdir(stateDir, { recursive: true });
+    return {
+      stateDir,
+      dataDir: join(stateDir, ".tofu"),
+      stateFile: join(stateDir, "terraform.tfstate"),
+      backupFile: join(stateDir, "terraform.tfstate.backup")
+    };
   }
 
   async requireTools(commands) {

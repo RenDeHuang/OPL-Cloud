@@ -162,6 +162,39 @@ h2 {
   margin-bottom: 16px;
 }
 
+.readiness {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #dce4eb;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: #fff;
+}
+
+.readiness.ready {
+  border-color: #8ac7ac;
+  background: #f2fbf6;
+}
+
+.readiness.blocked {
+  border-color: #dfc27b;
+  background: #fffaf0;
+}
+
+.readiness strong,
+.readiness span {
+  display: block;
+}
+
+.readiness span {
+  color: #667684;
+  font-size: 13px;
+  margin-top: 3px;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -341,6 +374,7 @@ code {
     display: grid;
   }
   .metrics,
+  .readiness,
   .planGrid,
   .resourceGrid,
   .urlBox,

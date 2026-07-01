@@ -60,8 +60,12 @@ test("local Docker provider creates real compose, disk, URL, and preserves disk 
     const compose = await readFile(composePath, "utf8");
     assert.match(compose, /ghcr\.io\/gaofeng21cn\/one-person-lab-webui:latest/);
     assert.match(compose, /\/data/);
-    assert.doesNotMatch(compose, /\/workspace/);
+    assert.doesNotMatch(compose, /- \.\/workspace:\/data/);
     assert.match(compose, /OPL_WORKSPACE_ID/);
+    assert.match(compose, /OPL_WEBUI_AUTH_MODE: none/);
+    assert.match(compose, /HOME: \/data/);
+    assert.match(compose, /OPL_WORKSPACE_ROOT: \/data\/workspaces/);
+    assert.match(compose, /CODEX_HOME: \/data\/codex/);
 
     const destroyed = await service.destroyServer({
       accountId: "pi-alpha",

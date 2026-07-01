@@ -1,168 +1,194 @@
-# OPL Cloud Implementation Plan
+# OPL Cloud Seven-Phase Implementation Plan
 
-This repo implements OPL Cloud in four compact phases. OPL Console owns product workflow, billing, token access, and audit. Runtime providers execute infrastructure actions.
-
-## Phase 1: OPL Console MVP
-
-Status: implemented with the Local Docker provider as the default runtime path.
-
-Scope:
-
-- Workspace list
-- Create Basic or Pro Workspace
-- Permanent URL token
-- Server stop/restart/destroy
-- Disk destroy with explicit data-loss confirmation
-- Billing ledger
-- Audit receipts
-- 7-day storage pre-freeze
-- Workspace URL token validation route
-- Hourly billing settlement endpoint
-
-Reference borrowed from `projects/platform-v22`:
-
-- left navigation + top status shell
-- resource control page shape
-- billing/audit ledger idea
-- fail-closed resource lifecycle contracts
-
-Not borrowed:
-
-- old product naming
-- old product semantics
-- old source code
-- K8s/TKE default route
-
-## Phase 2: Local Docker Provider
-
-Goal: prove a real `one-person-lab-app` Docker runtime can be created and controlled by OPL Console on one test machine.
-
-Status: implemented for artifact generation by default and real Docker execution when `OPL_LOCAL_DOCKER_EXECUTE=1`.
-
-Expected tools:
-
-- Docker Compose
-- local bind mount or Docker volume as disk substitute
-- OPL Cloud API route for local token validation
-- Caddy for production workspace URL routing
-
-Provider actions:
+This plan tracks the v1 business chain:
 
 ```text
-createWorkspaceRuntime()
-  create workspace directory
-  write compose file
-  create disk directory
-  optionally run one-person-lab-app container with Docker Compose
-  discover local container URL when execution is enabled
-  return URL
-
-stopServer()
-  docker compose stop
-  keep volume
-
-restartServer()
-  docker compose up -d
-  reuse volume and URL
-
-destroyServer()
-  docker compose down
-  keep volume
-
-destroyDisk()
-  remove volume only after explicit confirmation
+PI opens OPL Console
+-> creates an OPL Workspace
+-> OPL Cloud creates one server, one cloud disk, one one-person-lab-app Docker runtime, and one URL
+-> PI shares the URL
+-> members enter the OPL Workspace without login
+-> OPL Console manages lifecycle, billing, and audit
 ```
 
-## Phase 3: Tencent CVM Provider
+Development discipline follows the One Person Lab style: small durable contracts, focused diffs, no phase-only smoke artifacts in git, and machine-readable behavior tests instead of prose assertions.
 
-Goal: implement route A with real Tencent Cloud resources.
+## Phase 1: Product and Local Runtime Loop
 
-Status: provider runner is wired and fails closed unless required tools and environment variables are present. The provider runs OpenTofu, reads outputs, runs Ansible, and maps server/disk/URL outputs back to the Workspace runtime record.
+Status: implemented.
 
-Expected tools:
+Delivered:
 
-- OpenTofu or Terraform with TencentCloud provider
-- cloud-init for first boot
-- Ansible for Docker/Compose deployment
-- Harbor for image distribution
-- Caddy or Traefik for HTTPS reverse proxy
+- OPL Cloud, OPL Console, and OPL Workspace naming.
+- Product design freeze in `PRODUCT_DESIGN.md`.
+- Console UI for Workspace creation, URL access, server/disk lifecycle, billing, and audit.
+- Local Docker provider that writes real Docker Compose runtime artifacts under ignored `.runtime/workspaces`.
+- Optional local execution with `OPL_LOCAL_DOCKER_EXECUTE=1`.
+- Permanent URL token and no-login Workspace access rule.
+- Server and disk lifecycle separation.
+- 7-day storage pre-freeze.
 
-Provider actions:
+Durable checks:
+
+- `tests/workspace-lifecycle.test.js`
+- `tests/local-docker-provider.test.js`
+- `tests/workspace-url-route.test.js`
+
+## Phase 2: Tencent IaC Scaffold
+
+Status: implemented.
+
+Delivered:
+
+- OpenTofu scaffold in `infra/tencent-cvm`.
+- Tencent CVM server resource.
+- Tencent CBS cloud disk resource.
+- Server and disk attachment.
+- Cloud-init bootstrapping.
+- Ansible deployment for Docker Compose, Caddy route, and `one-person-lab-app`.
+- Sensitive Workspace URL output.
+
+Durable checks:
+
+- `tofu init -backend=false -input=false`
+- `tofu validate`
+
+Cleanup rule:
+
+- Remove `infra/tencent-cvm/.terraform/` after validation.
+- Do not commit `.terraform/`, tfstate, plan files, or cloud credentials.
+
+## Phase 3: Real Tencent CVM Workspace Creation
+
+Status: active.
+
+Delivered:
+
+- `tencent-cvm` runtime provider selectable with `OPL_RUNTIME_PROVIDER=tencent-cvm`.
+- Provider runs `tofu init`, `tofu apply`, `tofu output -json`, and `ansible-playbook`.
+- Provider maps server ID, disk ID, public IP, Docker image, URL, and disk mount back into the OPL Workspace record.
+- Provider fails closed until required Tencent environment and tools are present.
+- Provider exposes readiness data through `GET /api/runtime/readiness`.
+- OpenTofu state is isolated per Workspace under ignored `.runtime/tencent-cvm/<workspaceId>/`.
+
+Required environment:
 
 ```text
-createWorkspaceRuntime()
-  create CVM server
-  create CBS cloud disk
-  attach and mount disk
-  install Docker
-  pull one-person-lab-app image
-  start Docker Compose
-  configure workspace subdomain
-  return stable URL
-
-stopServer()
-  stop CVM billing when possible
-  keep CBS disk
-
-restartServer()
-  start or recreate CVM
-  reattach CBS disk
-  restart Docker
-  preserve URL and token
-
-destroyServer()
-  destroy CVM
-  keep CBS disk
-
-destroyDisk()
-  destroy CBS disk
-  stop storage billing
+TENCENTCLOUD_SECRET_ID
+TENCENTCLOUD_SECRET_KEY
+TENCENTCLOUD_REGION
+OPL_WORKSPACE_DOMAIN
+OPL_VPC_ID
+OPL_SUBNET_ID
+OPL_SECURITY_GROUP_ID
+OPL_AVAILABILITY_ZONE
+OPL_IMAGE_ID
+OPL_SSH_KEY_ID
+OPL_WORKSPACE_IMAGE
 ```
 
-Handoff files:
+Required tools on the API host:
 
-- `infra/tencent-cvm/main.tf`
-- `infra/tencent-cvm/variables.tf`
-- `infra/tencent-cvm/cloud-init.yml`
-- `infra/tencent-cvm/ansible/workspace.yml`
-- `infra/tencent-cvm/ansible/Caddyfile.j2`
+```text
+tofu
+ansible-playbook
+```
 
-Required API host tools:
+Next real-cloud verification:
 
-- `tofu`
-- `ansible-playbook`
+1. Inject the environment through shell env, CI secrets, or a deployment secret manager.
+2. Start API with `OPL_RUNTIME_PROVIDER=tencent-cvm`.
+3. Open OPL Console and confirm runtime readiness is ready.
+4. Credit the PI account.
+5. Create one Basic Workspace.
+6. Verify Tencent creates one CVM, one CBS disk, one Docker runtime, and one URL.
+7. Verify the URL reaches the OPL WebUI and the disk is mounted to `/data`.
 
-Required secret/config variables are documented in `.env.example`. Do not copy secret files from older projects into this repo.
+Do not copy secret files from older projects into this repo.
 
-## Phase 4: Billing and Audit Closure
+## Phase 4: Cloud Lifecycle Controls
 
-Goal: make billing an auditable OPL Console truth.
+Status: not implemented.
 
-Status: minimum ledger closure implemented. `settleBilling()` records hourly server and storage debits with Tencent-cost-plus-10% pricing. OpenMeter should consume the same event types next; Lago remains later for invoices/subscriptions.
+Goal:
 
-Ledger events:
+- Stop server billing without destroying CBS storage.
+- Restart or recreate the server while preserving the disk, token, and URL.
+- Destroy the server while retaining disk.
+- Destroy the disk only after explicit data-loss confirmation.
 
-- `credit`
-- `storage_hold`
-- `server_debit`
-- `storage_debit`
-- `server_billing_stopped`
-- `server_destroyed`
-- `storage_destroyed`
-- `token_reset`
-- `token_deleted`
+Implementation direction:
 
-Rules:
+- Prefer Tencent Cloud APIs or OpenTofu state-aware operations that preserve the separate server/disk lifecycle.
+- Keep per-Workspace state isolated under `.runtime/tencent-cvm/<workspaceId>/`.
+- Never implement destructive fallbacks that can delete storage when only server lifecycle was requested.
 
-- Billing is hourly.
-- User-facing price is Tencent Cloud resource cost plus 10%.
-- Storage cannot run unpaid.
-- Opening or resuming requires enough balance for a 7-day storage freeze.
-- Stopping or destroying the server stops server billing only.
-- Storage billing stops only after disk destruction completes.
+## Phase 5: PostgreSQL Persistence
 
-Future integrations:
+Status: not implemented.
 
-- Tencent Cloud pricing and bill APIs for cost reconciliation
-- OpenMeter for usage event metering
-- Lago only if external invoicing or subscriptions become required
+Goal:
+
+- Replace JSON file state with PostgreSQL as the durable control-plane database.
+- Keep JSON store only for local development if useful.
+
+Tables to introduce:
+
+- `accounts`
+- `workspaces`
+- `billing_ledger`
+- `audit_events`
+- `runtime_operations`
+
+Requirements:
+
+- Workspace state must survive API restart.
+- Workspace URL/token state must remain stable.
+- Runtime operations should be auditable and retry-aware.
+
+## Phase 6: OpenMeter Metering
+
+Status: not implemented.
+
+Goal:
+
+- Send server runtime and storage usage events to OpenMeter.
+- Keep OPL Console ledger as the product billing truth for v1.
+- Keep Lago for later invoice or subscription workflows.
+
+Event families:
+
+- `workspace.server.running_hours`
+- `workspace.storage.gb_hours`
+- `workspace.storage.hold`
+- `workspace.lifecycle.action`
+
+Billing rules remain:
+
+- Hourly server billing.
+- Storage billing until disk destruction.
+- Tencent cost plus 10% platform markup.
+- 7-day storage pre-freeze before opening or resuming.
+
+## Phase 7: Production Hardening
+
+Status: not implemented.
+
+Goal:
+
+- Use Harbor as the production image registry.
+- Use Caddy for HTTPS Workspace URL routing.
+- Move secrets into a deployment secret manager.
+- Add audit/recovery runbooks.
+- Add cloud cost reconciliation against Tencent billing.
+
+Hardening requirements:
+
+- No committed secrets.
+- No public no-auth container without token gateway or trusted proxy boundary.
+- No untracked runtime artifacts left in the repo after verification.
+- Workspace URL contains a permanent owner-controlled token until reset or deletion.
+
+## Current Blocker For Real Phase 3
+
+The repository is ready to attempt real Tencent creation once the required Tencent environment variables are injected. Without those values, `tencent-cvm` intentionally reports readiness gaps and refuses to create cloud resources.

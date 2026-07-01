@@ -60,3 +60,29 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("runtime readiness route reports provider execution gaps without creating resources", async () => {
+  const appService = {
+    runtimeReadiness: async () => ({
+      provider: "tencent-cvm",
+      ready: false,
+      missingEnv: ["OPL_VPC_ID"],
+      missingTools: ["ansible-playbook"]
+    })
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const response = await fetch(`${origin}/api/runtime/readiness`);
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload, {
+      provider: "tencent-cvm",
+      ready: false,
+      missingEnv: ["OPL_VPC_ID"],
+      missingTools: ["ansible-playbook"]
+    });
+  } finally {
+    await close();
+  }
+});

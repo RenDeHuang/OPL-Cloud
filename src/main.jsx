@@ -47,13 +47,19 @@ function statusLabel(workspace) {
 
 function App() {
   const [state, setState] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
 
   async function refresh() {
-    const response = await fetch(`/api/state?accountId=${accountId}`);
-    const next = await response.json();
+    const [stateResponse, readinessResponse] = await Promise.all([
+      fetch(`/api/state?accountId=${accountId}`),
+      fetch("/api/runtime/readiness")
+    ]);
+    const next = await stateResponse.json();
+    const nextReadiness = await readinessResponse.json();
     setState(next);
+    setReadiness(nextReadiness);
     setSelectedId((current) => current || next.workspaces[0]?.id || "");
   }
 
@@ -108,6 +114,20 @@ function App() {
         </header>
 
         {error && <div className="error">{error}</div>}
+
+        {readiness && (
+          <section className={`readiness ${readiness.ready ? "ready" : "blocked"}`}>
+            <div>
+              <strong>{readiness.provider}</strong>
+              <span>{readiness.ready ? "Ready for runtime execution" : "Runtime setup incomplete"}</span>
+            </div>
+            {!readiness.ready && (
+              <code>
+                {[...readiness.missingEnv, ...readiness.missingTools.map((tool) => `tool:${tool}`)].join(" · ")}
+              </code>
+            )}
+          </section>
+        )}
 
         <section className="metrics">
           <Metric label="Account" value={state.account.id} />

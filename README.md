@@ -93,9 +93,15 @@ The current app implements the local business-chain loop with the Local Docker p
 - billing ledger
 - audit receipts
 
-Production Tencent CVM handoff files are in [infra/tencent-cvm](./infra/tencent-cvm). They define the OpenTofu, Ansible, and Caddy shape for route A, but the cloud execution runner still needs to apply the plan, run Ansible, and write outputs back to the API.
+Production Tencent CVM handoff files are in [infra/tencent-cvm](./infra/tencent-cvm). They define the OpenTofu, Ansible, and Caddy shape for route A.
 
-The Tencent CVM provider now has the runner boundary wired into the API. It remains fail-closed unless the required environment variables and tools are present.
+The Tencent CVM provider now has the runner boundary wired into the API. It remains fail-closed unless the required environment variables and tools are present. Runtime readiness is exposed at:
+
+```text
+GET /api/runtime/readiness
+```
+
+The Console also shows readiness at the top of the page so real cloud creation is not attempted blindly.
 
 ## Run Locally
 
@@ -155,3 +161,32 @@ ansible-playbook ansible/workspace.yml
 ```
 
 Then it maps OpenTofu outputs back into the OPL Workspace record: server ID, disk ID, public IP, Docker image, stable URL, and token access state.
+
+Each Workspace gets isolated OpenTofu state under ignored `.runtime/tencent-cvm/<workspaceId>/`. Do not commit tfstate, `.terraform/`, `.runtime/`, plans, or credentials.
+
+## OPL WebUI Runtime Boundary
+
+The `one-person-lab-app` Docker runtime should persist data under `/data`. The current templates set:
+
+```text
+ALLOW_REMOTE=true
+DATA_DIR=/data
+OPL_WEBUI_AUTH_MODE=none
+HOME=/data
+OPL_WORKSPACE_ROOT=/data/workspaces
+CODEX_HOME=/data/codex
+```
+
+No-auth mode is acceptable only because OPL Cloud owns the Workspace URL token boundary. Do not expose the container directly without the OPL Workspace URL/token gateway or another trusted proxy boundary.
+
+## Seven Phases
+
+See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) for the current 7-phase plan:
+
+1. Product and local runtime loop
+2. Tencent IaC scaffold
+3. Real Tencent CVM Workspace creation
+4. Cloud lifecycle controls
+5. PostgreSQL persistence
+6. OpenMeter metering
+7. Production hardening

@@ -101,6 +101,9 @@ async function handleApi(request, response, pathname, appService) {
       const url = new URL(request.url, "http://localhost");
       return sendJson(response, 200, await appService.getState(url.searchParams.get("accountId") ?? "pi-alpha"));
     }
+    if (request.method === "GET" && pathname === "/api/runtime/readiness") {
+      return sendJson(response, 200, await appService.runtimeReadiness());
+    }
 
     const body = await readJson(request);
     const routes = {
