@@ -14,6 +14,8 @@ const REQUIRED_ENV = [
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
 const REQUIRED_TOOLS = ["kubectl"];
+const SHARED_INGRESS_NAME = "opl-cloud";
+const WORKSPACE_ROUTE_MANIFEST = "shared-ingress-route.k8s.json";
 
 function compactId(value) {
   return String(value)
@@ -97,7 +99,13 @@ export class TencentTkeProvider {
       packagePlan,
       token
     });
-    await this.runKubectl(["apply", "-f", manifestPath]);
+    try {
+      await this.runKubectl(["apply", "-f", manifestPath]);
+      await this.addWorkspaceRoute({ workspaceId, serviceName: name });
+    } catch (error) {
+      await this.cleanupCreatedWorkspaceResources({ name, deleteStorage: true });
+      throw error;
+    }
 
     return {
       provider: this.name,
@@ -183,6 +191,7 @@ export class TencentTkeProvider {
       token: workspace.access.token
     });
     await this.runKubectl(["apply", "-f", manifestPath]);
+    await this.addWorkspaceRoute({ workspaceId: workspace.id, serviceName: name });
     return {
       ...workspace.server,
       status: "running",
@@ -192,18 +201,29 @@ export class TencentTkeProvider {
 
   async destroyServer({ workspace }) {
     const name = resourceName(workspace.server.id);
+    let routeCleanupError = null;
+    try {
+      await this.removeWorkspaceRoute({ workspaceId: workspace.id });
+    } catch (error) {
+      routeCleanupError = error;
+    }
     await this.runKubectl([
       "delete",
       `deployment/${name}`,
       `service/${name}`,
-      `ingress/${name}`,
       `secret/${name}-env`,
       "--ignore-not-found=true"
     ]);
     return {
       ...workspace.server,
       status: "destroyed",
-      billingStatus: "stopped"
+      billingStatus: "stopped",
+      ...(routeCleanupError
+        ? {
+          routeCleanupStatus: "failed",
+          routeCleanupError: routeCleanupError.message
+        }
+        : {})
     };
   }
 
@@ -225,7 +245,7 @@ export class TencentTkeProvider {
       `deployment/${name}`,
       `pvc/${pvcName}`,
       `service/${serviceName}`,
-      `ingress/${name}`,
+      `ingress/${SHARED_INGRESS_NAME}`,
       `endpoints/${serviceName}`,
       "-o",
       "json"
@@ -235,7 +255,7 @@ export class TencentTkeProvider {
     const deployment = findKubernetesItem(items, "Deployment", name);
     const pvc = findKubernetesItem(items, "PersistentVolumeClaim", pvcName);
     const service = findKubernetesItem(items, "Service", serviceName);
-    const ingress = findKubernetesItem(items, "Ingress", name);
+    const ingress = findKubernetesItem(items, "Ingress", SHARED_INGRESS_NAME);
     const endpoints = findKubernetesItem(items, "Endpoints", serviceName);
     const podLabels = deployment?.spec?.template?.metadata?.labels || {};
     const selector = service?.spec?.selector || {};
@@ -286,7 +306,7 @@ export class TencentTkeProvider {
           selector
         },
         ingress: {
-          name,
+          name: SHARED_INGRESS_NAME,
           host: this.workspaceHost(),
           path: ingressPath?.path || ""
         },
@@ -350,6 +370,59 @@ export class TencentTkeProvider {
     const manifestPath = join(stateDir, "workspace.k8s.json");
     await writeFile(manifestPath, `${JSON.stringify(this.workspaceManifest(input), null, 2)}\n`, { mode: 0o600 });
     return manifestPath;
+  }
+
+  async writeSharedIngressRouteManifest({ workspaceId, ingress }) {
+    const stateDir = join(this.stateRootDir, compactId(workspaceId));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, WORKSPACE_ROUTE_MANIFEST);
+    await writeFile(manifestPath, `${JSON.stringify(ingress, null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
+  async readSharedIngress() {
+    const raw = await this.runKubectl(["get", `ingress/${SHARED_INGRESS_NAME}`, "-o", "json"]);
+    return JSON.parse(raw);
+  }
+
+  async applySharedIngressRoute({ workspaceId, mutate }) {
+    const ingress = await this.readSharedIngress();
+    const nextIngress = mutateSharedIngressRoute({
+      ingress,
+      host: this.workspaceHost(),
+      workspaceId,
+      mutate
+    });
+    const manifestPath = await this.writeSharedIngressRouteManifest({ workspaceId, ingress: nextIngress });
+    await this.runKubectl(["apply", "-f", manifestPath]);
+  }
+
+  async addWorkspaceRoute({ workspaceId, serviceName }) {
+    await this.applySharedIngressRoute({
+      workspaceId,
+      mutate: (paths, routePath) => [
+        workspaceIngressPath({ path: routePath, serviceName }),
+        ...paths.filter((candidate) => candidate.path !== routePath)
+      ]
+    });
+  }
+
+  async removeWorkspaceRoute({ workspaceId }) {
+    await this.applySharedIngressRoute({
+      workspaceId,
+      mutate: (paths, routePath) => paths.filter((candidate) => candidate.path !== routePath)
+    });
+  }
+
+  async cleanupCreatedWorkspaceResources({ name, deleteStorage }) {
+    await this.runKubectl([
+      "delete",
+      `deployment/${name}`,
+      `service/${name}`,
+      `secret/${name}-env`,
+      ...(deleteStorage ? [`pvc/${name}-data`] : []),
+      "--ignore-not-found=true"
+    ]);
   }
 
   workspaceManifest({ name, workspaceId, ownerAccountId, workspaceName, packagePlan, token }) {
@@ -445,39 +518,6 @@ export class TencentTkeProvider {
             selector: labels,
             ports: [{ name: "http", port: 3000, targetPort: "http" }]
           }
-        },
-        {
-          apiVersion: "networking.k8s.io/v1",
-          kind: "Ingress",
-          metadata: {
-            name,
-            labels,
-            annotations: {
-              "ingress.cloud.tencent.com/rewrite-support": "true"
-            }
-          },
-          spec: {
-            ingressClassName: this.env.OPL_INGRESS_CLASS,
-            rules: [
-              {
-                host: this.env.OPL_WORKSPACE_DOMAIN,
-                http: {
-                  paths: [
-                    {
-                      path: `/w/${workspaceId}`,
-                      pathType: "Prefix",
-                      backend: {
-                        service: {
-                          name,
-                          port: { number: 3000 }
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            ]
-          }
         }
       ]
     };
@@ -505,4 +545,61 @@ function findIngressPath({ ingress, host, path }) {
     }
   }
   return null;
+}
+
+function mutateSharedIngressRoute({ ingress, host, workspaceId, mutate }) {
+  const next = sanitizeKubernetesApplyManifest(ingress);
+  const rule = ensureIngressRule(next, host);
+  const routePath = `/w/${workspaceId}`;
+  const paths = Array.isArray(rule.http?.paths) ? rule.http.paths : [];
+  rule.http ??= {};
+  rule.http.paths = sortWorkspacePaths(mutate(paths, routePath));
+  return next;
+}
+
+function sanitizeKubernetesApplyManifest(item) {
+  const next = JSON.parse(JSON.stringify(item));
+  delete next.status;
+  if (next.metadata) {
+    delete next.metadata.creationTimestamp;
+    delete next.metadata.generation;
+    delete next.metadata.managedFields;
+    delete next.metadata.resourceVersion;
+    delete next.metadata.uid;
+  }
+  return next;
+}
+
+function ensureIngressRule(ingress, host) {
+  ingress.spec ??= {};
+  ingress.spec.rules ??= [];
+  let rule = ingress.spec.rules.find((candidate) => candidate.host === host);
+  if (!rule) {
+    rule = { host, http: { paths: [] } };
+    ingress.spec.rules.push(rule);
+  }
+  rule.http ??= {};
+  rule.http.paths ??= [];
+  return rule;
+}
+
+function sortWorkspacePaths(paths) {
+  return [...paths].sort((a, b) => {
+    if (a.path === "/") return 1;
+    if (b.path === "/") return -1;
+    return String(a.path).localeCompare(String(b.path));
+  });
+}
+
+function workspaceIngressPath({ path, serviceName }) {
+  return {
+    path,
+    pathType: "Prefix",
+    backend: {
+      service: {
+        name: serviceName,
+        port: { number: 3000 }
+      }
+    }
+  };
 }

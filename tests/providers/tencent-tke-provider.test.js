@@ -43,11 +43,14 @@ test("Tencent TKE provider reports readiness gaps before Kubernetes execution", 
   });
 });
 
-test("Tencent TKE provider applies one Deployment, Service, PVC, Secret, and Ingress per Workspace", async () => {
+test("Tencent TKE provider applies runtime resources and registers the Workspace path on the shared Ingress", async () => {
   const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
   const calls = [];
   const runner = async ({ command, args, cwd, env }) => {
     calls.push({ command, args, cwd, env });
+    if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+      return JSON.stringify(sharedIngressFixture());
+    }
     return "";
   };
   const provider = new TencentTkeProvider({
@@ -80,10 +83,13 @@ test("Tencent TKE provider applies one Deployment, Service, PVC, Secret, and Ing
     assert.equal(runtime.slug, "grant-lab-tke001");
 
     const manifestPath = join(stateRootDir, "ws-tke001", "workspace.k8s.json");
+    const routePath = join(stateRootDir, "ws-tke001", "shared-ingress-route.k8s.json");
     const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
     assert.equal(commandLines.join("\n").includes("share_tke_secret"), false);
     assert.deepEqual(commandLines, [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`,
+      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${routePath}`
     ]);
 
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -92,8 +98,7 @@ test("Tencent TKE provider applies one Deployment, Service, PVC, Secret, and Ing
       "Secret",
       "PersistentVolumeClaim",
       "Deployment",
-      "Service",
-      "Ingress"
+      "Service"
     ]);
     const deployment = manifest.items.find((item) => item.kind === "Deployment");
     const pvc = manifest.items.find((item) => item.kind === "PersistentVolumeClaim");
@@ -112,12 +117,19 @@ test("Tencent TKE provider applies one Deployment, Service, PVC, Secret, and Ing
     ]);
     assert.deepEqual(service.spec.selector, deployment.spec.template.metadata.labels);
     assert.equal(service.spec.ports[0].targetPort, "http");
-    const ingress = manifest.items.find((item) => item.kind === "Ingress");
+    const ingress = JSON.parse(await readFile(routePath, "utf8"));
+    assert.equal(ingress.metadata.name, "opl-cloud");
+    assert.equal(ingress.metadata.uid, undefined);
+    assert.equal(ingress.metadata.resourceVersion, undefined);
+    assert.equal(ingress.metadata.managedFields, undefined);
+    assert.equal(ingress.status, undefined);
+    assert.equal(ingress.metadata.annotations["ingress.cloud.tencent.com/direct-access"], "true");
     assert.equal(ingress.spec.ingressClassName, "qcloud");
-    assert.equal(ingress.spec.rules[0].host, "workspace.medopl.cn");
-    assert.equal(ingress.spec.rules[0].http.paths[0].path, "/w/ws-tke001");
-    assert.equal(ingress.spec.rules[0].http.paths[0].backend.service.name, service.metadata.name);
-    assert.equal(ingress.spec.rules[0].http.paths[0].backend.service.port.number, 3000);
+    const workspaceRule = ingress.spec.rules.find((rule) => rule.host === "workspace.medopl.cn");
+    assert.deepEqual(workspaceRule.http.paths.map((path) => `${path.path}->${path.backend.service.name}:${path.backend.service.port.number}`), [
+      "/w/ws-tke001->opl-ws-tke001:3000",
+      "/->opl-cloud-control-plane:8787"
+    ]);
   } finally {
     await rm(stateRootDir, { recursive: true, force: true });
   }
@@ -129,6 +141,11 @@ test("Tencent TKE provider scales compute lifecycle without deleting retained st
     env: requiredEnv,
     runner: async ({ command, args }) => {
       calls.push({ command, args });
+      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+        return JSON.stringify(sharedIngressFixture({
+          workspacePaths: [{ path: "/w/ws-tke101", serviceName: "opl-ws-tke101" }]
+        }));
+      }
       return "";
     },
     commandExists: () => true,
@@ -153,7 +170,9 @@ test("Tencent TKE provider scales compute lifecycle without deleting retained st
   assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud scale deployment/opl-ws-tke101 --replicas=0",
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud scale deployment/opl-ws-tke101 --replicas=1",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke101 service/opl-ws-tke101 ingress/opl-ws-tke101 secret/opl-ws-tke101-env --ignore-not-found=true",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/ws-tke101/shared-ingress-route.k8s.json",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke101 service/opl-ws-tke101 secret/opl-ws-tke101-env --ignore-not-found=true",
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete pvc/opl-ws-tke101-data --ignore-not-found=true"
   ]);
   assert.equal(stopped.status, "stopped");
@@ -173,6 +192,9 @@ test("Tencent TKE provider recreates compute from retained PVC after server dest
     env: requiredEnv,
     runner: async ({ command, args }) => {
       calls.push({ command, args });
+      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+        return JSON.stringify(sharedIngressFixture());
+      }
       return "";
     },
     commandExists: () => true,
@@ -193,9 +215,12 @@ test("Tencent TKE provider recreates compute from retained PVC after server dest
   try {
     const server = await provider.recreateServer({ workspace });
     const manifestPath = join(stateRootDir, "ws-tke202", "workspace.k8s.json");
+    const routePath = join(stateRootDir, "ws-tke202", "shared-ingress-route.k8s.json");
 
     assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`,
+      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${routePath}`
     ]);
     assert.equal(server.id, "deployment/opl-ws-tke202");
     assert.equal(server.status, "running");
@@ -208,6 +233,91 @@ test("Tencent TKE provider recreates compute from retained PVC after server dest
   } finally {
     await rm(stateRootDir, { recursive: true, force: true });
   }
+});
+
+test("Tencent TKE provider cleans up a partially-created runtime when shared Ingress route registration fails", async () => {
+  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
+  const calls = [];
+  const runner = async ({ command, args }) => {
+    calls.push({ command, args });
+    const commandLine = `${command} ${args.join(" ")}`;
+    if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+      return JSON.stringify(sharedIngressFixture());
+    }
+    if (commandLine.endsWith("shared-ingress-route.k8s.json")) {
+      throw new Error("shared_ingress_apply_failed");
+    }
+    return "";
+  };
+  const provider = new TencentTkeProvider({
+    env: requiredEnv,
+    runner,
+    commandExists: () => true,
+    stateRootDir
+  });
+
+  try {
+    await assert.rejects(
+      provider.createWorkspaceRuntime({
+        workspaceId: "ws-tke404",
+        ownerAccountId: "pi-alpha",
+        workspaceName: "Route Failure Lab",
+        packagePlan: { id: "basic", server: "2c4g", diskGb: 10 },
+        token: "share_route_failure"
+      }),
+      /shared_ingress_apply_failed/
+    );
+
+    const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
+    assert.deepEqual(commandLines, [
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${join(stateRootDir, "ws-tke404", "workspace.k8s.json")}`,
+      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${join(stateRootDir, "ws-tke404", "shared-ingress-route.k8s.json")}`,
+      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke404 service/opl-ws-tke404 secret/opl-ws-tke404-env pvc/opl-ws-tke404-data --ignore-not-found=true"
+    ]);
+  } finally {
+    await rm(stateRootDir, { recursive: true, force: true });
+  }
+});
+
+test("Tencent TKE provider still destroys compute when shared Ingress route cleanup fails", async () => {
+  const calls = [];
+  const provider = new TencentTkeProvider({
+    env: requiredEnv,
+    runner: async ({ command, args }) => {
+      calls.push({ command, args });
+      const commandLine = `${command} ${args.join(" ")}`;
+      if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+        return JSON.stringify(sharedIngressFixture({
+          workspacePaths: [{ path: "/w/ws-tke505", serviceName: "opl-ws-tke505" }]
+        }));
+      }
+      if (commandLine.endsWith("shared-ingress-route.k8s.json")) {
+        throw new Error("shared_ingress_cleanup_failed");
+      }
+      return "";
+    },
+    commandExists: () => true,
+    stateRootDir: ".runtime/test-tke"
+  });
+  const workspace = {
+    id: "ws-tke505",
+    server: { id: "deployment/opl-ws-tke505", status: "running", billingStatus: "active", spec: "2c4g" },
+    docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
+    disk: { id: "pvc/opl-ws-tke505-data", status: "attached_retained", billingStatus: "active", sizeGb: 10 }
+  };
+
+  const destroyed = await provider.destroyServer({ workspace });
+
+  assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/ws-tke505/shared-ingress-route.k8s.json",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke505 service/opl-ws-tke505 secret/opl-ws-tke505-env --ignore-not-found=true"
+  ]);
+  assert.equal(destroyed.status, "destroyed");
+  assert.equal(destroyed.billingStatus, "stopped");
+  assert.equal(destroyed.routeCleanupStatus, "failed");
+  assert.equal(destroyed.routeCleanupError, "shared_ingress_cleanup_failed");
 });
 
 test("Tencent TKE provider reports runtime status from Kubernetes resources without exposing the token", async () => {
@@ -271,7 +381,7 @@ test("Tencent TKE provider reports runtime status from Kubernetes resources with
           {
             apiVersion: "networking.k8s.io/v1",
             kind: "Ingress",
-            metadata: { name: "opl-ws-tke303" },
+            metadata: { name: "opl-cloud" },
             spec: {
               rules: [
                 {
@@ -312,7 +422,7 @@ test("Tencent TKE provider reports runtime status from Kubernetes resources with
   const status = await provider.runtimeStatus({ workspace });
 
   assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke303 pvc/opl-ws-tke303-data service/opl-ws-tke303 ingress/opl-ws-tke303 endpoints/opl-ws-tke303 -o json"
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke303 pvc/opl-ws-tke303-data service/opl-ws-tke303 ingress/opl-cloud endpoints/opl-ws-tke303 -o json"
   ]);
   assert.equal(JSON.stringify(status).includes("share_runtime_status"), false);
   assert.equal(status.provider, "tencent-tke");
@@ -331,6 +441,65 @@ test("Tencent TKE provider reports runtime status from Kubernetes resources with
   assert.equal(status.resources.pvc.name, "opl-ws-tke303-data");
   assert.equal(status.resources.pvc.phase, "Bound");
   assert.equal(status.resources.service.name, "opl-ws-tke303");
+  assert.equal(status.resources.ingress.name, "opl-cloud");
   assert.equal(status.resources.ingress.path, "/w/ws-tke303");
   assert.equal(status.resources.endpoints.readyAddresses, 1);
 });
+
+function sharedIngressFixture({ workspacePaths = [] } = {}) {
+  return {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "Ingress",
+    metadata: {
+      name: "opl-cloud",
+      namespace: "opl-cloud",
+      uid: "cluster-generated-uid",
+      resourceVersion: "12345",
+      generation: 4,
+      managedFields: [{ manager: "tke" }],
+      creationTimestamp: "2026-07-01T10:00:00Z",
+      annotations: {
+        "ingress.cloud.tencent.com/direct-access": "true"
+      }
+    },
+    spec: {
+      ingressClassName: "qcloud",
+      rules: [
+        {
+          host: "cloud.medopl.cn",
+          http: {
+            paths: [
+              {
+                path: "/",
+                pathType: "Prefix",
+                backend: { service: { name: "opl-cloud-control-plane", port: { number: 8787 } } }
+              }
+            ]
+          }
+        },
+        {
+          host: "workspace.medopl.cn",
+          http: {
+            paths: [
+              ...workspacePaths.map((item) => ({
+                path: item.path,
+                pathType: "Prefix",
+                backend: { service: { name: item.serviceName, port: { number: 3000 } } }
+              })),
+              {
+                path: "/",
+                pathType: "Prefix",
+                backend: { service: { name: "opl-cloud-control-plane", port: { number: 8787 } } }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    status: {
+      loadBalancer: {
+        ingress: [{ hostname: "lb-example.clb.tencentcloud.com" }]
+      }
+    }
+  };
+}

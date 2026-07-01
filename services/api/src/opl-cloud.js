@@ -346,6 +346,7 @@ export class OplCloudService {
       workspace.access.token = makeToken(workspaceId, `reset-${Date.now()}`);
       workspace.access.tokenStatus = "active";
       workspace.url = this.runtimeProvider.workspaceUrl({
+        workspaceId: workspace.id,
         slug: workspace.slug,
         token: workspace.access.token
       });
