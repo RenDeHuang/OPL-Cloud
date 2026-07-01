@@ -72,6 +72,6 @@ The API host must have `tccli` configured with Tencent credentials from the envi
 ## Production Notes
 
 - Harbor is the production source for `OPL_WORKSPACE_IMAGE`.
-- Caddy owns HTTPS and token URL routing.
+- Caddy owns HTTPS and token URL routing. The Ansible playbook installs Caddy, writes `/etc/caddy/Caddyfile`, imports `/etc/caddy/conf.d/*.caddy`, and fails the run if Caddy cannot reload the Workspace route.
 - OpenMeter receives `server_debit` and `storage_debit` usage events from the API billing settlement path.
 - Lago is not required for the current closed loop; use it later for invoices/subscriptions.

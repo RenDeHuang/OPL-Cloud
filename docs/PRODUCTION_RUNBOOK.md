@@ -64,10 +64,11 @@ Both must be reviewed before creating production Workspaces.
 4. Verify Tencent creates exactly one CVM and one CBS disk for that Workspace.
 5. Verify Ansible starts one `one-person-lab-app` container.
 6. Verify Caddy serves `https://<workspace-slug>.<domain>/?token=<token>`.
-7. Verify the Workspace disk is mounted to `/data`.
-8. Stop the server and confirm CBS storage remains active.
-9. Restart the server and confirm the Workspace URL/token still works.
-10. Run one billing settlement and confirm OpenMeter receives usage events.
+7. Verify `/etc/caddy/Caddyfile` imports `/etc/caddy/conf.d/*.caddy` and `caddy reload --config /etc/caddy/Caddyfile` succeeds.
+8. Verify the Workspace disk is mounted to `/data`.
+9. Stop the server and confirm CBS storage remains active.
+10. Restart the server and confirm the Workspace URL/token still works.
+11. Run one billing settlement and confirm OpenMeter receives usage events.
 
 ## Recovery Notes
 

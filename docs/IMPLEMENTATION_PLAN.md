@@ -234,6 +234,7 @@ Delivered:
 - `GET /api/production/readiness` checks production provider, Harbor image, workspace domain, PostgreSQL, OpenMeter, Tencent env, and required host tools.
 - OPL Console displays production launch blockers.
 - `docs/PRODUCTION_RUNBOOK.md` defines launch, recovery, and artifact hygiene checks.
+- Tencent Ansible installs Caddy, imports Workspace routes from `/etc/caddy/conf.d/*.caddy`, and fails deployment when the token-gated route cannot reload.
 
 Hardening requirements:
 

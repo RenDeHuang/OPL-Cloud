@@ -8,6 +8,12 @@
     workspace_domain: "{{ workspace_domain }}"
     opl_image: "{{ opl_image | default('ghcr.io/gaofeng21cn/one-person-lab-webui:latest') }}"
   tasks:
+    - name: Ensure Caddy is installed
+      ansible.builtin.package:
+        name:
+          - caddy
+        state: present
+
     - name: Ensure runtime directories exist
       ansible.builtin.file:
         path: "{{ item }}"
@@ -17,6 +23,17 @@
         - /opt/opl-cloud
         - /data/opl
         - /etc/caddy/conf.d
+
+    - name: Write Caddy root config
+      ansible.builtin.copy:
+        dest: /etc/caddy/Caddyfile
+        mode: "0644"
+        content: |
+          {
+            admin localhost:2019
+          }
+
+          import /etc/caddy/conf.d/*.caddy
 
     - name: Write Docker Compose file
       ansible.builtin.copy:
@@ -54,8 +71,10 @@
         dest: /etc/caddy/conf.d/opl-workspace.caddy
         mode: "0644"
 
-    - name: Reload Caddy when installed
+    - name: Enable and start Caddy
+      ansible.builtin.command: systemctl enable --now caddy
+      changed_when: true
+
+    - name: Reload Caddy
       ansible.builtin.command: caddy reload --config /etc/caddy/Caddyfile
-      register: caddy_reload
-      failed_when: false
-      changed_when: caddy_reload.rc == 0
+      changed_when: true
