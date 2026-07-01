@@ -1,0 +1,66 @@
+name: Release OPL Cloud Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA or branch to build after local verification passes.
+        required: true
+        type: string
+      image_tag:
+        description: Optional image tag. Defaults to the checked out short commit SHA.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build-push:
+    name: Build and Push OPL Cloud Control Plane Image
+    runs-on: [self-hosted, tencent-cloud, medopl]
+    environment: production
+    env:
+      OPL_CLOUD_IMAGE_CONTEXT: .
+      OPL_CLOUD_IMAGE_DOCKERFILE: Dockerfile
+      OPL_CLOUD_IMAGE_REPOSITORY: uswccr.ccs.tencentyun.com/oplcloud/opl-cloud
+      TCR_ID: ${{ secrets.TCR_USERNAME }}
+      TCR_SECRET: ${{ secrets.TCR_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Image metadata
+        id: meta
+        shell: bash
+        run: |
+          head_sha="$(git rev-parse HEAD)"
+          short_sha="${head_sha::12}"
+          image_tag="${{ inputs.image_tag }}"
+          if [ -z "$image_tag" ]; then
+            image_tag="$short_sha"
+          fi
+          if ! printf '%s' "$image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+            echo "image_tag is outside the allowed container tag format." >&2
+            exit 1
+          fi
+          image="${OPL_CLOUD_IMAGE_REPOSITORY}:${image_tag}"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "OPL_CLOUD_IMAGE_REF=${image}" >> "$GITHUB_ENV"
+
+      - name: Build and push image
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$TCR_SECRET" | docker login uswccr.ccs.tencentyun.com --username "$TCR_ID" --password-stdin
+          docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
+
+      - name: Print image ref
+        shell: bash
+        run: |
+          printf 'OPL_CLOUD_IMAGE=%s\n' "$OPL_CLOUD_IMAGE_REF"

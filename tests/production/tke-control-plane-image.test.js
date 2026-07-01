@@ -17,3 +17,15 @@ test("OPL Cloud control-plane image build includes app build output and kubectl"
   assert.match(dockerignore, /^\.runtime/m);
   assert.match(dockerignore, /^node_modules/m);
 });
+
+test("OPL Cloud image release workflow pushes the control plane image to the oplcloud TCR namespace", async () => {
+  const workflow = await readFile(".github/workflows/release-opl-cloud-image.yml", "utf8");
+
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /runs-on: \[self-hosted, tencent-cloud, medopl\]/);
+  assert.match(workflow, /uswccr\.ccs\.tencentyun\.com\/oplcloud\/opl-cloud/);
+  assert.match(workflow, /docker login uswccr\.ccs\.tencentyun\.com --username "\$TCR_ID" --password-stdin/);
+  assert.match(workflow, /docker buildx build --push -f Dockerfile -t "\$OPL_CLOUD_IMAGE_REF" "\$OPL_CLOUD_IMAGE_CONTEXT"/);
+  assert.match(workflow, /TCR_ID: \$\{\{ secrets\.TCR_USERNAME \}\}/);
+  assert.match(workflow, /TCR_SECRET: \$\{\{ secrets\.TCR_PASSWORD \}\}/);
+});
