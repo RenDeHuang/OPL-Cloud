@@ -92,16 +92,17 @@ function hourlyServerAmount({ packagePlan, pricing, hours }) {
   return money(hourly * (1 + markup) * hours);
 }
 
-export function createOplCloud({ store, runtimeProvider, pricing, meter = null }) {
-  return new OplCloudService({ store, runtimeProvider, pricing, meter });
+export function createOplCloud({ store, runtimeProvider, pricing, meter = null, productionReadiness = null }) {
+  return new OplCloudService({ store, runtimeProvider, pricing, meter, productionReadiness });
 }
 
 export class OplCloudService {
-  constructor({ store, runtimeProvider, pricing, meter = null }) {
+  constructor({ store, runtimeProvider, pricing, meter = null, productionReadiness = null }) {
     this.store = store;
     this.runtimeProvider = runtimeProvider;
     this.pricing = pricing;
     this.meter = meter;
+    this.productionReadinessCheck = productionReadiness;
   }
 
   packages() {
@@ -406,6 +407,19 @@ export class OplCloudService {
       missingEnv: [],
       missingTools: []
     };
+  }
+
+  async productionReadiness() {
+    if (!this.productionReadinessCheck) {
+      return {
+        ready: false,
+        missingEnv: [],
+        missingTools: [],
+        failedChecks: ["production_readiness_not_configured"],
+        checks: []
+      };
+    }
+    return this.productionReadinessCheck();
   }
 
   usageEventsForSettlement({ accountId, workspace, packagePlan, hours, entries, sourceEventId }) {

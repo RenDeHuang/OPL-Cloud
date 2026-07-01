@@ -217,7 +217,7 @@ Billing rules remain:
 
 ## Phase 7: Production Hardening
 
-Status: not implemented.
+Status: partially implemented; production readiness gate and runbook are in place, while real launch verification is pending production environment injection.
 
 Goal:
 
@@ -226,6 +226,12 @@ Goal:
 - Move secrets into a deployment secret manager.
 - Add audit/recovery runbooks.
 - Add cloud cost reconciliation against Tencent billing.
+
+Delivered:
+
+- `GET /api/production/readiness` checks production provider, Harbor image, workspace domain, PostgreSQL, OpenMeter, Tencent env, and required host tools.
+- OPL Console displays production launch blockers.
+- `docs/PRODUCTION_RUNBOOK.md` defines launch, recovery, and artifact hygiene checks.
 
 Hardening requirements:
 

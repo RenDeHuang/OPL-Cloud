@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createOplCloud } from "./src/opl-cloud.js";
 import { createMeterFromEnv } from "./src/openmeter.js";
+import { productionReadiness } from "./src/production-readiness.js";
 import { createRuntimeProvider } from "./src/runtime-provider-factory.js";
 import { JsonFileStore, PostgresStore } from "./src/store.js";
 
@@ -29,7 +30,8 @@ export const service = createOplCloud({
     diskGbMonth: 0.2,
     markup: 0.1
   },
-  meter: createMeterFromEnv(process.env)
+  meter: createMeterFromEnv(process.env),
+  productionReadiness: () => productionReadiness({ env: process.env })
 });
 
 function sendJson(response, status, payload) {
@@ -110,6 +112,9 @@ async function handleApi(request, response, pathname, appService) {
     }
     if (request.method === "GET" && pathname === "/api/runtime/readiness") {
       return sendJson(response, 200, await appService.runtimeReadiness());
+    }
+    if (request.method === "GET" && pathname === "/api/production/readiness") {
+      return sendJson(response, 200, await appService.productionReadiness());
     }
 
     const body = await readJson(request);

@@ -103,6 +103,14 @@ GET /api/runtime/readiness
 
 The Console also shows readiness at the top of the page so real cloud creation is not attempted blindly.
 
+Production launch readiness is exposed at:
+
+```text
+GET /api/production/readiness
+```
+
+It checks the production runtime provider, Harbor image, workspace domain, PostgreSQL, OpenMeter, Tencent environment, and required host tools before launch.
+
 ## Run Locally
 
 ```bash
@@ -227,3 +235,5 @@ See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) for the current
 5. PostgreSQL persistence
 6. OpenMeter metering
 7. Production hardening
+
+For the production launch checklist and recovery notes, see [docs/PRODUCTION_RUNBOOK.md](./docs/PRODUCTION_RUNBOOK.md).

@@ -86,3 +86,31 @@ test("runtime readiness route reports provider execution gaps without creating r
     await close();
   }
 });
+
+test("production readiness route reports launch blockers without creating resources", async () => {
+  const appService = {
+    productionReadiness: async () => ({
+      ready: false,
+      missingEnv: ["DATABASE_URL"],
+      missingTools: ["caddy"],
+      failedChecks: ["database_url", "tools"],
+      checks: []
+    })
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const response = await fetch(`${origin}/api/production/readiness`);
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload, {
+      ready: false,
+      missingEnv: ["DATABASE_URL"],
+      missingTools: ["caddy"],
+      failedChecks: ["database_url", "tools"],
+      checks: []
+    });
+  } finally {
+    await close();
+  }
+});

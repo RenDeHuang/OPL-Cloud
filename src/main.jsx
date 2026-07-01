@@ -48,18 +48,22 @@ function statusLabel(workspace) {
 function App() {
   const [state, setState] = useState(null);
   const [readiness, setReadiness] = useState(null);
+  const [productionReadiness, setProductionReadiness] = useState(null);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
 
   async function refresh() {
-    const [stateResponse, readinessResponse] = await Promise.all([
+    const [stateResponse, readinessResponse, productionReadinessResponse] = await Promise.all([
       fetch(`/api/state?accountId=${accountId}`),
-      fetch("/api/runtime/readiness")
+      fetch("/api/runtime/readiness"),
+      fetch("/api/production/readiness")
     ]);
     const next = await stateResponse.json();
     const nextReadiness = await readinessResponse.json();
+    const nextProductionReadiness = await productionReadinessResponse.json();
     setState(next);
     setReadiness(nextReadiness);
+    setProductionReadiness(nextProductionReadiness);
     setSelectedId((current) => current || next.workspaces[0]?.id || "");
   }
 
@@ -124,6 +128,24 @@ function App() {
             {!readiness.ready && (
               <code>
                 {[...readiness.missingEnv, ...readiness.missingTools.map((tool) => `tool:${tool}`)].join(" · ")}
+              </code>
+            )}
+          </section>
+        )}
+
+        {productionReadiness && (
+          <section className={`readiness ${productionReadiness.ready ? "ready" : "blocked"}`}>
+            <div>
+              <strong>production</strong>
+              <span>{productionReadiness.ready ? "Ready for production launch" : "Production launch blockers"}</span>
+            </div>
+            {!productionReadiness.ready && (
+              <code>
+                {[
+                  ...productionReadiness.failedChecks,
+                  ...productionReadiness.missingEnv,
+                  ...productionReadiness.missingTools.map((tool) => `tool:${tool}`)
+                ].join(" · ")}
               </code>
             )}
           </section>
