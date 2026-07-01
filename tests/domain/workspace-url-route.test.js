@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createRequestHandler } from "../services/api/server.js";
-import { createOplCloud } from "../services/api/src/opl-cloud.js";
-import { LocalDockerProvider } from "../services/api/src/runtime-providers/local-docker.js";
-import { MemoryStore } from "../services/api/src/store.js";
+import { createRequestHandler } from "../../services/api/server.js";
+import { createOplCloud } from "../../services/api/src/opl-cloud.js";
+import { LocalDockerProvider } from "../../services/api/src/runtime-providers/local-docker.js";
+import { MemoryStore } from "../../services/api/src/store.js";
 
 async function listen(handler) {
   const server = createServer(handler);

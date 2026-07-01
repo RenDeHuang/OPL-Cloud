@@ -1,0 +1,56 @@
+[constraints]
+min_quality = 0.60
+min_acyclicity = 1.00
+max_cycles = 0
+max_upward_violations = 0
+no_god_files = true
+
+[[layers]]
+name = "truth_and_docs"
+paths = ["docs/*", "docs/**/*", "contracts/*", "deploy/*", "PRODUCT_DESIGN.md", "README.md"]
+order = 6
+
+[[layers]]
+name = "frontend"
+paths = ["src/*", "src/**/*", "index.html", "vite.config.js"]
+order = 1
+
+[[layers]]
+name = "api"
+paths = ["services/api/*", "services/api/**/*"]
+order = 3
+
+[[layers]]
+name = "runtime_infra"
+paths = ["infra/*", "infra/**/*"]
+order = 4
+
+[[layers]]
+name = "ops_tools"
+paths = ["tools/*", "tools/**/*"]
+order = 2
+
+[[layers]]
+name = "verification"
+paths = ["tests/*", "tests/**/*", "package.json"]
+order = 0
+
+[[boundaries]]
+from = "services/api/src/**/*"
+to = "src/**/*"
+reason = "API control-plane code must not import Console UI implementation."
+
+[[boundaries]]
+from = "src/**/*"
+to = "services/api/src/runtime-providers/**/*"
+reason = "Console UI must call API routes instead of importing runtime providers."
+
+[[boundaries]]
+from = "services/api/src/runtime-providers/**/*"
+to = "src/**/*"
+reason = "Runtime providers must not depend on UI code."
+
+[[boundaries]]
+from = "tools/**/*"
+to = "src/**/*"
+reason = "Operator tools verify deployed APIs and must not import Console UI implementation."

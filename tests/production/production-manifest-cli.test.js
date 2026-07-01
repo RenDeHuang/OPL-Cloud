@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runProductionManifestCli } from "../tools/validate-production-manifest.js";
+import { runProductionManifestCli } from "../../tools/validate-production-manifest.js";
 
 test("production manifest CLI validates the example manifest", async () => {
   let stdout = "";

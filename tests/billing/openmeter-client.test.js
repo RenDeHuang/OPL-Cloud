@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createMeterFromEnv, openMeterDefinitions, OpenMeterClient } from "../services/api/src/openmeter.js";
+import { createMeterFromEnv, openMeterDefinitions, OpenMeterClient } from "../../services/api/src/openmeter.js";
 
 test("OpenMeterClient posts usage events with bearer auth and JSON payload", async () => {
   const requests = [];

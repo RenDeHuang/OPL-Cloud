@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runProductionVerifierCli, verifyProductionChain } from "../tools/production-verifier.js";
+import { runProductionVerifierCli, verifyProductionChain } from "../../tools/production-verifier.js";
 
 function jsonResponse(payload, status = 200) {
   return {

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -104,22 +104,29 @@ export class TencentCvmProvider {
         TF_DATA_DIR: statePaths.dataDir
       }
     };
-    const vars = [
-      ["workspace_id", workspaceId],
-      ["workspace_slug", slug],
-      ["workspace_token", token],
-      ["workspace_domain", this.env.OPL_WORKSPACE_DOMAIN],
-      ["owner_account_id", this.env.OPL_OWNER_ACCOUNT_ID || ownerAccountId],
-      ["package_id", packagePlan.id],
-      ["opl_image", oplImage],
-      ["region", this.env.TENCENTCLOUD_REGION],
-      ["availability_zone", this.env.OPL_AVAILABILITY_ZONE],
-      ["image_id", this.env.OPL_IMAGE_ID],
-      ["vpc_id", this.env.OPL_VPC_ID],
-      ["subnet_id", this.env.OPL_SUBNET_ID],
-      ["security_group_id", this.env.OPL_SECURITY_GROUP_ID],
-      ["key_id", this.env.OPL_SSH_KEY_ID || ""]
-    ].flatMap(([key, value]) => ["-var", `${key}=${value}`]);
+    const vars = {
+      workspace_id: workspaceId,
+      workspace_slug: slug,
+      workspace_token: token,
+      workspace_domain: this.env.OPL_WORKSPACE_DOMAIN,
+      owner_account_id: this.env.OPL_OWNER_ACCOUNT_ID || ownerAccountId,
+      package_id: packagePlan.id,
+      opl_image: oplImage,
+      region: this.env.TENCENTCLOUD_REGION,
+      availability_zone: this.env.OPL_AVAILABILITY_ZONE,
+      image_id: this.env.OPL_IMAGE_ID,
+      vpc_id: this.env.OPL_VPC_ID,
+      subnet_id: this.env.OPL_SUBNET_ID,
+      security_group_id: this.env.OPL_SECURITY_GROUP_ID,
+      key_id: this.env.OPL_SSH_KEY_ID || ""
+    };
+    await this.writeJsonFile(statePaths.tfvarsFile, vars);
+    await this.writeJsonFile(statePaths.ansibleVarsFile, this.ansibleVars({
+      workspaceId,
+      slug,
+      token,
+      oplImage
+    }));
 
     await this.runner({ command: "tofu", args: ["init", "-input=false"], ...common });
     await this.runner({
@@ -131,7 +138,7 @@ export class TencentCvmProvider {
         `-state=${statePaths.stateFile}`,
         `-state-out=${statePaths.stateFile}`,
         `-backup=${statePaths.backupFile}`,
-        ...vars
+        `-var-file=${statePaths.tfvarsFile}`
       ],
       ...common
     });
@@ -155,6 +162,7 @@ export class TencentCvmProvider {
       slug,
       token,
       oplImage,
+      varsFile: statePaths.ansibleVarsFile,
       cwd: common.cwd,
       env: common.env
     });
@@ -273,6 +281,13 @@ export class TencentCvmProvider {
     ]);
     const publicIp = this.parseInstancePublicIp(describeOutput, newInstanceId);
     const oplImage = workspace.docker?.image || this.env.OPL_WORKSPACE_IMAGE;
+    const statePaths = await this.prepareStatePaths(workspace.id);
+    await this.writeJsonFile(statePaths.ansibleVarsFile, this.ansibleVars({
+      workspaceId: workspace.id,
+      slug: workspace.slug,
+      token: workspace.access.token,
+      oplImage
+    }));
 
     await this.runAnsibleWorkspace({
       publicIp,
@@ -280,6 +295,7 @@ export class TencentCvmProvider {
       slug: workspace.slug,
       token: workspace.access.token,
       oplImage,
+      varsFile: statePaths.ansibleVarsFile,
       cwd: this.infraDir,
       env: this.env
     });
@@ -349,7 +365,9 @@ export class TencentCvmProvider {
       stateDir,
       dataDir: join(stateDir, ".tofu"),
       stateFile: join(stateDir, "terraform.tfstate"),
-      backupFile: join(stateDir, "terraform.tfstate.backup")
+      backupFile: join(stateDir, "terraform.tfstate.backup"),
+      tfvarsFile: join(stateDir, "workspace.auto.tfvars.json"),
+      ansibleVarsFile: join(stateDir, "ansible-vars.json")
     };
   }
 
@@ -380,7 +398,21 @@ export class TencentCvmProvider {
     }
   }
 
-  async runAnsibleWorkspace({ publicIp, workspaceId, slug, token, oplImage, cwd, env }) {
+  async writeJsonFile(path, payload) {
+    await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+  }
+
+  ansibleVars({ workspaceId, slug, token, oplImage }) {
+    return {
+      workspace_id: workspaceId,
+      workspace_slug: slug,
+      workspace_token: token,
+      workspace_domain: this.env.OPL_WORKSPACE_DOMAIN,
+      opl_image: oplImage
+    };
+  }
+
+  async runAnsibleWorkspace({ publicIp, varsFile, cwd, env }) {
     return this.runner({
       command: "ansible-playbook",
       args: [
@@ -390,13 +422,7 @@ export class TencentCvmProvider {
         "-u",
         "root",
         "--extra-vars",
-        [
-          `workspace_id=${workspaceId}`,
-          `workspace_slug=${slug}`,
-          `workspace_token=${token}`,
-          `workspace_domain=${this.env.OPL_WORKSPACE_DOMAIN}`,
-          `opl_image=${oplImage}`
-        ].join(" ")
+        `@${varsFile}`
       ],
       cwd,
       env

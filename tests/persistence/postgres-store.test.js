@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { emptyState, PostgresStore } from "../services/api/src/store.js";
+import { emptyState, PostgresStore } from "../../services/api/src/store.js";
 
 function createFakePool() {
   const tables = {

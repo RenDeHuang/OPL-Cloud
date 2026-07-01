@@ -36,29 +36,54 @@ Plan only:
 
 ```bash
 cd infra/tencent-cvm
+cat > "$OPL_WORKSPACE_STATE_DIR/workspace.auto.tfvars.json" <<'JSON'
+{
+  "workspace_id": "ws-example",
+  "workspace_slug": "example-lab",
+  "workspace_token": "replace-with-workspace-token",
+  "workspace_domain": "workspaces.oplcloud.cn",
+  "owner_account_id": "pi-example",
+  "package_id": "basic",
+  "opl_image": "harbor.oplcloud.cn/opl/one-person-lab-webui:2026-07-01",
+  "region": "ap-guangzhou",
+  "availability_zone": "ap-guangzhou-6",
+  "image_id": "img-...",
+  "vpc_id": "vpc-...",
+  "subnet_id": "subnet-...",
+  "security_group_id": "sg-...",
+  "key_id": "skey-..."
+}
+JSON
 tofu init
 tofu plan \
-  -var workspace_id="$OPL_WORKSPACE_ID" \
-  -var workspace_slug="$OPL_WORKSPACE_SLUG" \
-  -var workspace_token="$OPL_WORKSPACE_TOKEN"
+  -var-file="$OPL_WORKSPACE_STATE_DIR/workspace.auto.tfvars.json"
 ```
 
 Apply:
 
 ```bash
 tofu apply \
-  -var workspace_id="$OPL_WORKSPACE_ID" \
-  -var workspace_slug="$OPL_WORKSPACE_SLUG" \
-  -var workspace_token="$OPL_WORKSPACE_TOKEN"
+  -var-file="$OPL_WORKSPACE_STATE_DIR/workspace.auto.tfvars.json"
 ```
 
 Configure the server:
 
 ```bash
+cat > "$OPL_WORKSPACE_STATE_DIR/ansible-vars.json" <<'JSON'
+{
+  "workspace_id": "ws-example",
+  "workspace_slug": "example-lab",
+  "workspace_token": "replace-with-workspace-token",
+  "workspace_domain": "workspaces.oplcloud.cn",
+  "opl_image": "harbor.oplcloud.cn/opl/one-person-lab-webui:2026-07-01"
+}
+JSON
 ansible-playbook -i "<public_ip>," ansible/workspace.yml \
   -u root \
-  --extra-vars "workspace_id=$OPL_WORKSPACE_ID workspace_slug=$OPL_WORKSPACE_SLUG workspace_token=$OPL_WORKSPACE_TOKEN workspace_domain=$OPL_WORKSPACE_DOMAIN opl_image=$OPL_WORKSPACE_IMAGE"
+  --extra-vars "@$OPL_WORKSPACE_STATE_DIR/ansible-vars.json"
 ```
+
+The API provider writes these per-Workspace variable files under ignored `.runtime/tencent-cvm/<workspaceId>/`. Do not pass `workspace_token` directly on the `tofu` or `ansible-playbook` command line.
 
 ## Lifecycle Boundary
 

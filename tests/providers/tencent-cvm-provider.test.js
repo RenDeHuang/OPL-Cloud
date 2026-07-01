@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { TencentCvmProvider } from "../services/api/src/runtime-providers/tencent-cvm.js";
+import { TencentCvmProvider } from "../../services/api/src/runtime-providers/tencent-cvm.js";
 
 const requiredEnv = {
   TENCENTCLOUD_SECRET_ID: "sid",
@@ -72,12 +72,21 @@ test("Tencent CVM provider executes OpenTofu and Ansible, then maps outputs to W
     assert.equal(runtime.slug, "grant-lab-loud001");
 
     const stateFile = join(stateRootDir, "ws-cloud001", "terraform.tfstate");
-    assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
+    const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
+    assert.equal(commandLines.join("\n").includes("share_cloud"), false);
+    assert.deepEqual(commandLines, [
       "tofu init -input=false",
-      `tofu apply -auto-approve -input=false -state=${stateFile} -state-out=${stateFile} -backup=${stateFile}.backup -var workspace_id=ws-cloud001 -var workspace_slug=grant-lab-loud001 -var workspace_token=share_cloud -var workspace_domain=oplcloud.cn -var owner_account_id=pi-alpha -var package_id=basic -var opl_image=harbor.example.com/opl/one-person-lab-webui:latest -var region=ap-guangzhou -var availability_zone=ap-guangzhou-6 -var image_id=img-123 -var vpc_id=vpc-123 -var subnet_id=subnet-123 -var security_group_id=sg-123 -var key_id=skey-123`,
+      `tofu apply -auto-approve -input=false -state=${stateFile} -state-out=${stateFile} -backup=${stateFile}.backup -var-file=${join(stateRootDir, "ws-cloud001", "workspace.auto.tfvars.json")}`,
       `tofu output -json -state=${stateFile} -show-sensitive`,
-      "ansible-playbook -i 203.0.113.10, ansible/workspace.yml -u root --extra-vars workspace_id=ws-cloud001 workspace_slug=grant-lab-loud001 workspace_token=share_cloud workspace_domain=oplcloud.cn opl_image=harbor.example.com/opl/one-person-lab-webui:latest"
+      `ansible-playbook -i 203.0.113.10, ansible/workspace.yml -u root --extra-vars @${join(stateRootDir, "ws-cloud001", "ansible-vars.json")}`
     ]);
+
+    const tfvars = JSON.parse(await readFile(join(stateRootDir, "ws-cloud001", "workspace.auto.tfvars.json"), "utf8"));
+    assert.equal(tfvars.workspace_token, "share_cloud");
+    assert.equal(tfvars.workspace_id, "ws-cloud001");
+    const ansibleVars = JSON.parse(await readFile(join(stateRootDir, "ws-cloud001", "ansible-vars.json"), "utf8"));
+    assert.equal(ansibleVars.workspace_token, "share_cloud");
+    assert.equal(ansibleVars.workspace_slug, "grant-lab-loud001");
   } finally {
     await rm(stateRootDir, { recursive: true, force: true });
   }
@@ -162,6 +171,8 @@ test("Tencent CVM provider isolates OpenTofu state outside infra source for each
     });
 
     const stateFile = join(stateRootDir, "ws-cloud003", "terraform.tfstate");
+    const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
+    assert.equal(commandLines.join("\n").includes("share_isolated"), false);
     assert.deepEqual(calls.filter((call) => call.command === "tofu").map((call) => call.args), [
       ["init", "-input=false"],
       [
@@ -171,34 +182,7 @@ test("Tencent CVM provider isolates OpenTofu state outside infra source for each
         `-state=${stateFile}`,
         `-state-out=${stateFile}`,
         `-backup=${stateFile}.backup`,
-        "-var",
-        "workspace_id=ws-cloud003",
-        "-var",
-        "workspace_slug=isolated-lab-loud003",
-        "-var",
-        "workspace_token=share_isolated",
-        "-var",
-        "workspace_domain=oplcloud.cn",
-        "-var",
-        "owner_account_id=pi-alpha",
-        "-var",
-        "package_id=basic",
-        "-var",
-        "opl_image=harbor.example.com/opl/one-person-lab-webui:latest",
-        "-var",
-        "region=ap-guangzhou",
-        "-var",
-        "availability_zone=ap-guangzhou-6",
-        "-var",
-        "image_id=img-123",
-        "-var",
-        "vpc_id=vpc-123",
-        "-var",
-        "subnet_id=subnet-123",
-        "-var",
-        "security_group_id=sg-123",
-        "-var",
-        "key_id=skey-123"
+        `-var-file=${join(stateRootDir, "ws-cloud003", "workspace.auto.tfvars.json")}`
       ],
       ["output", "-json", `-state=${stateFile}`, "-show-sensitive"]
     ]);
@@ -263,6 +247,7 @@ test("Tencent CVM provider destroys server while retaining CBS disk", async () =
 });
 
 test("Tencent CVM provider recreates a destroyed server and reattaches the retained CBS disk", async () => {
+  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tencent-state-"));
   const calls = [];
   const runner = async ({ command, args }) => {
     calls.push({ command, args });
@@ -277,32 +262,39 @@ test("Tencent CVM provider recreates a destroyed server and reattaches the retai
   const provider = new TencentCvmProvider({
     env: requiredEnv,
     runner,
-    commandExists: () => true
+    commandExists: () => true,
+    stateRootDir
   });
 
-  const server = await provider.recreateServer({
-    workspace: {
-      id: "ws-cloud202",
-      ownerAccountId: "pi-alpha",
-      packageId: "pro",
-      slug: "recreate-lab-cloud202",
-      access: { token: "share_recreate" },
-      server: { id: "ins-old202", status: "destroyed", billingStatus: "stopped", spec: "8c16g" },
-      docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
-      disk: { id: "disk-opl202", status: "detached_retained", billingStatus: "active" }
-    }
-  });
+  try {
+    const server = await provider.recreateServer({
+      workspace: {
+        id: "ws-cloud202",
+        ownerAccountId: "pi-alpha",
+        packageId: "pro",
+        slug: "recreate-lab-cloud202",
+        access: { token: "share_recreate" },
+        server: { id: "ins-old202", status: "destroyed", billingStatus: "stopped", spec: "8c16g" },
+        docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
+        disk: { id: "disk-opl202", status: "detached_retained", billingStatus: "active" }
+      }
+    });
 
-  assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-    'tccli cvm RunInstances --region ap-guangzhou --Placement {"Zone":"ap-guangzhou-6"} --ImageId img-123 --InstanceType SA5.2XLARGE16 --InstanceChargeType POSTPAID_BY_HOUR --VirtualPrivateCloud {"VpcId":"vpc-123","SubnetId":"subnet-123"} --SecurityGroupIds ["sg-123"] --InternetAccessible {"InternetMaxBandwidthOut":5,"PublicIpAssigned":true} --SystemDisk {"DiskType":"CLOUD_BSSD","DiskSize":50} --InstanceName opl-recreate-lab-cloud202 --LoginSettings {"KeyIds":["skey-123"]}',
-    'tccli cbs AttachDisks --region ap-guangzhou --DiskIds ["disk-opl202"] --InstanceId ins-opl202',
-    'tccli cvm DescribeInstances --region ap-guangzhou --InstanceIds ["ins-opl202"]',
-    'ansible-playbook -i 203.0.113.202, ansible/workspace.yml -u root --extra-vars workspace_id=ws-cloud202 workspace_slug=recreate-lab-cloud202 workspace_token=share_recreate workspace_domain=oplcloud.cn opl_image=harbor.example.com/opl/one-person-lab-webui:latest'
-  ]);
-  assert.equal(server.id, "ins-opl202");
-  assert.equal(server.status, "running");
-  assert.equal(server.billingStatus, "active");
-  assert.equal(server.publicIp, "203.0.113.202");
+    const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
+    assert.equal(commandLines.join("\n").includes("share_recreate"), false);
+    assert.deepEqual(commandLines, [
+      'tccli cvm RunInstances --region ap-guangzhou --Placement {"Zone":"ap-guangzhou-6"} --ImageId img-123 --InstanceType SA5.2XLARGE16 --InstanceChargeType POSTPAID_BY_HOUR --VirtualPrivateCloud {"VpcId":"vpc-123","SubnetId":"subnet-123"} --SecurityGroupIds ["sg-123"] --InternetAccessible {"InternetMaxBandwidthOut":5,"PublicIpAssigned":true} --SystemDisk {"DiskType":"CLOUD_BSSD","DiskSize":50} --InstanceName opl-recreate-lab-cloud202 --LoginSettings {"KeyIds":["skey-123"]}',
+      'tccli cbs AttachDisks --region ap-guangzhou --DiskIds ["disk-opl202"] --InstanceId ins-opl202',
+      'tccli cvm DescribeInstances --region ap-guangzhou --InstanceIds ["ins-opl202"]',
+      `ansible-playbook -i 203.0.113.202, ansible/workspace.yml -u root --extra-vars @${join(stateRootDir, "ws-cloud202", "ansible-vars.json")}`
+    ]);
+    assert.equal(server.id, "ins-opl202");
+    assert.equal(server.status, "running");
+    assert.equal(server.billingStatus, "active");
+    assert.equal(server.publicIp, "203.0.113.202");
+  } finally {
+    await rm(stateRootDir, { recursive: true, force: true });
+  }
 });
 
 test("Tencent CVM provider destroys CBS disk only through explicit disk lifecycle action", async () => {

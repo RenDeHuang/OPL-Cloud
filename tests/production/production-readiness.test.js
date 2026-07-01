@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { productionReadiness } from "../services/api/src/production-readiness.js";
+import { productionReadiness } from "../../services/api/src/production-readiness.js";
 
 const productionEnv = {
   OPL_RUNTIME_PROVIDER: "tencent-cvm",

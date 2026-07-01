@@ -4,6 +4,8 @@ OPL Cloud is the online hosted version of OPL.
 
 This repository holds the v1 product design and a compact OPL Console implementation for the Workspace provisioning flow.
 
+Implementation scope is fixed in [docs/IMPLEMENTATION_SCOPE.md](./docs/IMPLEMENTATION_SCOPE.md): `one-person-lab` provides the development framework concepts, `one-person-lab-cloud` provides the Cloud product definition, and this repository implements the OPL Console / OPL Workspace control-plane slice.
+
 ## Product Names
 
 - `OPL Cloud`: the external product name.

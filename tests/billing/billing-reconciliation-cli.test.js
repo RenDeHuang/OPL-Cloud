@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runReconciliationCli } from "../tools/reconcile-tencent-bills.js";
+import { runReconciliationCli } from "../../tools/reconcile-tencent-bills.js";
 
 test("Tencent reconciliation CLI writes JSON to stdout and returns non-zero on mismatches", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-cloud-reconcile-"));
