@@ -11,6 +11,14 @@ on:
         description: Optional image tag. Defaults to the checked out short commit SHA.
         required: false
         type: string
+      workspace_source_image:
+        description: Existing one-person-lab-app/WebUI image to mirror into the oplcloud TCR namespace.
+        required: true
+        type: string
+      workspace_image_tag:
+        description: Optional Workspace image tag. Defaults to the source image tag.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -18,13 +26,14 @@ permissions:
 
 jobs:
   build-push:
-    name: Build and Push OPL Cloud Control Plane Image
-    runs-on: [self-hosted, tencent-cloud, medopl]
+    name: Build and Push OPL Cloud Images
+    runs-on: ubuntu-latest
     environment: production
     env:
       OPL_CLOUD_IMAGE_CONTEXT: .
       OPL_CLOUD_IMAGE_DOCKERFILE: Dockerfile
       OPL_CLOUD_IMAGE_REPOSITORY: uswccr.ccs.tencentyun.com/oplcloud/opl-cloud
+      OPL_WORKSPACE_IMAGE_REPOSITORY: uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app
       TCR_ID: ${{ secrets.TCR_USERNAME }}
       TCR_SECRET: ${{ secrets.TCR_PASSWORD }}
 
@@ -48,19 +57,42 @@ jobs:
             echo "image_tag is outside the allowed container tag format." >&2
             exit 1
           fi
+          workspace_source_image="${{ inputs.workspace_source_image }}"
+          workspace_image_tag="${{ inputs.workspace_image_tag }}"
+          if [ -z "$workspace_image_tag" ]; then
+            workspace_image_tag="${workspace_source_image##*:}"
+          fi
+          if [ "$workspace_image_tag" = "$workspace_source_image" ]; then
+            echo "workspace_source_image must include an explicit tag." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$workspace_image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+            echo "workspace_image_tag is outside the allowed container tag format." >&2
+            exit 1
+          fi
           image="${OPL_CLOUD_IMAGE_REPOSITORY}:${image_tag}"
+          workspace_image="${OPL_WORKSPACE_IMAGE_REPOSITORY}:${workspace_image_tag}"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "workspace_image_tag=${workspace_image_tag}" >> "$GITHUB_OUTPUT"
+          echo "workspace_image=${workspace_image}" >> "$GITHUB_OUTPUT"
           echo "OPL_CLOUD_IMAGE_REF=${image}" >> "$GITHUB_ENV"
+          echo "OPL_WORKSPACE_IMAGE_REF=${workspace_image}" >> "$GITHUB_ENV"
+          echo "WORKSPACE_SOURCE_IMAGE=${workspace_source_image}" >> "$GITHUB_ENV"
 
-      - name: Build and push image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push images
         shell: bash
         run: |
           set -euo pipefail
           printf '%s' "$TCR_SECRET" | docker login uswccr.ccs.tencentyun.com --username "$TCR_ID" --password-stdin
           docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
+          docker buildx imagetools create -t "$OPL_WORKSPACE_IMAGE_REF" "$WORKSPACE_SOURCE_IMAGE"
 
-      - name: Print image ref
+      - name: Print image refs
         shell: bash
         run: |
           printf 'OPL_CLOUD_IMAGE=%s\n' "$OPL_CLOUD_IMAGE_REF"
+          printf 'OPL_WORKSPACE_IMAGE=%s\n' "$OPL_WORKSPACE_IMAGE_REF"
