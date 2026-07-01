@@ -201,6 +201,14 @@ cp .env.example .env
 
 Do not copy secret files from older projects into this repository. Use `.env.example` as the variable contract and provide real values through local shell env, CI secrets, or a deployment secret manager.
 
+For deployment handoff, keep real secrets outside git and validate the secret-reference manifest:
+
+```bash
+npm run validate:production-manifest -- --manifest deploy/production-manifest.example.json
+```
+
+The manifest format requires sensitive values to use `secretRef`, not inline plaintext.
+
 Run with Tencent CVM provisioning enabled:
 
 ```bash

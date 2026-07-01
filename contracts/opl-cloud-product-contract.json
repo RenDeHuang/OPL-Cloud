@@ -29,6 +29,11 @@
       "diskGb": 100
     }
   ],
+  "productionHandoff": {
+    "manifestExample": "deploy/production-manifest.example.json",
+    "validateCommand": "npm run validate:production-manifest -- --manifest <manifest.json>",
+    "secretPolicy": "sensitive_values_must_use_secretRef"
+  },
   "nonGoals": [
     "member_login_for_shared_urls",
     "automatic_cloud_disk_delete_when_server_stops_or_is_destroyed",

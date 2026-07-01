@@ -1,0 +1,20 @@
+{
+  "env": {
+    "OPL_RUNTIME_PROVIDER": { "value": "tencent-cvm" },
+    "DATABASE_URL": { "secretRef": "opl-cloud/database-url" },
+    "OPENMETER_ENDPOINT": { "secretRef": "opl-cloud/openmeter-endpoint" },
+    "OPENMETER_API_KEY": { "secretRef": "opl-cloud/openmeter-api-key" },
+    "TENCENTCLOUD_SECRET_ID": { "secretRef": "opl-cloud/tencent-secret-id" },
+    "TENCENTCLOUD_SECRET_KEY": { "secretRef": "opl-cloud/tencent-secret-key" },
+    "TENCENTCLOUD_REGION": { "value": "ap-guangzhou" },
+    "OPL_HARBOR_REGISTRY": { "value": "harbor.oplcloud.cn" },
+    "OPL_WORKSPACE_DOMAIN": { "value": "workspaces.oplcloud.cn" },
+    "OPL_WORKSPACE_IMAGE": { "value": "harbor.oplcloud.cn/opl/one-person-lab-webui:2026-07-01" },
+    "OPL_VPC_ID": { "secretRef": "opl-cloud/vpc-id" },
+    "OPL_SUBNET_ID": { "secretRef": "opl-cloud/subnet-id" },
+    "OPL_SECURITY_GROUP_ID": { "secretRef": "opl-cloud/security-group-id" },
+    "OPL_AVAILABILITY_ZONE": { "value": "ap-guangzhou-6" },
+    "OPL_IMAGE_ID": { "secretRef": "opl-cloud/image-id" },
+    "OPL_SSH_KEY_ID": { "secretRef": "opl-cloud/ssh-key-id" }
+  }
+}

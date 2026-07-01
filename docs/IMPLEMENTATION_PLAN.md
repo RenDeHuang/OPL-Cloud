@@ -238,6 +238,8 @@ Delivered:
 - `GET /api/production/readiness` checks production provider, Harbor image, workspace domain, PostgreSQL, OpenMeter, Tencent env, and required host tools.
 - Production readiness requires `OPL_WORKSPACE_IMAGE` to come from the configured `OPL_HARBOR_REGISTRY`.
 - OPL Console displays production launch blockers.
+- `deploy/production-manifest.example.json` defines the production secretRef handoff contract.
+- `npm run validate:production-manifest` validates required launch variables and fails if sensitive values are inlined.
 - `npm run verify:production` runs the deployed API business-chain verifier without writing smoke artifacts to the repo.
 - `npm run reconcile:tencent` provides the Tencent bill reconciliation gate for deployment records without writing smoke artifacts to the repo.
 - `docs/PRODUCTION_RUNBOOK.md` defines launch, recovery, and artifact hygiene checks.
