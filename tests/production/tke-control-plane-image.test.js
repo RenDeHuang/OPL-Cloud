@@ -22,12 +22,16 @@ test("OPL Cloud image release workflow pushes the control plane image to the opl
   const workflow = await readFile(".github/workflows/release-opl-cloud-image.yml", "utf8");
 
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /publish_cloud_image:/);
+  assert.match(workflow, /mirror_workspace_image:/);
   assert.match(workflow, /workspace_source_image:/);
   assert.match(workflow, /runs-on: ubuntu-latest/);
   assert.match(workflow, /uswccr\.ccs\.tencentyun\.com\/oplcloud\/opl-cloud/);
   assert.match(workflow, /uswccr\.ccs\.tencentyun\.com\/oplcloud\/one-person-lab-app/);
   assert.match(workflow, /docker login uswccr\.ccs\.tencentyun\.com --username "\$TCR_ID" --password-stdin/);
+  assert.match(workflow, /if \[ "\$\{\{ inputs\.publish_cloud_image \}\}" = "true" \]; then/);
   assert.match(workflow, /docker buildx build --push -f Dockerfile -t "\$OPL_CLOUD_IMAGE_REF" "\$OPL_CLOUD_IMAGE_CONTEXT"/);
+  assert.match(workflow, /if \[ "\$\{\{ inputs\.mirror_workspace_image \}\}" = "true" \]; then/);
   assert.match(workflow, /docker buildx imagetools create -t "\$OPL_WORKSPACE_IMAGE_REF" "\$WORKSPACE_SOURCE_IMAGE"/);
   assert.match(workflow, /TCR_ID: \$\{\{ secrets\.TCR_USERNAME \}\}/);
   assert.match(workflow, /TCR_SECRET: \$\{\{ secrets\.TCR_PASSWORD \}\}/);

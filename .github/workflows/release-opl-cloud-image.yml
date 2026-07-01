@@ -11,9 +11,25 @@ on:
         description: Optional image tag. Defaults to the checked out short commit SHA.
         required: false
         type: string
+      publish_cloud_image:
+        description: Build and push the OPL Cloud control-plane image.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      mirror_workspace_image:
+        description: Mirror an existing one-person-lab-app/WebUI image into the oplcloud TCR namespace.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       workspace_source_image:
         description: Existing one-person-lab-app/WebUI image to mirror into the oplcloud TCR namespace.
-        required: true
+        required: false
         type: string
       workspace_image_tag:
         description: Optional Workspace image tag. Defaults to the source image tag.
@@ -59,14 +75,18 @@ jobs:
           fi
           workspace_source_image="${{ inputs.workspace_source_image }}"
           workspace_image_tag="${{ inputs.workspace_image_tag }}"
-          if [ -z "$workspace_image_tag" ]; then
+          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && [ -z "$workspace_source_image" ]; then
+            echo "workspace_source_image is required when mirror_workspace_image is true." >&2
+            exit 1
+          fi
+          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && [ -z "$workspace_image_tag" ]; then
             workspace_image_tag="${workspace_source_image##*:}"
           fi
-          if [ "$workspace_image_tag" = "$workspace_source_image" ]; then
+          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && [ "$workspace_image_tag" = "$workspace_source_image" ]; then
             echo "workspace_source_image must include an explicit tag." >&2
             exit 1
           fi
-          if ! printf '%s' "$workspace_image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && ! printf '%s' "$workspace_image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
             echo "workspace_image_tag is outside the allowed container tag format." >&2
             exit 1
           fi
@@ -88,8 +108,12 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$TCR_SECRET" | docker login uswccr.ccs.tencentyun.com --username "$TCR_ID" --password-stdin
-          docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
-          docker buildx imagetools create -t "$OPL_WORKSPACE_IMAGE_REF" "$WORKSPACE_SOURCE_IMAGE"
+          if [ "${{ inputs.publish_cloud_image }}" = "true" ]; then
+            docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
+          fi
+          if [ "${{ inputs.mirror_workspace_image }}" = "true" ]; then
+            docker buildx imagetools create -t "$OPL_WORKSPACE_IMAGE_REF" "$WORKSPACE_SOURCE_IMAGE"
+          fi
 
       - name: Print image refs
         shell: bash
