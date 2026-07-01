@@ -15,6 +15,12 @@ Production uses:
 - OpenMeter usage events
 - Kubernetes Ingress for `cloud.medopl.cn` and `workspace.medopl.cn`
 
+Current production entrypoint status:
+
+- `cloud.medopl.cn` and `workspace.medopl.cn` route to the OPL Cloud TKE Ingress.
+- The Ingress must keep `ingress.cloud.tencent.com/direct-access: "true"` for HTTPS backend reachability.
+- `GET https://cloud.medopl.cn/api/production/readiness` must return `ready: true` before any real Workspace verification.
+
 ## Required Secrets And Config
 
 Inject values through a deployment secret manager or host environment. Do not commit real values.
@@ -81,7 +87,7 @@ The operator input file to fill locally is:
 
 ## Automated Chain Verification
 
-After readiness is green, run:
+After readiness is green and the operator explicitly approves real resource creation, run:
 
 ```bash
 OPL_CONSOLE_ORIGIN=https://<console-domain> npm run verify:production

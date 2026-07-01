@@ -176,33 +176,39 @@ The following actions require explicit human approval before execution:
 - Renaming the GitHub repository.
 - Renaming the local folder.
 - Running `npm run verify:production`.
-- Creating real Tencent CVM, CBS, DNS, or OpenMeter events.
+- Creating real Workspace runtime resources, storage, DNS, or OpenMeter events outside the documented production deploy workflow.
 - Injecting or confirming production secrets.
 
-## Active Blockers
+## Current Production Evidence
 
-Production launch remains blocked until the operator provides or confirms:
+The OPL Cloud TKE production entrypoint is deployed and externally reachable.
 
-Required missing or unconfirmed TKE inputs:
+Verified production inputs:
 
-- `OPL_CLOUD_IMAGE`
-- `OPL_WORKSPACE_IMAGE`
-- `DATABASE_URL` secret value installed for `postgresql://medopl:<password>@10.66.0.21:5432/OPLCloud`
-- `OPENMETER_API_KEY`
-- `OPL_WORKSPACE_STORAGE_CLASS`
-- TLS secret or cert-manager issuer for `cloud.medopl.cn` and `workspace.medopl.cn`
-- Ingress/CLB DNS target after TKE deploy
-
-Confirmed production resource decisions:
-
+- `OPL_CLOUD_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:bca3a0d`
+- `OPL_WORKSPACE_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest`
 - `OPL_RUNTIME_PROVIDER=tencent-tke`
 - `OPL_PUBLIC_URL=https://cloud.medopl.cn`
 - `OPL_CONSOLE_DOMAIN=cloud.medopl.cn`
 - `OPL_WORKSPACE_DOMAIN=workspace.medopl.cn`
+- `OPL_WORKSPACE_STORAGE_CLASS=cbs`
+- `OPL_K8S_NAMESPACE=opl-cloud`
+- `OPL_IMAGE_PULL_SECRET_NAME=tcr-pull-secret`
 - The v22 TKE cluster is the OPL Cloud production cluster.
 - The v22 TCR registry/namespace continues to serve OPL Cloud.
 - The v22 kubeconfig is allowed for OPL Cloud deploy.
 - The v22 PostgreSQL service is allowed for OPL Cloud control-plane and ledger persistence.
+- TLS is installed through Tencent qcloud certificate-id Secrets:
+  - `opl-cloud-console-medopl-cn-tls`
+  - `opl-cloud-workspace-medopl-cn-tls`
+- `cloud.medopl.cn` and `workspace.medopl.cn` both point at the OPL Cloud TKE Ingress CLB.
+- The TKE Ingress uses `ingress.cloud.tencent.com/direct-access: "true"` so HTTPS traffic reaches the pod backend.
+
+Verified external entrypoints:
+
+- `https://cloud.medopl.cn/api/state` returns HTTP 200.
+- `https://cloud.medopl.cn/api/production/readiness` returns HTTP 200 with `ready: true`.
+- `https://workspace.medopl.cn/` returns HTTP 200.
 
 Legacy CVM-only inputs are no longer production blockers for the TKE route:
 
@@ -213,4 +219,4 @@ Do not print secret values. Do not commit `.env.production*` or legacy `.env.pre
 
 ## Next Step
 
-Build and push the OPL Cloud control-plane image, fill the ignored production input file, install Kubernetes Secrets, apply the TKE manifest, create DNS records after Ingress assigns a CLB target, then run production verification behind the operator gate.
+Close the Workspace usability proof behind the operator gate: run the production verifier only after explicit approval, keep its JSON receipt outside git, and use the result to prove that a real TKE Workspace creates one runtime compute unit, one PVC, one one-person-lab-app container, and one token-gated URL.

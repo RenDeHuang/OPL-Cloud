@@ -266,7 +266,7 @@ Server actions intentionally retain CBS storage. `TerminateDisks` is used only b
 
 ## Production Verification
 
-After deploying OPL Console with Tencent CVM, PostgreSQL, OpenMeter, Harbor, and Caddy configured, run the real chain verifier from an operator shell:
+After deploying OPL Console to Tencent TKE with PostgreSQL, OpenMeter, TCR images, TLS, DNS, and HTTPS readiness configured, run the real chain verifier from an operator shell only after explicit approval:
 
 ```bash
 OPL_CONSOLE_ORIGIN=https://<console-domain> npm run verify:production
@@ -283,17 +283,17 @@ Only when both are ready does it create a real verification Workspace and exerci
 credit account
 create Workspace
 open Workspace URL
-stop server while retaining CBS
-restart server
-destroy server while retaining CBS
-recreate server from retained CBS
+stop runtime compute while retaining workspace storage
+restart runtime compute
+destroy runtime compute while retaining workspace storage
+recreate runtime compute from retained workspace storage
 open the same Workspace URL again after recreation
 settle billing and emit OpenMeter usage
-destroy verification server
-destroy verification disk
+destroy verification runtime compute
+destroy verification workspace storage
 ```
 
-This command creates billable Tencent Cloud resources and lifecycle events, then attempts to clean up the verification server and disk on both success and post-creation failure paths. By default, the Workspace name and verification ledger source events include a unique run id so repeated verification runs create fresh cloud resources and remain traceable in billing records. Use a dedicated verification account. Successful runs write structured JSON to stdout; failed runs write structured JSON to stderr, including `cleanupErrors` when cleanup does not fully complete. If the verifier reports cleanup errors, inspect OPL Console and Tencent Cloud and explicitly destroy any remaining verification resources. The command writes no smoke report or generated artifact into the repository.
+This command creates billable Tencent Cloud runtime resources and lifecycle events, then attempts to clean up the verification compute and storage on both success and post-creation failure paths. By default, the Workspace name and verification ledger source events include a unique run id so repeated verification runs create fresh cloud resources and remain traceable in billing records. Use a dedicated verification account. Successful runs write structured JSON to stdout; failed runs write structured JSON to stderr, including `cleanupErrors` when cleanup does not fully complete. If the verifier reports cleanup errors, inspect OPL Console and Tencent Cloud and explicitly destroy any remaining verification resources. The command writes no smoke report or generated artifact into the repository.
 
 Optional verifier controls:
 

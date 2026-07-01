@@ -95,16 +95,32 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 - The v22 PostgreSQL service is allowed for OPL Cloud control-plane and ledger persistence.
 - OPL Cloud database name is `OPLCloud` on `10.66.0.21:5432`.
 
-## Still Needed
+## Current Production Inputs
 
-- `OPL_CLOUD_IMAGE`: the control-plane image built from this repository and pushed to TCR.
-- `OPL_WORKSPACE_IMAGE`: the exact `one-person-lab-app` image reference and tag.
-- `DATABASE_URL`: install the real value as a secret; do not commit the password.
-- `OPENMETER_API_KEY`: generate and install as a secret.
-- `OPL_WORKSPACE_STORAGE_CLASS`: confirm with `kubectl get storageclass`.
-- Tencent Cloud SSL `OPL_CONSOLE_TLS_CERT_ID` for `cloud.medopl.cn` and `OPL_WORKSPACE_TLS_CERT_ID` for `workspace.medopl.cn`; alternatively one `OPL_TLS_CERT_ID` that covers both hosts, or an existing qcloud certificate Secret to copy.
-- The Ingress/CLB address after deploy, then create the DNS records.
-- Confirmation that `opl-cloud` is the target namespace and `tcr-pull-secret` is the image pull secret name.
+- `OPL_CLOUD_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:bca3a0d`
+- `OPL_WORKSPACE_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest`
+- `OPL_K8S_NAMESPACE=opl-cloud`
+- `OPL_IMAGE_PULL_SECRET_NAME=tcr-pull-secret`
+- `OPL_WORKSPACE_STORAGE_CLASS=cbs`
+- `OPENMETER_ENDPOINT=http://openmeter.opl-cloud.svc.cluster.local:8888`
+- `DATABASE_URL`, `OPENMETER_API_KEY`, TCR credentials, kubeconfig, and TLS certificate ids are installed as GitHub production environment secrets and Kubernetes Secrets. Do not copy their values into git.
+- `cloud.medopl.cn` and `workspace.medopl.cn` point at the OPL Cloud TKE Ingress CLB.
+
+## Verified Entrypoints
+
+The current production deployment has these verified HTTPS entrypoints:
+
+- `https://cloud.medopl.cn/api/state` returns HTTP 200.
+- `https://cloud.medopl.cn/api/production/readiness` returns HTTP 200 with `ready: true`.
+- `https://workspace.medopl.cn/` returns HTTP 200.
+
+The TKE Ingress must keep this annotation so HTTPS traffic reaches the pod backend:
+
+```text
+ingress.cloud.tencent.com/direct-access: "true"
+```
+
+Do not treat a green entrypoint check as proof of the full Workspace lifecycle. The full lifecycle proof remains `npm run verify:production`, which creates real runtime resources and requires explicit operator approval.
 
 ## TKE Runtime Provider
 
