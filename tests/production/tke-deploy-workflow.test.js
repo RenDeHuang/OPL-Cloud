@@ -15,6 +15,10 @@ test("TKE production deploy workflow runs only on the VPC self-hosted runner", a
   assert.match(workflow, /OPL_CLOUD_IMAGE: \$\{\{ inputs\.cloud_image \}\}/);
   assert.match(workflow, /OPL_WORKSPACE_IMAGE: \$\{\{ inputs\.workspace_image \}\}/);
   assert.match(workflow, /OPL_TLS_CERT_ID: \$\{\{ secrets\.OPL_TLS_CERT_ID \|\| vars\.OPL_TLS_CERT_ID \|\| '' \}\}/);
+  assert.match(workflow, /OPL_CONSOLE_TLS_SECRET_NAME: \$\{\{ vars\.OPL_CONSOLE_TLS_SECRET_NAME \|\| 'opl-cloud-console-medopl-cn-tls' \}\}/);
+  assert.match(workflow, /OPL_WORKSPACE_TLS_SECRET_NAME: \$\{\{ vars\.OPL_WORKSPACE_TLS_SECRET_NAME \|\| 'opl-cloud-workspace-medopl-cn-tls' \}\}/);
+  assert.match(workflow, /OPL_CONSOLE_TLS_CERT_ID: \$\{\{ secrets\.OPL_CONSOLE_TLS_CERT_ID \|\| vars\.OPL_CONSOLE_TLS_CERT_ID \|\| '' \}\}/);
+  assert.match(workflow, /OPL_WORKSPACE_TLS_CERT_ID: \$\{\{ secrets\.OPL_WORKSPACE_TLS_CERT_ID \|\| vars\.OPL_WORKSPACE_TLS_CERT_ID \|\| '' \}\}/);
   assert.match(workflow, /OPL_TLS_SOURCE_NAMESPACE: \$\{\{ vars\.OPL_TLS_SOURCE_NAMESPACE \|\| '' \}\}/);
   assert.match(workflow, /OPL_TLS_SOURCE_SECRET_NAME: \$\{\{ vars\.OPL_TLS_SOURCE_SECRET_NAME \|\| '' \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_B64: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG_B64 \}\}/);
@@ -47,10 +51,14 @@ test("TKE production deploy workflow installs secrets without command-line secre
   assert.match(workflow, /--from-file=OPENMETER_API_KEY="\$secret_dir\/openmeter-api-key"/);
   assert.match(workflow, /--from-file=\.dockerconfigjson="\$docker_config"/);
   assert.match(workflow, /--from-file=kubeconfig="\$KUBECONFIG"/);
-  assert.match(workflow, /printf '%s' "\$OPL_TLS_CERT_ID" > "\$secret_dir\/qcloud-cert-id"/);
-  assert.match(workflow, /create secret generic "\$OPL_TLS_SECRET_NAME"/);
-  assert.match(workflow, /--from-file=qcloud_cert_id="\$secret_dir\/qcloud-cert-id"/);
-  assert.match(workflow, /get secret "\$OPL_TLS_SECRET_NAME"/);
+  assert.match(workflow, /install_qcloud_cert_secret\(\)/);
+  assert.match(workflow, /printf '%s' "\$cert_id" > "\$cert_file"/);
+  assert.match(workflow, /install_qcloud_cert_secret "\$OPL_CONSOLE_TLS_SECRET_NAME" "\$OPL_CONSOLE_TLS_CERT_ID"/);
+  assert.match(workflow, /install_qcloud_cert_secret "\$OPL_WORKSPACE_TLS_SECRET_NAME" "\$OPL_WORKSPACE_TLS_CERT_ID"/);
+  assert.match(workflow, /create secret generic "\$secret_name"/);
+  assert.match(workflow, /--from-file=qcloud_cert_id="\$cert_file"/);
+  assert.match(workflow, /verify_qcloud_cert_secret "\$OPL_CONSOLE_TLS_SECRET_NAME"/);
+  assert.match(workflow, /verify_qcloud_cert_secret "\$OPL_WORKSPACE_TLS_SECRET_NAME"/);
   assert.match(workflow, /jsonpath='\{\.data\.qcloud_cert_id\}'/);
   assert.match(workflow, /Missing TKE TLS certificate input/);
 });
@@ -69,7 +77,8 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
       OPL_WORKSPACE_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
       OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
-      OPL_TLS_SECRET_NAME: "opl-cloud-medopl-cn-tls",
+      OPL_CONSOLE_TLS_SECRET_NAME: "opl-cloud-console-medopl-cn-tls",
+      OPL_WORKSPACE_TLS_SECRET_NAME: "opl-cloud-workspace-medopl-cn-tls",
       OPL_INGRESS_CLASS: "qcloud",
       OPENMETER_ENDPOINT: "http://openmeter.opl-cloud.svc.cluster.local:8888",
       TENCENT_DEPLOY_CLUSTER_ID: "cls-oplcloud",
@@ -101,7 +110,10 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
   assert.equal(deployment.spec.template.spec.containers[0].image, "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test");
   assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [{ name: "tcr-pull-secret" }]);
   assert.equal(ingress.spec.ingressClassName, "qcloud");
-  assert.equal(ingress.spec.tls[0].secretName, "opl-cloud-medopl-cn-tls");
+  assert.deepEqual(ingress.spec.tls, [
+    { hosts: ["cloud.medopl.cn"], secretName: "opl-cloud-console-medopl-cn-tls" },
+    { hosts: ["workspace.medopl.cn"], secretName: "opl-cloud-workspace-medopl-cn-tls" }
+  ]);
   assert.deepEqual(ingress.spec.rules.map((rule) => rule.host), ["cloud.medopl.cn", "workspace.medopl.cn"]);
 });
 

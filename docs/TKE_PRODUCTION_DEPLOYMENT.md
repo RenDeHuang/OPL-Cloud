@@ -1,10 +1,10 @@
-# OPL Cloud TKE Preproduction Deployment
+# OPL Cloud TKE Production Deployment
 
 ## Decision
 
-OPL Cloud preproduction uses Tencent TKE as the production-shaped runtime.
+OPL Cloud production uses Tencent TKE as the runtime.
 
-The former v22 MedOPL TKE cluster, TCR namespace, kubeconfig, and PostgreSQL are now treated as the OPL Cloud preproduction resource pool. Existing external resource names may still contain `medopl` until they are deliberately renamed, but repository language and new deployment assets should use OPL Cloud.
+The former v22 MedOPL TKE cluster, TCR namespace, kubeconfig, and PostgreSQL are now treated as the OPL Cloud production resource pool. Existing external resource names may still contain `medopl` until they are deliberately renamed, but repository language and new deployment assets should use OPL Cloud.
 
 The CVM route is legacy fallback/debug only. `OPL_IMAGE_ID` and `OPL_SSH_KEY_ID` are not required for `OPL_RUNTIME_PROVIDER=tencent-tke`.
 
@@ -46,40 +46,41 @@ Recommended TTL: `600`.
 
 ## TLS
 
-Use one Kubernetes Secret for the Tencent Cloud SSL certificate id:
+Use Tencent qcloud certificate-id Secrets for the Ingress TLS hosts. The default production shape uses one Secret per host:
 
 ```text
-opl-cloud-medopl-cn-tls
+opl-cloud-console-medopl-cn-tls
+opl-cloud-workspace-medopl-cn-tls
 ```
 
-For TKE qcloud Ingress, the Secret must be in the `opl-cloud` namespace, must be type `Opaque`, and must contain this key:
+For TKE qcloud Ingress, each Secret must be in the `opl-cloud` namespace, must be type `Opaque`, and must contain this key:
 
 ```text
 qcloud_cert_id
 ```
 
-The referenced Tencent Cloud SSL certificate must cover these domains:
+The referenced Tencent Cloud SSL certificates must cover these domains:
 
 ```text
-cloud.medopl.cn
-workspace.medopl.cn
+cloud.medopl.cn -> OPL_CONSOLE_TLS_CERT_ID
+workspace.medopl.cn -> OPL_WORKSPACE_TLS_CERT_ID
 ```
 
-In GitHub production environment, provide the certificate id as `OPL_TLS_CERT_ID`, or set `OPL_TLS_SOURCE_NAMESPACE` and `OPL_TLS_SOURCE_SECRET_NAME` to copy an existing qcloud certificate Secret into `opl-cloud`.
+If you have one wildcard or multi-domain certificate covering both hosts, you can provide it as `OPL_TLS_CERT_ID`; the deploy workflow will install it into both host-specific Secrets. If you already have a qcloud certificate Secret, set `OPL_TLS_SOURCE_NAMESPACE` and `OPL_TLS_SOURCE_SECRET_NAME` to copy it into the two OPL Cloud Secret names.
 
-## Preproduction Env Template
+## Production Env Template
 
 Tracked template:
 
 ```text
-deploy/tke/opl-cloud-preproduction.env.example
-.env.preproduction.inputs.example
+deploy/tke/opl-cloud-production.env.example
+.env.production.inputs.example
 ```
 
 Ignored local file for the operator to fill:
 
 ```text
-.env.preproduction.local
+.env.production.local
 ```
 
 Do not commit a filled env file. Real values belong in ignored local files, Kubernetes Secrets, GitHub environment secrets, or the cluster secret manager.
@@ -88,7 +89,7 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 
 - `OPL_RUNTIME_PROVIDER=tencent-tke`
 - Workspace runtime image means the `one-person-lab-app` runtime image.
-- The v22 TKE cluster is the OPL Cloud preproduction cluster.
+- The v22 TKE cluster is the OPL Cloud production cluster.
 - The v22 TCR registry/namespace continues to serve OPL Cloud.
 - The v22 kubeconfig is allowed for OPL Cloud deploy.
 - The v22 PostgreSQL service is allowed for OPL Cloud control-plane and ledger persistence.
@@ -101,7 +102,7 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 - `DATABASE_URL`: install the real value as a secret; do not commit the password.
 - `OPENMETER_API_KEY`: generate and install as a secret.
 - `OPL_WORKSPACE_STORAGE_CLASS`: confirm with `kubectl get storageclass`.
-- Tencent Cloud SSL `OPL_TLS_CERT_ID` for `cloud.medopl.cn` and `workspace.medopl.cn`, or an existing qcloud certificate Secret to copy.
+- Tencent Cloud SSL `OPL_CONSOLE_TLS_CERT_ID` for `cloud.medopl.cn` and `OPL_WORKSPACE_TLS_CERT_ID` for `workspace.medopl.cn`; alternatively one `OPL_TLS_CERT_ID` that covers both hosts, or an existing qcloud certificate Secret to copy.
 - The Ingress/CLB address after deploy, then create the DNS records.
 - Confirmation that `opl-cloud` is the target namespace and `tcr-pull-secret` is the image pull secret name.
 
@@ -123,8 +124,8 @@ Use three locations:
 
 | Value type | Local dry-run location | Cluster/runtime location | Git-tracked reference |
 | --- | --- | --- | --- |
-| Non-secret config such as domains, namespace, ingress class, image refs, storage class | ignored `.env.preproduction` | ConfigMap or Deployment env | `deploy/tke/opl-cloud-preproduction.env.example` and `deploy/production-manifest.example.json` |
-| Secret references such as `DATABASE_URL`, `OPENMETER_API_KEY`, kubeconfig ref, TCR credentials | ignored `.env.preproduction` only if needed locally | Kubernetes Secret, GitHub environment secret, or secret manager | only `secretRef` names in `deploy/production-manifest.example.json` |
+| Non-secret config such as domains, namespace, ingress class, image refs, storage class | ignored `.env.production` | ConfigMap or Deployment env | `deploy/tke/opl-cloud-production.env.example` and `deploy/production-manifest.example.json` |
+| Secret references such as `DATABASE_URL`, `OPENMETER_API_KEY`, kubeconfig ref, TCR credentials | ignored `.env.production` only if needed locally | Kubernetes Secret, GitHub environment secret, or secret manager | only `secretRef` names in `deploy/production-manifest.example.json` |
 | DNS record values | not known until Ingress exists | Tencent DNS console | documented in this file only |
 
 Recommended Kubernetes Secret keys:
@@ -147,7 +148,7 @@ The tracked production manifest is a contract, not the live secret payload. Keep
 
 ## OpenMeter
 
-Default preproduction setting:
+Default production setting:
 
 ```text
 OPENMETER_ENDPOINT=http://openmeter.opl-cloud.svc.cluster.local:8888

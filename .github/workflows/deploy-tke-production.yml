@@ -30,7 +30,8 @@ jobs:
       OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
       OPL_IMAGE_PULL_SECRET_NAME: ${{ vars.OPL_IMAGE_PULL_SECRET_NAME || 'tcr-pull-secret' }}
       OPL_WORKSPACE_STORAGE_CLASS: ${{ vars.OPL_WORKSPACE_STORAGE_CLASS || 'cbs' }}
-      OPL_TLS_SECRET_NAME: ${{ vars.OPL_TLS_SECRET_NAME || 'opl-cloud-medopl-cn-tls' }}
+      OPL_CONSOLE_TLS_SECRET_NAME: ${{ vars.OPL_CONSOLE_TLS_SECRET_NAME || 'opl-cloud-console-medopl-cn-tls' }}
+      OPL_WORKSPACE_TLS_SECRET_NAME: ${{ vars.OPL_WORKSPACE_TLS_SECRET_NAME || 'opl-cloud-workspace-medopl-cn-tls' }}
       OPL_TLS_SOURCE_NAMESPACE: ${{ vars.OPL_TLS_SOURCE_NAMESPACE || '' }}
       OPL_TLS_SOURCE_SECRET_NAME: ${{ vars.OPL_TLS_SOURCE_SECRET_NAME || '' }}
       OPL_INGRESS_CLASS: ${{ vars.OPL_INGRESS_CLASS || 'qcloud' }}
@@ -51,6 +52,8 @@ jobs:
       TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
       TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
       OPL_TLS_CERT_ID: ${{ secrets.OPL_TLS_CERT_ID || vars.OPL_TLS_CERT_ID || '' }}
+      OPL_CONSOLE_TLS_CERT_ID: ${{ secrets.OPL_CONSOLE_TLS_CERT_ID || vars.OPL_CONSOLE_TLS_CERT_ID || '' }}
+      OPL_WORKSPACE_TLS_CERT_ID: ${{ secrets.OPL_WORKSPACE_TLS_CERT_ID || vars.OPL_WORKSPACE_TLS_CERT_ID || '' }}
 
     steps:
       - name: Checkout
@@ -155,16 +158,25 @@ jobs:
         run: |
           set -euo pipefail
           secret_dir="$OPL_DEPLOY_SECRET_DIR"
-          if [ -n "${OPL_TLS_CERT_ID:-}" ]; then
-            printf '%s' "$OPL_TLS_CERT_ID" > "$secret_dir/qcloud-cert-id"
-            chmod 600 "$secret_dir/qcloud-cert-id"
-            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic "$OPL_TLS_SECRET_NAME" \
+
+          install_qcloud_cert_secret() {
+            secret_name="$1"
+            cert_id="$2"
+            cert_file="$secret_dir/$secret_name-qcloud-cert-id"
+            printf '%s' "$cert_id" > "$cert_file"
+            chmod 600 "$cert_file"
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic "$secret_name" \
               --type=Opaque \
-              --from-file=qcloud_cert_id="$secret_dir/qcloud-cert-id" \
+              --from-file=qcloud_cert_id="$cert_file" \
               --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
-          elif [ -n "${OPL_TLS_SOURCE_NAMESPACE:-}" ] && [ -n "${OPL_TLS_SOURCE_SECRET_NAME:-}" ]; then
-            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_TLS_SOURCE_NAMESPACE" get secret "$OPL_TLS_SOURCE_SECRET_NAME" -o json \
-              | node -e '
+          }
+
+          copy_qcloud_cert_secret() {
+            source_namespace="$1"
+            source_secret="$2"
+            target_secret="$3"
+            kubectl --kubeconfig "$KUBECONFIG" -n "$source_namespace" get secret "$source_secret" -o json \
+              | TARGET_SECRET_NAME="$target_secret" node -e '
                   const fs = require("node:fs");
                   const secret = JSON.parse(fs.readFileSync(0, "utf8"));
                   delete secret.metadata.uid;
@@ -173,28 +185,46 @@ jobs:
                   delete secret.metadata.managedFields;
                   delete secret.metadata.annotations?.["kubectl.kubernetes.io/last-applied-configuration"];
                   secret.metadata.namespace = process.env.OPL_K8S_NAMESPACE;
-                  secret.metadata.name = process.env.OPL_TLS_SECRET_NAME;
+                  secret.metadata.name = process.env.TARGET_SECRET_NAME;
                   process.stdout.write(JSON.stringify(secret));
                 ' \
               | kubectl --kubeconfig "$KUBECONFIG" apply -f -
-          elif kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$OPL_TLS_SECRET_NAME" >/dev/null 2>&1; then
-            echo "Using existing TKE TLS certificate secret."
+          }
+
+          verify_qcloud_cert_secret() {
+            secret_name="$1"
+            secret_type="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$secret_name" -o jsonpath='{.type}')"
+            if [ "$secret_type" != "Opaque" ]; then
+              echo "TKE qcloud Ingress TLS secret $secret_name must be type Opaque." >&2
+              exit 1
+            fi
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$secret_name" -o jsonpath='{.data.qcloud_cert_id}' \
+              | base64 -d > "$secret_dir/$secret_name-qcloud-cert-id"
+            if [ ! -s "$secret_dir/$secret_name-qcloud-cert-id" ]; then
+              echo "TKE qcloud Ingress TLS secret $secret_name must contain qcloud_cert_id." >&2
+              exit 1
+            fi
+          }
+
+          if [ -n "${OPL_TLS_CERT_ID:-}" ]; then
+            install_qcloud_cert_secret "$OPL_CONSOLE_TLS_SECRET_NAME" "$OPL_TLS_CERT_ID"
+            install_qcloud_cert_secret "$OPL_WORKSPACE_TLS_SECRET_NAME" "$OPL_TLS_CERT_ID"
+          elif [ -n "${OPL_CONSOLE_TLS_CERT_ID:-}" ] && [ -n "${OPL_WORKSPACE_TLS_CERT_ID:-}" ]; then
+            install_qcloud_cert_secret "$OPL_CONSOLE_TLS_SECRET_NAME" "$OPL_CONSOLE_TLS_CERT_ID"
+            install_qcloud_cert_secret "$OPL_WORKSPACE_TLS_SECRET_NAME" "$OPL_WORKSPACE_TLS_CERT_ID"
+          elif [ -n "${OPL_TLS_SOURCE_NAMESPACE:-}" ] && [ -n "${OPL_TLS_SOURCE_SECRET_NAME:-}" ]; then
+            copy_qcloud_cert_secret "$OPL_TLS_SOURCE_NAMESPACE" "$OPL_TLS_SOURCE_SECRET_NAME" "$OPL_CONSOLE_TLS_SECRET_NAME"
+            copy_qcloud_cert_secret "$OPL_TLS_SOURCE_NAMESPACE" "$OPL_TLS_SOURCE_SECRET_NAME" "$OPL_WORKSPACE_TLS_SECRET_NAME"
+          elif kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$OPL_CONSOLE_TLS_SECRET_NAME" >/dev/null 2>&1 \
+            && kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$OPL_WORKSPACE_TLS_SECRET_NAME" >/dev/null 2>&1; then
+            echo "Using existing TKE TLS certificate secrets."
           else
-            echo "Missing TKE TLS certificate input: set OPL_TLS_CERT_ID or OPL_TLS_SOURCE_NAMESPACE/OPL_TLS_SOURCE_SECRET_NAME." >&2
+            echo "Missing TKE TLS certificate input: set OPL_TLS_CERT_ID, or set both OPL_CONSOLE_TLS_CERT_ID and OPL_WORKSPACE_TLS_CERT_ID, or set OPL_TLS_SOURCE_NAMESPACE/OPL_TLS_SOURCE_SECRET_NAME." >&2
             exit 1
           fi
 
-          secret_type="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$OPL_TLS_SECRET_NAME" -o jsonpath='{.type}')"
-          if [ "$secret_type" != "Opaque" ]; then
-            echo "TKE qcloud Ingress TLS secret must be type Opaque." >&2
-            exit 1
-          fi
-          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret "$OPL_TLS_SECRET_NAME" -o jsonpath='{.data.qcloud_cert_id}' \
-            | base64 -d > "$secret_dir/qcloud-cert-id"
-          if [ ! -s "$secret_dir/qcloud-cert-id" ]; then
-            echo "TKE qcloud Ingress TLS secret must contain qcloud_cert_id." >&2
-            exit 1
-          fi
+          verify_qcloud_cert_secret "$OPL_CONSOLE_TLS_SECRET_NAME"
+          verify_qcloud_cert_secret "$OPL_WORKSPACE_TLS_SECRET_NAME"
 
       - name: Render and apply manifest
         shell: bash

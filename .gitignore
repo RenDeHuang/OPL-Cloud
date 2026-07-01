@@ -4,6 +4,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.production.inputs.example
 !.env.preproduction.inputs.example
 .DS_Store
 npm-debug.log*

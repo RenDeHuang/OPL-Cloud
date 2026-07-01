@@ -90,8 +90,8 @@ Receipts:
 - `services/api/src/runtime-providers/tencent-tke.js`
 - `services/api/src/runtime-providers/tencent-cvm.js`
 - `deploy/tke/opl-cloud.k8s.json`
-- `deploy/tke/opl-cloud-preproduction.env.example`
-- `docs/TKE_PREPRODUCTION_DEPLOYMENT.md`
+- `deploy/tke/opl-cloud-production.env.example`
+- `docs/TKE_PRODUCTION_DEPLOYMENT.md`
 - `infra/tencent-cvm/`
 - `tests/providers/local-docker-provider.test.js`
 - `tests/providers/tencent-cvm-provider.test.js`
@@ -181,7 +181,7 @@ The following actions require explicit human approval before execution:
 
 ## Active Blockers
 
-Preproduction launch remains blocked until the operator provides or confirms:
+Production launch remains blocked until the operator provides or confirms:
 
 Required missing or unconfirmed TKE inputs:
 
@@ -193,13 +193,13 @@ Required missing or unconfirmed TKE inputs:
 - TLS secret or cert-manager issuer for `cloud.medopl.cn` and `workspace.medopl.cn`
 - Ingress/CLB DNS target after TKE deploy
 
-Confirmed preproduction resource decisions:
+Confirmed production resource decisions:
 
 - `OPL_RUNTIME_PROVIDER=tencent-tke`
 - `OPL_PUBLIC_URL=https://cloud.medopl.cn`
 - `OPL_CONSOLE_DOMAIN=cloud.medopl.cn`
 - `OPL_WORKSPACE_DOMAIN=workspace.medopl.cn`
-- The v22 TKE cluster is the OPL Cloud preproduction cluster.
+- The v22 TKE cluster is the OPL Cloud production cluster.
 - The v22 TCR registry/namespace continues to serve OPL Cloud.
 - The v22 kubeconfig is allowed for OPL Cloud deploy.
 - The v22 PostgreSQL service is allowed for OPL Cloud control-plane and ledger persistence.
@@ -209,8 +209,8 @@ Legacy CVM-only inputs are no longer production blockers for the TKE route:
 - `OPL_IMAGE_ID`
 - `OPL_SSH_KEY_ID`
 
-Do not print secret values. Do not commit `.env.preproduction*`.
+Do not print secret values. Do not commit `.env.production*` or legacy `.env.preproduction*` files.
 
 ## Next Step
 
-Build and push the OPL Cloud control-plane image, fill the ignored preproduction input file, install Kubernetes Secrets, apply the TKE manifest, create DNS records after Ingress assigns a CLB target, then run production verification behind the operator gate.
+Build and push the OPL Cloud control-plane image, fill the ignored production input file, install Kubernetes Secrets, apply the TKE manifest, create DNS records after Ingress assigns a CLB target, then run production verification behind the operator gate.

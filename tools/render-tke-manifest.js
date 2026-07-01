@@ -9,7 +9,8 @@ const DEPLOY_VALUE_KEYS = [
   "OPL_WORKSPACE_IMAGE",
   "OPL_IMAGE_PULL_SECRET_NAME",
   "OPL_WORKSPACE_STORAGE_CLASS",
-  "OPL_TLS_SECRET_NAME",
+  "OPL_CONSOLE_TLS_SECRET_NAME",
+  "OPL_WORKSPACE_TLS_SECRET_NAME",
   "OPL_INGRESS_CLASS",
   "OPENMETER_ENDPOINT",
   "TENCENT_DEPLOY_CLUSTER_ID",
@@ -65,8 +66,12 @@ function setIngress(item, values) {
   item.spec.ingressClassName = values.OPL_INGRESS_CLASS;
   item.spec.tls = [
     {
-      hosts: [values.OPL_CONSOLE_DOMAIN, values.OPL_WORKSPACE_DOMAIN],
-      secretName: values.OPL_TLS_SECRET_NAME
+      hosts: [values.OPL_CONSOLE_DOMAIN],
+      secretName: values.OPL_CONSOLE_TLS_SECRET_NAME
+    },
+    {
+      hosts: [values.OPL_WORKSPACE_DOMAIN],
+      secretName: values.OPL_WORKSPACE_TLS_SECRET_NAME
     }
   ];
 

@@ -76,7 +76,7 @@ deploy/tke/opl-cloud.k8s.json
 The operator input file to fill locally is:
 
 ```text
-.env.preproduction.local
+.env.production.local
 ```
 
 ## Automated Chain Verification

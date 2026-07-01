@@ -57,7 +57,9 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
 
   const ingress = items.find((item) => item.kind === "Ingress");
   assert.equal(ingress.spec.ingressClassName, "qcloud");
-  assert.deepEqual(ingress.spec.tls[0].hosts, ["cloud.medopl.cn", "workspace.medopl.cn"]);
-  assert.equal(ingress.spec.tls[0].secretName, "opl-cloud-medopl-cn-tls");
+  assert.deepEqual(ingress.spec.tls, [
+    { hosts: ["cloud.medopl.cn"], secretName: "opl-cloud-console-medopl-cn-tls" },
+    { hosts: ["workspace.medopl.cn"], secretName: "opl-cloud-workspace-medopl-cn-tls" }
+  ]);
   assert.deepEqual(ingress.spec.rules.map((rule) => rule.host), ["cloud.medopl.cn", "workspace.medopl.cn"]);
 });
