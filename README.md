@@ -207,12 +207,54 @@ Cloud lifecycle controls use Tencent Cloud CLI on the API host:
 ```text
 tccli cvm StopInstances --StoppedMode STOP_CHARGING
 tccli cvm StartInstances
+tccli cvm RunInstances
+tccli cbs AttachDisks
+tccli cvm DescribeInstances
 tccli cbs DetachDisks
 tccli cvm TerminateInstances
 tccli cbs TerminateDisks
 ```
 
 Server actions intentionally retain CBS storage. `TerminateDisks` is used only by the explicit disk destruction action.
+
+## Production Verification
+
+After deploying OPL Console with Tencent CVM, PostgreSQL, OpenMeter, Harbor, and Caddy configured, run the real chain verifier from an operator shell:
+
+```bash
+OPL_CONSOLE_ORIGIN=https://<console-domain> npm run verify:production
+```
+
+The verifier is fail-closed. It first checks:
+
+- `GET /api/production/readiness`
+- `GET /api/runtime/readiness`
+
+Only when both are ready does it create a real verification Workspace and exercise:
+
+```text
+credit account
+create Workspace
+open Workspace URL
+stop server while retaining CBS
+restart server
+destroy server while retaining CBS
+recreate server from retained CBS
+settle billing and emit OpenMeter usage
+```
+
+This command creates billable Tencent Cloud resources and lifecycle events. Use a dedicated verification account and destroy the verification disk from OPL Console after inspection. The command writes no smoke report or generated artifact into the repository.
+
+Optional verifier controls:
+
+```bash
+OPL_VERIFY_ACCOUNT_ID=pi-production-verifier
+OPL_VERIFY_WORKSPACE_NAME="Production Verification Lab"
+OPL_VERIFY_PACKAGE_ID=basic
+OPL_VERIFY_CREDIT_AMOUNT=1000
+OPL_VERIFY_URL_ATTEMPTS=12
+OPL_VERIFY_RETRY_DELAY_MS=5000
+```
 
 ## OPL WebUI Runtime Boundary
 

@@ -57,6 +57,18 @@ GET /api/production/readiness
 
 Both must be reviewed before creating production Workspaces.
 
+## Automated Chain Verification
+
+After readiness is green, run:
+
+```bash
+OPL_CONSOLE_ORIGIN=https://<console-domain> npm run verify:production
+```
+
+This command creates a real verification Workspace, opens its URL, stops/restarts/destroys/recreates server compute while retaining CBS storage, and runs one billing settlement. It writes results to stdout only and must not leave smoke outputs in the repository.
+
+Use a dedicated verification account and delete the verification disk from OPL Console after inspection to stop storage billing.
+
 ## Launch Checklist
 
 1. Confirm `GET /api/production/readiness` returns `ready: true`.
@@ -72,6 +84,7 @@ Both must be reviewed before creating production Workspaces.
 11. Destroy the server and confirm CBS storage is detached, retained, and still billable.
 12. Restart the server-destroyed Workspace and confirm a new CVM is created, the retained CBS disk is attached, Ansible restores the Docker runtime, and the same Workspace URL/token works.
 13. Run one billing settlement and confirm OpenMeter receives usage events.
+14. Run `npm run verify:production` against the deployed OPL Console and keep the stdout result in the deployment record, not in git.
 
 ## Recovery Notes
 
