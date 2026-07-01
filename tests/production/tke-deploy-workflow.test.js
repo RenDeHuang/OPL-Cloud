@@ -19,8 +19,13 @@ test("TKE production deploy workflow runs only on the VPC self-hosted runner", a
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
   assert.match(workflow, /tools\/render-tke-manifest\.js/);
   assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG"/);
+  assert.match(workflow, /rollout restart deployment\/opl-cloud-control-plane/);
   assert.match(workflow, /rollout status deployment\/opl-cloud-control-plane/);
   assert.match(workflow, /get ingress opl-cloud/);
+  assert.ok(
+    workflow.indexOf("rollout restart deployment/opl-cloud-control-plane") <
+      workflow.indexOf("rollout status deployment/opl-cloud-control-plane")
+  );
 
   const localKubeconfigCheck = workflow.indexOf('if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then');
   const base64KubeconfigCheck = workflow.indexOf('if [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then');
