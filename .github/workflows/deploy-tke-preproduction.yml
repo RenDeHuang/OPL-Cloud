@@ -1,4 +1,4 @@
-name: Deploy TKE Preproduction
+name: Deploy TKE Production
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
   deploy:
     name: Deploy OPL Cloud to TKE
     runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    environment: preproduction
+    environment: production
     env:
       OPL_RUNTIME_PROVIDER: tencent-tke
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
@@ -41,7 +41,7 @@ jobs:
       TENCENT_TCR_NAMESPACE: ${{ vars.TENCENT_TCR_NAMESPACE || 'oplcloud' }}
       TENCENT_TCR_REGION: ${{ vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
       TENCENT_DEPLOY_KUBECONFIG_REF: /var/run/opl-cloud/kubeconfig/kubeconfig
-      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/dev/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}

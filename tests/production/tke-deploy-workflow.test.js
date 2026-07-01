@@ -8,7 +8,7 @@ test("TKE preproduction deploy workflow runs only on the VPC self-hosted runner"
   const workflow = await readFile(".github/workflows/deploy-tke-preproduction.yml", "utf8");
 
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /environment: preproduction/);
+  assert.match(workflow, /environment: production/);
   assert.match(workflow, /runs-on: \[self-hosted, tencent-cloud, opl-cloud, tke-vpc\]/);
   assert.match(workflow, /uses: actions\/setup-node@v4/);
   assert.match(workflow, /node-version: "22"/);
@@ -16,7 +16,7 @@ test("TKE preproduction deploy workflow runs only on the VPC self-hosted runner"
   assert.match(workflow, /OPL_WORKSPACE_IMAGE: \$\{\{ inputs\.workspace_image \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_B64: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG_B64 \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG \}\}/);
-  assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/dev\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
+  assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
   assert.match(workflow, /tools\/render-tke-manifest\.js/);
   assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG"/);
   assert.match(workflow, /rollout status deployment\/opl-cloud-control-plane/);
