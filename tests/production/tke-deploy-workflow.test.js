@@ -10,6 +10,8 @@ test("TKE preproduction deploy workflow runs only on the VPC self-hosted runner"
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /environment: preproduction/);
   assert.match(workflow, /runs-on: \[self-hosted, tencent-cloud, opl-cloud, tke-vpc\]/);
+  assert.match(workflow, /uses: actions\/setup-node@v4/);
+  assert.match(workflow, /node-version: "22"/);
   assert.match(workflow, /OPL_CLOUD_IMAGE: \$\{\{ inputs\.cloud_image \}\}/);
   assert.match(workflow, /OPL_WORKSPACE_IMAGE: \$\{\{ inputs\.workspace_image \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_B64: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG_B64 \}\}/);
