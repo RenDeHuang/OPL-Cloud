@@ -55,6 +55,19 @@ Resource invariant:
 
 Compute and storage lifecycles stay separate. Stopping or recreating compute must not destroy workspace storage. Storage destruction is explicit and is the only action that stops storage billing.
 
+Storage backup invariant:
+
+```text
+Workspace storage backup
+= 1 Kubernetes VolumeSnapshot of the retained Workspace PVC
+
+Workspace restore
+= 1 new billable Workspace
+= 1 new PVC restored from the selected VolumeSnapshot
+```
+
+Retention pruning deletes only backup snapshots. It must not delete source PVCs, restored PVCs, runtime compute, Services, Ingress routes, or Workspace access tokens.
+
 ## Current Attempts And Receipts
 
 ### Console And Workspace Control Plane
@@ -82,6 +95,7 @@ Attempt:
 - Keep Tencent TKE as the production runtime provider.
 - Keep Tencent CVM as a legacy fallback/debug provider.
 - Hand off cloud provisioning through TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy CVM contracts.
+- Hand off retained Workspace storage backup and restore through TKE/CBS `VolumeSnapshot` and PVC `dataSource` contracts.
 
 Receipts:
 
@@ -92,8 +106,10 @@ Receipts:
 - `deploy/tke/opl-cloud.k8s.json`
 - `deploy/tke/opl-cloud-production.env.example`
 - `docs/TKE_PRODUCTION_DEPLOYMENT.md`
+- `packages/contracts/opl-cloud-storage-backup-contract.json`
 - `infra/tencent-cvm/`
 - `tests/providers/local-docker-provider.test.js`
+- `tests/domain/storage-backup-recovery.test.js`
 - `tests/providers/tencent-cvm-provider.test.js`
 - `tests/providers/tencent-cvm-ansible.test.js`
 - `tests/providers/server-provider-config.test.js`

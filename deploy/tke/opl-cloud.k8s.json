@@ -47,6 +47,7 @@
         "OPL_INGRESS_CLASS": "qcloud",
         "OPL_IMAGE_PULL_SECRET_NAME": "tcr-pull-secret",
         "OPL_WORKSPACE_STORAGE_CLASS": "cbs",
+        "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS": "cbs-snapshot",
         "OPL_WORKSPACE_WEBUI_PORT": "3000",
         "OPL_WORKSPACE_DATA_DIR": "/data",
         "OPL_WORKSPACE_PROJECTS_DIR": "/projects",

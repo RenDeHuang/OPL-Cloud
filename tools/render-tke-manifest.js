@@ -22,6 +22,9 @@ const DEPLOY_VALUE_KEYS = [
   "TENCENT_TCR_REGION",
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
+const OPTIONAL_DEPLOY_VALUE_KEYS = [
+  "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS"
+];
 
 function requiredValues(values) {
   const missing = DEPLOY_VALUE_KEYS.filter((key) => !values[key]);
@@ -43,9 +46,9 @@ function setNamespace(item, namespace) {
 
 function setConfigMap(item, values) {
   if (item.kind !== "ConfigMap" || !item.data) return;
-  for (const key of DEPLOY_VALUE_KEYS) {
+  for (const key of [...DEPLOY_VALUE_KEYS, ...OPTIONAL_DEPLOY_VALUE_KEYS]) {
     if (Object.prototype.hasOwnProperty.call(item.data, key)) {
-      item.data[key] = String(values[key]);
+      item.data[key] = values[key] ? String(values[key]) : "";
     }
   }
 }
@@ -119,7 +122,7 @@ export async function runRenderTkeManifestCli({
   if (!args.manifest) throw new Error("manifest_path_required");
   const outputPath = args.out;
   const manifest = JSON.parse(await readFile(args.manifest, "utf8"));
-  const values = Object.fromEntries(DEPLOY_VALUE_KEYS.map((key) => [key, env[key]]));
+  const values = Object.fromEntries([...DEPLOY_VALUE_KEYS, ...OPTIONAL_DEPLOY_VALUE_KEYS].map((key) => [key, env[key]]));
   const rendered = renderTkeManifest({
     manifest,
     values,

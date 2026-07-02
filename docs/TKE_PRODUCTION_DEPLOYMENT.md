@@ -102,6 +102,7 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 - `OPL_K8S_NAMESPACE=opl-cloud`
 - `OPL_IMAGE_PULL_SECRET_NAME=tcr-pull-secret`
 - `OPL_WORKSPACE_STORAGE_CLASS=cbs`
+- `OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS` should point at the TKE/CBS `VolumeSnapshotClass` used for Workspace storage backups. If the cluster has a default `VolumeSnapshotClass`, this can be omitted, but production operators should set it explicitly before claiming backup readiness.
 - `OPL_BILLING_MARKUP=0.2`
 - `OPL_BASIC_COMPUTE_HOURLY_CNY=0.39`
 - `OPL_PRO_COMPUTE_HOURLY_CNY=3.09`
@@ -138,6 +139,30 @@ The `tencent-tke` runtime provider maps one OPL Workspace to:
 Stopping, destroying, or recreating compute must not delete the PVC. PVC deletion is only done by the explicit storage destroy path.
 
 The production verifier also calls the read-only runtime status API for TKE Workspaces. That check verifies the Deployment is ready, the one-person-lab-app image matches the Workspace runtime image, the PVC is bound, the Deployment mounts the retained PVC, the Service has endpoints, and the Ingress route points at the expected Workspace Service path.
+
+## Workspace Storage Backup And Restore
+
+OPL Cloud storage backup uses Kubernetes `VolumeSnapshot` for the retained Workspace PVC. On Tencent TKE this is backed by CBS CSI snapshot capability.
+
+Default policy:
+
+```text
+daily_7_weekly_4
+retainLast=11
+restoreMode=restore_to_new_workspace
+```
+
+The current control-plane API is:
+
+```text
+POST /api/workspaces/storage-backups
+POST /api/workspaces/restore-storage-backup
+POST /api/workspaces/prune-storage-backups
+```
+
+Restore is intentionally not in-place. A restore creates a new billable Workspace with a new PVC whose `dataSource` points at the selected `VolumeSnapshot`. The restored Workspace must pass the same prepaid hold rule as any new Workspace: seven days of compute and storage are frozen first, and the first hour is charged immediately.
+
+Retention pruning deletes only `VolumeSnapshot` objects. It must never delete the source PVC, a restored PVC, runtime compute, Service, Ingress route, or Workspace access token.
 
 ## Where To Put Values
 

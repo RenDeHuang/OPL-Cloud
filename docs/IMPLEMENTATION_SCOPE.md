@@ -18,6 +18,7 @@ This repository is responsible for:
 - OPL Fabric handoff through Local Docker, Tencent TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy Tencent CVM contracts.
 - Long-lived Workspace URL token access. Tokens are permanent until the owner resets or deletes them after leakage.
 - Compute and persistent workspace storage lifecycle separation.
+- Workspace storage backup, restore-to-new-Workspace, and retention through TKE/CBS VolumeSnapshot contracts.
 - OPL Ledger records for prepaid compute/storage holds, hourly debits, hold releases, audit events, notifications, verifier output, and Tencent bill reconciliation.
 - OPL Ledger evidence receipts v0 for control-plane actions that affect workspace access, runtime, storage, cost, or continuation.
 - Runtime readiness, production readiness, and production chain verification.
@@ -30,7 +31,7 @@ The implementation is staged for future repository extraction under `packages/`:
 - `packages/console`: OPL Console API, control-plane service, management model, store, readiness, manifest validation, and UI.
 - `packages/fabric`: runtime provider factory and Local Docker / Tencent TKE / legacy Tencent CVM adapters.
 - `packages/ledger`: billing reconciliation helpers, evidence receipt helpers, and future Ledger extraction boundary.
-- `packages/contracts`: machine-readable product, lifecycle, management, billing, and evidence contracts.
+- `packages/contracts`: machine-readable product, lifecycle, management, billing, storage backup, and evidence contracts.
 
 This is a migration layout, not a monorepo product claim. The service still deploys as one OPL Console control-plane process while imports are kept near the future package boundaries.
 

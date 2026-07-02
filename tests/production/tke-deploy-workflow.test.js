@@ -14,6 +14,7 @@ test("TKE production deploy workflow runs only on the VPC self-hosted runner", a
   assert.match(workflow, /node-version: "22"/);
   assert.match(workflow, /OPL_CLOUD_IMAGE: \$\{\{ inputs\.cloud_image \}\}/);
   assert.match(workflow, /OPL_WORKSPACE_IMAGE: \$\{\{ inputs\.workspace_image \}\}/);
+  assert.match(workflow, /OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: \$\{\{ vars\.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS \|\| '' \}\}/);
   assert.match(workflow, /OPL_TLS_CERT_ID: \$\{\{ secrets\.OPL_TLS_CERT_ID \|\| vars\.OPL_TLS_CERT_ID \|\| '' \}\}/);
   assert.match(workflow, /OPL_CONSOLE_TLS_SECRET_NAME: \$\{\{ vars\.OPL_CONSOLE_TLS_SECRET_NAME \|\| 'opl-cloud-console-medopl-cn-tls' \}\}/);
   assert.match(workflow, /OPL_WORKSPACE_TLS_SECRET_NAME: \$\{\{ vars\.OPL_WORKSPACE_TLS_SECRET_NAME \|\| 'opl-cloud-workspace-medopl-cn-tls' \}\}/);
@@ -97,6 +98,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
       OPL_WORKSPACE_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
       OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+      OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot",
       OPL_BILLING_MARKUP: "0.2",
       OPL_BASIC_COMPUTE_HOURLY_CNY: "0.39",
       OPL_PRO_COMPUTE_HOURLY_CNY: "3.09",
@@ -132,6 +134,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
   assert.equal(config.data.OPL_PRO_COMPUTE_HOURLY_CNY, "3.09");
   assert.equal(config.data.OPL_GPU_COMPUTE_HOURLY_CNY, undefined);
   assert.equal(config.data.OPL_STORAGE_GB_MONTH_CNY, "0.36");
+  assert.equal(config.data.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS, "cbs-snapshot");
   assert.equal(config.data.TENCENT_DEPLOY_CLUSTER_ID, "cls-oplcloud");
   assert.equal(config.data.TENCENT_TCR_REGISTRY, "uswccr.ccs.tencentyun.com");
   assert.equal(deployment.spec.template.spec.containers[0].image, "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test");
@@ -159,6 +162,7 @@ test("TKE manifest renderer can skip the shared Ingress during deploy so Workspa
       OPL_WORKSPACE_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
       OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+      OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot",
       OPL_BILLING_MARKUP: "0.2",
       OPL_BASIC_COMPUTE_HOURLY_CNY: "0.39",
       OPL_PRO_COMPUTE_HOURLY_CNY: "3.09",

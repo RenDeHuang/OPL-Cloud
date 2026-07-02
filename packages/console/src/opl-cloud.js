@@ -219,6 +219,28 @@ function storageDestroyed(workspace) {
   return workspace?.state === "destroyed" || workspace?.disk?.status === "destroyed";
 }
 
+function defaultStorageBackupPolicy() {
+  return {
+    name: "daily_7_weekly_4",
+    retainDaily: 7,
+    retainWeekly: 4,
+    retainLast: 11
+  };
+}
+
+function backupRetentionPolicy(inputPolicy = null) {
+  return {
+    ...defaultStorageBackupPolicy(),
+    ...(inputPolicy || {})
+  };
+}
+
+function latestStorageBackupForAccount(state, accountId, backupId) {
+  const backup = (state.storageBackups || []).find((item) => item.id === backupId && item.accountId === accountId);
+  if (!backup) throw new Error("storage_backup_not_found");
+  return backup;
+}
+
 export function createOplCloud({ store, runtimeProvider, pricing, productionReadiness = null }) {
   return new OplCloudService({ store, runtimeProvider, pricing, productionReadiness });
 }
@@ -466,6 +488,252 @@ export class OplCloudService {
         initialBilling: firstHourEntries.map(clone)
       };
     });
+  }
+
+  async createStorageBackup({ accountId, workspaceId, reason = "manual", retentionPolicy = null }) {
+    if (typeof this.runtimeProvider.createStorageBackup !== "function") throw new Error("storage_backup_unsupported");
+    return this.runRuntimeOperation({
+      accountId,
+      workspaceId,
+      operationType: "create_storage_backup",
+      mutate: async (state, workspace, operation) => {
+        if (storageDestroyed(workspace)) throw new Error("workspace_storage_destroyed");
+        state.storageBackups ??= [];
+        const policy = backupRetentionPolicy(retentionPolicy);
+        const backupId = makeId("backup", accountId, workspaceId, reason, String(Date.now()), String(state.storageBackups.length));
+        const providerBackup = await this.runtimeProvider.createStorageBackup({
+          workspace: clone(workspace),
+          backupId,
+          retentionPolicy: policy
+        });
+        const backup = {
+          ...providerBackup,
+          id: backupId,
+          accountId,
+          workspaceId,
+          status: providerBackup.status || "available",
+          retentionPolicy: policy,
+          reason,
+          createdAt: now(),
+          updatedAt: now()
+        };
+        state.storageBackups.push(backup);
+        this.finishRuntimeOperation(operation, "succeeded");
+        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "storage.backup_created", sourceEventId: backupId }));
+        this.recordEvidence({
+          state,
+          type: "workspace.storage_backup_created",
+          accountId,
+          workspace,
+          continuation: { action: "restore_workspace_from_backup", backupId }
+        });
+        return clone(backup);
+      }
+    });
+  }
+
+  async restoreWorkspaceFromBackup({ accountId, backupId, workspaceName, packageId }) {
+    if (typeof this.runtimeProvider.createWorkspaceRuntime !== "function") throw new Error("runtime_provider_missing_create");
+    const packagePlan = getPackage(packageId);
+    const hold = packageHoldAmount({ packagePlan, pricing: this.pricing });
+    let workspaceId = null;
+    let token = null;
+    let backupSnapshot = null;
+
+    const reservation = await this.store.update((state) => {
+      const backup = latestStorageBackupForAccount(state, accountId, backupId);
+      if (backup.status !== "available") throw new Error("storage_backup_not_available");
+      backupSnapshot = clone(backup);
+      workspaceId = makeId("ws", accountId, workspaceName, packageId, backupId);
+      token = makeToken(workspaceId);
+      const account = ensureAccount(state, accountId);
+      if (state.workspaces[workspaceId]) return { existing: true, workspace: clone(state.workspaces[workspaceId]) };
+      if (accountAvailable(account) < hold.total) {
+        throw new Error("insufficient_prepaid_hold_balance");
+      }
+
+      addHold(account, "compute", hold.compute);
+      addHold(account, "storage", hold.storage);
+      state.billingLedger.push(this.ledgerEntry({ state,
+        workspaceId,
+        accountId,
+        type: "compute_hold",
+        amount: hold.compute,
+        sourceEventId: "restore_workspace_from_backup",
+        holdType: "compute",
+        metadata: {
+          holdDays: 7,
+          backupId,
+          baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
+          markup: pricingMarkup(this.pricing)
+        }
+      }));
+      state.billingLedger.push(this.ledgerEntry({ state,
+        workspaceId,
+        accountId,
+        type: "storage_hold",
+        amount: hold.storage,
+        sourceEventId: "restore_workspace_from_backup",
+        holdType: "storage",
+        metadata: {
+          holdDays: 7,
+          backupId,
+          baseGbMonth: storageGbMonthBase(this.pricing),
+          markup: pricingMarkup(this.pricing)
+        }
+      }));
+      const operation = this.startRuntimeOperation({ state, accountId, workspaceId, operationType: "restore_workspace_from_backup" });
+      return { existing: false, operationId: operation.id };
+    });
+
+    if (reservation.existing) return reservation.workspace;
+
+    let runtime;
+    try {
+      runtime = await this.runtimeProvider.createWorkspaceRuntime({
+        workspaceId,
+        ownerAccountId: accountId,
+        workspaceName,
+        packagePlan,
+        token,
+        restoreFromBackup: backupSnapshot
+      });
+    } catch (error) {
+      await this.recordCreateWorkspaceFailure({ accountId, workspaceId, operationId: reservation.operationId, error });
+      throw error;
+    }
+
+    return this.store.update((state) => {
+      const account = ensureAccount(state, accountId);
+      const backup = latestStorageBackupForAccount(state, accountId, backupId);
+      const operation = state.runtimeOperations.find((item) => item.id === reservation.operationId);
+      if (operation) this.finishRuntimeOperation(operation, "succeeded");
+
+      const workspace = {
+        id: workspaceId,
+        ownerAccountId: accountId,
+        name: workspaceName,
+        packageId,
+        state: "running",
+        provider: runtime.provider,
+        server: runtime.server,
+        docker: runtime.docker,
+        disk: {
+          ...runtime.disk,
+          restoredFromBackupId: backupId
+        },
+        slug: runtime.slug,
+        url: runtime.url,
+        restoredFromBackupId: backupId,
+        storageRestore: {
+          backupId,
+          sourceWorkspaceId: backup.workspaceId,
+          restoredAt: now()
+        },
+        access: {
+          mode: "long_lived_url_token",
+          requiresLogin: false,
+          token,
+          tokenStatus: "active",
+          rotationPolicy: "reset_or_delete_on_leak"
+        },
+        billing: {
+          holdPolicy: "seven_day_prepaid",
+          minimumBillableHours: 1,
+          priceMarkup: pricingMarkup(this.pricing)
+        },
+        createdAt: now(),
+        updatedAt: now()
+      };
+      state.workspaces[workspaceId] = workspace;
+      backup.restoreCount = Number(backup.restoreCount || 0) + 1;
+      backup.lastRestoredAt = workspace.storageRestore.restoredAt;
+      backup.restoredWorkspaceIds = [...new Set([...(backup.restoredWorkspaceIds || []), workspaceId])];
+      backup.updatedAt = now();
+      const firstHourEntries = this.debitWorkspaceUsage({
+        state,
+        account,
+        workspace,
+        packagePlan,
+        hours: 1,
+        sourceEventId: "restore_workspace_initial_hour",
+        billableHours: 1
+      });
+      state.audit.push(this.auditEvent({ accountId, workspaceId, type: "workspace.restored_from_backup", sourceEventId: backupId }));
+      this.recordEvidence({
+        state,
+        type: "workspace.storage_restored",
+        accountId,
+        workspace,
+        packagePlan,
+        billingRefs: firstHourEntries,
+        continuation: {
+          action: "open_workspace_url",
+          uri: workspace.url,
+          backupId
+        }
+      });
+      return {
+        ...clone(workspace),
+        initialBilling: firstHourEntries.map(clone)
+      };
+    });
+  }
+
+  async pruneStorageBackups({ accountId, workspaceId }) {
+    if (typeof this.runtimeProvider.deleteStorageBackup !== "function") throw new Error("storage_backup_delete_unsupported");
+    const prunePlan = await this.store.update((state) => {
+      latestWorkspaceForAccount(state, accountId, workspaceId);
+      state.storageBackups ??= [];
+      const available = state.storageBackups
+        .map((backup, index) => ({ backup, index }))
+        .filter(({ backup }) => backup.accountId === accountId && backup.workspaceId === workspaceId && backup.status === "available")
+        .sort((a, b) => a.index - b.index)
+        .map(({ backup }) => backup);
+      const retainLast = Math.max(1, Number(available.at(-1)?.retentionPolicy?.retainLast || defaultStorageBackupPolicy().retainLast));
+      const deletable = available.slice(0, Math.max(0, available.length - retainLast));
+      for (const backup of deletable) {
+        backup.status = "deleting";
+        backup.updatedAt = now();
+      }
+      return deletable.map(clone);
+    });
+
+    const deletedBackupIds = [];
+    for (const backup of prunePlan) {
+      try {
+        await this.runtimeProvider.deleteStorageBackup({ backup });
+        await this.store.update((state) => {
+          const current = latestStorageBackupForAccount(state, accountId, backup.id);
+          current.status = "deleted";
+          current.deletedAt = now();
+          current.updatedAt = now();
+          state.audit.push(this.auditEvent({ accountId, workspaceId, type: "storage.backup_deleted", sourceEventId: backup.id }));
+          return true;
+        });
+        deletedBackupIds.push(backup.id);
+      } catch (error) {
+        await this.store.update((state) => {
+          const current = latestStorageBackupForAccount(state, accountId, backup.id);
+          current.status = "delete_failed";
+          current.error = error.message;
+          current.updatedAt = now();
+          this.notify({
+            state,
+            accountId,
+            workspaceId,
+            type: "storage.backup_delete_failed",
+            severity: "error",
+            message: error.message,
+            sourceEventId: backup.id
+          });
+          return true;
+        });
+        throw error;
+      }
+    }
+
+    return { deletedBackupIds };
   }
 
   async stopServer({ accountId, workspaceId, confirm }) {
@@ -752,6 +1020,7 @@ export class OplCloudService {
       account: clone(state.accounts[accountId] ?? { id: accountId, balance: 0, frozen: 0, holds: {} }),
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
+      storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === accountId).map(clone),
       evidenceLedger: (state.evidenceLedger || []).filter((entry) => entry.accountId === accountId).map(clone),
       audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
       notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
@@ -765,6 +1034,7 @@ export class OplCloudService {
     const notifications = (state.notifications || []).filter((event) => !accountId || event.accountId === accountId);
     const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
     const accounts = Object.values(state.accounts).filter((account) => !accountId || account.id === accountId);
+    const storageBackups = (state.storageBackups || []).filter((backup) => !accountId || backup.accountId === accountId);
     const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
     const attentionWorkspaces = workspaces.filter((workspace) =>
       workspace.state === "failed" ||
@@ -815,6 +1085,11 @@ export class OplCloudService {
           error: operation.error,
           updatedAt: operation.updatedAt
         }))
+      },
+      storageBackups: {
+        total: storageBackups.length,
+        available: storageBackups.filter((backup) => backup.status === "available").length,
+        failed: storageBackups.filter((backup) => String(backup.status).endsWith("_failed")).length
       },
       billingPolicy: billingPolicy(this.pricing)
     };

@@ -30,6 +30,7 @@ jobs:
       OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
       OPL_IMAGE_PULL_SECRET_NAME: ${{ vars.OPL_IMAGE_PULL_SECRET_NAME || 'tcr-pull-secret' }}
       OPL_WORKSPACE_STORAGE_CLASS: ${{ vars.OPL_WORKSPACE_STORAGE_CLASS || 'cbs' }}
+      OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: ${{ vars.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS || '' }}
       OPL_CONSOLE_TLS_SECRET_NAME: ${{ vars.OPL_CONSOLE_TLS_SECRET_NAME || 'opl-cloud-console-medopl-cn-tls' }}
       OPL_WORKSPACE_TLS_SECRET_NAME: ${{ vars.OPL_WORKSPACE_TLS_SECRET_NAME || 'opl-cloud-workspace-medopl-cn-tls' }}
       OPL_TLS_SOURCE_NAMESPACE: ${{ vars.OPL_TLS_SOURCE_NAMESPACE || '' }}

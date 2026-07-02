@@ -272,6 +272,109 @@ test("Tencent TKE provider recreates compute from retained PVC after server dest
   }
 });
 
+test("Tencent TKE provider creates a VolumeSnapshot and restores a Workspace PVC from it", async () => {
+  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
+  const calls = [];
+  const provider = new TencentTkeProvider({
+    env: {
+      ...requiredEnv,
+      OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot"
+    },
+    runner: async ({ command, args }) => {
+      calls.push({ command, args });
+      const commandLine = `${command} ${args.join(" ")}`;
+      if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get volumesnapshot/backup-ws-tke202-001 -o json") {
+        return JSON.stringify({
+          apiVersion: "snapshot.storage.k8s.io/v1",
+          kind: "VolumeSnapshot",
+          metadata: {
+            name: "backup-ws-tke202-001",
+            namespace: "opl-cloud",
+            labels: {
+              "oplcloud.cn/workspace-id": "ws-tke202"
+            }
+          },
+          status: {
+            readyToUse: true,
+            boundVolumeSnapshotContentName: "snapcontent-001",
+            restoreSize: "10Gi"
+          }
+        });
+      }
+      return "";
+    },
+    commandExists: () => true,
+    stateRootDir
+  });
+  const workspace = {
+    id: "ws-tke202",
+    ownerAccountId: "pi-alpha",
+    name: "Recreate Lab",
+    packageId: "basic",
+    server: { id: "deployment/opl-ws-tke202", status: "running", billingStatus: "active", spec: "2c4g" },
+    docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
+    disk: { id: "pvc/opl-ws-tke202-data", status: "attached_retained", billingStatus: "active", sizeGb: 10 }
+  };
+
+  try {
+    const backup = await provider.createStorageBackup({
+      workspace,
+      backupId: "backup-ws-tke202-001",
+      retentionPolicy: { name: "daily_7_weekly_4", retainLast: 11 }
+    });
+    const restoredDisk = await provider.restoreStorageBackup({
+      backup,
+      workspaceId: "ws-tke777",
+      workspaceName: "Restored Lab",
+      packagePlan: { id: "basic", diskGb: 10 }
+    });
+    const snapshotManifestPath = join(stateRootDir, "ws-tke202", "backup-ws-tke202-001.volumesnapshot.k8s.json");
+    const restoreManifestPath = join(stateRootDir, "ws-tke777", "restore-backup-ws-tke202-001.pvc.k8s.json");
+
+    assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${snapshotManifestPath}`,
+      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get volumesnapshot/backup-ws-tke202-001 -o json",
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${restoreManifestPath}`
+    ]);
+    assert.deepEqual(backup, {
+      id: "backup-ws-tke202-001",
+      provider: "tencent-tke",
+      status: "available",
+      workspaceId: "ws-tke202",
+      sourcePvc: "opl-ws-tke202-data",
+      snapshotName: "backup-ws-tke202-001",
+      snapshotContentName: "snapcontent-001",
+      restoreSize: "10Gi",
+      retentionPolicy: { name: "daily_7_weekly_4", retainLast: 11 }
+    });
+    assert.deepEqual(restoredDisk, {
+      id: "pvc/opl-ws-tke777-data",
+      status: "restored_retained",
+      billingStatus: "active",
+      sizeGb: 10,
+      mountPath: "/data",
+      storageClass: "cbs",
+      restoredFromBackupId: "backup-ws-tke202-001"
+    });
+
+    const snapshotManifest = JSON.parse(await readFile(snapshotManifestPath, "utf8"));
+    assert.equal(snapshotManifest.kind, "VolumeSnapshot");
+    assert.equal(snapshotManifest.spec.volumeSnapshotClassName, "cbs-snapshot");
+    assert.equal(snapshotManifest.spec.source.persistentVolumeClaimName, "opl-ws-tke202-data");
+
+    const restoreManifest = JSON.parse(await readFile(restoreManifestPath, "utf8"));
+    assert.equal(restoreManifest.kind, "PersistentVolumeClaim");
+    assert.equal(restoreManifest.metadata.name, "opl-ws-tke777-data");
+    assert.deepEqual(restoreManifest.spec.dataSource, {
+      name: "backup-ws-tke202-001",
+      kind: "VolumeSnapshot",
+      apiGroup: "snapshot.storage.k8s.io"
+    });
+  } finally {
+    await rm(stateRootDir, { recursive: true, force: true });
+  }
+});
+
 test("Tencent TKE provider cleans up a partially-created runtime when shared Ingress route registration fails", async () => {
   const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
   const calls = [];

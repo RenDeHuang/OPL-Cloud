@@ -15,6 +15,8 @@
     "restarting_server",
     "destroying_server",
     "server_destroyed_disk_retained",
+    "creating_storage_backup",
+    "restoring_storage_backup",
     "destroying_disk",
     "destroyed",
     "failed",
@@ -25,6 +27,8 @@
     "server_destroy_does_not_destroy_disk",
     "disk_destroy_requires_explicit_confirmation",
     "disk_destroy_is_the_only_action_that_stops_storage_billing",
-    "stable_url_should_survive_restart_or_server_recreation_when_possible"
+    "stable_url_should_survive_restart_or_server_recreation_when_possible",
+    "storage_backup_delete_never_deletes_workspace_storage",
+    "storage_restore_creates_a_new_billable_workspace"
   ]
 }

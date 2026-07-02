@@ -29,6 +29,7 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
   assert.equal(config.data.OPL_WORKSPACE_DOMAIN, "workspace.medopl.cn");
   assert.match(config.data.OPL_CLOUD_IMAGE, /\/opl-cloud:/);
   assert.match(config.data.OPL_WORKSPACE_IMAGE, /\/one-person-lab-app:/);
+  assert.equal(config.data.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS, "cbs-snapshot");
   assert.equal(config.data.TENCENT_DEPLOY_CLUSTER_ID, "cls-xxxxxxxx");
   assert.equal(config.data.TENCENT_TCR_REGISTRY, "registry.example.com");
   assert.equal(config.data.TENCENT_TCR_NAMESPACE, "opl");

@@ -8,6 +8,8 @@
     "workspace.compute_restarted",
     "workspace.compute_recreated",
     "workspace.compute_destroyed",
+    "workspace.storage_backup_created",
+    "workspace.storage_restored",
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
     "workspace.access_token_deleted"

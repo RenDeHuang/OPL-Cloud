@@ -150,6 +150,9 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       "POST /api/workspaces/destroy-server": () => appService.destroyServer(body),
       "POST /api/workspaces/destroy-disk": () => appService.destroyDisk(body),
       "POST /api/workspaces/runtime-status": () => appService.runtimeStatus(body),
+      "POST /api/workspaces/storage-backups": () => appService.createStorageBackup(body),
+      "POST /api/workspaces/restore-storage-backup": () => appService.restoreWorkspaceFromBackup(body),
+      "POST /api/workspaces/prune-storage-backups": () => appService.pruneStorageBackups(body),
       "POST /api/workspaces/reset-token": () => appService.resetWorkspaceToken(body),
       "POST /api/workspaces/delete-token": () => appService.deleteWorkspaceToken(body),
       "POST /api/billing/settle": () => appService.settleBilling(body)

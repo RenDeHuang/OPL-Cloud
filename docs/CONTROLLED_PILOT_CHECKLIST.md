@@ -64,14 +64,15 @@ Pilot boundary:
 - OPL Console controls lifecycle and billing state.
 - OPL Workspace writes application data to mounted persistent storage.
 - Storage destruction is irreversible from OPL Console's perspective.
-- This repository does not yet provide user-facing backup, snapshot restore, point-in-time recovery, or accidental deletion recovery.
-- Any pilot user must be told that storage deletion deletes Workspace data unless an external backup process has been separately arranged.
+- OPL Console can create retained storage backups through Kubernetes `VolumeSnapshot`.
+- OPL Console can restore a backup into a new billable Workspace using a new PVC.
+- Backup retention pruning deletes only snapshot objects and must never delete source or restored PVCs.
+- Pilot users must still be told that explicit storage destruction deletes the active Workspace PVC; recovery depends on an available retained snapshot.
 
 Future GA requirement:
 
-- define snapshot cadence
-- define restore procedure
-- define retention period
+- expose snapshot cadence and retention in the Console UI
+- add restore verification evidence to the production verifier
 - define deletion grace period
 - define user-facing data loss responsibility
 

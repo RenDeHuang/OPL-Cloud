@@ -16,6 +16,7 @@ const REQUIRED_ENV = [
 const REQUIRED_TOOLS = ["kubectl"];
 const SHARED_INGRESS_NAME = "opl-cloud";
 const WORKSPACE_ROUTE_MANIFEST = "shared-ingress-route.k8s.json";
+const VOLUME_SNAPSHOT_API_GROUP = "snapshot.storage.k8s.io";
 const DEFAULT_WORKSPACE_READY_TIMEOUT_MS = 300000;
 const DEFAULT_WORKSPACE_READY_POLL_MS = 5000;
 
@@ -86,7 +87,7 @@ export class TencentTkeProvider {
     this.stateRootDir = stateRootDir;
   }
 
-  async createWorkspaceRuntime({ workspaceId, ownerAccountId = "unknown", workspaceName, packagePlan, token }) {
+  async createWorkspaceRuntime({ workspaceId, ownerAccountId = "unknown", workspaceName, packagePlan, token, restoreFromBackup = null }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
 
@@ -99,7 +100,8 @@ export class TencentTkeProvider {
       ownerAccountId,
       workspaceName,
       packagePlan,
-      token
+      token,
+      restoreFromBackup
     });
     try {
       await this.runKubectl(["apply", "-f", manifestPath]);
@@ -112,7 +114,8 @@ export class TencentTkeProvider {
           workspaceName,
           packagePlan,
           token,
-          slug
+          slug,
+          restoreFromBackup
         })
       });
     } catch (error) {
@@ -128,11 +131,12 @@ export class TencentTkeProvider {
       workspaceName,
       packagePlan,
       token,
-      slug
+      slug,
+      restoreFromBackup
     });
   }
 
-  runtimeFixture({ name, workspaceId, packagePlan, token, slug }) {
+  runtimeFixture({ name, workspaceId, packagePlan, token, slug, restoreFromBackup = null }) {
     return {
       id: workspaceId,
       provider: this.name,
@@ -151,11 +155,12 @@ export class TencentTkeProvider {
       },
       disk: {
         id: `pvc/${name}-data`,
-        status: "attached_retained",
+        status: restoreFromBackup ? "restored_retained" : "attached_retained",
         billingStatus: "active",
         sizeGb: packagePlan.diskGb,
         mountPath: "/data",
-        storageClass: this.env.OPL_WORKSPACE_STORAGE_CLASS
+        storageClass: this.env.OPL_WORKSPACE_STORAGE_CLASS,
+        ...(restoreFromBackup ? { restoredFromBackupId: restoreFromBackup.id } : {})
       },
       url: this.workspaceUrl({ workspaceId, token }),
       slug
@@ -288,6 +293,63 @@ export class TencentTkeProvider {
       ...workspace.disk,
       status: "destroyed",
       billingStatus: "stopped"
+    };
+  }
+
+  async createStorageBackup({ workspace, backupId, retentionPolicy }) {
+    const snapshotName = compactId(backupId);
+    const pvcName = resourceName(workspace.disk.id);
+    const manifestPath = await this.writeStorageBackupManifest({
+      workspace,
+      snapshotName,
+      pvcName,
+      retentionPolicy
+    });
+    await this.runKubectl(["apply", "-f", manifestPath]);
+    const raw = await this.runKubectl(["get", `volumesnapshot/${snapshotName}`, "-o", "json"]);
+    const snapshot = JSON.parse(raw);
+    if (snapshot.status?.readyToUse !== true) {
+      throw new Error(`tencent_tke_storage_backup_not_ready:${snapshotName}`);
+    }
+    return {
+      id: backupId,
+      provider: this.name,
+      status: "available",
+      workspaceId: workspace.id,
+      sourcePvc: pvcName,
+      snapshotName,
+      snapshotContentName: snapshot.status?.boundVolumeSnapshotContentName || "",
+      restoreSize: snapshot.status?.restoreSize || `${workspace.disk.sizeGb}Gi`,
+      retentionPolicy
+    };
+  }
+
+  async restoreStorageBackup({ backup, workspaceId, workspaceName, packagePlan }) {
+    const name = k8sName(workspaceId);
+    const manifestPath = await this.writeStorageRestoreManifest({
+      backup,
+      name,
+      workspaceId,
+      workspaceName,
+      packagePlan
+    });
+    await this.runKubectl(["apply", "-f", manifestPath]);
+    return {
+      id: `pvc/${name}-data`,
+      status: "restored_retained",
+      billingStatus: "active",
+      sizeGb: packagePlan.diskGb,
+      mountPath: "/data",
+      storageClass: this.env.OPL_WORKSPACE_STORAGE_CLASS,
+      restoredFromBackupId: backup.id
+    };
+  }
+
+  async deleteStorageBackup({ backup }) {
+    await this.runKubectl(["delete", `volumesnapshot/${backup.snapshotName || backup.id}`, "--ignore-not-found=true"]);
+    return {
+      ...backup,
+      status: "deleted"
     };
   }
 
@@ -427,6 +489,22 @@ export class TencentTkeProvider {
     return manifestPath;
   }
 
+  async writeStorageBackupManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.workspace.id));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, `${input.snapshotName}.volumesnapshot.k8s.json`);
+    await writeFile(manifestPath, `${JSON.stringify(this.volumeSnapshotManifest(input), null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
+  async writeStorageRestoreManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.workspaceId));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, `restore-${compactId(input.backup.id)}.pvc.k8s.json`);
+    await writeFile(manifestPath, `${JSON.stringify(this.restoredPvcManifest(input), null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
   async writeSharedIngressRouteManifest({ workspaceId, ingress }) {
     const stateDir = join(this.stateRootDir, compactId(workspaceId));
     await mkdir(stateDir, { recursive: true });
@@ -505,7 +583,7 @@ export class TencentTkeProvider {
     return status;
   }
 
-  workspaceManifest({ name, workspaceId, ownerAccountId, workspaceName, packagePlan, token }) {
+  workspaceManifest({ name, workspaceId, ownerAccountId, workspaceName, packagePlan, token, restoreFromBackup = null }) {
     const labels = {
       "app.kubernetes.io/name": "opl-workspace",
       "app.kubernetes.io/instance": name,
@@ -531,11 +609,7 @@ export class TencentTkeProvider {
           apiVersion: "v1",
           kind: "PersistentVolumeClaim",
           metadata: { name: `${name}-data`, labels },
-          spec: {
-            accessModes: ["ReadWriteOnce"],
-            storageClassName: this.env.OPL_WORKSPACE_STORAGE_CLASS,
-            resources: { requests: { storage: `${packagePlan.diskGb}Gi` } }
-          }
+          spec: this.workspacePvcSpec({ packagePlan, restoreFromBackup })
         },
         {
           apiVersion: "apps/v1",
@@ -602,6 +676,67 @@ export class TencentTkeProvider {
           }
         }
       ]
+    };
+  }
+
+  workspacePvcSpec({ packagePlan, restoreFromBackup = null }) {
+    return {
+      accessModes: ["ReadWriteOnce"],
+      storageClassName: this.env.OPL_WORKSPACE_STORAGE_CLASS,
+      resources: { requests: { storage: `${packagePlan.diskGb}Gi` } },
+      ...(restoreFromBackup
+        ? {
+          dataSource: {
+            name: restoreFromBackup.snapshotName || restoreFromBackup.id,
+            kind: "VolumeSnapshot",
+            apiGroup: VOLUME_SNAPSHOT_API_GROUP
+          }
+        }
+        : {})
+    };
+  }
+
+  volumeSnapshotManifest({ workspace, snapshotName, pvcName, retentionPolicy }) {
+    return {
+      apiVersion: `${VOLUME_SNAPSHOT_API_GROUP}/v1`,
+      kind: "VolumeSnapshot",
+      metadata: {
+        name: snapshotName,
+        labels: {
+          "app.kubernetes.io/name": "opl-workspace-backup",
+          "oplcloud.cn/workspace-id": workspace.id,
+          "oplcloud.cn/source-pvc": pvcName,
+          "oplcloud.cn/retention-policy": retentionPolicy?.name || "daily_7_weekly_4"
+        }
+      },
+      spec: {
+        ...(this.env.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS
+          ? { volumeSnapshotClassName: this.env.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS }
+          : {}),
+        source: {
+          persistentVolumeClaimName: pvcName
+        }
+      }
+    };
+  }
+
+  restoredPvcManifest({ backup, name, workspaceId, workspaceName, packagePlan }) {
+    return {
+      apiVersion: "v1",
+      kind: "PersistentVolumeClaim",
+      metadata: {
+        name: `${name}-data`,
+        labels: {
+          "app.kubernetes.io/name": "opl-workspace",
+          "app.kubernetes.io/instance": name,
+          "oplcloud.cn/workspace-id": workspaceId,
+          "oplcloud.cn/restored-from-backup": backup.id
+        },
+        annotations: {
+          "oplcloud.cn/workspace-name": workspaceName
+        }
+      },
+      spec: this.workspacePvcSpec({ packagePlan, restoreFromBackup: backup })
     };
   }
 }
