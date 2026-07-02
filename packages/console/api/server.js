@@ -36,10 +36,10 @@ export const service = createOplCloud({
   }),
   pricing: {
     computeHourly: {
-      basic: numberFromEnv("OPL_BASIC_COMPUTE_HOURLY_CNY", 1),
-      pro: numberFromEnv("OPL_PRO_COMPUTE_HOURLY_CNY", 4)
+      basic: numberFromEnv("OPL_BASIC_COMPUTE_HOURLY_CNY", 0.39),
+      pro: numberFromEnv("OPL_PRO_COMPUTE_HOURLY_CNY", 3.09)
     },
-    storageGbMonth: numberFromEnv("OPL_STORAGE_GB_MONTH_CNY", 0.2),
+    storageGbMonth: numberFromEnv("OPL_STORAGE_GB_MONTH_CNY", 0.36),
     markup: numberFromEnv("OPL_BILLING_MARKUP", 0.2)
   },
   productionReadiness: () => productionReadiness({ env: process.env })

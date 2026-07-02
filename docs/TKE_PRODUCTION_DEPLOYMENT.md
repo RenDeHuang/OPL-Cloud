@@ -72,7 +72,6 @@ Tracked template:
 
 ```text
 deploy/tke/opl-cloud-production.env.example
-.env.production.inputs.example
 ```
 
 Ignored local file for the operator to fill:

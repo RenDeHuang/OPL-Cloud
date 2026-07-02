@@ -13,7 +13,6 @@ const requiredEnv = {
   OPL_INGRESS_CLASS: "qcloud",
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
   OPL_WORKSPACE_STORAGE_CLASS: "cbs",
-  OPL_WORKSPACE_STORAGE_SIZE_GB: "20",
   OPL_WORKSPACE_NODE_SELECTOR_KEY: "medopl.cn/workload",
   OPL_WORKSPACE_NODE_SELECTOR_VALUE: "medopl",
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig"
