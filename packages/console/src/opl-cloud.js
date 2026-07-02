@@ -1,421 +1,23 @@
 import {
-  addMembershipRecord,
-  createOrganizationRecord,
-  createUserRecord,
-  managementSnapshot,
-  resolveWorkspaceOwner
-} from "./management-model.js";
-import {
   availableWorkspacePackages,
   defaultFabricResourceCatalog,
-  fabricCatalogReadiness,
   selectWorkspacePackage
-} from "../../fabric/src/resource-catalog.js";
-import { appendEvidenceReceipt, createEvidenceReceipt } from "../../ledger/src/evidence-ledger.js";
+} from "../../fabric/src/index.js";
+import { clone } from "./services/core-utils.js";
 import {
-  appendTaskEvidenceReceipt,
-  createTaskEvidenceReceipt,
-  filterTaskEvidenceReceipts
-} from "../../ledger/src/task-evidence.js";
-import { billingReconciliationGuard } from "../../ledger/src/billing-reconciliation.js";
+  packageHoldAmount,
+  pricedComputeHourly,
+  pricedStorageGbMonth,
+  pricingMarkup,
+  storageHoldAmount
+} from "./services/pricing-service.js";
+import { BillingService } from "./services/billing-service.js";
+import { ConsoleReadModelService } from "./services/console-read-model-service.js";
+import { LedgerEvidenceService } from "./services/ledger-evidence-service.js";
+import { RuntimeOperationService } from "./services/runtime-operation-service.js";
+import { WorkspaceLifecycleService } from "./services/workspace-lifecycle-service.js";
 
-function now() {
-  return new Date().toISOString();
-}
-
-function stableHash(input) {
-  let hash = 0;
-  for (const char of input) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  }
-  return hash.toString(36).padStart(6, "0");
-}
-
-function makeId(prefix, ...parts) {
-  return `${prefix}-${stableHash(parts.join(":"))}`;
-}
-
-function makeToken(workspaceId, sequence = "initial") {
-  return `share_${stableHash(`${workspaceId}:${sequence}`)}${stableHash(`${sequence}:${workspaceId}`).slice(0, 6)}`;
-}
-
-function money(value) {
-  return Number(value.toFixed(4));
-}
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function ensureBillingCollections(state) {
-  state.resourceUsageLogs ??= [];
-  state.requestUsageLogs ??= [];
-  state.walletTransactions ??= [];
-  state.manualTopups ??= [];
-  state.requestUsageDedup ??= [];
-}
-
-function userIdForAccount(state, accountId) {
-  return Object.values(state.users || {}).find((user) => user.accountId === accountId)?.id || `usr-${accountId}`;
-}
-
-function syncAccountWallet(state, user) {
-  state.accounts ??= {};
-  const accountId = user.accountId;
-  const existing = state.accounts[accountId] || {};
-  const account = {
-    ...existing,
-    id: accountId,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    holds: clone(user.holds || {})
-  };
-  if (existing.totalRecharged !== undefined || Number(user.totalRecharged || 0) > 0) {
-    account.totalRecharged = money(Number(user.totalRecharged || 0));
-  }
-  state.accounts[accountId] = account;
-  return account;
-}
-
-function ensureUserWallet(state, { userId = "", accountId, email = "" } = {}) {
-  if (!accountId) throw new Error("account_required");
-  ensureBillingCollections(state);
-  state.accounts ??= {};
-  state.users ??= {};
-  const existingUser = userId
-    ? state.users[userId]
-    : Object.values(state.users).find((user) => user.accountId === accountId);
-  const id = existingUser?.id || userId || userIdForAccount(state, accountId);
-  const legacyAccount = state.accounts[accountId] || {};
-  state.users[id] ??= {
-    id,
-    email,
-    accountId,
-    role: "pi",
-    status: "active",
-    createdAt: now(),
-    updatedAt: now()
-  };
-  const user = state.users[id];
-  user.accountId ||= accountId;
-  user.email ||= email;
-  user.status ||= "active";
-  user.balance = money(Number(user.balance ?? legacyAccount.balance ?? 0));
-  user.frozen = money(Number(user.frozen ?? legacyAccount.frozen ?? 0));
-  user.holds ??= clone(legacyAccount.holds || {});
-  user.totalRecharged = money(Number(user.totalRecharged ?? legacyAccount.totalRecharged ?? 0));
-  syncAccountWallet(state, user);
-  return user;
-}
-
-function ensureAccount(state, accountId) {
-  return ensureUserWallet(state, { accountId });
-}
-
-function publicWalletUser(user) {
-  if (!user) return null;
-  const { password, passwordHash, ...safe } = clone(user);
-  return safe;
-}
-
-function walletSnapshot(user, accountId) {
-  return {
-    id: user.id,
-    userId: user.id,
-    accountId,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    available: accountAvailable(user),
-    holds: clone(user.holds || {}),
-    totalRecharged: money(Number(user.totalRecharged || 0))
-  };
-}
-
-function accountSnapshotForState(state, accountId) {
-  const user = Object.values(state.users || {}).find((item) => item.accountId === accountId);
-  const account = state.accounts?.[accountId] || { id: accountId, balance: 0, frozen: 0, holds: {} };
-  if (!user) return clone(account);
-  return {
-    ...clone(account),
-    id: accountId,
-    userId: user.id,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    holds: clone(user.holds || {})
-  };
-}
-
-function accountAvailable(account) {
-  return money(account.balance - account.frozen);
-}
-
-function accountHold(account, holdType) {
-  account.holds ??= {};
-  account.holds[holdType] = money(Number(account.holds[holdType] || 0));
-  account.frozen = money(Object.values(account.holds).reduce((total, amount) => total + Number(amount || 0), 0));
-  return account.holds[holdType];
-}
-
-function addHold(account, holdType, amount) {
-  const current = accountHold(account, holdType);
-  account.holds[holdType] = money(current + amount);
-  account.frozen = money(account.frozen + amount);
-}
-
-function releaseHold(account, holdType, amount = accountHold(account, holdType)) {
-  const current = accountHold(account, holdType);
-  const released = money(Math.min(current, Math.max(0, Number(amount || 0))));
-  if (released <= 0) return 0;
-  account.holds[holdType] = money(current - released);
-  account.frozen = money(account.frozen - released);
-  return released;
-}
-
-function debitAccount(account, holdType, amount) {
-  const debit = money(Math.max(0, Number(amount || 0)));
-  if (debit <= 0) return 0;
-  const currentHold = accountHold(account, holdType);
-  const captured = money(Math.min(currentHold, debit));
-  if (captured <= 0) return 0;
-  account.holds[holdType] = money(currentHold - captured);
-  account.frozen = money(Math.max(0, account.frozen - captured));
-  account.balance = money(account.balance - captured);
-  return captured;
-}
-
-function debitAvailableBalance(account, amount) {
-  const debit = money(Math.max(0, Number(amount || 0)));
-  if (debit <= 0) return 0;
-  const captured = money(Math.min(accountAvailable(account), debit));
-  if (captured <= 0) return 0;
-  account.balance = money(account.balance - captured);
-  return captured;
-}
-
-function chargeAccount(account, holdType, amount) {
-  const requested = money(Math.max(0, Number(amount || 0)));
-  const available = debitAvailableBalance(account, requested);
-  const remainingAfterAvailable = money(requested - available);
-  const hold = debitAccount(account, holdType, remainingAfterAvailable);
-  return {
-    requested,
-    available,
-    hold,
-    charged: money(available + hold),
-    unpaid: money(requested - available - hold),
-    usedHold: hold > 0,
-    exhaustedHold: hold > 0 && accountHold(account, holdType) <= 0
-  };
-}
-
-function appendWalletTransaction(state, {
-  user,
-  accountId,
-  workspaceId = "account",
-  type,
-  amount,
-  sourceEventId,
-  ledgerEntryId = "",
-  usageLogId = "",
-  fundingSource = "",
-  balanceBefore,
-  balanceAfter,
-  frozenBefore,
-  frozenAfter,
-  metadata = null
-}) {
-  ensureBillingCollections(state);
-  const transaction = {
-    id: makeId("wallet-tx", user.id, accountId, workspaceId, type, sourceEventId, String(state.walletTransactions.length)),
-    userId: user.id,
-    accountId,
-    workspaceId,
-    type,
-    amount: money(Number(amount || 0)),
-    currency: "CNY",
-    balanceBefore: money(Number(balanceBefore || 0)),
-    balanceAfter: money(Number(balanceAfter || 0)),
-    frozenBefore: money(Number(frozenBefore || 0)),
-    frozenAfter: money(Number(frozenAfter || 0)),
-    sourceEventId,
-    ...(ledgerEntryId ? { ledgerEntryId } : {}),
-    ...(usageLogId ? { usageLogId } : {}),
-    ...(fundingSource ? { fundingSource } : {}),
-    ...(metadata ? { metadata: clone(metadata) } : {}),
-    createdAt: now()
-  };
-  state.walletTransactions.push(transaction);
-  return transaction;
-}
-
-function requestUsageFingerprint({
-  provider = "",
-  model = "",
-  inputTokens = 0,
-  outputTokens = 0,
-  requestedAmount = 0,
-  sourceEventId = ""
-}) {
-  return `fp-${stableHash(JSON.stringify({
-    provider,
-    model,
-    inputTokens: Number(inputTokens || 0),
-    outputTokens: Number(outputTokens || 0),
-    requestedAmount: money(Number(requestedAmount || 0)),
-    sourceEventId
-  }))}`;
-}
-
-function requestQuotaWindowExpired(quota) {
-  const windowSeconds = Number(quota.windowSeconds || 0);
-  if (!windowSeconds || !quota.windowStartedAt) return false;
-  const startedAt = Date.parse(quota.windowStartedAt);
-  if (!Number.isFinite(startedAt)) return false;
-  return Date.now() - startedAt >= windowSeconds * 1000;
-}
-
-function incrementRequestQuota(user, units = 1) {
-  const quota = user.requestQuota;
-  if (!quota) return null;
-  const amount = Number(units || 0);
-  if (!Number.isFinite(amount) || amount <= 0) return clone(quota);
-  quota.used = Number(quota.used || 0);
-  if (quota.limit !== undefined && Number(quota.limit) >= 0 && quota.used + amount > Number(quota.limit)) {
-    throw new Error("request_quota_exceeded");
-  }
-  if (requestQuotaWindowExpired(quota)) {
-    quota.windowUsed = 0;
-    quota.windowStartedAt = now();
-  }
-  if (quota.windowLimit !== undefined) {
-    quota.windowUsed = Number(quota.windowUsed || 0);
-    if (Number(quota.windowLimit) >= 0 && quota.windowUsed + amount > Number(quota.windowLimit)) {
-      throw new Error("request_quota_exceeded");
-    }
-    quota.windowUsed = money(quota.windowUsed + amount);
-    quota.windowStartedAt ||= now();
-  }
-  quota.used = money(quota.used + amount);
-  return clone(quota);
-}
-
-function latestWorkspaceForAccount(state, accountId, workspaceId) {
-  const workspace = state.workspaces[workspaceId];
-  if (!workspace || workspace.ownerAccountId !== accountId) {
-    throw new Error("workspace_not_found");
-  }
-  return workspace;
-}
-
-function workspaceBySlug(state, slug) {
-  return Object.values(state.workspaces).find((workspace) => workspace.slug === slug);
-}
-
-export function storageHoldAmount({ packagePlan, pricing }) {
-  return packageHoldAmount({ packagePlan, pricing }).storage;
-}
-
-function pricingMarkup(pricing) {
-  return pricing.markup ?? 0.2;
-}
-
-function computeHourlyBase({ packagePlan, pricing }) {
-  return pricing.computeHourly?.[packagePlan.id] ?? pricing.serverHourly?.[packagePlan.id] ?? 0;
-}
-
-function storageGbMonthBase(pricing) {
-  return pricing.storageGbMonth ?? pricing.diskGbMonth ?? 0.2;
-}
-
-function pricedComputeHourly({ packagePlan, pricing }) {
-  return money(computeHourlyBase({ packagePlan, pricing }) * (1 + pricingMarkup(pricing)));
-}
-
-function pricedStorageGbMonth(pricing) {
-  return money(storageGbMonthBase(pricing) * (1 + pricingMarkup(pricing)));
-}
-
-export function packageHoldAmount({ packagePlan, pricing }) {
-  const compute = money(pricedComputeHourly({ packagePlan, pricing }) * 24 * 7);
-  const storage = money((packagePlan.diskGb * pricedStorageGbMonth(pricing) / 30) * 7);
-  return {
-    compute,
-    storage,
-    total: money(compute + storage)
-  };
-}
-
-function hourlyStorageAmount({ packagePlan, pricing, hours }) {
-  const gbMonth = storageGbMonthBase(pricing);
-  const markup = pricingMarkup(pricing);
-  return money((packagePlan.diskGb * gbMonth * (1 + markup) / 30 / 24) * hours);
-}
-
-function storageGbHourPrice(pricing) {
-  return money(storageGbMonthBase(pricing) * (1 + pricingMarkup(pricing)) / 30 / 24);
-}
-
-function hourlyComputeAmount({ packagePlan, pricing, hours }) {
-  const hourly = computeHourlyBase({ packagePlan, pricing });
-  const markup = pricingMarkup(pricing);
-  return money(hourly * (1 + markup) * hours);
-}
-
-function billableHours(hours) {
-  const value = Number(hours);
-  if (!Number.isFinite(value) || value <= 0) throw new Error("positive_hours_required");
-  return Math.ceil(value);
-}
-
-function billingPolicy(pricing) {
-  return {
-    currency: "CNY",
-    markup: pricingMarkup(pricing),
-    prepaidHoldDays: 7,
-    minimumBillableHours: 1,
-    billingCadence: "hourly",
-    fundingOrder: ["available_balance", "frozen_hold"],
-    computeHoldExhaustion: "stop_compute",
-    storageHoldExhaustion: "freeze_workspace_until_top_up_or_storage_destroy",
-    storageDestroyConfirmation: "required"
-  };
-}
-
-function storageDestroyed(workspace) {
-  return workspace?.state === "destroyed" || workspace?.disk?.status === "destroyed";
-}
-
-function defaultStorageBackupPolicy() {
-  return {
-    name: "daily_7_weekly_4",
-    retainDaily: 7,
-    retainWeekly: 4,
-    retainLast: 11
-  };
-}
-
-function backupRetentionPolicy(inputPolicy = null) {
-  return {
-    ...defaultStorageBackupPolicy(),
-    ...(inputPolicy || {})
-  };
-}
-
-function latestStorageBackupForAccount(state, accountId, backupId) {
-  const backup = (state.storageBackups || []).find((item) => item.id === backupId && item.accountId === accountId);
-  if (!backup) throw new Error("storage_backup_not_found");
-  return backup;
-}
-
-function latestBillingReconciliationReport(state) {
-  return (state.billingReconciliationReports || []).at(-1) || null;
-}
-
-function operatorNotificationInScope(event, accountId) {
-  if (!accountId) return true;
-  if (event.accountId === accountId) return true;
-  return event.accountId === "billing" && event.workspaceId === "billing";
-}
+export { packageHoldAmount, storageHoldAmount };
 
 export function createOplCloud({ store, runtimeProvider, pricing, productionReadiness = null, fabricCatalog = defaultFabricResourceCatalog() }) {
   return new OplCloudService({ store, runtimeProvider, pricing, productionReadiness, fabricCatalog });
@@ -429,6 +31,11 @@ export class OplCloudService {
     this.productionReadinessCheck = productionReadiness;
     this.fabricCatalog = clone(fabricCatalog);
     this.runtimeOperationSequence = 0;
+    this.runtimeOperations = new RuntimeOperationService(this);
+    this.ledgerEvidence = new LedgerEvidenceService(this);
+    this.billing = new BillingService(this);
+    this.workspaceLifecycle = new WorkspaceLifecycleService(this);
+    this.consoleReadModel = new ConsoleReadModelService(this);
   }
 
   resourceCatalog() {
@@ -452,1659 +59,187 @@ export class OplCloudService {
     }));
   }
 
-  async creditAccount({ accountId, amount, reason, operatorUserId = "", operatorAccountId = "" }) {
-    if (!accountId) throw new Error("account_required");
-    const credit = Number(amount);
-    if (!Number.isFinite(credit) || credit <= 0) throw new Error("positive_credit_required");
-
-    return this.store.update((state) => {
-      ensureBillingCollections(state);
-      const account = ensureAccount(state, accountId);
-      const sourceEventId = reason || "owner_credit";
-      const balanceBefore = money(Number(account.balance || 0));
-      const frozenBefore = money(Number(account.frozen || 0));
-      account.balance = money(account.balance + credit);
-      account.totalRecharged = money(Number(account.totalRecharged || 0) + credit);
-      syncAccountWallet(state, account);
-      const entry = this.ledgerEntry({ state,
-        workspaceId: "account",
-        accountId,
-        type: "credit",
-        amount: credit,
-        sourceEventId,
-        metadata: {
-          operatorUserId,
-          operatorAccountId
-        }
-      });
-      state.billingLedger.push(entry);
-      const transaction = appendWalletTransaction(state, {
-        user: account,
-        accountId,
-        type: "credit",
-        amount: credit,
-        sourceEventId,
-        ledgerEntryId: entry.id,
-        balanceBefore,
-        balanceAfter: account.balance,
-        frozenBefore,
-        frozenAfter: account.frozen,
-        metadata: {
-          operatorUserId,
-          operatorAccountId
-        }
-      });
-      const topup = {
-        id: makeId("manual-topup", account.id, accountId, sourceEventId, String(state.manualTopups.length)),
-        operatorUserId,
-        operatorAccountId,
-        targetUserId: account.id,
-        targetAccountId: accountId,
-        amount: money(credit),
-        currency: "CNY",
-        reason: sourceEventId,
-        status: "completed",
-        balanceBefore,
-        balanceAfter: money(Number(account.balance || 0)),
-        ledgerEntryId: entry.id,
-        walletTransactionId: transaction.id,
-        createdAt: now()
-      };
-      state.manualTopups.push(topup);
-      state.audit.push(this.auditEvent({ accountId, type: "account.credit_granted", sourceEventId: topup.id }));
-      return accountSnapshotForState(state, accountId);
-    });
+  async creditAccount(...args) {
+    return this.billing.creditAccount(...args);
   }
 
-  async createOrganization(input) {
-    return this.store.update((state) => {
-      const organization = createOrganizationRecord(state, input);
-      ensureAccount(state, organization.billingAccountId);
-      state.audit.push(this.auditEvent({
-        accountId: organization.billingAccountId,
-        type: "organization.created",
-        sourceEventId: organization.id
-      }));
-      return organization;
-    });
+  async createOrganization(...args) {
+    return this.consoleReadModel.createOrganization(...args);
   }
 
-  async createUser(input) {
-    return this.store.update((state) => {
-      const user = createUserRecord(state, input);
-      state.audit.push(this.auditEvent({
-        accountId: "management",
-        type: "user.created",
-        sourceEventId: user.id
-      }));
-      return user;
-    });
+  async createUser(...args) {
+    return this.consoleReadModel.createUser(...args);
   }
 
-  async addOrganizationMember(input) {
-    return this.store.update((state) => {
-      const membership = addMembershipRecord(state, input);
-      const organization = state.organizations[membership.organizationId];
-      state.audit.push(this.auditEvent({
-        accountId: organization.billingAccountId,
-        type: "organization.member_added",
-        sourceEventId: membership.id
-      }));
-      return membership;
-    });
+  async addOrganizationMember(...args) {
+    return this.consoleReadModel.addOrganizationMember(...args);
   }
 
-  async managementState({ organizationId }) {
-    const state = await this.store.read();
-    const organization = state.organizations?.[organizationId];
-    if (!organization) throw new Error("organization_not_found");
-    const billingAccount = state.accounts[organization.billingAccountId] ?? {
-      id: organization.billingAccountId,
-      balance: 0,
-      frozen: 0,
-      holds: {}
-    };
-    const workspaces = Object.values(state.workspaces)
-      .filter((workspace) => workspace.owner?.organizationId === organizationId || workspace.ownerAccountId === organization.billingAccountId);
-    return managementSnapshot(state, {
-      organizationId,
-      packages: this.packages(),
-      account: billingAccount,
-      workspaces
-    });
+  async managementState(...args) {
+    return this.consoleReadModel.managementState(...args);
   }
 
-  async createWorkspace({ accountId, organizationId, userId, workspaceName, packageId }) {
-    const packagePlan = this.getPackage(packageId);
-    const hold = packageHoldAmount({ packagePlan, pricing: this.pricing });
-    let workspaceId = null;
-    let token = null;
-    let owner = null;
-
-    const reservation = await this.store.update((state) => {
-      this.assertBillingReconciliationAllowsProvisioning(state);
-      const resolvedOwner = resolveWorkspaceOwner(state, { accountId, organizationId, userId });
-      accountId = resolvedOwner.accountId;
-      const account = ensureUserWallet(state, {
-        accountId,
-        userId: resolvedOwner.owner?.userId || userId
-      });
-      owner = {
-        ...resolvedOwner.owner,
-        userId: account.id
-      };
-      workspaceId = makeId("ws", accountId, workspaceName, packageId);
-      token = makeToken(workspaceId);
-      if (state.workspaces[workspaceId]) return { existing: true, workspace: clone(state.workspaces[workspaceId]) };
-      if (accountAvailable(account) < hold.total) {
-        throw new Error("insufficient_prepaid_hold_balance");
-      }
-
-      addHold(account, "compute", hold.compute);
-      addHold(account, "storage", hold.storage);
-      syncAccountWallet(state, account);
-      state.billingLedger.push(this.ledgerEntry({ state,
-        workspaceId,
-        accountId,
-        type: "compute_hold",
-        amount: hold.compute,
-        sourceEventId: "open_workspace",
-        holdType: "compute",
-        metadata: {
-          holdDays: 7,
-          baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
-          markup: pricingMarkup(this.pricing)
-        }
-      }));
-      state.billingLedger.push(this.ledgerEntry({ state,
-        workspaceId,
-        accountId,
-        type: "storage_hold",
-        amount: hold.storage,
-        sourceEventId: "open_workspace",
-        holdType: "storage",
-        metadata: {
-          holdDays: 7,
-          baseGbMonth: storageGbMonthBase(this.pricing),
-          markup: pricingMarkup(this.pricing)
-        }
-      }));
-
-      const operation = this.startRuntimeOperation({ state, accountId, workspaceId, operationType: "create_workspace" });
-      return { existing: false, operationId: operation.id };
-    });
-
-    if (reservation.existing) return reservation.workspace;
-
-    let runtime;
-    try {
-      runtime = await this.runtimeProvider.createWorkspaceRuntime({
-        workspaceId,
-        ownerAccountId: accountId,
-        workspaceName,
-        packagePlan,
-        token
-      });
-    } catch (error) {
-      await this.recordCreateWorkspaceFailure({ accountId, workspaceId, operationId: reservation.operationId, error });
-      throw error;
-    }
-
-    return this.store.update((state) => {
-      const account = ensureUserWallet(state, { accountId, userId: owner?.userId });
-      const operation = state.runtimeOperations.find((item) => item.id === reservation.operationId);
-      if (operation) this.finishRuntimeOperation(operation, "succeeded");
-
-      const workspace = {
-        id: workspaceId,
-        ownerAccountId: accountId,
-        ownerUserId: account.id,
-        owner,
-        name: workspaceName,
-        packageId,
-        state: "running",
-        provider: runtime.provider,
-        server: runtime.server,
-        docker: runtime.docker,
-        disk: runtime.disk,
-        slug: runtime.slug,
-        url: runtime.url,
-        access: {
-          mode: "long_lived_url_token",
-          requiresLogin: false,
-          token,
-          tokenStatus: "active",
-          rotationPolicy: "reset_or_delete_on_leak"
-        },
-        billing: {
-          holdPolicy: "seven_day_prepaid",
-          minimumBillableHours: 1,
-          priceMarkup: pricingMarkup(this.pricing)
-        },
-        createdAt: now(),
-        updatedAt: now()
-      };
-      state.workspaces[workspaceId] = workspace;
-      const firstHourEntries = this.debitWorkspaceUsage({
-        state,
-        account,
-        workspace,
-        packagePlan,
-        hours: 1,
-        sourceEventId: "open_workspace_initial_hour",
-        billableHours: 1
-      });
-      state.audit.push(this.auditEvent({ accountId, workspaceId, type: "workspace.created", sourceEventId: workspaceId }));
-      state.audit.push(this.auditEvent({
-        accountId,
-        workspaceId,
-        type: "billing.first_hour_charged",
-        sourceEventId: "open_workspace_initial_hour"
-      }));
-      this.recordEvidence({
-        state,
-        type: "workspace.created",
-        accountId,
-        workspace,
-        packagePlan,
-        billingRefs: [
-          ...state.billingLedger.filter((entry) =>
-            entry.accountId === accountId &&
-            entry.workspaceId === workspaceId &&
-            ["compute_hold", "storage_hold"].includes(entry.type)
-          ),
-          ...firstHourEntries
-        ],
-        continuation: {
-          action: "open_workspace_url",
-          uri: workspace.url
-        }
-      });
-      return {
-        ...clone(workspace),
-        initialBilling: firstHourEntries.map(clone)
-      };
-    });
+  async createWorkspace(...args) {
+    return this.workspaceLifecycle.createWorkspace(...args);
   }
 
-  async createStorageBackup({ accountId, workspaceId, reason = "manual", retentionPolicy = null }) {
-    if (typeof this.runtimeProvider.createStorageBackup !== "function") throw new Error("storage_backup_unsupported");
-    return this.runRuntimeOperation({
-      accountId,
-      workspaceId,
-      operationType: "create_storage_backup",
-      mutate: async (state, workspace, operation) => {
-        if (storageDestroyed(workspace)) throw new Error("workspace_storage_destroyed");
-        state.storageBackups ??= [];
-        const policy = backupRetentionPolicy(retentionPolicy);
-        const backupId = makeId("backup", accountId, workspaceId, reason, String(Date.now()), String(state.storageBackups.length));
-        const providerBackup = await this.runtimeProvider.createStorageBackup({
-          workspace: clone(workspace),
-          backupId,
-          retentionPolicy: policy
-        });
-        const backup = {
-          ...providerBackup,
-          id: backupId,
-          accountId,
-          workspaceId,
-          status: providerBackup.status || "available",
-          retentionPolicy: policy,
-          reason,
-          createdAt: now(),
-          updatedAt: now()
-        };
-        state.storageBackups.push(backup);
-        this.finishRuntimeOperation(operation, "succeeded");
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "storage.backup_created", sourceEventId: backupId }));
-        this.recordEvidence({
-          state,
-          type: "workspace.storage_backup_created",
-          accountId,
-          workspace,
-          continuation: { action: "restore_workspace_from_backup", backupId }
-        });
-        return clone(backup);
-      }
-    });
+  async createStorageBackup(...args) {
+    return this.workspaceLifecycle.createStorageBackup(...args);
   }
 
-  async restoreWorkspaceFromBackup({ accountId, backupId, workspaceName, packageId }) {
-    if (typeof this.runtimeProvider.createWorkspaceRuntime !== "function") throw new Error("runtime_provider_missing_create");
-    const packagePlan = this.getPackage(packageId);
-    const hold = packageHoldAmount({ packagePlan, pricing: this.pricing });
-    let workspaceId = null;
-    let token = null;
-    let backupSnapshot = null;
-
-    const reservation = await this.store.update((state) => {
-      this.assertBillingReconciliationAllowsProvisioning(state);
-      const backup = latestStorageBackupForAccount(state, accountId, backupId);
-      if (backup.status !== "available") throw new Error("storage_backup_not_available");
-      backupSnapshot = clone(backup);
-      workspaceId = makeId("ws", accountId, workspaceName, packageId, backupId);
-      token = makeToken(workspaceId);
-      const account = ensureAccount(state, accountId);
-      if (state.workspaces[workspaceId]) return { existing: true, workspace: clone(state.workspaces[workspaceId]) };
-      if (accountAvailable(account) < hold.total) {
-        throw new Error("insufficient_prepaid_hold_balance");
-      }
-
-      addHold(account, "compute", hold.compute);
-      addHold(account, "storage", hold.storage);
-      syncAccountWallet(state, account);
-      state.billingLedger.push(this.ledgerEntry({ state,
-        workspaceId,
-        accountId,
-        type: "compute_hold",
-        amount: hold.compute,
-        sourceEventId: "restore_workspace_from_backup",
-        holdType: "compute",
-        metadata: {
-          holdDays: 7,
-          backupId,
-          baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
-          markup: pricingMarkup(this.pricing)
-        }
-      }));
-      state.billingLedger.push(this.ledgerEntry({ state,
-        workspaceId,
-        accountId,
-        type: "storage_hold",
-        amount: hold.storage,
-        sourceEventId: "restore_workspace_from_backup",
-        holdType: "storage",
-        metadata: {
-          holdDays: 7,
-          backupId,
-          baseGbMonth: storageGbMonthBase(this.pricing),
-          markup: pricingMarkup(this.pricing)
-        }
-      }));
-      const operation = this.startRuntimeOperation({ state, accountId, workspaceId, operationType: "restore_workspace_from_backup" });
-      return { existing: false, operationId: operation.id };
-    });
-
-    if (reservation.existing) return reservation.workspace;
-
-    let runtime;
-    try {
-      runtime = await this.runtimeProvider.createWorkspaceRuntime({
-        workspaceId,
-        ownerAccountId: accountId,
-        workspaceName,
-        packagePlan,
-        token,
-        restoreFromBackup: backupSnapshot
-      });
-    } catch (error) {
-      await this.recordCreateWorkspaceFailure({ accountId, workspaceId, operationId: reservation.operationId, error });
-      throw error;
-    }
-
-    return this.store.update((state) => {
-      const account = ensureAccount(state, accountId);
-      const backup = latestStorageBackupForAccount(state, accountId, backupId);
-      const operation = state.runtimeOperations.find((item) => item.id === reservation.operationId);
-      if (operation) this.finishRuntimeOperation(operation, "succeeded");
-
-      const workspace = {
-        id: workspaceId,
-        ownerAccountId: accountId,
-        ownerUserId: account.id,
-        name: workspaceName,
-        packageId,
-        state: "running",
-        provider: runtime.provider,
-        server: runtime.server,
-        docker: runtime.docker,
-        disk: {
-          ...runtime.disk,
-          restoredFromBackupId: backupId
-        },
-        slug: runtime.slug,
-        url: runtime.url,
-        restoredFromBackupId: backupId,
-        storageRestore: {
-          backupId,
-          sourceWorkspaceId: backup.workspaceId,
-          restoredAt: now()
-        },
-        access: {
-          mode: "long_lived_url_token",
-          requiresLogin: false,
-          token,
-          tokenStatus: "active",
-          rotationPolicy: "reset_or_delete_on_leak"
-        },
-        billing: {
-          holdPolicy: "seven_day_prepaid",
-          minimumBillableHours: 1,
-          priceMarkup: pricingMarkup(this.pricing)
-        },
-        createdAt: now(),
-        updatedAt: now()
-      };
-      state.workspaces[workspaceId] = workspace;
-      backup.restoreCount = Number(backup.restoreCount || 0) + 1;
-      backup.lastRestoredAt = workspace.storageRestore.restoredAt;
-      backup.restoredWorkspaceIds = [...new Set([...(backup.restoredWorkspaceIds || []), workspaceId])];
-      backup.updatedAt = now();
-      const firstHourEntries = this.debitWorkspaceUsage({
-        state,
-        account,
-        workspace,
-        packagePlan,
-        hours: 1,
-        sourceEventId: "restore_workspace_initial_hour",
-        billableHours: 1
-      });
-      state.audit.push(this.auditEvent({ accountId, workspaceId, type: "workspace.restored_from_backup", sourceEventId: backupId }));
-      this.recordEvidence({
-        state,
-        type: "workspace.storage_restored",
-        accountId,
-        workspace,
-        packagePlan,
-        billingRefs: firstHourEntries,
-        continuation: {
-          action: "open_workspace_url",
-          uri: workspace.url,
-          backupId
-        }
-      });
-      return {
-        ...clone(workspace),
-        initialBilling: firstHourEntries.map(clone)
-      };
-    });
+  async restoreWorkspaceFromBackup(...args) {
+    return this.workspaceLifecycle.restoreWorkspaceFromBackup(...args);
   }
 
-  async pruneStorageBackups({ accountId, workspaceId }) {
-    if (typeof this.runtimeProvider.deleteStorageBackup !== "function") throw new Error("storage_backup_delete_unsupported");
-    const prunePlan = await this.store.update((state) => {
-      latestWorkspaceForAccount(state, accountId, workspaceId);
-      state.storageBackups ??= [];
-      const available = state.storageBackups
-        .map((backup, index) => ({ backup, index }))
-        .filter(({ backup }) => backup.accountId === accountId && backup.workspaceId === workspaceId && backup.status === "available")
-        .sort((a, b) => a.index - b.index)
-        .map(({ backup }) => backup);
-      const retainLast = Math.max(1, Number(available.at(-1)?.retentionPolicy?.retainLast || defaultStorageBackupPolicy().retainLast));
-      const deletable = available.slice(0, Math.max(0, available.length - retainLast));
-      for (const backup of deletable) {
-        backup.status = "deleting";
-        backup.updatedAt = now();
-      }
-      return deletable.map(clone);
-    });
-
-    const deletedBackupIds = [];
-    for (const backup of prunePlan) {
-      try {
-        await this.runtimeProvider.deleteStorageBackup({ backup });
-        await this.store.update((state) => {
-          const current = latestStorageBackupForAccount(state, accountId, backup.id);
-          current.status = "deleted";
-          current.deletedAt = now();
-          current.updatedAt = now();
-          state.audit.push(this.auditEvent({ accountId, workspaceId, type: "storage.backup_deleted", sourceEventId: backup.id }));
-          return true;
-        });
-        deletedBackupIds.push(backup.id);
-      } catch (error) {
-        await this.store.update((state) => {
-          const current = latestStorageBackupForAccount(state, accountId, backup.id);
-          current.status = "delete_failed";
-          current.error = error.message;
-          current.updatedAt = now();
-          this.notify({
-            state,
-            accountId,
-            workspaceId,
-            type: "storage.backup_delete_failed",
-            severity: "error",
-            message: error.message,
-            sourceEventId: backup.id
-          });
-          return true;
-        });
-        throw error;
-      }
-    }
-
-    return { deletedBackupIds };
+  async pruneStorageBackups(...args) {
+    return this.workspaceLifecycle.pruneStorageBackups(...args);
   }
 
-  async stopServer({ accountId, workspaceId, confirm }) {
-    if (confirm !== true) throw new Error("server_stop_confirmation_required");
-    return this.runRuntimeOperation({
-      accountId,
-      workspaceId,
-      operationType: "stop_server",
-      mutate: async (state, workspace, operation) => {
-        workspace.state = "stopping_server";
-        workspace.server = await this.runtimeProvider.stopServer({ workspace: clone(workspace) });
-        this.finishRuntimeOperation(operation, "succeeded");
-        workspace.state = workspace.disk.billingStatus === "hold_exhausted"
-          ? "stopped_storage_hold_exhausted"
-          : "stopped_server_disk_retained";
-        workspace.disk.status = workspace.disk.status === "destroyed" ? "destroyed" : "attached_retained";
-        workspace.updatedAt = now();
-        state.billingLedger.push(this.ledgerEntry({ state,
-          workspaceId,
-          accountId,
-          type: "server_billing_stopped",
-          amount: 0,
-          sourceEventId: "stop_server"
-        }));
-        this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "stop_server" });
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "server.stopped", sourceEventId: "stop_server" }));
-        this.recordEvidence({
-          state,
-          type: "workspace.compute_stopped",
-          accountId,
-          workspace,
-          continuation: { action: "restart_workspace_compute" }
-        });
-        return clone(workspace);
-      }
-    });
+  async stopServer(...args) {
+    return this.workspaceLifecycle.stopServer(...args);
   }
 
-  async restartServer({ accountId, workspaceId }) {
-    const operationType = await this.restartOperationType({ accountId, workspaceId });
-    return this.runRuntimeOperation({
-      accountId,
-      workspaceId,
-      operationType,
-      prepare: (state, workspace) => {
-        const packagePlan = this.getPackage(workspace.packageId);
-        const account = ensureAccount(state, accountId);
-        const requiredHold = packageHoldAmount({ packagePlan, pricing: this.pricing });
-        this.ensureHold({ state, account, accountId, workspaceId, holdType: "compute", requiredAmount: requiredHold.compute, sourceEventId: "resume_workspace" });
-        this.ensureHold({ state, account, accountId, workspaceId, holdType: "storage", requiredAmount: requiredHold.storage, sourceEventId: "resume_workspace" });
-      },
-      mutate: async (state, workspace, operation) => {
-        const recreate = workspace.server.status === "destroyed" || workspace.state === "server_destroyed_disk_retained";
-        workspace.state = recreate ? "recreating_server" : "restarting_server";
-        workspace.server = recreate
-          ? await this.runtimeProvider.recreateServer({ workspace: clone(workspace) })
-          : await this.runtimeProvider.restartServer({ workspace: clone(workspace) });
-        this.finishRuntimeOperation(operation, "succeeded");
-        workspace.docker.status = "running";
-        workspace.disk.status = "attached_retained";
-        workspace.disk.billingStatus = "active";
-        workspace.state = "running";
-        workspace.updatedAt = now();
-        this.debitWorkspaceUsage({
-          state,
-          account: ensureAccount(state, accountId),
-          workspace,
-          packagePlan: this.getPackage(workspace.packageId),
-          hours: 1,
-          sourceEventId: "resume_workspace_initial_hour",
-          billableHours: 1
-        });
-        state.audit.push(this.auditEvent({
-          accountId,
-          workspaceId,
-          type: recreate ? "server.recreated" : "server.restarted",
-          sourceEventId: operationType
-        }));
-        this.recordEvidence({
-          state,
-          type: recreate ? "workspace.compute_recreated" : "workspace.compute_restarted",
-          accountId,
-          workspace,
-          continuation: { action: "open_workspace_url", uri: workspace.url }
-        });
-        return clone(workspace);
-      }
-    });
+  async restartServer(...args) {
+    return this.workspaceLifecycle.restartServer(...args);
   }
 
-  async restartOperationType({ accountId, workspaceId }) {
-    const state = await this.store.read();
-    const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-    return workspace.server.status === "destroyed" || workspace.state === "server_destroyed_disk_retained"
-      ? "recreate_server"
-      : "restart_server";
+  async restartOperationType(...args) {
+    return this.workspaceLifecycle.restartOperationType(...args);
   }
 
-  async destroyServer({ accountId, workspaceId, confirm }) {
-    if (confirm !== true) throw new Error("server_destroy_confirmation_required");
-    return this.runRuntimeOperation({
-      accountId,
-      workspaceId,
-      operationType: "destroy_server",
-      mutate: async (state, workspace, operation) => {
-        workspace.state = "destroying_server";
-        workspace.server = await this.runtimeProvider.destroyServer({ workspace: clone(workspace) });
-        this.finishRuntimeOperation(operation, "succeeded");
-        workspace.docker.status = "destroyed";
-        workspace.disk.status = workspace.disk.status === "destroyed" ? "destroyed" : "detached_retained";
-        workspace.state = workspace.disk.status === "destroyed" ? "destroyed" : "server_destroyed_disk_retained";
-        workspace.updatedAt = now();
-        state.billingLedger.push(this.ledgerEntry({ state,
-          workspaceId,
-          accountId,
-          type: "server_destroyed",
-          amount: 0,
-          sourceEventId: "destroy_server"
-        }));
-        this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "destroy_server" });
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "server.destroyed", sourceEventId: "destroy_server" }));
-        this.recordEvidence({
-          state,
-          type: "workspace.compute_destroyed",
-          accountId,
-          workspace,
-          continuation: { action: "restart_workspace_compute_from_retained_storage" }
-        });
-        return clone(workspace);
-      }
-    });
+  async destroyServer(...args) {
+    return this.workspaceLifecycle.destroyServer(...args);
   }
 
-  async destroyDisk({ accountId, workspaceId, confirmDataLoss }) {
-    if (confirmDataLoss !== true) throw new Error("disk_destroy_confirmation_required");
-    return this.runRuntimeOperation({
-      accountId,
-      workspaceId,
-      operationType: "destroy_disk",
-      mutate: async (state, workspace, operation) => {
-        workspace.state = "destroying_disk";
-        if (workspace.server.status !== "destroyed") {
-          workspace.server = await this.runtimeProvider.destroyServer({ workspace: clone(workspace) });
-          workspace.docker.status = "destroyed";
-          workspace.disk.status = workspace.disk.status === "destroyed" ? "destroyed" : "detached_retained";
-        }
-        workspace.disk = await this.runtimeProvider.destroyDisk({ workspace: clone(workspace) });
-        this.finishRuntimeOperation(operation, "succeeded");
-        workspace.server.status = "destroyed";
-        workspace.server.billingStatus = "stopped";
-        workspace.docker.status = "destroyed";
-        workspace.access.tokenStatus = "unavailable";
-        workspace.state = "destroyed";
-        workspace.updatedAt = now();
-        state.billingLedger.push(this.ledgerEntry({ state,
-          workspaceId,
-          accountId,
-          type: "storage_destroyed",
-          amount: 0,
-          sourceEventId: "destroy_disk"
-        }));
-        this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "destroy_disk" });
-        this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "storage", sourceEventId: "destroy_disk" });
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "disk.destroyed", sourceEventId: "destroy_disk" }));
-        this.recordEvidence({
-          state,
-          type: "workspace.storage_destroyed",
-          accountId,
-          workspace,
-          continuation: { action: "workspace_deleted" }
-        });
-        return clone(workspace);
-      }
-    });
+  async destroyDisk(...args) {
+    return this.workspaceLifecycle.destroyDisk(...args);
   }
 
-  async resetWorkspaceToken({ accountId, workspaceId }) {
-    return this.store.update((state) => {
-      const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-      if (storageDestroyed(workspace)) throw new Error("workspace_storage_destroyed");
-      workspace.access.token = makeToken(workspaceId, `reset-${Date.now()}`);
-      workspace.access.tokenStatus = "active";
-      workspace.url = this.runtimeProvider.workspaceUrl({
-        workspaceId: workspace.id,
-        slug: workspace.slug,
-        token: workspace.access.token
-      });
-      workspace.updatedAt = now();
-      state.billingLedger.push(this.ledgerEntry({ state, workspaceId, accountId, type: "token_reset", amount: 0, sourceEventId: "reset_token" }));
-      this.recordEvidence({
-        state,
-        type: "workspace.access_token_reset",
-        accountId,
-        workspace,
-        continuation: { action: "open_workspace_url", uri: workspace.url }
-      });
-      return clone(workspace);
-    });
+  async resetWorkspaceToken(...args) {
+    return this.workspaceLifecycle.resetWorkspaceToken(...args);
   }
 
-  async deleteWorkspaceToken({ accountId, workspaceId }) {
-    return this.store.update((state) => {
-      const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-      workspace.access.tokenStatus = storageDestroyed(workspace) ? "unavailable" : "deleted";
-      workspace.updatedAt = now();
-      state.billingLedger.push(this.ledgerEntry({ state, workspaceId, accountId, type: "token_deleted", amount: 0, sourceEventId: "delete_token" }));
-      this.recordEvidence({
-        state,
-        type: "workspace.access_token_deleted",
-        accountId,
-        workspace,
-        continuation: { action: "reset_workspace_token" }
-      });
-      return clone(workspace);
-    });
+  async deleteWorkspaceToken(...args) {
+    return this.workspaceLifecycle.deleteWorkspaceToken(...args);
   }
 
-  async settleBilling({ accountId, workspaceId, hours = 1, sourceEventId = "billing_tick" }) {
-    const requestedBillHours = billableHours(hours);
-    let autoStopRequested = false;
-
-    const settlement = await this.store.update((state) => {
-      const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-      const account = ensureAccount(state, accountId);
-      const packagePlan = this.getPackage(workspace.packageId);
-      const existingEntries = this.existingSettlementEntries({ state, accountId, workspaceId, sourceEventId });
-      if (existingEntries.length > 0) {
-        return {
-          entries: existingEntries.map(clone),
-          account: accountSnapshotForState(state, accountId)
-        };
-      }
-      const entries = this.debitWorkspaceUsage({
-        state,
-        account,
-        workspace,
-        packagePlan,
-        hours: requestedBillHours,
-        sourceEventId,
-        billableHours: requestedBillHours
-      });
-      autoStopRequested = entries.some((entry) => entry.type === "compute_auto_stopped");
-      if (entries.length > 0) {
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "billing.settled", sourceEventId }));
-      }
-      return {
-        entries: entries.map(clone),
-        account: accountSnapshotForState(state, accountId)
-      };
-    });
-    if (autoStopRequested) {
-      await this.stopRuntimeAfterHoldExhausted({ accountId, workspaceId, sourceEventId });
-    }
-    return {
-      entries: settlement.entries,
-      account: settlement.account
-    };
+  async settleBilling(...args) {
+    return this.billing.settleBilling(...args);
   }
 
-  async billingLedger(accountId) {
-    const state = await this.store.read();
-    return state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone);
+  async billingLedger(...args) {
+    return this.billing.billingLedger(...args);
   }
 
-  async recordRequestUsage({
-    accountId = "",
-    userId = "",
-    workspaceId,
-    requestId,
-    provider,
-    model,
-    inputTokens = 0,
-    outputTokens = 0,
-    amount = 0,
-    sourceEventId = ""
-  }) {
-    if (!workspaceId) throw new Error("workspace_required");
-    if (!requestId) throw new Error("request_required");
-    return this.store.update((state) => {
-      ensureBillingCollections(state);
-      const workspace = accountId
-        ? latestWorkspaceForAccount(state, accountId, workspaceId)
-        : state.workspaces[workspaceId];
-      if (!workspace) throw new Error("workspace_not_found");
-      const resolvedAccountId = accountId || workspace.ownerAccountId;
-      const eventId = sourceEventId || `gateway_request:${requestId}`;
-      const requestedAmount = money(Math.max(0, Number(amount || 0)));
-      const normalizedInputTokens = Number(inputTokens || 0);
-      const normalizedOutputTokens = Number(outputTokens || 0);
-      const fingerprint = requestUsageFingerprint({
-        provider,
-        model,
-        inputTokens: normalizedInputTokens,
-        outputTokens: normalizedOutputTokens,
-        requestedAmount,
-        sourceEventId: eventId
-      });
-      const existing = state.requestUsageLogs.find((log) =>
-        log.workspaceId === workspaceId &&
-        (log.sourceEventId === eventId || log.requestId === requestId)
-      );
-      const existingDedup = state.requestUsageDedup.find((dedup) =>
-        dedup.workspaceId === workspaceId &&
-        (dedup.sourceEventId === eventId || dedup.requestId === requestId)
-      );
-      const existingFingerprint = existing?.requestFingerprint || existingDedup?.requestFingerprint;
-      if (existingFingerprint && existingFingerprint !== fingerprint) {
-        throw new Error("request_usage_fingerprint_conflict");
-      }
-      if (existing) return clone(existing);
-      if (existingDedup?.usageLogId) {
-        const existingLog = state.requestUsageLogs.find((log) => log.id === existingDedup.usageLogId);
-        if (existingLog) return clone(existingLog);
-      }
-
-      const user = ensureUserWallet(state, {
-        accountId: resolvedAccountId,
-        userId: userId || workspace.ownerUserId || workspace.owner?.userId
-      });
-      const quota = incrementRequestQuota(user, 1);
-      const balanceBefore = money(Number(user.balance || 0));
-      const frozenBefore = money(Number(user.frozen || 0));
-      const charged = debitAvailableBalance(user, requestedAmount);
-      syncAccountWallet(state, user);
-      const logId = makeId("usage-request", resolvedAccountId, workspaceId, requestId, eventId, String(state.requestUsageLogs.length));
-      let ledgerEntry = null;
-      if (charged > 0) {
-        ledgerEntry = this.ledgerEntry({ state,
-          workspaceId,
-          accountId: resolvedAccountId,
-          type: "request_debit",
-          amount: -charged,
-          sourceEventId: eventId,
-          metadata: {
-            requestId,
-            provider,
-            model,
-            inputTokens: normalizedInputTokens,
-            outputTokens: normalizedOutputTokens,
-            requestedAmount,
-            fundingSource: "available_balance",
-            requestFingerprint: fingerprint,
-            usageLogId: logId
-          }
-        });
-        state.billingLedger.push(ledgerEntry);
-      }
-      const log = {
-        id: logId,
-        userId: user.id,
-        accountId: resolvedAccountId,
-        workspaceId,
-        requestId,
-        provider,
-        model,
-        inputTokens: normalizedInputTokens,
-        outputTokens: normalizedOutputTokens,
-        amount: charged,
-        requestedAmount,
-        unpaid: money(requestedAmount - charged),
-        currency: "CNY",
-        sourceEventId: eventId,
-        requestFingerprint: fingerprint,
-        ...(ledgerEntry ? { ledgerEntryId: ledgerEntry.id } : {}),
-        ...(quota ? { quota } : {}),
-        createdAt: now()
-      };
-      state.requestUsageLogs.push(log);
-      if (charged > 0) {
-        appendWalletTransaction(state, {
-          user,
-          accountId: resolvedAccountId,
-          workspaceId,
-          type: "request_debit",
-          amount: -charged,
-          sourceEventId: eventId,
-          ledgerEntryId: ledgerEntry.id,
-          usageLogId: log.id,
-          fundingSource: "available_balance",
-          balanceBefore,
-          balanceAfter: user.balance,
-          frozenBefore,
-          frozenAfter: user.frozen,
-          metadata: {
-            requestId,
-            provider,
-            model,
-            requestFingerprint: fingerprint
-          }
-        });
-      }
-      const dedup = {
-        id: makeId("dedup", resolvedAccountId, workspaceId, eventId, requestId),
-        userId: user.id,
-        accountId: resolvedAccountId,
-        workspaceId,
-        requestId,
-        sourceEventId: eventId,
-        requestFingerprint: fingerprint,
-        usageLogId: log.id,
-        createdAt: now()
-      };
-      state.requestUsageDedup.push(dedup);
-      state.audit.push(this.auditEvent({
-        accountId: resolvedAccountId,
-        workspaceId,
-        type: "billing.request_usage_recorded",
-        sourceEventId: eventId
-      }));
-      return clone(log);
-    });
+  async recordRequestUsage(...args) {
+    return this.billing.recordRequestUsage(...args);
   }
 
-  async recordTaskEvidenceReceipt(input) {
-    return this.store.update((state) => {
-      if (input.workspaceId) latestWorkspaceForAccount(state, input.accountId, input.workspaceId);
-      const receipt = createTaskEvidenceReceipt({
-        state,
-        ...input
-      });
-      appendTaskEvidenceReceipt(state, receipt);
-      state.audit.push(this.auditEvent({
-        accountId: input.accountId,
-        workspaceId: input.workspaceId || "",
-        type: "ledger.task_evidence_recorded",
-        sourceEventId: receipt.id
-      }));
-      return clone(receipt);
-    });
+  async recordTaskEvidenceReceipt(...args) {
+    return this.ledgerEvidence.recordTaskEvidenceReceipt(...args);
   }
 
-  async taskEvidenceReceipts({ accountId, workspaceId = null, taskId = null }) {
-    const state = await this.store.read();
-    return filterTaskEvidenceReceipts(state, { accountId, workspaceId, taskId });
+  async taskEvidenceReceipts(...args) {
+    return this.ledgerEvidence.taskEvidenceReceipts(...args);
   }
 
-  async recordBillingReconciliation({ report, source = "manual" }) {
-    if (!report || typeof report !== "object") throw new Error("billing_reconciliation_report_required");
-    return this.store.update((state) => {
-      state.billingReconciliationReports ??= [];
-      const guard = billingReconciliationGuard({
-        latestReport: report,
-        now: report.generatedAt || now(),
-        requireRecentReport: true
-      });
-      const record = {
-        ...clone(report),
-        id: report.id || makeId("recon", source, report.generatedAt || now(), String(state.billingReconciliationReports.length)),
-        source,
-        guard,
-        createdAt: now()
-      };
-      state.billingReconciliationReports.push(record);
-      state.audit.push(this.auditEvent({
-        accountId: "billing",
-        type: guard.blockNewWorkspaces ? "billing.reconciliation_guard_blocked" : "billing.reconciliation_recorded",
-        sourceEventId: record.id
-      }));
-      if (guard.blockNewWorkspaces) {
-        this.notify({
-          state,
-          accountId: "billing",
-          workspaceId: "billing",
-          type: "billing.reconciliation_guard_blocked",
-          severity: "error",
-          message: guard.reason,
-          sourceEventId: record.id
-        });
-      }
-      return clone(record);
-    });
+  async recordBillingReconciliation(...args) {
+    return this.billing.recordBillingReconciliation(...args);
   }
 
-  async resolveWorkspaceAccess({ slug, token }) {
-    const state = await this.store.read();
-    const workspace = workspaceBySlug(state, slug);
-    if (!workspace) throw new Error("workspace_not_found");
-    if (workspace.access.tokenStatus !== "active") throw new Error("workspace_token_inactive");
-    if (workspace.access.token !== token) throw new Error("workspace_token_invalid");
-    return clone(workspace);
+  async resolveWorkspaceAccess(...args) {
+    return this.workspaceLifecycle.resolveWorkspaceAccess(...args);
   }
 
-  async getState(accountId = "pi-alpha") {
-    const state = await this.store.read();
-    const user = Object.values(state.users || {}).find((item) => item.accountId === accountId) || {
-      id: userIdForAccount(state, accountId),
-      accountId,
-      role: "pi",
-      status: "active",
-      balance: Number(state.accounts?.[accountId]?.balance || 0),
-      frozen: Number(state.accounts?.[accountId]?.frozen || 0),
-      holds: clone(state.accounts?.[accountId]?.holds || {}),
-      totalRecharged: Number(state.accounts?.[accountId]?.totalRecharged || 0)
-    };
-    const wallet = walletSnapshot(user, accountId);
-    return {
-      product: {
-        name: "OPL Cloud",
-        console: "OPL Console",
-        workspace: "OPL Workspace"
-      },
-      billingPolicy: billingPolicy(this.pricing),
-      packages: this.packages(),
-      account: accountSnapshotForState(state, accountId),
-      user: publicWalletUser(user),
-      wallet,
-      workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
-      billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
-      resourceUsageLogs: (state.resourceUsageLogs || []).filter((entry) => entry.accountId === accountId).map(clone),
-      requestUsageLogs: (state.requestUsageLogs || []).filter((entry) => entry.accountId === accountId).map(clone),
-      walletTransactions: (state.walletTransactions || []).filter((entry) => entry.accountId === accountId).map(clone),
-      manualTopups: (state.manualTopups || []).filter((entry) => entry.targetAccountId === accountId).map(clone),
-      requestUsageDedup: (state.requestUsageDedup || []).filter((entry) => entry.accountId === accountId).map(clone),
-      storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === accountId).map(clone),
-      billingReconciliation: {
-        latestReport: clone(latestBillingReconciliationReport(state)),
-        guard: clone(latestBillingReconciliationReport(state)?.guard || {
-          status: "not_required",
-          blockNewWorkspaces: false,
-          reason: "billing_reconciliation_not_required"
-        })
-      },
-      evidenceLedger: (state.evidenceLedger || []).filter((entry) => entry.accountId === accountId).map(clone),
-      audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
-      notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
-      runtimeOperations: state.runtimeOperations.filter((entry) => entry.accountId === accountId).map(clone)
-    };
+  async getState(...args) {
+    return this.consoleReadModel.getState(...args);
   }
 
-  async operatorSummary({ accountId = null } = {}) {
-    const state = await this.store.read();
-    const workspaces = Object.values(state.workspaces).filter((workspace) => !accountId || workspace.ownerAccountId === accountId);
-    const notifications = (state.notifications || []).filter((event) => operatorNotificationInScope(event, accountId));
-    const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
-    const accountIds = new Set([
-      ...Object.keys(state.accounts || {}),
-      ...Object.values(state.users || {}).map((user) => user.accountId).filter(Boolean)
-    ]);
-    const accounts = [...accountIds]
-      .filter((id) => !accountId || id === accountId)
-      .map((id) => accountSnapshotForState(state, id));
-    const storageBackups = (state.storageBackups || []).filter((backup) => !accountId || backup.accountId === accountId);
-    const latestReconciliation = latestBillingReconciliationReport(state);
-    const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
-    const attentionWorkspaces = workspaces.filter((workspace) =>
-      workspace.state === "failed" ||
-      workspace.state === "storage_hold_exhausted" ||
-      workspace.state === "stopped_storage_hold_exhausted" ||
-      workspace.server?.routeCleanupStatus === "failed"
-    );
-
-    return {
-      product: "OPL Console",
-      generatedAt: now(),
-      accountScope: accountId || "all",
-      accounts: {
-        total: accounts.length,
-        frozen: money(accounts.reduce((sum, account) => sum + Number(account.frozen || 0), 0)),
-        balance: money(accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0))
-      },
-      workspaces: {
-        total: workspaces.length,
-        running: workspaces.filter((workspace) => workspace.state === "running").length,
-        stopped: workspaces.filter((workspace) => workspace.state === "stopped_server_disk_retained").length,
-        computeDestroyedStorageRetained: workspaces.filter((workspace) => workspace.state === "server_destroyed_disk_retained").length,
-        destroyed: workspaces.filter((workspace) => workspace.state === "destroyed").length,
-        needsAttention: attentionWorkspaces.length
-      },
-      notifications: {
-        total: notifications.length,
-        error: notifications.filter((event) => event.severity === "error").length,
-        warning: notifications.filter((event) => event.severity === "warning").length,
-        recent: notifications.slice(-10).reverse().map((event) => ({
-          id: event.id,
-          accountId: event.accountId,
-          workspaceId: event.workspaceId,
-          type: event.type,
-          severity: event.severity,
-          message: event.message,
-          createdAt: event.createdAt
-        }))
-      },
-      runtimeOperations: {
-        total: runtimeOperations.length,
-        failed: failedOperations.length,
-        recentFailed: failedOperations.slice(-10).reverse().map((operation) => ({
-          id: operation.id,
-          accountId: operation.accountId,
-          workspaceId: operation.workspaceId,
-          operationType: operation.operationType,
-          error: operation.error,
-          updatedAt: operation.updatedAt
-        }))
-      },
-      storageBackups: {
-        total: storageBackups.length,
-        available: storageBackups.filter((backup) => backup.status === "available").length,
-        failed: storageBackups.filter((backup) => String(backup.status).endsWith("_failed")).length
-      },
-      billingReconciliation: {
-        reports: state.billingReconciliationReports?.length || 0,
-        guard: clone(latestReconciliation?.guard || {
-          status: "not_required",
-          blockNewWorkspaces: false,
-          reason: "billing_reconciliation_not_required"
-        })
-      },
-      billingPolicy: billingPolicy(this.pricing)
-    };
+  async operatorSummary(...args) {
+    return this.consoleReadModel.operatorSummary(...args);
   }
 
-  async runtimeReadiness() {
-    const resourceCatalog = fabricCatalogReadiness(this.fabricCatalog);
-    if (typeof this.runtimeProvider.readiness === "function") {
-      const providerReadiness = await this.runtimeProvider.readiness();
-      return {
-        ...providerReadiness,
-        ready: Boolean(providerReadiness.ready && resourceCatalog.ready),
-        resourceCatalog
-      };
-    }
-    return {
-      provider: this.runtimeProvider.name,
-      ready: resourceCatalog.ready,
-      missingEnv: [],
-      missingTools: [],
-      resourceCatalog
-    };
+  async runtimeReadiness(...args) {
+    return this.consoleReadModel.runtimeReadiness(...args);
   }
 
-  async runtimeStatus({ accountId, workspaceId }) {
-    const state = await this.store.read();
-    const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-    if (typeof this.runtimeProvider.runtimeStatus === "function") {
-      return this.runtimeProvider.runtimeStatus({ workspace: clone(workspace) });
-    }
-    return {
-      provider: workspace.provider,
-      workspaceId: workspace.id,
-      ready: workspace.state === "running" &&
-        workspace.server.status === "running" &&
-        workspace.docker.status === "running" &&
-        workspace.disk.status === "attached_retained",
-      checks: [
-        {
-          name: "workspace_runtime_running",
-          ok: workspace.state === "running" &&
-            workspace.server.status === "running" &&
-            workspace.docker.status === "running"
-        },
-        {
-          name: "workspace_storage_attached",
-          ok: workspace.disk.status === "attached_retained"
-        }
-      ]
-    };
+  async runtimeStatus(...args) {
+    return this.runtimeOperations.runtimeStatus(...args);
   }
 
-  async productionReadiness() {
-    if (!this.productionReadinessCheck) {
-      return {
-        ready: false,
-        missingEnv: [],
-        missingTools: [],
-        failedChecks: ["production_readiness_not_configured"],
-        checks: []
-      };
-    }
-    return this.productionReadinessCheck();
+  async productionReadiness(...args) {
+    return this.consoleReadModel.productionReadiness(...args);
   }
 
-  existingSettlementEntries({ state, accountId, workspaceId, sourceEventId }) {
-    const settlementTypes = new Set(["compute_debit", "storage_debit", "compute_auto_stopped"]);
-    return state.billingLedger.filter((entry) =>
-      entry.accountId === accountId &&
-      entry.workspaceId === workspaceId &&
-      entry.sourceEventId === sourceEventId &&
-      settlementTypes.has(entry.type)
-    );
+  existingSettlementEntries(...args) {
+    return this.billing.existingSettlementEntries(...args);
   }
 
-  recordResourceUsage({
-    state,
-    account,
-    workspace,
-    resourceType,
-    quantity,
-    unit,
-    unitPrice,
-    amount,
-    requestedAmount,
-    sourceEventId,
-    metadata = {}
-  }) {
-    ensureBillingCollections(state);
-    const existing = state.resourceUsageLogs.find((log) =>
-      log.workspaceId === workspace.id &&
-      log.resourceType === resourceType &&
-      log.sourceEventId === sourceEventId
-    );
-    if (existing) return existing;
-    const log = {
-      id: makeId("usage-resource", workspace.ownerAccountId, workspace.id, resourceType, sourceEventId, String(state.resourceUsageLogs.length)),
-      userId: account.id,
-      accountId: workspace.ownerAccountId,
-      workspaceId: workspace.id,
-      resourceType,
-      quantity: money(Number(quantity || 0)),
-      unit,
-      unitPrice: money(Number(unitPrice || 0)),
-      amount: money(Number(amount || 0)),
-      requestedAmount: money(Number(requestedAmount ?? amount ?? 0)),
-      currency: "CNY",
-      sourceEventId,
-      metadata: clone(metadata),
-      createdAt: now()
-    };
-    state.resourceUsageLogs.push(log);
-    return log;
+  recordResourceUsage(...args) {
+    return this.billing.recordResourceUsage(...args);
   }
 
-  appendDebitEntries({ state, entries, workspaceId, accountId, type, holdType, charge, sourceEventId, billableHours, metadata }) {
-    const debits = [
-      { amount: charge.available, fundingSource: "available_balance" },
-      { amount: charge.hold, fundingSource: `${holdType}_hold` }
-    ];
-    for (const debit of debits) {
-      if (debit.amount <= 0) continue;
-      const entry = this.ledgerEntry({ state,
-        workspaceId,
-        accountId,
-        type,
-        amount: -debit.amount,
-        sourceEventId,
-        holdType,
-        billableHours,
-        metadata: {
-          ...metadata,
-          fundingSource: debit.fundingSource
-        }
-      });
-      entries.push(entry);
-      state.billingLedger.push(entry);
-    }
+  appendDebitEntries(...args) {
+    return this.billing.appendDebitEntries(...args);
   }
 
-  debitWorkspaceUsage({ state, account, workspace, packagePlan, hours, sourceEventId, billableHours: billedHours = billableHours(hours) }) {
-    const entries = [];
-    const workspaceId = workspace.id;
-    const accountId = workspace.ownerAccountId;
-
-    if (workspace.server.status === "running" && workspace.server.billingStatus === "active") {
-      const requestedAmount = hourlyComputeAmount({ packagePlan, pricing: this.pricing, hours: billedHours });
-      const charge = chargeAccount(account, "compute", requestedAmount);
-      const metadata = {
-        requestedHours: billedHours,
-        baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
-        markup: pricingMarkup(this.pricing)
-      };
-      this.appendDebitEntries({
-        state,
-        entries,
-        workspaceId,
-        accountId,
-        type: "compute_debit",
-        holdType: "compute",
-        charge,
-        sourceEventId,
-        billableHours: billedHours,
-        metadata
-      });
-      this.recordResourceUsage({
-        state,
-        account,
-        workspace,
-        resourceType: "compute",
-        quantity: billedHours,
-        unit: "hour",
-        unitPrice: pricedComputeHourly({ packagePlan, pricing: this.pricing }),
-        amount: charge.charged,
-        requestedAmount,
-        sourceEventId,
-        metadata
-      });
-      if (charge.usedHold) {
-        this.notify({
-          state,
-          accountId,
-          workspaceId,
-          type: "account.available_balance_exhausted",
-          severity: "warning",
-          message: "available_balance_exhausted_using_frozen_hold",
-          sourceEventId
-        });
-      }
-    }
-
-    if (workspace.disk.status !== "destroyed" && workspace.disk.billingStatus === "active") {
-      const requestedStorageAmount = hourlyStorageAmount({ packagePlan, pricing: this.pricing, hours: billedHours });
-      const charge = chargeAccount(account, "storage", requestedStorageAmount);
-      const metadata = {
-        requestedHours: billedHours,
-        diskGb: packagePlan.diskGb,
-        baseGbMonth: storageGbMonthBase(this.pricing),
-        markup: pricingMarkup(this.pricing)
-      };
-      this.appendDebitEntries({
-        state,
-        entries,
-        workspaceId,
-        accountId,
-        type: "storage_debit",
-        holdType: "storage",
-        charge,
-        sourceEventId,
-        billableHours: billedHours,
-        metadata
-      });
-      this.recordResourceUsage({
-        state,
-        account,
-        workspace,
-        resourceType: "storage",
-        quantity: packagePlan.diskGb * billedHours,
-        unit: "gb_hour",
-        unitPrice: storageGbHourPrice(this.pricing),
-        amount: charge.charged,
-        requestedAmount: requestedStorageAmount,
-        sourceEventId,
-        metadata
-      });
-      if (charge.usedHold && !entries.some((entry) =>
-        entry.type === "compute_debit" &&
-        entry.sourceEventId === sourceEventId &&
-        entry.metadata?.fundingSource === "compute_hold"
-      )) {
-        this.notify({
-          state,
-          accountId,
-          workspaceId,
-          type: "account.available_balance_exhausted",
-          severity: "warning",
-          message: "available_balance_exhausted_using_frozen_hold",
-          sourceEventId
-        });
-      }
-      if (charge.unpaid > 0 || charge.exhaustedHold) {
-        workspace.state = workspace.server.status === "running" ? "storage_hold_exhausted" : "stopped_storage_hold_exhausted";
-        workspace.disk.billingStatus = "hold_exhausted";
-        workspace.updatedAt = now();
-        this.notify({
-          state,
-          accountId,
-          workspaceId,
-          type: "workspace.storage_hold_exhausted",
-          severity: "warning",
-          message: "storage_hold_exhausted",
-          sourceEventId
-        });
-      }
-    }
-
-    if (workspace.server.status === "running" && workspace.server.billingStatus === "active") {
-      if (accountHold(account, "compute") <= 0) {
-        const autoStopEntry = this.ledgerEntry({ state,
-          workspaceId,
-          accountId,
-          type: "compute_auto_stopped",
-          amount: 0,
-          sourceEventId,
-          holdType: "compute",
-          metadata: { reason: "compute_hold_exhausted", requestedHours: billedHours }
-        });
-        entries.push(autoStopEntry);
-        state.billingLedger.push(autoStopEntry);
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "compute.auto_stop_requested", sourceEventId }));
-        this.notify({
-          state,
-          accountId,
-          workspaceId,
-          type: "workspace.compute_auto_stopped",
-          severity: "warning",
-          message: "compute_hold_exhausted",
-          sourceEventId
-        });
-      }
-    }
-
-    syncAccountWallet(state, account);
-    return entries;
+  debitWorkspaceUsage(...args) {
+    return this.billing.debitWorkspaceUsage(...args);
   }
 
-  ensureHold({ state, account, accountId, workspaceId, holdType, requiredAmount, sourceEventId }) {
-    const current = accountHold(account, holdType);
-    if (current >= requiredAmount) return;
-    const delta = money(requiredAmount - current);
-    if (accountAvailable(account) < delta) throw new Error("insufficient_prepaid_hold_balance");
-    addHold(account, holdType, delta);
-    syncAccountWallet(state, account);
-    state.billingLedger.push(this.ledgerEntry({ state,
-      workspaceId,
-      accountId,
-      type: holdType === "compute" ? "compute_hold" : "storage_hold",
-      amount: delta,
-      sourceEventId,
-      holdType,
-      metadata: { holdDays: 7 }
-    }));
+  ensureHold(...args) {
+    return this.billing.ensureHold(...args);
   }
 
-  releaseHoldToLedger({ state, accountId, workspaceId, holdType, sourceEventId }) {
-    const account = ensureAccount(state, accountId);
-    const released = releaseHold(account, holdType);
-    syncAccountWallet(state, account);
-    if (released <= 0) return null;
-    const entry = this.ledgerEntry({ state,
-      workspaceId,
-      accountId,
-      type: holdType === "compute" ? "compute_hold_released" : "storage_hold_released",
-      amount: -released,
-      sourceEventId,
-      holdType
-    });
-    state.billingLedger.push(entry);
-    return entry;
+  releaseHoldToLedger(...args) {
+    return this.billing.releaseHoldToLedger(...args);
   }
 
-  async releaseWorkspaceHoldsAfterCreateFailure({ accountId, workspaceId, error }) {
-    return this.store.update((state) => {
-      this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "create_workspace_failed" });
-      this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "storage", sourceEventId: "create_workspace_failed" });
-      this.notify({
-        state,
-        accountId,
-        workspaceId,
-        type: "workspace.create_failed",
-        severity: "error",
-        message: error.message,
-        sourceEventId: "create_workspace_failed"
-      });
-      return true;
-    });
+  async releaseWorkspaceHoldsAfterCreateFailure(...args) {
+    return this.workspaceLifecycle.releaseWorkspaceHoldsAfterCreateFailure(...args);
   }
 
-  async recordCreateWorkspaceFailure({ accountId, workspaceId, operationId, error }) {
-    return this.store.update((state) => {
-      this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "create_workspace_failed" });
-      this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "storage", sourceEventId: "create_workspace_failed" });
-      const operation = state.runtimeOperations.find((item) => item.id === operationId);
-      if (operation) this.finishRuntimeOperation(operation, "failed", error);
-      this.notify({
-        state,
-        accountId,
-        workspaceId,
-        type: "workspace.create_failed",
-        severity: "error",
-        message: error.message,
-        sourceEventId: "create_workspace_failed"
-      });
-      return true;
-    });
+  async recordCreateWorkspaceFailure(...args) {
+    return this.workspaceLifecycle.recordCreateWorkspaceFailure(...args);
   }
 
-  async stopRuntimeAfterHoldExhausted({ accountId, workspaceId, sourceEventId }) {
-    return this.runRuntimeOperation({
-      accountId,
-      workspaceId,
-      operationType: "auto_stop_compute",
-      mutate: async (state, workspace, operation) => {
-        if (workspace.server.status !== "running") {
-          this.finishRuntimeOperation(operation, "succeeded");
-          return clone(workspace);
-        }
-        workspace.state = "stopping_server";
-        workspace.server = await this.runtimeProvider.stopServer({ workspace: clone(workspace) });
-        this.finishRuntimeOperation(operation, "succeeded");
-        workspace.state = workspace.disk.billingStatus === "hold_exhausted"
-          ? "stopped_storage_hold_exhausted"
-          : "stopped_server_disk_retained";
-        workspace.disk.status = workspace.disk.status === "destroyed" ? "destroyed" : "attached_retained";
-        workspace.updatedAt = now();
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "server.auto_stopped", sourceEventId }));
-        return clone(workspace);
-      }
-    });
+  async stopRuntimeAfterHoldExhausted(...args) {
+    return this.workspaceLifecycle.stopRuntimeAfterHoldExhausted(...args);
   }
 
-  notify({ state, accountId, workspaceId, type, severity, message, sourceEventId }) {
-    state.notifications ??= [];
-    const event = {
-      id: makeId("notification", accountId, workspaceId, type, sourceEventId, String(state.notifications.length)),
-      accountId,
-      workspaceId,
-      type,
-      severity,
-      message,
-      sourceEventId,
-      createdAt: now()
-    };
-    state.notifications.push(event);
-    return event;
+  notify(...args) {
+    return this.ledgerEvidence.notify(...args);
   }
 
-  async runRuntimeOperation({ accountId, workspaceId, operationType, prepare = null, mutate }) {
-    let runtimeOperationStarted = false;
-    try {
-      return await this.store.update(async (state) => {
-        const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-        if (prepare) prepare(state, workspace);
-        const operation = this.startRuntimeOperation({ state, accountId, workspaceId, operationType });
-        runtimeOperationStarted = true;
-        try {
-          return await mutate(state, workspace, operation);
-        } catch (error) {
-          this.finishRuntimeOperation(operation, "failed", error);
-          throw error;
-        }
-      });
-    } catch (error) {
-      if (runtimeOperationStarted) {
-        await this.recordFailedRuntimeOperation({ accountId, workspaceId, operationType, error });
-      }
-      throw error;
-    }
+  async runRuntimeOperation(...args) {
+    return this.runtimeOperations.runRuntimeOperation(...args);
   }
 
-  startRuntimeOperation({ state, accountId, workspaceId, operationType }) {
-    this.runtimeOperationSequence += 1;
-    const operation = {
-      id: makeId("op", accountId, workspaceId, operationType, String(Date.now()), String(this.runtimeOperationSequence)),
-      accountId,
-      workspaceId,
-      operationType,
-      status: "running",
-      attempts: 1,
-      createdAt: now(),
-      updatedAt: now()
-    };
-    state.runtimeOperations.push(operation);
-    return operation;
+  startRuntimeOperation(...args) {
+    return this.runtimeOperations.startRuntimeOperation(...args);
   }
 
-  finishRuntimeOperation(operation, status, error = null) {
-    operation.status = status;
-    operation.updatedAt = now();
-    if (error) operation.error = error.message;
-    return operation;
+  finishRuntimeOperation(...args) {
+    return this.runtimeOperations.finishRuntimeOperation(...args);
   }
 
-  async recordFailedRuntimeOperation({ accountId, workspaceId, operationType, error }) {
-    return this.store.update((state) => {
-      const operation = this.startRuntimeOperation({ state, accountId, workspaceId, operationType });
-      return clone(this.finishRuntimeOperation(operation, "failed", error));
-    });
+  async recordFailedRuntimeOperation(...args) {
+    return this.runtimeOperations.recordFailedRuntimeOperation(...args);
   }
 
-  ledgerEntry({ state, workspaceId, accountId, type, amount, sourceEventId, holdType, billableHours, metadata }) {
-    const sequence = state?.billingLedger?.length ?? 0;
-    const userId = userIdForAccount(state, accountId);
-    return {
-      id: makeId("ledger", accountId, workspaceId, type, sourceEventId, String(sequence)),
-      workspaceId,
-      accountId,
-      userId,
-      type,
-      amount: money(Number(amount)),
-      currency: "CNY",
-      sourceEventId,
-      ...(holdType ? { holdType } : {}),
-      ...(billableHours ? { billableHours } : {}),
-      ...(metadata ? { metadata: clone(metadata) } : {}),
-      createdAt: now()
-    };
+  ledgerEntry(...args) {
+    return this.ledgerEvidence.ledgerEntry(...args);
   }
 
-  recordEvidence({ state, type, accountId, workspace, packagePlan = null, billingRefs = [], continuation = null }) {
-    const effectivePackagePlan = packagePlan || this.getPackage(workspace.packageId);
-    const receipt = createEvidenceReceipt({
-      state,
-      type,
-      accountId,
-      workspaceId: workspace.id,
-      actor: workspace.owner?.userId
-        ? { type: "user", id: workspace.owner.userId, organizationId: workspace.owner.organizationId }
-        : { type: "account", id: accountId },
-      plan: {
-        workspaceName: workspace.name,
-        packageId: workspace.packageId,
-        computeProfile: effectivePackagePlan.server,
-        storageGb: effectivePackagePlan.diskGb
-      },
-      approval: { status: "implicit_console_policy" },
-      environment: {
-        runtimeProvider: workspace.provider,
-        workspaceImage: workspace.docker?.image
-      },
-      resourceRefs: {
-        serverId: workspace.server?.id,
-        dockerId: workspace.docker?.id,
-        storageId: workspace.disk?.id,
-        storageMountPath: workspace.disk?.mountPath,
-        urlTokenMode: workspace.access?.mode || "long_lived_url_token",
-        tokenStatus: workspace.access?.tokenStatus
-      },
-      billingRefs: billingRefs.map((entry) => ({
-        id: entry.id,
-        type: entry.type,
-        amount: entry.amount,
-        currency: entry.currency
-      })),
-      continuation
-    });
-    appendEvidenceReceipt(state, receipt);
-    return receipt;
+  recordEvidence(...args) {
+    return this.ledgerEvidence.recordEvidence(...args);
   }
 
-  auditEvent({ accountId, workspaceId = "", type, sourceEventId }) {
-    return {
-      id: makeId("audit", accountId, workspaceId, type, sourceEventId, String(Date.now())),
-      accountId,
-      workspaceId,
-      type,
-      sourceEventId,
-      createdAt: now()
-    };
+  auditEvent(...args) {
+    return this.ledgerEvidence.auditEvent(...args);
   }
 
-  assertBillingReconciliationAllowsProvisioning(state) {
-    const guard = latestBillingReconciliationReport(state)?.guard;
-    if (guard?.blockNewWorkspaces) {
-      throw new Error(`billing_reconciliation_guard_blocked:${guard.reason}`);
-    }
+  assertBillingReconciliationAllowsProvisioning(...args) {
+    return this.billing.assertBillingReconciliationAllowsProvisioning(...args);
   }
 }

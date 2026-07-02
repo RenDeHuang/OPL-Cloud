@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ArrowLeft, LogIn, ShieldCheck } from "lucide-react";
+import { login } from "../api/auth-api.js";
 
 function errorLabel(value) {
   const labels = {
@@ -22,13 +23,7 @@ export default function LoginPage({ route, onLogin }) {
     setSubmitting(true);
     setError("");
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password })
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "login_failed");
+      const payload = await login({ email, password });
       onLogin(payload);
     } catch (err) {
       setError(err.message);
