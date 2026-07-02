@@ -5,22 +5,11 @@
   "productTruth": "one-person-lab-cloud",
   "frameworkTruth": "one-person-lab",
   "currentSlice": "OPL Console / OPL Workspace control-plane",
-  "futureRepos": [
-    "opl-console",
-    "opl-fabric",
-    "opl-ledger"
-  ],
-  "statuses": [
-    "implemented",
-    "folded_into_parent",
-    "placeholder_hidden"
-  ],
-  "boundaryRules": [
-    "Console may call Fabric only through package boundary exports or future service APIs.",
-    "Console may call Ledger only through package boundary exports or future service APIs.",
-    "Implemented route means page + domain API client + server route + service boundary are all named.",
-    "Folded routes may share a parent page until a domain API exists; they must not claim implemented status."
-  ],
+  "futureRepos": ["opl-console", "opl-fabric", "opl-ledger"],
+  "statuses": ["implemented", "folded_into_parent", "placeholder_hidden"],
+  "routeKinds": ["static_content", "auth_flow", "read_model", "business_object", "policy_or_approval_object"],
+  "contractLifecycles": ["long_term", "long_term_gap", "folded_parent", "dynamic_prune"],
+  "boundaryRules": ["Console may call Fabric only through package boundary exports or future service APIs.", "Console may call Ledger only through package boundary exports or future service APIs.", "Implemented route means page + domain API client + server route + service boundary are all named.", "Folded routes may share a parent page until a domain API exists; they must not claim implemented status.", "Static content may remain API-free; dynamic control-plane objects must not claim implemented status without read/write/action evidence.", "Long-term gaps stay in the route table only when they name an owner repo, lifecycle, and missing capability boundary.", "Dynamic prune routes are tracked only so they can be removed from active product claims."],
   "publicRoutes": [
     {
       "path": "/",
@@ -29,7 +18,10 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": false,
-      "reason": "static_public_page_no_console_api"
+      "reason": "static_public_page_no_console_api",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/pricing",
@@ -38,7 +30,10 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": false,
-      "reason": "static_public_page_no_console_api"
+      "reason": "static_public_page_no_console_api",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/docs",
@@ -47,7 +42,10 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": false,
-      "reason": "static_public_page_no_console_api"
+      "reason": "static_public_page_no_console_api",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/status",
@@ -56,7 +54,10 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": false,
-      "reason": "static_public_page_no_console_api"
+      "reason": "static_public_page_no_console_api",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/legal/terms",
@@ -65,7 +66,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/legal/privacy",
@@ -74,7 +78,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/setup",
@@ -83,7 +90,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "prune_legacy_setup_route_not_part_of_tke_console_contract",
+      "routeKind": "static_content",
+      "contractLifecycle": "dynamic_prune",
+      "capabilities": []
     }
   ],
   "authRoutes": [
@@ -96,10 +106,11 @@
       "requiresAuth": false,
       "pageModule": "packages/console/ui/pages/LoginPage.jsx",
       "apiClient": "packages/console/ui/api/auth-api.js",
-      "apiRoutes": [
-        "POST /api/auth/login"
-      ],
-      "serviceBoundary": "AuthController"
+      "apiRoutes": ["POST /api/auth/login"],
+      "serviceBoundary": "AuthController",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read", "authenticate", "session"]
     },
     {
       "path": "/register",
@@ -108,7 +119,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "feature_gate:registration"
+      "reason": "feature_gate:registration",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/invite/accept",
@@ -117,7 +131,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "feature_gate:invites"
+      "reason": "feature_gate:invites",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/email/verify",
@@ -126,7 +143,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/forgot-password",
@@ -135,7 +155,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/reset-password",
@@ -144,7 +167,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/auth/callback",
@@ -153,7 +179,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "feature_gate:sso"
+      "reason": "feature_gate:sso",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     },
     {
       "path": "/logout",
@@ -162,7 +191,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "auth_flow",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": []
     }
   ],
   "consoleRoutes": [
@@ -174,7 +206,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "redirect": "/console/overview",
-      "reason": "redirect_route"
+      "reason": "redirect_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/overview",
@@ -185,10 +220,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/OverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/workspaces",
@@ -199,12 +235,12 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
       "apiClient": "packages/console/ui/api/workspaces-api.js",
-      "apiRoutes": [
-        "GET /api/state",
-        "POST /api/workspaces/reset-token",
-        "POST /api/workspaces/delete-token"
-      ],
-      "serviceBoundary": "WorkspaceLifecycleService"
+      "apiRoutes": ["GET /api/state", "POST /api/workspaces/reset-token", "POST /api/workspaces/delete-token"],
+      "serviceBoundary": "WorkspaceLifecycleService",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term",
+      "capabilities": ["list", "read", "action"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/workspaces/new",
@@ -215,11 +251,12 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx",
       "apiClient": "packages/console/ui/api/workspaces-api.js",
-      "apiRoutes": [
-        "GET /api/state",
-        "POST /api/workspaces"
-      ],
-      "serviceBoundary": "WorkspaceLifecycleService"
+      "apiRoutes": ["GET /api/state", "POST /api/workspaces"],
+      "serviceBoundary": "WorkspaceLifecycleService",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term",
+      "capabilities": ["write", "read"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/workspaces/:id",
@@ -230,17 +267,12 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx",
       "apiClient": "packages/console/ui/api/workspaces-api.js",
-      "apiRoutes": [
-        "GET /api/state",
-        "POST /api/workspaces/stop-server",
-        "POST /api/workspaces/restart-server",
-        "POST /api/workspaces/destroy-server",
-        "POST /api/workspaces/destroy-disk",
-        "POST /api/workspaces/storage-backups",
-        "POST /api/workspaces/reset-token",
-        "POST /api/workspaces/delete-token"
-      ],
-      "serviceBoundary": "WorkspaceLifecycleService"
+      "apiRoutes": ["GET /api/state", "POST /api/workspaces/stop-server", "POST /api/workspaces/restart-server", "POST /api/workspaces/destroy-server", "POST /api/workspaces/destroy-disk", "POST /api/workspaces/storage-backups", "POST /api/workspaces/reset-token", "POST /api/workspaces/delete-token"],
+      "serviceBoundary": "WorkspaceLifecycleService",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term",
+      "capabilities": ["detail", "read", "action", "evidence"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/workspaces/:id/access",
@@ -249,7 +281,11 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "business_object",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["detail", "read", "action"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/workspaces/:id/resources",
@@ -258,7 +294,11 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "business_object",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["detail", "read", "action"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/workspaces/:id/backups",
@@ -267,7 +307,11 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "business_object",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["detail", "read", "write", "action", "evidence"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/workspaces/:id/receipts",
@@ -276,7 +320,11 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "business_object",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["detail", "read", "evidence"],
+      "objectKind": "Workspace"
     },
     {
       "path": "/console/gateway",
@@ -287,10 +335,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/gateway/GatewayPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/gateway/keys",
@@ -299,7 +348,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/gateway/usage",
@@ -308,7 +360,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/gateway/quotas",
@@ -317,7 +372,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/billing",
@@ -328,10 +386,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/billing/BillingPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/billing/wallet",
@@ -340,7 +399,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/billing/usage",
@@ -349,7 +411,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/billing/orders",
@@ -358,7 +423,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/billing/invoices",
@@ -367,7 +435,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/account",
@@ -378,10 +449,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/account/AccountPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/account/profile",
@@ -390,7 +462,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/account/security",
@@ -399,7 +474,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/account/lab",
@@ -408,7 +486,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/account/alerts",
@@ -417,7 +498,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/support",
@@ -426,7 +510,11 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": true,
-      "reason": "local_ticket_ui_not_server_backed_yet"
+      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read"],
+      "objectKind": "SupportTicket"
     },
     {
       "path": "/console/support/new",
@@ -435,7 +523,11 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "local_ticket_ui_not_server_backed_yet"
+      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["write"],
+      "objectKind": "SupportTicket"
     },
     {
       "path": "/console/support/:id",
@@ -444,7 +536,11 @@
       "ownerRepo": "opl-console",
       "status": "folded_into_parent",
       "requiresAuth": true,
-      "reason": "local_ticket_ui_not_server_backed_yet"
+      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["detail", "read", "action"],
+      "objectKind": "SupportTicket"
     },
     {
       "path": "/console/resources",
@@ -455,10 +551,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/catalog/FabricPages.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/console/resources/connectors",
@@ -467,7 +564,11 @@
       "ownerRepo": "opl-fabric",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "fabric_approval_object_requires_fabric_service_api_and_audit_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read"],
+      "objectKind": "ConnectorApproval"
     },
     {
       "path": "/console/resources/environments",
@@ -476,7 +577,11 @@
       "ownerRepo": "opl-fabric",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "fabric_approval_object_requires_fabric_service_api_and_audit_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read"],
+      "objectKind": "EnvironmentTemplateApproval"
     },
     {
       "path": "/console/resources/agents",
@@ -485,21 +590,24 @@
       "ownerRepo": "opl-fabric",
       "status": "placeholder_hidden",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "fabric_approval_object_requires_fabric_service_api_and_audit_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read"],
+      "objectKind": "AgentPackageApproval"
     },
     {
       "path": "/console/approvals",
       "label": "Approvals",
       "area": "console",
       "ownerRepo": "opl-console",
-      "status": "implemented",
+      "status": "placeholder_hidden",
       "requiresAuth": true,
-      "pageModule": "packages/console/ui/pages/catalog/FabricPages.jsx",
-      "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read"],
+      "reason": "approval_queue_requires_server_api_and_audit_before_implemented_status",
+      "objectKind": "ApprovalQueue"
     },
     {
       "path": "/console/receipts",
@@ -510,10 +618,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/catalog/FabricPages.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read", "evidence", "audit"]
     },
     {
       "path": "/console/alerts",
@@ -524,10 +633,11 @@
       "requiresAuth": true,
       "pageModule": "packages/console/ui/pages/catalog/FabricPages.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     }
   ],
   "adminRoutes": [
@@ -540,7 +650,10 @@
       "requiresAuth": true,
       "requiresAdmin": true,
       "redirect": "/admin/overview",
-      "reason": "redirect_route"
+      "reason": "redirect_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/overview",
@@ -552,12 +665,11 @@
       "requiresAdmin": true,
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/operator/summary",
-        "GET /api/runtime/readiness",
-        "GET /api/production/readiness"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/operator/summary", "GET /api/runtime/readiness", "GET /api/production/readiness"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read", "audit"]
     },
     {
       "path": "/admin/users",
@@ -569,11 +681,11 @@
       "requiresAdmin": true,
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/billing-api.js",
-      "apiRoutes": [
-        "GET /api/state",
-        "POST /api/accounts/credit"
-      ],
-      "serviceBoundary": "BillingService"
+      "apiRoutes": ["GET /api/state", "POST /api/accounts/credit"],
+      "serviceBoundary": "BillingService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read", "list", "action", "audit"]
     },
     {
       "path": "/admin/users/new",
@@ -583,7 +695,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/users/:id",
@@ -593,7 +708,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/users/:id/wallet",
@@ -603,7 +721,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/users/:id/workspaces",
@@ -613,7 +734,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/users/:id/usage",
@@ -623,7 +747,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/users/:id/audit",
@@ -633,7 +760,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "subroute_rendered_by_parent_page"
+      "reason": "subroute_rendered_by_parent_page",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/governance",
@@ -643,7 +773,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "ui_shell_or_parent_route"
+      "reason": "ui_shell_or_parent_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/governance/organizations",
@@ -653,7 +786,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/governance/teams",
@@ -663,7 +799,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/governance/roles",
@@ -673,7 +812,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/governance/policies",
@@ -683,7 +825,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/workspaces",
@@ -693,7 +838,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "ui_shell_or_parent_route"
+      "reason": "ui_shell_or_parent_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/workspaces/:id",
@@ -703,7 +851,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/billing",
@@ -715,10 +866,11 @@
       "requiresAdmin": true,
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "ConsoleReadModelService"
+      "apiRoutes": ["GET /api/state"],
+      "serviceBoundary": "ConsoleReadModelService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/billing/plans",
@@ -728,7 +880,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/billing/topups",
@@ -738,7 +893,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/billing/transactions",
@@ -748,7 +906,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/billing/reconciliation",
@@ -758,7 +919,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/gateway",
@@ -768,7 +932,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "ui_shell_or_parent_route"
+      "reason": "ui_shell_or_parent_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/fabric",
@@ -778,7 +945,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "fabric_admin_ui_shell_pending_fabric_service_api"
+      "reason": "fabric_admin_ui_shell_pending_fabric_service_api",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/fabric/compute",
@@ -788,7 +958,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "fabric_admin_ui_shell_pending_fabric_service_api"
+      "reason": "fabric_admin_ui_shell_pending_fabric_service_api",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/fabric/storage",
@@ -798,7 +971,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "fabric_admin_ui_shell_pending_fabric_service_api"
+      "reason": "fabric_admin_ui_shell_pending_fabric_service_api",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/fabric/connectors",
@@ -808,7 +984,11 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "fabric_admin_ui_shell_pending_fabric_service_api"
+      "reason": "fabric_approval_object_requires_fabric_service_api_and_audit_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "detail", "read", "approve", "reject", "audit"],
+      "objectKind": "ConnectorApproval"
     },
     {
       "path": "/admin/fabric/environments",
@@ -818,7 +998,11 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "fabric_admin_ui_shell_pending_fabric_service_api"
+      "reason": "fabric_approval_object_requires_fabric_service_api_and_audit_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "detail", "read", "approve", "reject", "audit"],
+      "objectKind": "EnvironmentTemplateApproval"
     },
     {
       "path": "/admin/fabric/agents",
@@ -828,7 +1012,11 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "fabric_admin_ui_shell_pending_fabric_service_api"
+      "reason": "fabric_approval_object_requires_fabric_service_api_and_audit_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "detail", "read", "approve", "reject", "audit"],
+      "objectKind": "AgentPackageApproval"
     },
     {
       "path": "/admin/ledger",
@@ -840,11 +1028,11 @@
       "requiresAdmin": true,
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/ledger-api.js",
-      "apiRoutes": [
-        "GET /api/state",
-        "GET /api/ledger/task-receipts"
-      ],
-      "serviceBoundary": "LedgerEvidenceService"
+      "apiRoutes": ["GET /api/state", "GET /api/ledger/task-receipts"],
+      "serviceBoundary": "LedgerEvidenceService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read", "evidence", "audit"]
     },
     {
       "path": "/admin/ledger/receipts",
@@ -854,7 +1042,11 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "ledger_receipt_detail_and_review_api_not_implemented_yet",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read", "evidence"],
+      "objectKind": "LedgerReceipt"
     },
     {
       "path": "/admin/ledger/events",
@@ -864,7 +1056,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/ledger/policies",
@@ -874,7 +1069,11 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "ledger_review_policy_requires_ledger_policy_api_before_implemented_status",
+      "routeKind": "policy_or_approval_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read", "write", "audit"],
+      "objectKind": "LedgerReviewPolicy"
     },
     {
       "path": "/admin/runtime",
@@ -886,11 +1085,11 @@
       "requiresAdmin": true,
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
-      "apiRoutes": [
-        "GET /api/runtime/readiness",
-        "GET /api/production/readiness"
-      ],
-      "serviceBoundary": "RuntimeOperationService"
+      "apiRoutes": ["GET /api/runtime/readiness", "GET /api/production/readiness"],
+      "serviceBoundary": "RuntimeOperationService",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read", "audit"]
     },
     {
       "path": "/admin/runtime/readiness",
@@ -900,37 +1099,52 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/runtime/kubernetes",
       "label": "Kubernetes",
       "area": "admin",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-fabric",
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "prune_raw_runtime_provider_detail_from_console_product_contract",
+      "routeKind": "business_object",
+      "contractLifecycle": "dynamic_prune",
+      "capabilities": ["read"],
+      "objectKind": "RuntimeProviderDiagnostics"
     },
     {
       "path": "/admin/runtime/images",
       "label": "Workspace Images",
       "area": "admin",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-fabric",
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "prune_raw_runtime_provider_detail_from_console_product_contract",
+      "routeKind": "business_object",
+      "contractLifecycle": "dynamic_prune",
+      "capabilities": ["read"],
+      "objectKind": "RuntimeProviderDiagnostics"
     },
     {
       "path": "/admin/runtime/domains",
       "label": "Domains and Ingress",
       "area": "admin",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-fabric",
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "prune_raw_runtime_provider_detail_from_console_product_contract",
+      "routeKind": "business_object",
+      "contractLifecycle": "dynamic_prune",
+      "capabilities": ["read"],
+      "objectKind": "RuntimeProviderDiagnostics"
     },
     {
       "path": "/admin/support",
@@ -940,7 +1154,11 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "local_ticket_ui_not_server_backed_yet"
+      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["list", "read", "action", "audit"],
+      "objectKind": "SupportTicket"
     },
     {
       "path": "/admin/support/:id",
@@ -950,7 +1168,11 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "local_ticket_ui_not_server_backed_yet"
+      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "routeKind": "business_object",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["detail", "read", "action", "audit"],
+      "objectKind": "SupportTicket"
     },
     {
       "path": "/admin/audit",
@@ -960,7 +1182,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "ui_shell_or_parent_route"
+      "reason": "ui_shell_or_parent_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/settings",
@@ -970,7 +1195,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "ui_shell_or_parent_route"
+      "reason": "ui_shell_or_parent_route",
+      "routeKind": "read_model",
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["read"]
     },
     {
       "path": "/admin/alerts",
@@ -980,7 +1208,10 @@
       "status": "placeholder_hidden",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "read_model",
+      "contractLifecycle": "long_term_gap",
+      "capabilities": ["read"]
     }
   ],
   "errorRoutes": [
@@ -991,7 +1222,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/404",
@@ -1000,7 +1234,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     },
     {
       "path": "/500",
@@ -1009,7 +1246,10 @@
       "ownerRepo": "opl-console",
       "status": "placeholder_hidden",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet"
+      "reason": "reserved_route_not_api_backed_yet",
+      "routeKind": "static_content",
+      "contractLifecycle": "long_term",
+      "capabilities": ["read"]
     }
   ]
 }
