@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createRuntimeProvider } from "../../fabric/src/runtime-provider-factory.js";
+import { createRuntimeProvider } from "../../fabric/src/index.js";
 import { createAuthController } from "./auth.js";
+import { buildApiRoutes } from "./routes/index.js";
 import { createOplCloud } from "../src/opl-cloud.js";
 import { productionReadiness } from "../src/production-readiness.js";
 import { JsonFileStore, PostgresStore } from "../src/store.js";
@@ -144,7 +145,7 @@ function errorStatus(error) {
 }
 
 function scopedAccountId(auth, session, requestedAccountId) {
-  return auth ? auth.accountIdFor(session.user, requestedAccountId) : requestedAccountId;
+  return auth ? auth.accountIdFor(session.user, requestedAccountId) : requestedAccountId || "pi-alpha";
 }
 
 function scopedWorkspaceInput(auth, session, body) {
@@ -157,22 +158,25 @@ function requireAdmin(auth, session) {
 
 async function handleApi(request, response, pathname, appService, operatorSummaryToken = process.env.OPL_OPERATOR_SUMMARY_TOKEN, auth = null) {
   try {
-    if (request.method === "GET" && pathname === "/api/healthz") {
-      return sendJson(response, 200, { ok: true, service: "opl-console" });
-    }
-    if (auth && request.method === "POST" && pathname === "/api/auth/login") {
-      return sendJson(response, 200, await auth.login(await readJson(request), { request, response }));
-    }
-    if (auth && request.method === "POST" && pathname === "/api/auth/logout") {
-      await auth.requireSession(request, { requireCsrf: true });
-      return sendJson(response, 200, await auth.logout(request, response));
-    }
-    if (auth && request.method === "GET" && pathname === "/api/auth/me") {
-      const session = await auth.requireSession(request);
-      return sendJson(response, 200, {
-        user: session.user,
-        csrfToken: session.csrfToken
-      });
+    const routeKey = `${request.method} ${pathname}`;
+    const publicRoutes = buildApiRoutes({
+      appService,
+      auth,
+      request,
+      response,
+      readJson,
+      body: {},
+      operatorSummaryToken,
+      session: null,
+      isAdminSession: false,
+      scopedAccountId: (requestedAccountId) => scopedAccountId(auth, null, requestedAccountId),
+      scopedWorkspaceInput: (body) => scopedWorkspaceInput(auth, null, body),
+      requireAdmin: () => requireAdmin(auth, null)
+    });
+    if (routeKey === "GET /api/healthz" || pathname.startsWith("/api/auth/")) {
+      const handler = publicRoutes[routeKey];
+      if (!handler) return sendJson(response, 404, { ok: false, error: "route_not_found" });
+      return sendJson(response, 200, await handler());
     }
     if (!auth && pathname.startsWith("/api/auth/")) {
       return sendJson(response, 404, { ok: false, error: "route_not_found" });
@@ -182,95 +186,23 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       ? await auth.requireSession(request, { requireCsrf: request.method !== "GET" && request.method !== "HEAD" })
       : null;
 
-    if (request.method === "GET" && pathname === "/api/state") {
-      const url = new URL(request.url, "http://localhost");
-      const requestedAccountId = url.searchParams.get("accountId") || (auth ? "" : "pi-alpha");
-      const accountId = scopedAccountId(auth, session, requestedAccountId);
-      return sendJson(response, 200, await appService.getState(accountId));
-    }
-    if (request.method === "GET" && pathname === "/api/runtime/readiness") {
-      requireAdmin(auth, session);
-      return sendJson(response, 200, await appService.runtimeReadiness());
-    }
-    if (request.method === "GET" && pathname === "/api/production/readiness") {
-      requireAdmin(auth, session);
-      return sendJson(response, 200, await appService.productionReadiness());
-    }
-    if (request.method === "GET" && pathname === "/api/operator/summary") {
-      const url = new URL(request.url, "http://localhost");
-      const providedToken = request.headers["x-opl-operator-token"] || url.searchParams.get("operatorToken") || "";
-      const adminSession = auth && auth.isAdmin(session.user);
-      if (!adminSession) {
-        if (!operatorSummaryToken) return sendJson(response, 403, { ok: false, error: "operator_summary_token_not_configured" });
-        if (providedToken !== operatorSummaryToken) return sendJson(response, 403, { ok: false, error: "operator_summary_token_invalid" });
-      }
-      return sendJson(response, 200, await appService.operatorSummary({
-        accountId: url.searchParams.get("accountId") || null
-      }));
-    }
-    if (request.method === "GET" && pathname === "/api/management/state") {
-      requireAdmin(auth, session);
-      const url = new URL(request.url, "http://localhost");
-      return sendJson(response, 200, await appService.managementState({
-        organizationId: url.searchParams.get("organizationId") || ""
-      }));
-    }
-    if (request.method === "GET" && pathname === "/api/ledger/task-receipts") {
-      const url = new URL(request.url, "http://localhost");
-      return sendJson(response, 200, await appService.taskEvidenceReceipts({
-        accountId: scopedAccountId(auth, session, url.searchParams.get("accountId") || ""),
-        workspaceId: url.searchParams.get("workspaceId") || null,
-        taskId: url.searchParams.get("taskId") || null
-      }));
-    }
-
-    const body = await readJson(request);
-    const routes = {
-      "POST /api/accounts/credit": () => {
-        requireAdmin(auth, session);
-        return appService.creditAccount(auth
-          ? {
-            ...body,
-            operatorUserId: session.user.id,
-            operatorAccountId: session.user.accountId
-          }
-          : body);
-      },
-      "POST /api/organizations": () => {
-        requireAdmin(auth, session);
-        return appService.createOrganization(body);
-      },
-      "POST /api/users": () => {
-        requireAdmin(auth, session);
-        return appService.createUser(body);
-      },
-      "POST /api/organizations/members": () => {
-        requireAdmin(auth, session);
-        return appService.addOrganizationMember(body);
-      },
-      "POST /api/workspaces": () => appService.createWorkspace(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/stop-server": () => appService.stopServer(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/restart-server": () => appService.restartServer(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/destroy-server": () => appService.destroyServer(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/destroy-disk": () => appService.destroyDisk(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/runtime-status": () => {
-        requireAdmin(auth, session);
-        return appService.runtimeStatus(body);
-      },
-      "POST /api/workspaces/storage-backups": () => appService.createStorageBackup(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/restore-storage-backup": () => appService.restoreWorkspaceFromBackup(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/prune-storage-backups": () => appService.pruneStorageBackups(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/reset-token": () => appService.resetWorkspaceToken(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/workspaces/delete-token": () => appService.deleteWorkspaceToken(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/billing/settle": () => appService.settleBilling(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/billing/request-usage": () => appService.recordRequestUsage(scopedWorkspaceInput(auth, session, body)),
-      "POST /api/billing/reconciliation": () => {
-        requireAdmin(auth, session);
-        return appService.recordBillingReconciliation(body);
-      },
-      "POST /api/ledger/task-receipts": () => appService.recordTaskEvidenceReceipt(scopedWorkspaceInput(auth, session, body))
-    };
-    const handler = routes[`${request.method} ${pathname}`];
+    const body = request.method === "GET" || request.method === "HEAD" ? {} : await readJson(request);
+    const isAdminSession = Boolean(auth && auth.isAdmin(session.user));
+    const routes = buildApiRoutes({
+      appService,
+      auth,
+      request,
+      response,
+      readJson,
+      body,
+      operatorSummaryToken,
+      session,
+      isAdminSession,
+      scopedAccountId: (requestedAccountId) => scopedAccountId(auth, session, requestedAccountId),
+      scopedWorkspaceInput: (input) => scopedWorkspaceInput(auth, session, input),
+      requireAdmin: () => requireAdmin(auth, session)
+    });
+    const handler = routes[routeKey];
     if (!handler) return sendJson(response, 404, { ok: false, error: "route_not_found" });
     return sendJson(response, 200, await handler());
   } catch (error) {

@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 import "./styles.css";
+import { currentSession } from "./api/auth-api.js";
 import { findRoute, navigate } from "./consoleRoutes.js";
 
 const HomePage = lazy(() => import("./pages/HomePage.jsx"));
@@ -36,11 +37,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/me")
-      .then(async (response) => {
-        if (!response.ok) return null;
-        return response.json();
-      })
+    currentSession()
       .then((payload) => {
         if (cancelled) return;
         if (payload?.user) setSession(payload);

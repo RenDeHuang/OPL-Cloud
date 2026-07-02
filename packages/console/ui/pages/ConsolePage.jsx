@@ -2,7 +2,7 @@ import React from "react";
 import { ProLayout } from "@ant-design/pro-components";
 import { Button, Tag } from "antd";
 import { LogOut, UserRound } from "lucide-react";
-import { api } from "../api/console-api.js";
+import { logout as logoutSession } from "../api/auth-api.js";
 import { navigate } from "../consoleRoutes.js";
 import { useConsoleState } from "../store/console-state.js";
 import { AccountPage } from "./account/AccountPage.jsx";
@@ -33,7 +33,7 @@ export default function ConsolePage({ route, session, onLogout }) {
 
   async function logout() {
     try {
-      await api("/api/auth/logout", {}, session.csrfToken);
+      await logoutSession(session.csrfToken);
     } finally {
       onLogout();
       navigate("/");

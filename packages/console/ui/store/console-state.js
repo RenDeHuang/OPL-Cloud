@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Form, message } from "antd";
-import { getJson } from "../api/console-api.js";
+import {
+  getConsoleState,
+  getOperatorSummary,
+  getProductionReadiness,
+  getRuntimeReadiness
+} from "../api/console-read-api.js";
 import { useTickets } from "../pages/support/useTickets.js";
 
 export function useConsoleState({ isAdmin, path }) {
@@ -12,7 +17,7 @@ export function useConsoleState({ isAdmin, path }) {
   const tickets = useTickets();
 
   async function refresh() {
-    const next = await getJson("/api/state");
+    const next = await getConsoleState();
     setState(next);
   }
 
@@ -20,9 +25,9 @@ export function useConsoleState({ isAdmin, path }) {
     if (!isAdmin) return;
     try {
       const [operator, runtime, launch] = await Promise.all([
-        getJson("/api/operator/summary"),
-        getJson("/api/runtime/readiness"),
-        getJson("/api/production/readiness")
+        getOperatorSummary(),
+        getRuntimeReadiness(),
+        getProductionReadiness()
       ]);
       setAdminOps({ operator, runtime, launch, error: "" });
     } catch (err) {

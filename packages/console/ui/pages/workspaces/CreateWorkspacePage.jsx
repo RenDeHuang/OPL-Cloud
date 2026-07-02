@@ -1,7 +1,7 @@
 import React from "react";
 import { PageContainer, ProCard, ProFormSelect, ProFormText, StepsForm } from "@ant-design/pro-components";
 import { Alert, Descriptions } from "antd";
-import { api } from "../../api/console-api.js";
+import { createWorkspace } from "../../api/workspaces-api.js";
 import { navigate } from "../../consoleRoutes.js";
 import { available, money, packageText, planHold } from "../shared/formatters.js";
 
@@ -13,7 +13,7 @@ export function CreateWorkspacePage({ state, wallet, selectedCreatePlan, setCrea
         <StepsForm
           onFinish={async (values) => {
             await runAction(
-              () => api("/api/workspaces", {
+              () => createWorkspace({
                 workspaceName: values.workspaceName,
                 packageId: values.packageId
               }, session.csrfToken),

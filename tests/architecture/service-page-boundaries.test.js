@@ -23,6 +23,11 @@ function lineCount(text) {
 test("console UI is split into api, store, shared, and page modules", async () => {
   for (const file of [
     "packages/console/ui/api/console-api.js",
+    "packages/console/ui/api/auth-api.js",
+    "packages/console/ui/api/billing-api.js",
+    "packages/console/ui/api/console-read-api.js",
+    "packages/console/ui/api/ledger-api.js",
+    "packages/console/ui/api/workspaces-api.js",
     "packages/console/ui/store/console-state.js",
     "packages/console/ui/pages/shared/console-menu.jsx",
     "packages/console/ui/pages/shared/formatters.js",
@@ -42,27 +47,35 @@ test("console UI is split into api, store, shared, and page modules", async () =
   assert.doesNotMatch(consolePage, /async function api\(/);
   assert.doesNotMatch(consolePage, /function WorkspacesPage\(/);
   assert.doesNotMatch(consolePage, /function AdminOverviewPage\(/);
-  assert.match(consolePage, /from "\.\.\/api\/console-api\.js"/);
+  assert.match(consolePage, /from "\.\.\/api\/auth-api\.js"/);
   assert.match(consolePage, /from "\.\.\/store\/console-state\.js"/);
 });
 
-test("opl-cloud delegates pure billing and workspace helpers to service modules", async () => {
+test("opl-cloud facade delegates domain use cases to service modules", async () => {
   for (const file of [
     "packages/console/src/services/core-utils.js",
     "packages/console/src/services/wallet-service.js",
     "packages/console/src/services/pricing-service.js",
     "packages/console/src/services/usage-billing-service.js",
-    "packages/console/src/services/workspace-service.js"
+    "packages/console/src/services/workspace-service.js",
+    "packages/console/src/services/workspace-lifecycle-service.js",
+    "packages/console/src/services/billing-service.js",
+    "packages/console/src/services/ledger-evidence-service.js",
+    "packages/console/src/services/console-read-model-service.js",
+    "packages/console/src/services/runtime-operation-service.js"
   ]) {
     await assertFile(file);
   }
 
   const service = await source("packages/console/src/opl-cloud.js");
-  assert.ok(lineCount(service) < 1800, "opl-cloud should keep orchestration methods, not every helper");
+  assert.ok(lineCount(service) < 900, "opl-cloud should be a facade, not a domain implementation bundle");
   assert.doesNotMatch(service, /function ensureUserWallet\(/);
   assert.doesNotMatch(service, /function packageHoldAmount\(/);
   assert.doesNotMatch(service, /function latestWorkspaceForAccount\(/);
-  assert.match(service, /from "\.\/services\/wallet-service\.js"/);
   assert.match(service, /from "\.\/services\/pricing-service\.js"/);
-  assert.match(service, /from "\.\/services\/workspace-service\.js"/);
+  assert.match(service, /WorkspaceLifecycleService/);
+  assert.match(service, /BillingService/);
+  assert.match(service, /LedgerEvidenceService/);
+  assert.match(service, /ConsoleReadModelService/);
+  assert.match(service, /RuntimeOperationService/);
 });

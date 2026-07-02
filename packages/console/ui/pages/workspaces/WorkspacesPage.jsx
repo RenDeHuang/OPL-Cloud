@@ -2,7 +2,7 @@ import React from "react";
 import { PageContainer, ProTable } from "@ant-design/pro-components";
 import { Button, Tag, Typography } from "antd";
 import { Link as LinkIcon, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { api } from "../../api/console-api.js";
+import { deleteWorkspaceToken, resetWorkspaceToken } from "../../api/workspaces-api.js";
 import { navigate } from "../../consoleRoutes.js";
 import { available, money, packageText, statusColor, statusLabel } from "../shared/formatters.js";
 
@@ -30,8 +30,8 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
             valueType: "option",
             render: (_, row) => [
               <Button key="open" size="small" icon={<LinkIcon size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => window.open(row.url, "_blank", "noopener,noreferrer")}>打开</Button>,
-              <Button key="reset" size="small" icon={<RefreshCw size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => runAction(() => api("/api/workspaces/reset-token", { workspaceId: row.id }, session.csrfToken), "URL 已重置")}>重置</Button>,
-              <Button key="delete" size="small" danger icon={<Trash2 size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => runAction(() => api("/api/workspaces/delete-token", { workspaceId: row.id }, session.csrfToken), "URL 已停用")}>停用</Button>
+              <Button key="reset" size="small" icon={<RefreshCw size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => runAction(() => resetWorkspaceToken({ workspaceId: row.id }, session.csrfToken), "URL 已重置")}>重置</Button>,
+              <Button key="delete" size="small" danger icon={<Trash2 size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => runAction(() => deleteWorkspaceToken({ workspaceId: row.id }, session.csrfToken), "URL 已停用")}>停用</Button>
             ]
           }
         ]}
