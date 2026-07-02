@@ -6,6 +6,7 @@ import {
   resolveWorkspaceOwner
 } from "./management-model.js";
 import { appendEvidenceReceipt, createEvidenceReceipt } from "../../ledger/src/evidence-ledger.js";
+import { billingReconciliationGuard } from "../../ledger/src/billing-reconciliation.js";
 
 const PACKAGES = {
   basic: {
@@ -241,6 +242,16 @@ function latestStorageBackupForAccount(state, accountId, backupId) {
   return backup;
 }
 
+function latestBillingReconciliationReport(state) {
+  return (state.billingReconciliationReports || []).at(-1) || null;
+}
+
+function operatorNotificationInScope(event, accountId) {
+  if (!accountId) return true;
+  if (event.accountId === accountId) return true;
+  return event.accountId === "billing" && event.workspaceId === "billing";
+}
+
 export function createOplCloud({ store, runtimeProvider, pricing, productionReadiness = null }) {
   return new OplCloudService({ store, runtimeProvider, pricing, productionReadiness });
 }
@@ -354,6 +365,7 @@ export class OplCloudService {
     let owner = null;
 
     const reservation = await this.store.update((state) => {
+      this.assertBillingReconciliationAllowsProvisioning(state);
       const resolvedOwner = resolveWorkspaceOwner(state, { accountId, organizationId, userId });
       accountId = resolvedOwner.accountId;
       owner = resolvedOwner.owner;
@@ -541,6 +553,7 @@ export class OplCloudService {
     let backupSnapshot = null;
 
     const reservation = await this.store.update((state) => {
+      this.assertBillingReconciliationAllowsProvisioning(state);
       const backup = latestStorageBackupForAccount(state, accountId, backupId);
       if (backup.status !== "available") throw new Error("storage_backup_not_available");
       backupSnapshot = clone(backup);
@@ -998,6 +1011,43 @@ export class OplCloudService {
     return state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone);
   }
 
+  async recordBillingReconciliation({ report, source = "manual" }) {
+    if (!report || typeof report !== "object") throw new Error("billing_reconciliation_report_required");
+    return this.store.update((state) => {
+      state.billingReconciliationReports ??= [];
+      const guard = billingReconciliationGuard({
+        latestReport: report,
+        now: report.generatedAt || now(),
+        requireRecentReport: true
+      });
+      const record = {
+        ...clone(report),
+        id: report.id || makeId("recon", source, report.generatedAt || now(), String(state.billingReconciliationReports.length)),
+        source,
+        guard,
+        createdAt: now()
+      };
+      state.billingReconciliationReports.push(record);
+      state.audit.push(this.auditEvent({
+        accountId: "billing",
+        type: guard.blockNewWorkspaces ? "billing.reconciliation_guard_blocked" : "billing.reconciliation_recorded",
+        sourceEventId: record.id
+      }));
+      if (guard.blockNewWorkspaces) {
+        this.notify({
+          state,
+          accountId: "billing",
+          workspaceId: "billing",
+          type: "billing.reconciliation_guard_blocked",
+          severity: "error",
+          message: guard.reason,
+          sourceEventId: record.id
+        });
+      }
+      return clone(record);
+    });
+  }
+
   async resolveWorkspaceAccess({ slug, token }) {
     const state = await this.store.read();
     const workspace = workspaceBySlug(state, slug);
@@ -1021,6 +1071,14 @@ export class OplCloudService {
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
       storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === accountId).map(clone),
+      billingReconciliation: {
+        latestReport: clone(latestBillingReconciliationReport(state)),
+        guard: clone(latestBillingReconciliationReport(state)?.guard || {
+          status: "not_required",
+          blockNewWorkspaces: false,
+          reason: "billing_reconciliation_not_required"
+        })
+      },
       evidenceLedger: (state.evidenceLedger || []).filter((entry) => entry.accountId === accountId).map(clone),
       audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
       notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
@@ -1031,10 +1089,11 @@ export class OplCloudService {
   async operatorSummary({ accountId = null } = {}) {
     const state = await this.store.read();
     const workspaces = Object.values(state.workspaces).filter((workspace) => !accountId || workspace.ownerAccountId === accountId);
-    const notifications = (state.notifications || []).filter((event) => !accountId || event.accountId === accountId);
+    const notifications = (state.notifications || []).filter((event) => operatorNotificationInScope(event, accountId));
     const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
     const accounts = Object.values(state.accounts).filter((account) => !accountId || account.id === accountId);
     const storageBackups = (state.storageBackups || []).filter((backup) => !accountId || backup.accountId === accountId);
+    const latestReconciliation = latestBillingReconciliationReport(state);
     const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
     const attentionWorkspaces = workspaces.filter((workspace) =>
       workspace.state === "failed" ||
@@ -1090,6 +1149,14 @@ export class OplCloudService {
         total: storageBackups.length,
         available: storageBackups.filter((backup) => backup.status === "available").length,
         failed: storageBackups.filter((backup) => String(backup.status).endsWith("_failed")).length
+      },
+      billingReconciliation: {
+        reports: state.billingReconciliationReports?.length || 0,
+        guard: clone(latestReconciliation?.guard || {
+          status: "not_required",
+          blockNewWorkspaces: false,
+          reason: "billing_reconciliation_not_required"
+        })
       },
       billingPolicy: billingPolicy(this.pricing)
     };
@@ -1528,5 +1595,12 @@ export class OplCloudService {
       sourceEventId,
       createdAt: now()
     };
+  }
+
+  assertBillingReconciliationAllowsProvisioning(state) {
+    const guard = latestBillingReconciliationReport(state)?.guard;
+    if (guard?.blockNewWorkspaces) {
+      throw new Error(`billing_reconciliation_guard_blocked:${guard.reason}`);
+    }
   }
 }

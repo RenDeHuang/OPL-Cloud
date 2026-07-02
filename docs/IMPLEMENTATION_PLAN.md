@@ -120,7 +120,8 @@ Attempt:
 
 - Keep OPL Console as the v1 billing truth.
 - Keep OPL Ledger as the v1 billing truth with prepaid compute/storage holds, hourly internal debits from available balance first, frozen-hold consumption after balance exhaustion, hold release, and auto-stop/freeze receipts.
-- Preserve operation attempts, billing ledger entries, evidence receipts, audit events, notifications, verifier output, and Tencent bill reconciliation evidence.
+- Preserve operation attempts, billing ledger entries, evidence receipts, audit events, notifications, verifier output, and Tencent bill reconciliation reports.
+- Store the latest Tencent bill reconciliation guard in Console state and fail closed for new Workspace provisioning when OPL debits do not cover Tencent cost plus markup.
 - Keep Evidence Ledger v0 limited to control-plane receipts until full task/agent provenance moves into the owning OPL Ledger surface.
 
 Receipts:
@@ -265,4 +266,4 @@ Do not print secret values. Do not commit `.env.production*` or legacy `.env.pre
 
 ## Current Pilot Gate
 
-Use [CONTROLLED_PILOT_CHECKLIST.md](./CONTROLLED_PILOT_CHECKLIST.md) as the current non-reconciliation pilot gate. Tencent bill reconciliation remains a separate finance validation task. The OPL Console control-plane should not claim public GA or full OPL Cloud completeness until payment settlement, data backup/restore policy, Gateway product surface, and full Ledger service boundaries are separately closed.
+Use [CONTROLLED_PILOT_CHECKLIST.md](./CONTROLLED_PILOT_CHECKLIST.md) as the current pilot gate. The OPL Console control-plane should not claim public GA or full OPL Cloud completeness until payment settlement, Gateway product surface, full Ledger service boundaries, and richer Fabric resource catalog boundaries are separately closed.

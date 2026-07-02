@@ -68,6 +68,26 @@
     "resourceTypes": [
       "server",
       "storage"
-    ]
+    ],
+    "guard": {
+      "storedIn": "billing_reconciliation_reports",
+      "blocks": [
+        "open_workspace",
+        "restore_workspace_from_backup"
+      ],
+      "doesNotBlock": [
+        "resolve_workspace_access",
+        "settle_billing",
+        "stop_compute",
+        "destroy_compute",
+        "destroy_storage"
+      ],
+      "blockReasons": [
+        "tencent_bill_reconciliation_failed",
+        "billing_reconciliation_report_missing",
+        "billing_reconciliation_report_stale"
+      ],
+      "operatorNotificationType": "billing.reconciliation_guard_blocked"
+    }
   }
 }

@@ -212,4 +212,12 @@ The production billing chain is:
 Workspace open/resume -> 7-day compute and storage holds -> hourly internal debits from available balance -> frozen hold consumption only after available balance is exhausted -> hold release or auto-stop/freeze -> Tencent bill reconciliation
 ```
 
+Record reconciliation output with:
+
+```text
+POST /api/billing/reconciliation
+```
+
+If the latest reconciliation report shows OPL debits do not cover Tencent cost plus markup, OPL Console blocks new Workspace creation and backup restore-to-new-Workspace until an operator records a passing report. Existing Workspaces remain accessible and can still settle billing or be stopped/destroyed so operators can reduce cost while investigating.
+
 External metering systems are not required for production billing. OPL Ledger remains the v1 billing truth.

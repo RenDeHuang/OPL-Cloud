@@ -155,7 +155,8 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       "POST /api/workspaces/prune-storage-backups": () => appService.pruneStorageBackups(body),
       "POST /api/workspaces/reset-token": () => appService.resetWorkspaceToken(body),
       "POST /api/workspaces/delete-token": () => appService.deleteWorkspaceToken(body),
-      "POST /api/billing/settle": () => appService.settleBilling(body)
+      "POST /api/billing/settle": () => appService.settleBilling(body),
+      "POST /api/billing/reconciliation": () => appService.recordBillingReconciliation(body)
     };
     const handler = routes[`${request.method} ${pathname}`];
     if (!handler) return sendJson(response, 404, { ok: false, error: "route_not_found" });

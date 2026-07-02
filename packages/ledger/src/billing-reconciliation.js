@@ -2,6 +2,17 @@ function money(value) {
   return Number(Number(value).toFixed(4));
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function hoursBetween(startIso, endIso) {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return money((end - start) / 1000 / 60 / 60);
+}
+
 function absDebit(entry) {
   return money(Math.abs(Number(entry.amount || 0)));
 }
@@ -185,5 +196,88 @@ export function reconcileTencentBills({
     totals,
     workspaces: rows,
     mismatches
+  };
+}
+
+export function billingReconciliationGuard({
+  latestReport = null,
+  now = nowIso(),
+  maxAgeHours = 30,
+  requireRecentReport = false
+} = {}) {
+  if (!latestReport) {
+    return requireRecentReport
+      ? {
+        status: "blocked",
+        blockNewWorkspaces: true,
+        reason: "billing_reconciliation_report_missing",
+        checkedAt: now
+      }
+      : {
+        status: "not_required",
+        blockNewWorkspaces: false,
+        reason: "billing_reconciliation_not_required",
+        checkedAt: now
+      };
+  }
+
+  const ageHours = hoursBetween(latestReport.generatedAt || latestReport.createdAt, now);
+  if (requireRecentReport && ageHours !== null && ageHours > maxAgeHours) {
+    return {
+      status: "blocked",
+      blockNewWorkspaces: true,
+      reason: "billing_reconciliation_report_stale",
+      checkedAt: now,
+      generatedAt: latestReport.generatedAt || latestReport.createdAt,
+      ageHours
+    };
+  }
+
+  if (latestReport.ok !== true) {
+    return {
+      status: "blocked",
+      blockNewWorkspaces: true,
+      reason: "tencent_bill_reconciliation_failed",
+      checkedAt: now,
+      generatedAt: latestReport.generatedAt || latestReport.createdAt,
+      mismatchWorkspaceIds: (latestReport.mismatches || []).map((item) => item.workspaceId)
+    };
+  }
+
+  return {
+    status: "ok",
+    blockNewWorkspaces: false,
+    reason: "billing_reconciliation_ok",
+    checkedAt: now,
+    generatedAt: latestReport.generatedAt || latestReport.createdAt,
+    ...(ageHours === null ? {} : { ageHours })
+  };
+}
+
+export function createBillingReconciliationReport({
+  ledgerEntries = [],
+  tencentBills = [],
+  markup = 0.2,
+  tolerance = 0.01,
+  generatedAt = nowIso(),
+  maxAgeHours = 30
+} = {}) {
+  const report = {
+    ...reconcileTencentBills({
+      ledgerEntries,
+      tencentBills,
+      markup,
+      tolerance
+    }),
+    generatedAt
+  };
+  return {
+    ...report,
+    guard: billingReconciliationGuard({
+      latestReport: report,
+      now: generatedAt,
+      maxAgeHours,
+      requireRecentReport: true
+    })
   };
 }

@@ -2,7 +2,7 @@
 
 Status: production pilot readiness checklist
 
-This repository is the OPL Console control-plane implementation. It is ready for controlled production pilot only when the following six non-reconciliation checks stay true. Tencent bill reconciliation remains a separate finance validation gate.
+This repository is the OPL Console control-plane implementation. It is ready for controlled production pilot only when the following checks stay true.
 
 ## 1. Destroyed Workspace Access
 
@@ -34,6 +34,7 @@ Pilot rule:
 - Frozen-hold consumption must record a warning notification.
 - Compute hold exhaustion must record auto-stop intent.
 - Storage hold exhaustion must freeze Workspace state until top-up or explicit storage destruction.
+- A failing Tencent bill reconciliation report must create an operator-visible `billing.reconciliation_guard_blocked` notification.
 
 ## 3. User Billing Rules
 
@@ -76,7 +77,20 @@ Future GA requirement:
 - define deletion grace period
 - define user-facing data loss responsibility
 
-## 5. Tutorial Screenshot Refresh
+## 5. Tencent Bill Reconciliation Guard
+
+Current production billing truth is OPL Ledger. Tencent bill reconciliation is the finance guard that proves OPL debits cover Tencent cost plus the configured markup.
+
+Required behavior:
+
+- `npm run reconcile:tencent` outputs a reconciliation report with a `guard` object.
+- `POST /api/billing/reconciliation` stores the report in `billing_reconciliation_reports`.
+- If the latest report fails, OPL Console blocks new Workspace creation.
+- If the latest report fails, OPL Console blocks restore-to-new-Workspace from backup.
+- Existing Workspace access, billing settlement, stop, destroy compute, and destroy storage remain available.
+- Operator summary shows the active guard and recent global billing notification even when scoped to one account.
+
+## 6. Tutorial Screenshot Refresh
 
 Screenshot refresh is a documentation task, not an OPL Console control-plane implementation task.
 
@@ -101,7 +115,7 @@ Rules:
 - remove old model names
 - one screenshot should answer one user action
 
-## 6. Launch Boundary
+## 7. Launch Boundary
 
 Current status:
 
@@ -124,7 +138,6 @@ What is not included in this pilot:
 
 - public self-serve sales
 - payment provider settlement
-- Tencent bill reconciliation gate
 - GPU Workspace package
 - full OPL Gateway product surface
 - full OPL Ledger service

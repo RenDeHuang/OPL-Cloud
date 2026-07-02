@@ -143,3 +143,45 @@ test("storage backup API routes to backup, restore, and retention operations", a
     await close();
   }
 });
+
+test("billing reconciliation API records guard reports before provisioning", async () => {
+  const calls = [];
+  const appService = {
+    async recordBillingReconciliation(input) {
+      calls.push(["recordBillingReconciliation", input]);
+      return {
+        id: "recon-1",
+        guard: {
+          blockNewWorkspaces: true,
+          reason: "tencent_bill_reconciliation_failed"
+        }
+      };
+    },
+    async createWorkspace() {
+      throw new Error("billing_reconciliation_guard_blocked:tencent_bill_reconciliation_failed");
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const recorded = await postJson(origin, "/api/billing/reconciliation", {
+      report: {
+        ok: false,
+        generatedAt: "2026-07-02T00:00:00.000Z",
+        mismatches: [{ workspaceId: "ws-alpha" }]
+      }
+    });
+    assert.equal(recorded.response.status, 200);
+    assert.equal(recorded.payload.guard.blockNewWorkspaces, true);
+
+    const blocked = await postJson(origin, "/api/workspaces", {
+      accountId: "pi-alpha",
+      workspaceName: "Blocked Lab",
+      packageId: "basic"
+    });
+    assert.equal(blocked.response.status, 400);
+    assert.equal(blocked.payload.error, "billing_reconciliation_guard_blocked:tencent_bill_reconciliation_failed");
+    assert.deepEqual(calls.map(([name]) => name), ["recordBillingReconciliation"]);
+  } finally {
+    await close();
+  }
+});

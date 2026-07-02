@@ -29,6 +29,7 @@ test("Tencent reconciliation CLI writes JSON to stdout and returns non-zero on m
     const report = JSON.parse(stdout);
     assert.equal(code, 1);
     assert.equal(report.ok, false);
+    assert.equal(report.guard.blockNewWorkspaces, true);
     assert.equal(report.mismatches[0].serverDelta, -1.5);
     assert.equal(stderr, "tencent_bill_reconciliation_failed\n");
   } finally {
@@ -63,6 +64,7 @@ test("Tencent reconciliation CLI can normalize raw Tencent export rows before re
     const report = JSON.parse(stdout);
     assert.equal(code, 0);
     assert.equal(report.ok, true);
+    assert.equal(report.guard.blockNewWorkspaces, false);
     assert.deepEqual(report.totals, {
       ledgerServer: 12,
       ledgerStorage: 2.4,

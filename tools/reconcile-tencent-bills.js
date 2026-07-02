@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { normalizeTencentBillRows, reconcileTencentBills } from "../packages/ledger/src/billing-reconciliation.js";
+import { createBillingReconciliationReport, normalizeTencentBillRows } from "../packages/ledger/src/billing-reconciliation.js";
 
 function cliArgs(argv) {
   const args = {};
@@ -64,7 +64,7 @@ export async function runReconciliationCli({
   const tencentBills = args["tencent-format"] === "raw"
     ? normalizeTencentBillRows(rawTencentRows)
     : rawTencentRows;
-  const report = reconcileTencentBills({
+  const report = createBillingReconciliationReport({
     ledgerEntries,
     tencentBills,
     markup: args.markup === undefined ? 0.2 : Number(args.markup),
