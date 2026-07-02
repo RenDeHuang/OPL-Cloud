@@ -17,7 +17,12 @@ export function emptyState() {
     billingLedger: [],
     audit: [],
     notifications: [],
-    runtimeOperations: []
+    runtimeOperations: [],
+    resourceUsageLogs: [],
+    requestUsageLogs: [],
+    walletTransactions: [],
+    manualTopups: [],
+    requestUsageDedup: []
   };
 }
 
@@ -85,7 +90,25 @@ export class PostgresStore {
   async read(client = this.pool) {
     await this.ensureSchema(client);
     const state = emptyState();
-    const [accounts, organizations, users, memberships, workspaces, storageBackups, billingReconciliationReports, evidenceLedger, billingLedger, audit, notifications, runtimeOperations] = await Promise.all([
+    const [
+      accounts,
+      organizations,
+      users,
+      memberships,
+      workspaces,
+      storageBackups,
+      billingReconciliationReports,
+      evidenceLedger,
+      billingLedger,
+      audit,
+      notifications,
+      runtimeOperations,
+      resourceUsageLogs,
+      requestUsageLogs,
+      walletTransactions,
+      manualTopups,
+      requestUsageDedup
+    ] = await Promise.all([
       client.query("SELECT id, state FROM accounts ORDER BY id"),
       client.query("SELECT id, state FROM organizations ORDER BY id"),
       client.query("SELECT id, state FROM users ORDER BY id"),
@@ -97,7 +120,12 @@ export class PostgresStore {
       client.query("SELECT state FROM billing_ledger ORDER BY created_at, id"),
       client.query("SELECT state FROM audit_events ORDER BY created_at, id"),
       client.query("SELECT state FROM notifications ORDER BY created_at, id"),
-      client.query("SELECT state FROM runtime_operations ORDER BY created_at, id")
+      client.query("SELECT state FROM runtime_operations ORDER BY created_at, id"),
+      client.query("SELECT state FROM resource_usage_logs ORDER BY created_at, id"),
+      client.query("SELECT state FROM request_usage_logs ORDER BY created_at, id"),
+      client.query("SELECT state FROM wallet_transactions ORDER BY created_at, id"),
+      client.query("SELECT state FROM manual_topups ORDER BY created_at, id"),
+      client.query("SELECT state FROM request_usage_dedup ORDER BY created_at, id")
     ]);
 
     for (const row of accounts.rows) state.accounts[row.id] = row.state;
@@ -112,12 +140,17 @@ export class PostgresStore {
     state.audit = audit.rows.map((row) => row.state);
     state.notifications = notifications.rows.map((row) => row.state);
     state.runtimeOperations = runtimeOperations.rows.map((row) => row.state);
+    state.resourceUsageLogs = resourceUsageLogs.rows.map((row) => row.state);
+    state.requestUsageLogs = requestUsageLogs.rows.map((row) => row.state);
+    state.walletTransactions = walletTransactions.rows.map((row) => row.state);
+    state.manualTopups = manualTopups.rows.map((row) => row.state);
+    state.requestUsageDedup = requestUsageDedup.rows.map((row) => row.state);
     return clone(state);
   }
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
-    await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations");
+    await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
 
     for (const account of Object.values(nextState.accounts || {})) {
       await client.query(
@@ -217,6 +250,62 @@ export class PostgresStore {
         operation,
         operation.createdAt || new Date().toISOString(),
         operation.updatedAt || operation.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const usage of nextState.resourceUsageLogs || []) {
+      await client.query("INSERT INTO resource_usage_logs (id, user_id, account_id, workspace_id, resource_type, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+        usage.id,
+        usage.userId,
+        usage.accountId,
+        usage.workspaceId,
+        usage.resourceType,
+        usage,
+        usage.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const usage of nextState.requestUsageLogs || []) {
+      await client.query("INSERT INTO request_usage_logs (id, user_id, account_id, workspace_id, request_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+        usage.id,
+        usage.userId,
+        usage.accountId,
+        usage.workspaceId,
+        usage.requestId,
+        usage,
+        usage.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const transaction of nextState.walletTransactions || []) {
+      await client.query("INSERT INTO wallet_transactions (id, user_id, account_id, workspace_id, transaction_type, source_event_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [
+        transaction.id,
+        transaction.userId,
+        transaction.accountId,
+        transaction.workspaceId || "",
+        transaction.type,
+        transaction.sourceEventId || "",
+        transaction,
+        transaction.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const topup of nextState.manualTopups || []) {
+      await client.query("INSERT INTO manual_topups (id, operator_user_id, target_user_id, target_account_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6)", [
+        topup.id,
+        topup.operatorUserId || "",
+        topup.targetUserId,
+        topup.targetAccountId,
+        topup,
+        topup.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const dedup of nextState.requestUsageDedup || []) {
+      await client.query("INSERT INTO request_usage_dedup (id, workspace_id, source_event_id, request_id, request_fingerprint, usage_log_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [
+        dedup.id,
+        dedup.workspaceId,
+        dedup.sourceEventId,
+        dedup.requestId,
+        dedup.requestFingerprint,
+        dedup.usageLogId,
+        dedup,
+        dedup.createdAt || new Date().toISOString()
       ]);
     }
     return this.read(client);
@@ -352,6 +441,66 @@ export class PostgresStore {
         updated_at timestamptz NOT NULL DEFAULT now()
       )
     `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS resource_usage_logs (
+        id text PRIMARY KEY,
+        user_id text NOT NULL,
+        account_id text NOT NULL,
+        workspace_id text NOT NULL,
+        resource_type text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS request_usage_logs (
+        id text PRIMARY KEY,
+        user_id text NOT NULL,
+        account_id text NOT NULL,
+        workspace_id text NOT NULL,
+        request_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wallet_transactions (
+        id text PRIMARY KEY,
+        user_id text NOT NULL,
+        account_id text NOT NULL,
+        workspace_id text NOT NULL,
+        transaction_type text NOT NULL,
+        source_event_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS manual_topups (
+        id text PRIMARY KEY,
+        operator_user_id text NOT NULL,
+        target_user_id text NOT NULL,
+        target_account_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS request_usage_dedup (
+        id text PRIMARY KEY,
+        workspace_id text NOT NULL,
+        source_event_id text NOT NULL,
+        request_id text NOT NULL,
+        request_fingerprint text NOT NULL,
+        usage_log_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx ON request_usage_logs (workspace_id, request_id)");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx ON request_usage_dedup (workspace_id, source_event_id)");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_workspace_resource_source_idx ON resource_usage_logs (workspace_id, resource_type, ((state->>'sourceEventId')))");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS billing_ledger_dedup_idx ON billing_ledger (account_id, workspace_id, ((state->>'type')), ((state->>'sourceEventId')), (COALESCE(state->'metadata'->>'fundingSource', '')))");
     this.initialized = true;
   }
 }

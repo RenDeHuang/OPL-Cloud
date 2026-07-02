@@ -16,7 +16,12 @@ function createFakePool() {
     billing_ledger: [],
     audit_events: [],
     notifications: [],
-    runtime_operations: []
+    runtime_operations: [],
+    resource_usage_logs: [],
+    request_usage_logs: [],
+    wallet_transactions: [],
+    manual_topups: [],
+    request_usage_dedup: []
   };
   const statements = [];
 
@@ -30,10 +35,10 @@ function createFakePool() {
       if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK") {
         return { rows: [] };
       }
-      if (normalized.startsWith("CREATE TABLE IF NOT EXISTS")) {
+      if (normalized.startsWith("CREATE TABLE IF NOT EXISTS") || normalized.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
         return { rows: [] };
       }
-      if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations")) {
+      if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, resource_usage_logs, request_usage_logs")) {
         tables.accounts.clear();
         tables.organizations.clear();
         tables.users.clear();
@@ -46,6 +51,11 @@ function createFakePool() {
         tables.audit_events = [];
         tables.notifications = [];
         tables.runtime_operations = [];
+        tables.resource_usage_logs = [];
+        tables.request_usage_logs = [];
+        tables.wallet_transactions = [];
+        tables.manual_topups = [];
+        tables.request_usage_dedup = [];
         return { rows: [] };
       }
       if (normalized.startsWith("SELECT id, state FROM accounts")) {
@@ -83,6 +93,21 @@ function createFakePool() {
       }
       if (normalized.startsWith("SELECT state FROM runtime_operations")) {
         return { rows: tables.runtime_operations.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM resource_usage_logs")) {
+        return { rows: tables.resource_usage_logs.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM request_usage_logs")) {
+        return { rows: tables.request_usage_logs.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM wallet_transactions")) {
+        return { rows: tables.wallet_transactions.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM manual_topups")) {
+        return { rows: tables.manual_topups.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM request_usage_dedup")) {
+        return { rows: tables.request_usage_dedup.map((state) => ({ state })) };
       }
       if (normalized.startsWith("INSERT INTO accounts")) {
         tables.accounts.set(params[0], params[1]);
@@ -130,6 +155,26 @@ function createFakePool() {
       }
       if (normalized.startsWith("INSERT INTO runtime_operations")) {
         tables.runtime_operations.push(params[3]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO resource_usage_logs")) {
+        tables.resource_usage_logs.push(params[5]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO request_usage_logs")) {
+        tables.request_usage_logs.push(params[5]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO wallet_transactions")) {
+        tables.wallet_transactions.push(params[6]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO manual_topups")) {
+        tables.manual_topups.push(params[4]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO request_usage_dedup")) {
+        tables.request_usage_dedup.push(params[6]);
         return { rows: [] };
       }
       throw new Error(`unexpected_sql:${normalized}`);
@@ -209,6 +254,90 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         status: "succeeded",
         attempts: 1
       }
+    ],
+    resourceUsageLogs: [
+      {
+        id: "usage-resource-1",
+        userId: "usr-ada",
+        accountId: "pi-alpha",
+        workspaceId: "ws-alpha",
+        resourceType: "compute",
+        quantity: 1,
+        unit: "hour",
+        unitPrice: 1.2,
+        amount: 1.2,
+        currency: "CNY",
+        sourceEventId: "billing_tick_1",
+        createdAt: "2026-07-01T03:00:00.000Z"
+      }
+    ],
+    requestUsageLogs: [
+      {
+        id: "usage-request-1",
+        userId: "usr-ada",
+        accountId: "pi-alpha",
+        workspaceId: "ws-alpha",
+        requestId: "req-1",
+        provider: "openai",
+        model: "gpt-5",
+        inputTokens: 100,
+        outputTokens: 20,
+        amount: 0.1,
+        currency: "CNY",
+        sourceEventId: "gateway_req_1",
+        createdAt: "2026-07-01T03:01:00.000Z"
+      }
+    ],
+    walletTransactions: [
+      {
+        id: "wallet-tx-1",
+        userId: "usr-ada",
+        accountId: "pi-alpha",
+        workspaceId: "ws-alpha",
+        type: "request_debit",
+        amount: -0.1,
+        currency: "CNY",
+        balanceBefore: 200,
+        balanceAfter: 199.9,
+        frozenBefore: 0,
+        frozenAfter: 0,
+        sourceEventId: "gateway_req_1",
+        usageLogId: "usage-request-1",
+        ledgerEntryId: "ledger-2",
+        fundingSource: "available_balance",
+        createdAt: "2026-07-01T03:01:00.000Z"
+      }
+    ],
+    manualTopups: [
+      {
+        id: "manual-topup-1",
+        operatorUserId: "usr-admin",
+        operatorAccountId: "admin",
+        targetUserId: "usr-ada",
+        targetAccountId: "pi-alpha",
+        amount: 200,
+        currency: "CNY",
+        reason: "pilot_credit",
+        status: "completed",
+        balanceBefore: 0,
+        balanceAfter: 200,
+        ledgerEntryId: "ledger-1",
+        walletTransactionId: "wallet-tx-0",
+        createdAt: "2026-07-01T00:00:00.000Z"
+      }
+    ],
+    requestUsageDedup: [
+      {
+        id: "dedup-1",
+        userId: "usr-ada",
+        accountId: "pi-alpha",
+        workspaceId: "ws-alpha",
+        requestId: "req-1",
+        sourceEventId: "gateway_req_1",
+        requestFingerprint: "fingerprint-1",
+        usageLogId: "usage-request-1",
+        createdAt: "2026-07-01T03:01:00.000Z"
+      }
     ]
   };
 
@@ -228,6 +357,15 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS audit_events")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS notifications")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS runtime_operations")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_logs")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_logs")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS wallet_transactions")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS manual_topups")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_dedup")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_workspace_resource_source_idx")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS billing_ledger_dedup_idx")));
 });
 
 test("PostgresStore update reads, mutates, and writes state transactionally", async () => {

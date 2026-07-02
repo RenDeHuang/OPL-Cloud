@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createAuthController, createRequestHandler } from "../../packages/console/api/server.js";
-import { MemoryStore } from "../../packages/console/src/store.js";
+import { emptyState, MemoryStore } from "../../packages/console/src/store.js";
 
 async function listen(handler) {
   const server = createServer(handler);
@@ -194,7 +194,13 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
     assert.equal(adminCredit.response.status, 200);
     assert.deepEqual(calls, [
       ["getState", "pi-alpha"],
-      ["creditAccount", { accountId: "pi-alpha", amount: 200, reason: "manual_top_up" }]
+      ["creditAccount", {
+        accountId: "pi-alpha",
+        amount: 200,
+        reason: "manual_top_up",
+        operatorUserId: "usr-admin",
+        operatorAccountId: "admin"
+      }]
     ]);
   } finally {
     await close();
@@ -432,6 +438,112 @@ test("store-backed auth repairs missing account records for persisted login user
     });
   } finally {
     await repairedServer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("store-backed auth migrates legacy account wallet fields onto persisted users", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-wallet-"));
+  const usersPath = join(root, "users.json");
+  const store = new MemoryStore({
+    accounts: {
+      "pi-wallet": {
+        id: "pi-wallet",
+        balance: 248.7967,
+        frozen: 202.16,
+        holds: {
+          compute: 201.6,
+          storage: 0.56
+        },
+        totalRecharged: 250
+      }
+    },
+    organizations: {},
+    users: {
+      "usr-pi-wallet": {
+        id: "usr-pi-wallet",
+        email: "wallet@example.com",
+        name: "Wallet PI",
+        role: "pi",
+        accountId: "pi-wallet",
+        status: "active",
+        passwordHash: "scrypt:94ffcb9fc02bdc377ead1ae046cfe792:71389fc96c628b6779c107f28bbdce446a6b82f1a4d6cd1a3643801fff81d52e95a1271b02b999f56ae5f63072b0a5609a893fdfb7cf106b9a18bed169391167"
+      }
+    },
+    memberships: [],
+    workspaces: {},
+    storageBackups: [],
+    billingReconciliationReports: [],
+    evidenceLedger: [],
+    billingLedger: [],
+    audit: [],
+    notifications: [],
+    runtimeOperations: [],
+    resourceUsageLogs: [],
+    requestUsageLogs: []
+  });
+  try {
+    const auth = createAuthController({ store, usersPath, seedUsers: [] });
+    await auth.listUsers();
+
+    const persisted = await store.read();
+    assert.equal(persisted.users["usr-pi-wallet"].balance, 248.7967);
+    assert.equal(persisted.users["usr-pi-wallet"].frozen, 202.16);
+    assert.deepEqual(persisted.users["usr-pi-wallet"].holds, {
+      compute: 201.6,
+      storage: 0.56
+    });
+    assert.equal(persisted.users["usr-pi-wallet"].totalRecharged, 250);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("store-backed auth does not rewrite already repaired wallet users", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-no-rewrite-"));
+  const baseStore = new MemoryStore({
+    ...emptyState(),
+    accounts: {
+      "pi-stable": {
+        id: "pi-stable",
+        balance: 25,
+        frozen: 0,
+        holds: {}
+      }
+    },
+    users: {
+      "usr-pi-stable": {
+        id: "usr-pi-stable",
+        email: "stable@example.com",
+        name: "Stable PI",
+        role: "pi",
+        accountId: "pi-stable",
+        status: "active",
+        passwordHash: "scrypt:salt:hash",
+        balance: 25,
+        frozen: 0,
+        holds: {},
+        totalRecharged: 25
+      }
+    }
+  });
+  let updateCalls = 0;
+  const store = {
+    read: () => baseStore.read(),
+    update: async (mutator) => {
+      updateCalls += 1;
+      return baseStore.update(mutator);
+    }
+  };
+
+  try {
+    const auth = createAuthController({ store, usersPath: join(root, "users.json"), seedUsers: [] });
+    const users = await auth.listUsers();
+
+    assert.equal(users.length, 1);
+    assert.equal(users[0].email, "stable@example.com");
+    assert.equal(updateCalls, 0);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

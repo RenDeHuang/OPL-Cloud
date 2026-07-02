@@ -1,18 +1,50 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  PageContainer,
+  ProCard,
+  ProLayout,
+  ProTable,
+  StatisticCard,
+  StepsForm,
+  ProFormText,
+  ProFormSelect
+} from "@ant-design/pro-components";
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Drawer,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  List,
+  Modal,
+  Space,
+  Tag,
+  Timeline,
+  Typography,
+  message
+} from "antd";
+import {
   Activity,
   AlertTriangle,
-  CheckCircle2,
-  ClipboardList,
-  Copy,
+  Bell,
+  Boxes,
+  ClipboardCheck,
   CreditCard,
   Database,
+  FileText,
+  Gauge,
   HardDrive,
-  History,
+  Headphones,
   KeyRound,
+  Layers,
   Link as LinkIcon,
   LogOut,
   Play,
+  Plus,
+  ReceiptText,
   RefreshCw,
   RotateCw,
   Server,
@@ -22,6 +54,7 @@ import {
   UserRound,
   WalletCards
 } from "lucide-react";
+import { adminMenuRoutes, navigate, ownerMenuRoutes } from "../consoleRoutes.js";
 
 async function api(path, body, csrfToken) {
   const response = await fetch(path, {
@@ -48,18 +81,24 @@ function money(value) {
   return `¥${Number(value || 0).toFixed(2)}`;
 }
 
-function packageSummary(plan) {
-  return `${plan.cpu} CPU / ${plan.memoryGb}GB 内存 / ${plan.diskGb}GB 存储`;
+function planHold(plan) {
+  if (!plan) return 0;
+  return Number(plan.price?.computeHourly || 0) * 24 * 7
+    + Number(plan.price?.storageGbMonth || 0) * Number(plan.diskGb || 0) / 30 * 7;
+}
+
+function available(wallet) {
+  return Number(wallet?.available ?? (Number(wallet?.balance || 0) - Number(wallet?.frozen || 0)));
 }
 
 function statusLabel(workspace) {
-  if (!workspace) return "暂无 OPL Workspace";
+  if (!workspace) return "No Workspace";
   const labels = {
     running: "运行中",
-    stopped_server_disk_retained: "已停止，存储保留",
-    server_destroyed_disk_retained: "计算已销毁，存储保留",
-    storage_hold_exhausted: "存储冻结金额耗尽",
-    stopped_storage_hold_exhausted: "已停止，存储冻结金额耗尽",
+    stopped_server_disk_retained: "已停止",
+    server_destroyed_disk_retained: "计算销毁",
+    storage_hold_exhausted: "存储冻结不足",
+    stopped_storage_hold_exhausted: "已停止",
     destroyed: "已销毁",
     failed: "失败"
   };
@@ -74,141 +113,155 @@ function valueLabel(value) {
     stopped: "已停止",
     destroyed: "已销毁",
     failed: "失败",
-    retained: "已保留",
-    attached_retained: "已挂载并保留",
-    detached_retained: "已卸载并保留",
-    restored_retained: "已从备份恢复",
-    hold_exhausted: "冻结金额耗尽",
-    not_required: "不需要",
-    billing_reconciliation_not_required: "无需对账",
-    ready: "已就绪",
+    retained: "保留",
+    attached_retained: "挂载保留",
+    detached_retained: "卸载保留",
+    restored_retained: "已恢复",
+    hold_exhausted: "冻结不足",
+    ready: "就绪",
     blocked: "阻塞"
   };
-  return labels[value] || value;
+  return labels[value] || value || "-";
 }
 
-function errorLabel(value) {
-  const labels = {
-    request_failed: "请求失败",
-    login_failed: "登录失败",
-    invalid_credentials: "邮箱或密码不正确",
-    not_authenticated: "请先登录",
-    csrf_token_invalid: "页面安全令牌已失效，请重新登录",
-    admin_role_required: "需要管理员权限",
-    insufficient_prepaid_hold_balance: "余额不足，无法完成 7 天预冻结",
-    storage_backup_unsupported: "当前运行时暂不支持存储备份",
-    storage_backup_delete_unsupported: "当前运行时暂不支持清理备份",
-    storage_backup_not_found: "未找到存储备份",
-    storage_backup_not_available: "存储备份不可用",
-    workspace_not_found: "未找到 OPL Workspace",
-    workspace_token_inactive: "OPL Workspace 访问令牌已失效",
-    workspace_token_invalid: "OPL Workspace 访问令牌无效",
-    billing_reconciliation_guard_blocked: "对账保护已阻止创建新的 OPL Workspace"
+function statusColor(value) {
+  if (["running", "active", "available", "ready"].includes(value)) return "green";
+  if (["failed", "destroyed", "hold_exhausted", "blocked"].includes(value)) return "red";
+  if (["stopped", "stopped_server_disk_retained", "server_destroyed_disk_retained"].includes(value)) return "orange";
+  return "blue";
+}
+
+function packageText(plan) {
+  if (!plan) return "-";
+  return `${plan.cpu} CPU / ${plan.memoryGb}GB / ${plan.diskGb}GB`;
+}
+
+function usageAmount(logs, resourceType = "") {
+  return (logs || [])
+    .filter((log) => !resourceType || log.resourceType === resourceType)
+    .reduce((sum, log) => sum + Number(log.amount || 0), 0);
+}
+
+function usageQuantity(logs, resourceType) {
+  return (logs || [])
+    .filter((log) => log.resourceType === resourceType)
+    .reduce((sum, log) => sum + Number(log.quantity || 0), 0);
+}
+
+function firstWorkspacePath(workspaces) {
+  return workspaces?.[0] ? `/console/workspaces/${workspaces[0].id}` : "/console/workspaces";
+}
+
+function menuIcon(path) {
+  const map = {
+    "/console/overview": <Gauge size={17} />,
+    "/console/workspaces": <Server size={17} />,
+    "/console/gateway": <KeyRound size={17} />,
+    "/console/billing": <WalletCards size={17} />,
+    "/console/account": <UserRound size={17} />,
+    "/console/support": <Headphones size={17} />,
+    "/console/alerts": <Bell size={17} />,
+    "/admin/overview": <Gauge size={17} />,
+    "/admin/users": <UserRound size={17} />,
+    "/admin/governance": <ShieldCheck size={17} />,
+    "/admin/workspaces": <Server size={17} />,
+    "/admin/billing": <CreditCard size={17} />,
+    "/admin/gateway": <KeyRound size={17} />,
+    "/admin/fabric": <Boxes size={17} />,
+    "/admin/ledger": <Database size={17} />,
+    "/admin/runtime": <Activity size={17} />,
+    "/admin/support": <Headphones size={17} />,
+    "/admin/audit": <ClipboardCheck size={17} />,
+    "/admin/settings": <Layers size={17} />
   };
-  return labels[value] || value;
+  return map[path] || <FileText size={17} />;
 }
 
-function packageLabel(packageId) {
-  const labels = {
-    basic: "Basic Workspace",
-    pro: "Pro Workspace"
-  };
-  return labels[packageId] || packageId;
+function buildMenu(isAdmin) {
+  const owner = ownerMenuRoutes.map((route) => ({
+    path: route.path,
+    name: route.label,
+    icon: menuIcon(route.path)
+  }));
+  const admin = isAdmin ? [{
+    path: "/admin",
+    name: "Admin",
+    icon: <ShieldCheck size={17} />,
+    children: adminMenuRoutes.map((route) => ({
+      path: route.path,
+      name: route.label,
+      icon: menuIcon(route.path)
+    }))
+  }] : [];
+  return [...owner, ...admin];
 }
 
-function eventTitle(type) {
-  const labels = {
-    credit: "充值",
-    compute_hold: "计算冻结",
-    storage_hold: "存储冻结",
-    compute_debit: "计算扣费",
-    storage_debit: "存储扣费",
-    server_billing_stopped: "计算计费已停止",
-    server_destroyed: "计算已销毁",
-    missing_env: "缺少环境变量",
-    missing_tool: "缺少工具",
-    failed_check: "检查失败",
-    stop_server: "停止计算",
-    restart_server: "重启计算",
-    recreate_server: "重建计算",
-    destroy_server: "销毁计算",
-    destroy_disk: "销毁存储",
-    create_workspace_runtime: "创建运行时",
-    restore_workspace_from_backup: "从备份恢复"
-  };
-  const key = String(type || "event").replaceAll(".", "_");
-  return labels[key] || String(type || "事件").replaceAll("_", " ").replaceAll(".", " · ");
+function useTickets() {
+  const [tickets, setTickets] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("opl-support-tickets") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  function save(next) {
+    setTickets(next);
+    localStorage.setItem("opl-support-tickets", JSON.stringify(next));
+  }
+  function createTicket(input) {
+    const ticket = {
+      id: `ticket-${Date.now()}`,
+      title: input.title,
+      category: input.category,
+      priority: input.priority,
+      workspaceId: input.workspaceId || "",
+      status: "open",
+      createdAt: new Date().toISOString(),
+      messages: [{ author: "Lab Owner", text: input.description || "Created from OPL Console" }]
+    };
+    save([ticket, ...tickets]);
+    return ticket;
+  }
+  return { tickets, createTicket };
 }
 
-function readinessLabel(value) {
-  if (!value) return "未检查";
-  return value.ready ? "已就绪" : "阻塞";
-}
-
-function readinessTone(value) {
-  if (!value) return "muted";
-  return value.ready ? "ok" : "danger";
-}
-
-function backupForWorkspace(backups, workspaceId) {
-  return (backups || []).filter((backup) => backup.workspaceId === workspaceId);
-}
-
-function workspaceEvents(state, workspaceId) {
-  return [
-    ...(state.notifications || []),
-    ...(state.audit || []),
-    ...(state.evidenceLedger || []),
-    ...(state.runtimeOperations || [])
-  ].filter((event) => !workspaceId || event.workspaceId === workspaceId);
-}
-
-function costRunwayDays(account, plan) {
-  if (!account || !plan) return "暂无";
-  const dailyCompute = Number(plan.price?.computeHourly || 0) * 24;
-  const dailyStorage = Number(plan.price?.storageGbMonth || 0) * Number(plan.diskGb || 0) / 30;
-  const daily = dailyCompute + dailyStorage;
-  if (!daily) return "暂无";
-  return `${Math.max(0, Number(account.balance || 0) / daily).toFixed(1)} 天`;
-}
-
-export default function ConsolePage({ session, onLogout }) {
+export default function ConsolePage({ route, session, onLogout }) {
   const [state, setState] = useState(null);
-  const [selectedId, setSelectedId] = useState("");
-  const [error, setError] = useState("");
-  const [adminTopUp, setAdminTopUp] = useState({ accountId: "", amount: 200, reason: "手工充值" });
-  const [adminOps, setAdminOps] = useState({ operator: null, runtime: null, production: null, error: "" });
-
+  const [adminOps, setAdminOps] = useState({ operator: null, runtime: null, launch: null, error: "" });
+  const [topUpOpen, setTopUpOpen] = useState(false);
+  const [topUpForm] = Form.useForm();
+  const [createPackageId, setCreatePackageId] = useState("basic");
+  const tickets = useTickets();
   const isAdmin = session.user.role === "admin";
+  const path = window.location.pathname;
 
   async function refresh() {
     const next = await getJson("/api/state");
     setState(next);
-    setSelectedId((current) => current || next.workspaces[0]?.id || "");
   }
 
   async function refreshAdminOps() {
     if (!isAdmin) return;
     try {
-      const [operator, runtime, production] = await Promise.all([
+      const [operator, runtime, launch] = await Promise.all([
         getJson("/api/operator/summary"),
         getJson("/api/runtime/readiness"),
         getJson("/api/production/readiness")
       ]);
-      setAdminOps({ operator, runtime, production, error: "" });
+      setAdminOps({ operator, runtime, launch, error: "" });
     } catch (err) {
       setAdminOps((current) => ({ ...current, error: err.message }));
     }
   }
 
-  async function run(action) {
+  async function runAction(action, success = "Done") {
     try {
-      setError("");
       await action();
       await refresh();
       await refreshAdminOps();
+      message.success(success);
     } catch (err) {
-      setError(err.message);
+      message.error(err.message);
     }
   }
 
@@ -217,397 +270,690 @@ export default function ConsolePage({ session, onLogout }) {
       await api("/api/auth/logout", {}, session.csrfToken);
     } finally {
       onLogout();
-      window.location.hash = "home";
+      navigate("/");
     }
   }
 
   useEffect(() => {
-    refresh().catch((err) => setError(err.message));
+    refresh().catch((err) => message.error(err.message));
   }, []);
 
   useEffect(() => {
     refreshAdminOps();
   }, [isAdmin]);
 
-  const selected = useMemo(() => state?.workspaces.find((item) => item.id === selectedId) || state?.workspaces[0], [state, selectedId]);
-  const selectedPlan = useMemo(() => state?.packages.find((plan) => plan.id === selected?.packageId), [state, selected]);
-  const selectedBackups = useMemo(() => backupForWorkspace(state?.storageBackups, selected?.id), [state, selected]);
-  const selectedEvents = useMemo(() => workspaceEvents(state || {}, selected?.id), [state, selected]);
-  const latestBackup = selectedBackups.find((backup) => backup.status === "available") || selectedBackups[0];
+  const wallet = state?.wallet || state?.account || { balance: 0, frozen: 0, available: 0, totalRecharged: 0 };
+  const selectedId = path.match(/\/(?:console|admin)\/workspaces\/([^/]+)/)?.[1];
+  const selected = useMemo(
+    () => state?.workspaces?.find((workspace) => workspace.id === selectedId) || state?.workspaces?.[0],
+    [state, selectedId]
+  );
+  const selectedPlan = useMemo(
+    () => state?.packages?.find((plan) => plan.id === selected?.packageId) || state?.packages?.find((plan) => plan.id === createPackageId),
+    [state, selected, createPackageId]
+  );
+  const selectedCreatePlan = useMemo(
+    () => state?.packages?.find((plan) => plan.id === createPackageId) || state?.packages?.[0],
+    [state, createPackageId]
+  );
 
-  if (!state) {
-    return (
-      <div className="shell">
-        <div className="loading">正在加载 OPL Console...</div>
-      </div>
-    );
-  }
+  if (!state) return <div className="loading">Loading OPL Console...</div>;
 
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <a className="brand" href="#home">
-          <div className="brandIcon">OPL</div>
-          <div>
-            <strong>OPL Console</strong>
-            <span>{session.user.email}</span>
-          </div>
-        </a>
-        <nav>
-          <a href="#overview">概览</a>
-          <a href="#workspaces">OPL Workspace</a>
-          <a href="#create">创建 OPL Workspace</a>
-          <a href="#billing">账单</a>
-          {isAdmin && <a href="#admin">管理员</a>}
-        </nav>
-        <button className="ghost wide" onClick={logout}><LogOut size={16} /> 退出登录</button>
-      </aside>
+    <ProLayout
+      title="OPL Cloud"
+      logo={<div className="proLogo">OPL</div>}
+      location={{ pathname: path }}
+      layout="mix"
+      navTheme="light"
+      menuDataRender={() => buildMenu(isAdmin)}
+      menuItemRender={(item, dom) => (
+        <a onClick={(event) => {
+          event.preventDefault();
+          navigate(item.path || "/console/overview");
+        }} href={item.path}>{dom}</a>
+      )}
+      actionsRender={() => [
+        <Tag color={isAdmin ? "purple" : "blue"} key="role">{isAdmin ? "Admin" : "Lab Owner"}</Tag>,
+        <Button key="logout" icon={<LogOut size={15} />} onClick={logout}>退出</Button>
+      ]}
+      avatarProps={{
+        title: session.user.email,
+        size: "small",
+        icon: <UserRound size={16} />
+      }}
+    >
+      {renderRoute({
+        route,
+        path,
+        state,
+        wallet,
+        selected,
+        selectedPlan,
+        selectedCreatePlan,
+        setCreatePackageId,
+        session,
+        isAdmin,
+        adminOps,
+        tickets,
+        topUpOpen,
+        setTopUpOpen,
+        topUpForm,
+        runAction,
+        refresh,
+        refreshAdminOps
+      })}
+    </ProLayout>
+  );
+}
 
-      <main className="main">
-        <header className="topbar" id="overview">
-          <div>
-            <p className="eyebrow">OPL Cloud</p>
-            <h1>OPL Workspace 控制台</h1>
-            <p className="topbarText">通过预付实验室账号创建、分发和运维托管 OPL Workspace。</p>
-          </div>
-          <div className="accountBadge">
-            <strong>{session.user.name || session.user.email}</strong>
-            <span>{isAdmin ? "管理员" : "实验室负责人"} · {state.account.id}</span>
-          </div>
-        </header>
+function renderRoute(ctx) {
+  const { path, route, isAdmin } = ctx;
+  if (route.area === "admin" && !isAdmin) return <ForbiddenPage />;
+  if (path.startsWith("/admin/users")) return <AdminUsersPage {...ctx} />;
+  if (path.startsWith("/admin/billing")) return <AdminBillingPage {...ctx} />;
+  if (path.startsWith("/admin/fabric")) return <AdminFabricPage {...ctx} />;
+  if (path.startsWith("/admin/ledger")) return <AdminLedgerPage {...ctx} />;
+  if (path.startsWith("/admin/runtime")) return <AdminRuntimePage {...ctx} />;
+  if (path.startsWith("/admin/support")) return <AdminSupportPage {...ctx} />;
+  if (path.startsWith("/admin")) return <AdminOverviewPage {...ctx} />;
+  if (path.startsWith("/console/workspaces/new")) return <CreateWorkspacePage {...ctx} />;
+  if (path.startsWith("/console/workspaces/") || path.startsWith("/admin/workspaces/")) return <WorkspaceDetailPage {...ctx} />;
+  if (path.startsWith("/console/workspaces")) return <WorkspacesPage {...ctx} />;
+  if (path.startsWith("/console/gateway")) return <GatewayPage {...ctx} />;
+  if (path.startsWith("/console/billing")) return <BillingPage {...ctx} />;
+  if (path.startsWith("/console/account")) return <AccountPage {...ctx} />;
+  if (path.startsWith("/console/support/new")) return <NewSupportTicketPage {...ctx} />;
+  if (path.startsWith("/console/support/")) return <SupportTicketPage {...ctx} />;
+  if (path.startsWith("/console/support")) return <SupportPage {...ctx} />;
+  if (path.startsWith("/console/resources")) return <ResourcesPage {...ctx} />;
+  if (path.startsWith("/console/approvals")) return <ApprovalsPage {...ctx} />;
+  if (path.startsWith("/console/receipts")) return <ReceiptsPage {...ctx} />;
+  if (path.startsWith("/console/alerts")) return <AlertsPage {...ctx} />;
+  if (path === "/403") return <ForbiddenPage />;
+  return <OverviewPage {...ctx} />;
+}
 
-        {error && <div className="error">{errorLabel(error)}</div>}
+function OverviewPage({ state, wallet, tickets }) {
+  const needsAttention = state.notifications?.length || 0;
+  return (
+    <PageContainer title="总览" subTitle="Workspace delivery, wallet, tickets">
+      <StatisticCard.Group>
+        <StatisticCard statistic={{ title: "余额", value: money(wallet.balance) }} />
+        <StatisticCard statistic={{ title: "冻结", value: money(wallet.frozen) }} />
+        <StatisticCard statistic={{ title: "Workspace", value: state.workspaces.length }} />
+        <StatisticCard statistic={{ title: "工单", value: tickets.tickets.length }} />
+        <StatisticCard statistic={{ title: "告警", value: needsAttention }} />
+      </StatisticCard.Group>
+      <ProCard className="sectionCard" gutter={16} split="vertical">
+        <ProCard title="下一步" colSpan="35%">
+          <Space direction="vertical" size={12}>
+            <Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/workspaces/new")}>创建 Workspace</Button>
+            <Button icon={<Headphones size={15} />} onClick={() => navigate("/console/support/new")}>提交工单</Button>
+            <Button icon={<WalletCards size={15} />} onClick={() => navigate("/console/billing/wallet")}>查看钱包</Button>
+          </Space>
+        </ProCard>
+        <ProCard title="最近告警">
+          <AlertList events={state.notifications} />
+        </ProCard>
+      </ProCard>
+    </PageContainer>
+  );
+}
 
-        <section className="metrics">
-          <Metric icon={<WalletCards />} label="余额" value={money(state.account.balance)} />
-          <Metric icon={<CreditCard />} label="冻结金额" value={money(state.account.frozen)} />
-          <Metric icon={<Server />} label="OPL Workspace" value={state.workspaces.length} />
-          <Metric icon={<AlertTriangle />} label="告警" value={state.notifications.length} />
-        </section>
+function WorkspacesPage({ state, wallet, runAction, session }) {
+  const planById = Object.fromEntries((state.packages || []).map((plan) => [plan.id, plan]));
+  return (
+    <PageContainer
+      title="OPL Workspace"
+      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/workspaces/new")}>创建</Button>}
+    >
+      <ProTable
+        rowKey="id"
+        search={false}
+        options={false}
+        pagination={false}
+        dataSource={state.workspaces}
+        columns={[
+          { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(`/console/workspaces/${row.id}`)}>{row.name}</Button> },
+          { title: "状态", dataIndex: "state", render: (_, row) => <Tag color={statusColor(row.state)}>{statusLabel(row)}</Tag> },
+          { title: "套餐", dataIndex: "packageId", render: (value) => packageText(planById[value]) },
+          { title: "Workspace URL", dataIndex: "url", ellipsis: true, render: (_, row) => <Typography.Text copyable={row.access?.tokenStatus === "active"}>{row.url}</Typography.Text> },
+          { title: "余额", render: () => money(available(wallet)) },
+          {
+            title: "操作",
+            valueType: "option",
+            render: (_, row) => [
+              <Button key="open" size="small" icon={<LinkIcon size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => window.open(row.url, "_blank", "noopener,noreferrer")}>打开</Button>,
+              <Button key="reset" size="small" icon={<RefreshCw size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => runAction(() => api("/api/workspaces/reset-token", { workspaceId: row.id }, session.csrfToken), "URL 已重置")}>重置</Button>,
+              <Button key="delete" size="small" danger icon={<Trash2 size={14} />} disabled={row.access?.tokenStatus !== "active"} onClick={() => runAction(() => api("/api/workspaces/delete-token", { workspaceId: row.id }, session.csrfToken), "URL 已停用")}>停用</Button>
+            ]
+          }
+        ]}
+      />
+    </PageContainer>
+  );
+}
 
-        <section id="workspaces" className="band workspaceBand">
-          <div className="sectionHeader">
-            <div>
-              <h2>OPL Workspace</h2>
-              <p>一个 OPL Workspace 包含访问 URL、计算、存储、备份、计费状态和近期活动。</p>
-            </div>
-            <a className="secondaryLink" href="#create"><Play size={16} /> 新建</a>
-          </div>
-
-          <div className="workspaceLayout">
-            <div className="workspaceList">
-              {state.workspaces.length === 0 && <div className="empty">还没有 OPL Workspace。请先充值，再创建套餐。</div>}
-              {state.workspaces.map((workspace) => (
-                <button
-                  className={`workspaceRow ${workspace.id === selected?.id ? "active" : ""}`}
-                  key={workspace.id}
-                  onClick={() => setSelectedId(workspace.id)}
-                >
-                  <span>{workspace.name}</span>
-                  <strong>{statusLabel(workspace)}</strong>
-                  <small>{packageLabel(workspace.packageId)} · {valueLabel(workspace.access.tokenStatus)}</small>
-                </button>
-              ))}
-            </div>
-
-            <WorkspaceDetail
-              selected={selected}
-              selectedPlan={selectedPlan}
-              account={state.account}
-              backups={selectedBackups}
-              latestBackup={latestBackup}
-              events={selectedEvents}
-              session={session}
-              run={run}
+function WorkspaceDetailPage({ selected, selectedPlan, state, session, runAction }) {
+  if (!selected) return <PageContainer title="Workspace"><Empty description="暂无 Workspace" /></PageContainer>;
+  const backups = (state.storageBackups || []).filter((backup) => backup.workspaceId === selected.id);
+  return (
+    <PageContainer
+      title={selected.name}
+      subTitle="Workspace URL, compute, storage"
+      extra={<Button onClick={() => navigate("/console/workspaces")}>返回列表</Button>}
+    >
+      <ProCard gutter={16} wrap>
+        <ProCard title="Workspace URL" colSpan={{ xs: 24, xl: 12 }}>
+          <Space direction="vertical" size={16} className="fullWidth">
+            <Typography.Text copyable={selected.access?.tokenStatus === "active"} ellipsis>{selected.url}</Typography.Text>
+            <Space wrap>
+              <Button icon={<LinkIcon size={15} />} disabled={selected.access?.tokenStatus !== "active"} onClick={() => window.open(selected.url, "_blank", "noopener,noreferrer")}>打开</Button>
+              <Button icon={<RefreshCw size={15} />} disabled={selected.access?.tokenStatus !== "active"} onClick={() => runAction(() => api("/api/workspaces/reset-token", { workspaceId: selected.id }, session.csrfToken), "URL 已重置")}>重置</Button>
+              <Button danger icon={<Trash2 size={15} />} disabled={selected.access?.tokenStatus !== "active"} onClick={() => runAction(() => api("/api/workspaces/delete-token", { workspaceId: selected.id }, session.csrfToken), "URL 已停用")}>停用</Button>
+            </Space>
+          </Space>
+        </ProCard>
+        <ProCard title="计算与存储" colSpan={{ xs: 24, xl: 12 }}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="状态"><Tag color={statusColor(selected.state)}>{statusLabel(selected)}</Tag></Descriptions.Item>
+            <Descriptions.Item label="套餐">{selectedPlan?.name} · {packageText(selectedPlan)}</Descriptions.Item>
+            <Descriptions.Item label="计算">{selected.server?.spec} · {valueLabel(selected.server?.status)}</Descriptions.Item>
+            <Descriptions.Item label="存储">{selected.disk?.sizeGb}GB · {valueLabel(selected.disk?.status)}</Descriptions.Item>
+          </Descriptions>
+        </ProCard>
+      </ProCard>
+      <ProCard className="sectionCard" gutter={16} wrap>
+        <ProCard title="生命周期" colSpan={{ xs: 24, xl: 12 }}>
+          <Space wrap>
+            <Button icon={<Square size={15} />} onClick={() => runAction(() => api("/api/workspaces/stop-server", { workspaceId: selected.id, confirm: true }, session.csrfToken), "计算已停止")}>停止计算</Button>
+            <Button icon={<RotateCw size={15} />} onClick={() => runAction(() => api("/api/workspaces/restart-server", { workspaceId: selected.id }, session.csrfToken), "计算已启动")}>启动计算</Button>
+            <Button danger icon={<Trash2 size={15} />} onClick={() => runAction(() => api("/api/workspaces/destroy-server", { workspaceId: selected.id, confirm: true }, session.csrfToken), "计算已销毁")}>销毁计算</Button>
+            <Button danger icon={<HardDrive size={15} />} onClick={() => runAction(() => api("/api/workspaces/destroy-disk", { workspaceId: selected.id, confirmDataLoss: true }, session.csrfToken), "存储已销毁")}>销毁存储</Button>
+          </Space>
+        </ProCard>
+        <ProCard title="备份" colSpan={{ xs: 24, xl: 12 }}>
+          <Space direction="vertical" className="fullWidth">
+            <Button icon={<Database size={15} />} onClick={() => runAction(() => api("/api/workspaces/storage-backups", { workspaceId: selected.id, reason: "console", retentionPolicy: { retainLast: 2 } }, session.csrfToken), "备份已创建")}>创建备份</Button>
+            <List
+              size="small"
+              dataSource={backups.slice(-4).reverse()}
+              locale={{ emptyText: "暂无备份" }}
+              renderItem={(backup) => <List.Item><Tag>{valueLabel(backup.status)}</Tag><Typography.Text ellipsis>{backup.id}</Typography.Text></List.Item>}
             />
-          </div>
-        </section>
+          </Space>
+        </ProCard>
+      </ProCard>
+    </PageContainer>
+  );
+}
 
-        <section id="create" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>创建 OPL Workspace</h2>
-              <p>选择计算与存储套餐。OPL Workspace 创建后才会显示运行时控制。</p>
-            </div>
-          </div>
-          <div className="planGrid">
-            {state.packages.map((plan) => (
-              <article className="plan" key={plan.id}>
-                <span>{plan.id === "basic" ? "试点默认" : "CPU 套餐"}</span>
-                <h3>{plan.name}</h3>
-                <p>{packageSummary(plan)}</p>
-                <dl className="planFacts">
-                  <div><dt>计算</dt><dd>{money(plan.price.computeHourly)}/小时</dd></div>
-                  <div><dt>存储</dt><dd>{money(plan.price.storageGbMonth)}/GB/月</dd></div>
-                  <div><dt>7 天冻结</dt><dd>{money((Number(plan.price.computeHourly) * 24 * 7) + (Number(plan.price.storageGbMonth) * Number(plan.diskGb) / 30 * 7))}</dd></div>
-                </dl>
-                <button
-                  className="primary"
-                  onClick={() => run(() => api("/api/workspaces", {
-                    workspaceName: plan.id === "basic" ? "课题组实验室" : "蛋白实验室",
-                    packageId: plan.id
-                  }, session.csrfToken))}
-                >
-                  <Play size={16} /> 创建 {plan.id}
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="billing" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>账单</h2>
-              <p>OPL Ledger 记录预付冻结、小时扣费、充值、对账状态和证据回执。</p>
-            </div>
-            <Database />
-          </div>
-          <PolicyGrid policy={state.billingPolicy} />
-          <div className="splitGrid">
-            <Panel title="OPL Ledger 事件" icon={<History />}>
-              <EventList events={state.billingLedger} />
-            </Panel>
-            <Panel title="回执与告警" icon={<ClipboardList />}>
-              <EventList events={[...state.notifications, ...state.audit, ...state.evidenceLedger]} />
-            </Panel>
-          </div>
-        </section>
-
-        {isAdmin && (
-          <section id="admin" className="band">
-            <div className="sectionHeader">
-              <div>
-                <h2>管理员</h2>
-                <p>账号、手工充值、生产就绪、对账和运维证据仅管理员可见。</p>
-              </div>
-              <ShieldCheck />
-            </div>
-            {adminOps.error && <div className="error">{errorLabel(adminOps.error)}</div>}
-            <AdminPanel
-              state={state}
-              adminTopUp={adminTopUp}
-              setAdminTopUp={setAdminTopUp}
-              adminOps={adminOps}
-              session={session}
-              run={run}
+function CreateWorkspacePage({ state, wallet, selectedCreatePlan, setCreatePackageId, session, runAction }) {
+  const enough = available(wallet) >= planHold(selectedCreatePlan);
+  return (
+    <PageContainer title="创建 Workspace" subTitle="Package, price, 7-day hold">
+      <ProCard>
+        <StepsForm
+          onFinish={async (values) => {
+            await runAction(
+              () => api("/api/workspaces", {
+                workspaceName: values.workspaceName,
+                packageId: values.packageId
+              }, session.csrfToken),
+              "Workspace 已创建"
+            );
+            navigate("/console/workspaces");
+            return true;
+          }}
+        >
+          <StepsForm.StepForm name="name" title="Name">
+            <ProFormText name="workspaceName" label="名称" initialValue="Lab Workspace" rules={[{ required: true }]} />
+          </StepsForm.StepForm>
+          <StepsForm.StepForm name="package" title="Package">
+            <ProFormSelect
+              name="packageId"
+              label="套餐"
+              initialValue={selectedCreatePlan?.id || "basic"}
+              options={(state.packages || []).map((plan) => ({ label: `${plan.name} · ${packageText(plan)}`, value: plan.id }))}
+              fieldProps={{ onChange: setCreatePackageId }}
+              rules={[{ required: true }]}
             />
-          </section>
-        )}
-      </main>
-    </div>
+          </StepsForm.StepForm>
+          <StepsForm.StepForm name="confirm" title="Confirm">
+            <ProCard bordered>
+              <Descriptions column={1} size="small">
+                <Descriptions.Item label="套餐">{selectedCreatePlan?.name}</Descriptions.Item>
+                <Descriptions.Item label="计算">{money(selectedCreatePlan?.price?.computeHourly)}/hour</Descriptions.Item>
+                <Descriptions.Item label="存储">{money(selectedCreatePlan?.price?.storageGbMonth)}/GB/month</Descriptions.Item>
+                <Descriptions.Item label="7-day hold">{money(planHold(selectedCreatePlan))}</Descriptions.Item>
+                <Descriptions.Item label="可用余额">{money(available(wallet))}</Descriptions.Item>
+              </Descriptions>
+              {!enough && <Alert type="warning" showIcon message="余额不足，无法完成预冻结。" />}
+            </ProCard>
+          </StepsForm.StepForm>
+        </StepsForm>
+      </ProCard>
+    </PageContainer>
   );
 }
 
-function WorkspaceDetail({ selected, selectedPlan, account, backups, latestBackup, events, session, run }) {
-  if (!selected) return <div className="workspaceDetail"><div className="empty">创建 OPL Workspace 后，可在这里查看 URL、计算、存储、备份和活动控制。</div></div>;
-
+function GatewayPage({ state }) {
+  const requestUsage = state.requestUsageLogs || [];
   return (
-    <div className="workspaceDetail">
-      <div className="detailHeader">
-        <div>
-          <p className="eyebrow">OPL Workspace 详情</p>
-          <h3>{selected.name}</h3>
-          <span className={`pill ${selected.state === "running" ? "ok" : "muted"}`}>{statusLabel(selected)}</span>
-        </div>
-        <div className="detailMeta">
-          <span>{selected.id}</span>
-          <strong>{packageLabel(selected.packageId)}</strong>
-        </div>
-      </div>
-
-      <Panel title="OPL Workspace URL" icon={<LinkIcon />}>
-        <div className="urlBox compact">
-          <code>{selected.url}</code>
-          <button disabled={selected.access.tokenStatus !== "active"} onClick={() => navigator.clipboard?.writeText(selected.url)}><Copy size={16} /> 复制</button>
-          <button disabled={selected.access.tokenStatus !== "active"} onClick={() => window.open(selected.url, "_blank", "noopener,noreferrer")}><LinkIcon size={16} /> 打开</button>
-          <button disabled={selected.access.tokenStatus !== "active"} onClick={() => run(() => api("/api/workspaces/reset-token", { workspaceId: selected.id }, session.csrfToken))}><RefreshCw size={16} /> 重置</button>
-          <button className="danger" disabled={selected.access.tokenStatus !== "active"} onClick={() => run(() => api("/api/workspaces/delete-token", { workspaceId: selected.id }, session.csrfToken))}><Trash2 size={16} /> 删除</button>
-        </div>
-      </Panel>
-
-      <div className="resourceGrid">
-        <ResourceCard icon={<Server />} title="计算" value={`${selected.server.spec} / ${valueLabel(selected.server.status)}`} detail={valueLabel(selected.server.billingStatus)} />
-        <ResourceCard icon={<HardDrive />} title="存储" value={`${selected.disk.sizeGb}GB / ${valueLabel(selected.disk.status)}`} detail={valueLabel(selected.disk.billingStatus)} />
-        <ResourceCard icon={<KeyRound />} title="访问令牌" value={valueLabel(selected.access.tokenStatus)} detail="重置或删除前长期有效" />
-        <ResourceCard icon={<WalletCards />} title="余额可运行时长" value={costRunwayDays(account, selectedPlan)} detail="按当前套餐价格估算" />
-      </div>
-
-      <Panel title="计算与存储生命周期" icon={<Server />}>
-        <div className="actions">
-          <button onClick={() => run(() => api("/api/workspaces/stop-server", { workspaceId: selected.id, confirm: true }, session.csrfToken))}><Square size={16} /> 停止计算</button>
-          <button onClick={() => run(() => api("/api/workspaces/restart-server", { workspaceId: selected.id }, session.csrfToken))}><RotateCw size={16} /> 重启</button>
-          <button className="danger" onClick={() => run(() => api("/api/workspaces/destroy-server", { workspaceId: selected.id, confirm: true }, session.csrfToken))}><Trash2 size={16} /> 销毁计算</button>
-          <button className="danger strong" onClick={() => run(() => api("/api/workspaces/destroy-disk", { workspaceId: selected.id, confirmDataLoss: true }, session.csrfToken))}><Trash2 size={16} /> 销毁存储</button>
-          <button onClick={() => run(() => api("/api/billing/settle", {
-            workspaceId: selected.id,
-            hours: 1,
-            sourceEventId: `console_billing_tick_${Date.now()}`
-          }, session.csrfToken))}><CreditCard size={16} /> 结算 1 小时</button>
-        </div>
-      </Panel>
-
-      <Panel title="备份与恢复" icon={<Database />}>
-        <div className="actions">
-          <button onClick={() => run(() => api("/api/workspaces/storage-backups", {
-            workspaceId: selected.id,
-            reason: "manual_console",
-            retentionPolicy: { retainLast: 2 }
-          }, session.csrfToken))}><Database size={16} /> 创建备份</button>
-          <button disabled={!latestBackup} onClick={() => run(() => api("/api/workspaces/restore-storage-backup", {
-            backupId: latestBackup.id,
-            workspaceName: `${selected.name} 恢复版`,
-            packageId: selected.packageId
-          }, session.csrfToken))}><RotateCw size={16} /> 恢复最新备份</button>
-          <button disabled={backups.length === 0} onClick={() => run(() => api("/api/workspaces/prune-storage-backups", {
-            workspaceId: selected.id
-          }, session.csrfToken))}><Trash2 size={16} /> 清理旧备份</button>
-        </div>
-        <BackupList backups={backups} />
-      </Panel>
-
-      <Panel title="近期活动" icon={<Activity />}>
-        <EventList events={events} />
-      </Panel>
-    </div>
+    <PageContainer title="OPL Gateway" subTitle="Keys, usage, quotas">
+      <StatisticCard.Group>
+        <StatisticCard statistic={{ title: "请求", value: requestUsage.length }} />
+        <StatisticCard statistic={{ title: "扣费", value: money(usageAmount(requestUsage)) }} />
+        <StatisticCard statistic={{ title: "可用密钥", value: 1 }} />
+      </StatisticCard.Group>
+      <ProCard className="sectionCard" gutter={16} wrap>
+        <ProCard title="接入密钥" colSpan={{ xs: 24, xl: 10 }}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="状态"><Tag color="green">Active</Tag></Descriptions.Item>
+            <Descriptions.Item label="作用域">当前实验室</Descriptions.Item>
+          </Descriptions>
+        </ProCard>
+        <ProCard title="最近用量" colSpan={{ xs: 24, xl: 14 }}>
+          <UsageTable data={requestUsage} type="request" />
+        </ProCard>
+      </ProCard>
+    </PageContainer>
   );
 }
 
-function AdminPanel({ state, adminTopUp, setAdminTopUp, adminOps, session, run }) {
-  const operator = adminOps.operator;
-
+function BillingPage({ state, wallet }) {
+  const resourceUsage = state.resourceUsageLogs || [];
+  const requestUsage = state.requestUsageLogs || [];
+  const recent = [
+    ...resourceUsage.map((item) => ({ ...item, billingType: item.resourceType === "compute" ? "计算" : "存储" })),
+    ...requestUsage.map((item) => ({ ...item, billingType: "请求", quantity: 1, unit: "request" }))
+  ].slice(-12).reverse();
   return (
-    <div className="adminStack">
-      <div className="adminMetrics">
-        <Metric icon={<UserRound />} label="账号数" value={operator?.accounts?.total ?? "暂无"} />
-        <Metric icon={<Server />} label="OPL Workspace 总数" value={operator?.workspaces?.total ?? state.workspaces.length} />
-        <Metric icon={<CheckCircle2 />} label="运行时就绪" value={readinessLabel(adminOps.runtime)} tone={readinessTone(adminOps.runtime)} />
-        <Metric icon={<ShieldCheck />} label="生产就绪" value={readinessLabel(adminOps.production)} tone={readinessTone(adminOps.production)} />
-      </div>
-
-      <Panel title="账号" icon={<UserRound />}>
-        <div className="accountSummary">
-          <ResourceCard icon={<WalletCards />} title="当前账号" value={state.account.id} detail={`${money(state.account.balance)} 余额`} />
-          <ResourceCard icon={<CreditCard />} title="冻结金额" value={money(state.account.frozen)} detail="计算与存储预留" />
-          <ResourceCard icon={<AlertTriangle />} title="需要关注" value={operator?.workspaces?.needsAttention ?? 0} detail="失败或额度耗尽的 OPL Workspace 状态" />
-        </div>
-      </Panel>
-
-      <Panel title="手工充值" icon={<CreditCard />}>
-        <div className="adminForm">
-          <label>
-            账号
-            <input value={adminTopUp.accountId} onChange={(event) => setAdminTopUp({ ...adminTopUp, accountId: event.target.value })} />
-          </label>
-          <label>
-            金额
-            <input type="number" min="1" value={adminTopUp.amount} onChange={(event) => setAdminTopUp({ ...adminTopUp, amount: Number(event.target.value) })} />
-          </label>
-          <label>
-            原因
-            <input value={adminTopUp.reason} onChange={(event) => setAdminTopUp({ ...adminTopUp, reason: event.target.value })} />
-          </label>
-          <button className="primary" disabled={!adminTopUp.accountId} onClick={() => run(() => api("/api/accounts/credit", adminTopUp, session.csrfToken))}>
-            <CreditCard size={16} /> 增加余额
-          </button>
-        </div>
-      </Panel>
-
-      <div className="splitGrid">
-        <Panel title="生产就绪" icon={<ShieldCheck />}>
-          <ReadinessBlock readiness={adminOps.production} />
-        </Panel>
-        <Panel title="运行时就绪" icon={<Server />}>
-          <ReadinessBlock readiness={adminOps.runtime} />
-        </Panel>
-      </div>
-
-      <Panel title="对账与验证证据" icon={<ClipboardList />}>
-        <div className="evidenceGrid">
-          <ResourceCard icon={<Database />} title="对账保护" value={valueLabel(state.billingReconciliation?.guard?.status || "not_required")} detail={valueLabel(state.billingReconciliation?.guard?.reason || "billing_reconciliation_not_required")} />
-          <ResourceCard icon={<History />} title="运行时操作" value={operator?.runtimeOperations?.total ?? state.runtimeOperations.length} detail={`${operator?.runtimeOperations?.failed ?? 0} 个失败`} />
-          <ResourceCard icon={<Database />} title="存储备份" value={operator?.storageBackups?.total ?? state.storageBackups.length} detail={`${operator?.storageBackups?.available ?? 0} 个可用`} />
-        </div>
-      </Panel>
-    </div>
+    <PageContainer title="账单" subTitle="Wallet, holds, usage">
+      <StatisticCard.Group>
+        <StatisticCard statistic={{ title: "余额", value: money(wallet.balance) }} />
+        <StatisticCard statistic={{ title: "冻结", value: money(wallet.frozen) }} />
+        <StatisticCard statistic={{ title: "可用", value: money(available(wallet)) }} />
+        <StatisticCard statistic={{ title: "累计充值", value: money(wallet.totalRecharged) }} />
+      </StatisticCard.Group>
+      <ProCard className="sectionCard" gutter={16} wrap>
+        <ProCard title="资源用量" colSpan={{ xs: 24, xl: 10 }}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="Compute">{usageQuantity(resourceUsage, "compute").toFixed(1)} hours</Descriptions.Item>
+            <Descriptions.Item label="Storage">{usageQuantity(resourceUsage, "storage").toFixed(1)} GB-hour</Descriptions.Item>
+            <Descriptions.Item label="Requests">{requestUsage.length}</Descriptions.Item>
+          </Descriptions>
+        </ProCard>
+        <ProCard title="最近扣费" colSpan={{ xs: 24, xl: 14 }}>
+          <ProTable
+            rowKey={(row) => row.id}
+            search={false}
+            options={false}
+            pagination={false}
+            size="small"
+            dataSource={recent}
+            columns={[
+              { title: "类型", dataIndex: "billingType" },
+              { title: "Workspace", dataIndex: "workspaceId", ellipsis: true },
+              { title: "用量", render: (_, row) => `${Number(row.quantity || 0).toFixed(2)} ${row.unit || ""}` },
+              { title: "金额", dataIndex: "amount", render: (value) => money(value) }
+            ]}
+          />
+        </ProCard>
+      </ProCard>
+    </PageContainer>
   );
 }
 
-function Metric({ icon, label, value, tone = "" }) {
-  return <div className={`metric ${tone}`}>{icon}<span>{label}</span><strong>{value}</strong></div>;
-}
-
-function Panel({ title, icon, children }) {
+function AccountPage({ state, wallet, session }) {
   return (
-    <section className="panel">
-      <div className="panelHeader">{icon}<h3>{title}</h3></div>
-      {children}
-    </section>
+    <PageContainer title="账户与实验室" subTitle="Identity, wallet, lab policy">
+      <ProCard gutter={16} wrap>
+        <ProCard title="身份" colSpan={{ xs: 24, xl: 8 }}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="邮箱">{session.user.email}</Descriptions.Item>
+            <Descriptions.Item label="角色">{session.user.role === "admin" ? "Admin" : "Lab Owner"}</Descriptions.Item>
+            <Descriptions.Item label="账号">{state.account.id}</Descriptions.Item>
+          </Descriptions>
+        </ProCard>
+        <ProCard title="钱包" colSpan={{ xs: 24, xl: 8 }}>
+          <StatisticCard statistic={{ title: "可用余额", value: money(available(wallet)) }} />
+        </ProCard>
+        <ProCard title="实验室策略" colSpan={{ xs: 24, xl: 8 }}>
+          <List size="small" dataSource={["Workspace URL 可分发", "7 天资源预冻结", "账单按小时解释"]} renderItem={(item) => <List.Item>{item}</List.Item>} />
+        </ProCard>
+      </ProCard>
+    </PageContainer>
   );
 }
 
-function ResourceCard({ icon, title, value, detail }) {
+function SupportPage({ tickets }) {
   return (
-    <article className="resourceCard">
-      <div>{icon}<span>{title}</span></div>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </article>
+    <PageContainer title="工单" extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/support/new")}>提交工单</Button>}>
+      <ProTable
+        rowKey="id"
+        search={false}
+        options={false}
+        pagination={false}
+        dataSource={tickets.tickets}
+        locale={{ emptyText: <Empty description="暂无工单" /> }}
+        columns={[
+          { title: "标题", dataIndex: "title", render: (_, row) => <Button type="link" onClick={() => navigate(`/console/support/${row.id}`)}>{row.title}</Button> },
+          { title: "分类", dataIndex: "category" },
+          { title: "优先级", dataIndex: "priority", render: (value) => <Tag color={value === "high" ? "red" : "blue"}>{value}</Tag> },
+          { title: "状态", dataIndex: "status", render: (value) => <Tag color="green">{value}</Tag> }
+        ]}
+      />
+    </PageContainer>
   );
 }
 
-function PolicyGrid({ policy }) {
-  if (!policy) return null;
+function NewSupportTicketPage({ state, tickets }) {
+  const [form] = Form.useForm();
   return (
-    <div className="policyGrid">
-      <Metric icon={<CreditCard />} label="冻结周期" value={`${policy.prepaidHoldDays} 天`} />
-      <Metric icon={<Activity />} label="最低计费" value={`${policy.minimumBillableHours} 小时`} />
-      <Metric icon={<WalletCards />} label="加价比例" value={`${Math.round(policy.markup * 100)}%`} />
-      <Metric icon={<Server />} label="计算策略" value="额度耗尽自动停止" />
-    </div>
+    <PageContainer title="提交工单" subTitle="Account, billing, Workspace">
+      <ProCard>
+        <Form form={form} layout="vertical" onFinish={(values) => {
+          const ticket = tickets.createTicket(values);
+          message.success("工单已提交");
+          navigate(`/console/support/${ticket.id}`);
+        }}>
+          <Form.Item name="title" label="标题" rules={[{ required: true }]}>
+            <Input placeholder="Workspace 无法打开" />
+          </Form.Item>
+          <Form.Item name="category" label="分类" initialValue="Workspace">
+            <Input />
+          </Form.Item>
+          <Form.Item name="priority" label="优先级" initialValue="normal">
+            <Input />
+          </Form.Item>
+          <Form.Item name="workspaceId" label="关联 Workspace">
+            <Input list="workspaceIds" />
+          </Form.Item>
+          <datalist id="workspaceIds">
+            {state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+          </datalist>
+          <Form.Item name="description" label="说明">
+            <Input.TextArea rows={5} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit">提交</Button>
+        </Form>
+      </ProCard>
+    </PageContainer>
   );
 }
 
-function BackupList({ backups }) {
-  if (!backups.length) return <div className="empty">暂无存储备份。</div>;
+function SupportTicketPage({ tickets }) {
+  const id = window.location.pathname.split("/").at(-1);
+  const ticket = tickets.tickets.find((item) => item.id === id);
+  if (!ticket) return <PageContainer title="工单"><Empty description="未找到工单" /></PageContainer>;
   return (
-    <div className="eventList">
-      {backups.slice().reverse().slice(0, 6).map((backup) => (
-        <article className="event" key={backup.id}>
-          <strong>{valueLabel(backup.status)}</strong>
-          <span>{backup.id}</span>
-          <em>{backup.createdAt || backup.updatedAt}</em>
-        </article>
-      ))}
-    </div>
+    <PageContainer title={ticket.title} subTitle={ticket.id}>
+      <ProCard gutter={16} wrap>
+        <ProCard title="状态" colSpan={{ xs: 24, xl: 8 }}>
+          <Descriptions column={1} size="small">
+            <Descriptions.Item label="分类">{ticket.category}</Descriptions.Item>
+            <Descriptions.Item label="优先级">{ticket.priority}</Descriptions.Item>
+            <Descriptions.Item label="状态">{ticket.status}</Descriptions.Item>
+          </Descriptions>
+        </ProCard>
+        <ProCard title="对话" colSpan={{ xs: 24, xl: 16 }}>
+          <Timeline items={ticket.messages.map((item) => ({ children: <><strong>{item.author}</strong><div>{item.text}</div></> }))} />
+        </ProCard>
+      </ProCard>
+    </PageContainer>
   );
 }
 
-function ReadinessBlock({ readiness }) {
-  if (!readiness) return <div className="empty">尚未检查就绪状态。</div>;
+function AlertsPage({ state, tickets }) {
+  const ticketAlerts = tickets.tickets.filter((ticket) => ticket.status !== "closed").map((ticket) => ({
+    id: ticket.id,
+    type: "support.ticket_open",
+    accountId: ticket.title
+  }));
   return (
-    <div className="readinessBlock">
-      <span className={`pill ${readiness.ready ? "ok" : "danger"}`}>{readiness.ready ? "已就绪" : "阻塞"}</span>
-      <EventList events={[
-        ...(readiness.missingEnv || []).map((name) => ({ id: `env-${name}`, type: "missing.env", accountId: name })),
-        ...(readiness.missingTools || []).map((name) => ({ id: `tool-${name}`, type: "missing.tool", accountId: name })),
-        ...(readiness.failedChecks || []).map((name) => ({ id: `check-${name}`, type: "failed.check", accountId: name }))
-      ]} />
-    </div>
+    <PageContainer title="告警">
+      <AlertList events={[...(state.notifications || []), ...ticketAlerts]} />
+    </PageContainer>
   );
 }
 
-function EventList({ events }) {
-  if (!events.length) return <div className="empty">暂无事件。</div>;
+function ResourcesPage() {
   return (
-    <div className="eventList">
-      {events.slice().reverse().slice(0, 12).map((event) => (
-        <article className="event" key={event.id}>
-          <strong>{eventTitle(event.type || event.operationType)}</strong>
-          <span>{event.workspaceId || event.accountId || event.status}</span>
-          <em>{event.amount !== undefined ? money(event.amount) : event.createdAt || event.updatedAt || ""}</em>
-        </article>
-      ))}
-    </div>
+    <PageContainer title="资源目录" subTitle="Approved connectors, environments, agents">
+      <ProCard gutter={16} wrap>
+        <CatalogCard title="连接器" items={["PubMed", "arXiv", "Zotero"]} />
+        <CatalogCard title="环境" items={["Python/R", "Quarto/LaTeX", "CUDA"]} />
+        <CatalogCard title="Agent 包" items={["Literature Review", "Grant Draft", "Figure Review"]} />
+      </ProCard>
+    </PageContainer>
+  );
+}
+
+function ApprovalsPage() {
+  return <PageContainer title="待审批"><Empty description="暂无审批事项" /></PageContainer>;
+}
+
+function ReceiptsPage({ state }) {
+  return (
+    <PageContainer title="回执中心">
+      <Timeline items={(state.evidenceLedger || []).slice(-12).reverse().map((item) => ({
+        children: <><strong>{item.type}</strong><div>{item.workspaceId || item.accountId}</div></>
+      }))} />
+    </PageContainer>
+  );
+}
+
+function AdminOverviewPage({ state, adminOps }) {
+  return (
+    <PageContainer title="管理总览">
+      <StatisticCard.Group>
+        <StatisticCard statistic={{ title: "账号", value: adminOps.operator?.accounts?.total ?? 1 }} />
+        <StatisticCard statistic={{ title: "Workspace", value: adminOps.operator?.workspaces?.total ?? state.workspaces.length }} />
+        <StatisticCard statistic={{ title: "失败操作", value: adminOps.operator?.runtimeOperations?.failed ?? 0 }} />
+      </StatisticCard.Group>
+    </PageContainer>
+  );
+}
+
+function AdminUsersPage({ state, wallet, topUpOpen, setTopUpOpen, topUpForm, session, runAction }) {
+  return (
+    <PageContainer title="用户管理" extra={<Button icon={<Plus size={15} />} onClick={() => navigate("/admin/users/new")}>新建用户</Button>}>
+      <ProTable
+        rowKey="id"
+        search={false}
+        options={false}
+        pagination={false}
+        dataSource={[{
+          id: session.user.id,
+          email: session.user.email,
+          role: session.user.role,
+          accountId: state.account.id,
+          balance: wallet.balance,
+          frozen: wallet.frozen,
+          status: "active"
+        }]}
+        columns={[
+          { title: "用户", dataIndex: "email" },
+          { title: "角色", dataIndex: "role", render: (value) => <Tag>{value}</Tag> },
+          { title: "账号", dataIndex: "accountId" },
+          { title: "余额", dataIndex: "balance", render: (value) => money(value) },
+          { title: "状态", dataIndex: "status", render: (value) => <Tag color="green">{value}</Tag> },
+          {
+            title: "操作",
+            valueType: "option",
+            render: (_, row) => [
+              <Button key="wallet" size="small" onClick={() => navigate(`/admin/users/${row.id}/wallet`)}>钱包</Button>,
+              <Button key="topup" size="small" type="primary" onClick={() => {
+                topUpForm.setFieldsValue({ accountId: row.accountId, amount: 200, reason: "commercial top-up" });
+                setTopUpOpen(true);
+              }}>充值</Button>
+            ]
+          }
+        ]}
+      />
+      <TopUpDrawer open={topUpOpen} setOpen={setTopUpOpen} form={topUpForm} session={session} runAction={runAction} />
+    </PageContainer>
+  );
+}
+
+function TopUpDrawer({ open, setOpen, form, session, runAction }) {
+  return (
+    <Drawer title="用户钱包充值" open={open} onClose={() => setOpen(false)} width={420}>
+      <Form form={form} layout="vertical" onFinish={(values) => runAction(() => api("/api/accounts/credit", values, session.csrfToken), "充值已记录").then(() => setOpen(false))}>
+        <Form.Item name="accountId" label="账号" rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="amount" label="金额" rules={[{ required: true }]}><InputNumber min={1} className="fullWidth" /></Form.Item>
+        <Form.Item name="reason" label="原因"><Input /></Form.Item>
+        <Button type="primary" htmlType="submit">确认充值</Button>
+      </Form>
+    </Drawer>
+  );
+}
+
+function AdminBillingPage({ state }) {
+  return (
+    <PageContainer title="账务运营">
+      <ProCard gutter={16} wrap>
+        <ProCard title="手工充值记录"><TopupList events={state.manualTopups || []} /></ProCard>
+        <ProCard title="钱包流水"><WalletList events={state.walletTransactions || []} /></ProCard>
+      </ProCard>
+    </PageContainer>
+  );
+}
+
+function AdminFabricPage() {
+  return (
+    <PageContainer title="OPL Fabric">
+      <ProCard gutter={16} wrap>
+        <CatalogCard title="计算" items={["Standard CPU", "GPU reserved", "SSH/HPC adapter"]} />
+        <CatalogCard title="存储" items={["Workspace volume", "Private bucket", "Institution storage"]} />
+        <CatalogCard title="审批" items={["Connector", "Environment", "Agent package"]} />
+      </ProCard>
+    </PageContainer>
+  );
+}
+
+function AdminLedgerPage({ state }) {
+  return (
+    <PageContainer title="OPL Ledger">
+      <ProTable
+        rowKey="id"
+        search={false}
+        options={false}
+        pagination={{ pageSize: 8 }}
+        dataSource={state.billingLedger || []}
+        columns={[
+          { title: "事件", dataIndex: "type" },
+          { title: "账号", dataIndex: "accountId", ellipsis: true },
+          { title: "Workspace", dataIndex: "workspaceId", ellipsis: true },
+          { title: "金额", dataIndex: "amount", render: (value) => money(value) }
+        ]}
+      />
+    </PageContainer>
+  );
+}
+
+function AdminRuntimePage({ adminOps }) {
+  return (
+    <PageContainer title="运行时">
+      {adminOps.error && <Alert type="error" showIcon message={adminOps.error} />}
+      <ProCard gutter={16} wrap>
+        <ReadinessCard title="Fabric readiness" readiness={adminOps.runtime} />
+        <ReadinessCard title="Launch gates" readiness={adminOps.launch} />
+      </ProCard>
+    </PageContainer>
+  );
+}
+
+function AdminSupportPage({ tickets }) {
+  return (
+    <PageContainer title="工单管理">
+      <ProTable
+        rowKey="id"
+        search={false}
+        options={false}
+        pagination={false}
+        dataSource={tickets.tickets}
+        columns={[
+          { title: "标题", dataIndex: "title" },
+          { title: "分类", dataIndex: "category" },
+          { title: "状态", dataIndex: "status" },
+          { title: "创建时间", dataIndex: "createdAt" }
+        ]}
+      />
+    </PageContainer>
+  );
+}
+
+function ForbiddenPage() {
+  return <PageContainer title="无权限"><Empty description="当前账号无权访问该页面" /></PageContainer>;
+}
+
+function CatalogCard({ title, items }) {
+  return (
+    <ProCard title={title} colSpan={{ xs: 24, xl: 8 }}>
+      <List size="small" dataSource={items} renderItem={(item) => <List.Item><Tag color="blue">Approved</Tag>{item}</List.Item>} />
+    </ProCard>
+  );
+}
+
+function UsageTable({ data, type }) {
+  return (
+    <ProTable
+      rowKey={(row) => row.id}
+      search={false}
+      options={false}
+      pagination={false}
+      size="small"
+      dataSource={data.slice(-8).reverse()}
+      columns={[
+        { title: type === "request" ? "请求" : "资源", dataIndex: type === "request" ? "requestId" : "resourceType", ellipsis: true },
+        { title: "Workspace", dataIndex: "workspaceId", ellipsis: true },
+        { title: "金额", dataIndex: "amount", render: (value) => money(value) }
+      ]}
+    />
+  );
+}
+
+function AlertList({ events = [] }) {
+  if (!events.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无告警" />;
+  return (
+    <List
+      dataSource={events.slice(-8).reverse()}
+      renderItem={(event) => (
+        <List.Item>
+          <Space>
+            <AlertTriangle size={15} />
+            <Typography.Text>{event.type || "alert"}</Typography.Text>
+            <Typography.Text type="secondary">{event.workspaceId || event.accountId}</Typography.Text>
+          </Space>
+        </List.Item>
+      )}
+    />
+  );
+}
+
+function TopupList({ events }) {
+  if (!events.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无充值记录" />;
+  return <List size="small" dataSource={events.slice(-8).reverse()} renderItem={(event) => <List.Item>{event.targetAccountId} · {money(event.amount)}</List.Item>} />;
+}
+
+function WalletList({ events }) {
+  if (!events.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无钱包流水" />;
+  return <List size="small" dataSource={events.slice(-8).reverse()} renderItem={(event) => <List.Item>{event.type} · {money(event.amount)}</List.Item>} />;
+}
+
+function ReadinessCard({ title, readiness }) {
+  return (
+    <ProCard title={title} colSpan={{ xs: 24, xl: 12 }}>
+      <Tag color={readiness?.ready ? "green" : "red"}>{readiness?.ready ? "Ready" : "Blocked"}</Tag>
+      <List
+        size="small"
+        dataSource={[...(readiness?.missingEnv || []), ...(readiness?.missingTools || []), ...(readiness?.failedChecks || [])]}
+        locale={{ emptyText: "No blockers" }}
+        renderItem={(item) => <List.Item>{item}</List.Item>}
+      />
+    </ProCard>
   );
 }

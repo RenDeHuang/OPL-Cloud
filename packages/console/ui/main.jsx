@@ -1,14 +1,26 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import "antd/dist/reset.css";
 import "./styles.css";
+import { findRoute, navigate } from "./consoleRoutes.js";
 
 const HomePage = lazy(() => import("./pages/HomePage.jsx"));
 const LoginPage = lazy(() => import("./pages/LoginPage.jsx"));
 const ConsolePage = lazy(() => import("./pages/ConsolePage.jsx"));
 
 function currentRoute() {
-  const route = window.location.hash.replace(/^#\/?/, "");
-  return route || "home";
+  return findRoute(window.location.pathname);
+}
+
+function redirectToLogin(pathname) {
+  const redirect = encodeURIComponent(pathname || "/console/overview");
+  navigate(`/login?redirect=${redirect}`);
+}
+
+function authRedirectTarget() {
+  const params = new URLSearchParams(window.location.search);
+  const redirect = params.get("redirect");
+  return redirect && redirect.startsWith("/") ? redirect : "/console/overview";
 }
 
 function App() {
@@ -17,9 +29,9 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    const onHashChange = () => setRoute(currentRoute());
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    const onRouteChange = () => setRoute(currentRoute());
+    window.addEventListener("popstate", onRouteChange);
+    return () => window.removeEventListener("popstate", onRouteChange);
   }, []);
 
   useEffect(() => {
@@ -38,31 +50,48 @@ function App() {
       });
     return () => {
       cancelled = true;
-    };
+      };
   }, []);
 
+  useEffect(() => {
+    if (!authChecked) return;
+    if (route.redirect) {
+      navigate(route.redirect);
+      return;
+    }
+    if (route.requiresAuth && !session) {
+      redirectToLogin(window.location.pathname);
+      return;
+    }
+    if (route.requiresAdmin && session?.user?.role !== "admin") {
+      navigate("/403");
+    }
+  }, [authChecked, route, session]);
+
   const page = useMemo(() => {
-    if (route === "login") {
-      return <LoginPage onLogin={(payload) => {
+    if (route.area === "auth" && route.path !== "/logout") {
+      return <LoginPage route={route} onLogin={(payload) => {
         setSession(payload);
-        window.location.hash = "console";
+        navigate(authRedirectTarget());
       }} />;
     }
-    if (route === "console") {
-      return session
-        ? <ConsolePage session={session} onLogout={() => setSession(null)} />
-        : <LoginPage onLogin={(payload) => {
-          setSession(payload);
-          window.location.hash = "console";
-        }} />;
+    if (route.path === "/logout") {
+      return <LoginPage route={route} onLogin={(payload) => {
+        setSession(payload);
+        navigate("/console/overview");
+      }} />;
     }
-    return <HomePage session={session} />;
+    if (route.area === "console" || route.area === "admin") {
+      if (!session) return null;
+      return <ConsolePage route={route} session={session} onLogout={() => setSession(null)} />;
+    }
+    return <HomePage route={route} session={session} />;
   }, [route, session]);
 
-  if (!authChecked) return <div className="loading">正在加载 OPL Cloud...</div>;
+  if (!authChecked) return <div className="loading">Loading OPL Cloud...</div>;
 
   return (
-    <Suspense fallback={<div className="loading">正在加载 OPL Cloud...</div>}>
+    <Suspense fallback={<div className="loading">Loading OPL Cloud...</div>}>
       {page}
     </Suspense>
   );

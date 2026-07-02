@@ -228,7 +228,13 @@ async function handleApi(request, response, pathname, appService, operatorSummar
     const routes = {
       "POST /api/accounts/credit": () => {
         requireAdmin(auth, session);
-        return appService.creditAccount(body);
+        return appService.creditAccount(auth
+          ? {
+            ...body,
+            operatorUserId: session.user.id,
+            operatorAccountId: session.user.accountId
+          }
+          : body);
       },
       "POST /api/organizations": () => {
         requireAdmin(auth, session);
@@ -257,6 +263,7 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       "POST /api/workspaces/reset-token": () => appService.resetWorkspaceToken(scopedWorkspaceInput(auth, session, body)),
       "POST /api/workspaces/delete-token": () => appService.deleteWorkspaceToken(scopedWorkspaceInput(auth, session, body)),
       "POST /api/billing/settle": () => appService.settleBilling(scopedWorkspaceInput(auth, session, body)),
+      "POST /api/billing/request-usage": () => appService.recordRequestUsage(scopedWorkspaceInput(auth, session, body)),
       "POST /api/billing/reconciliation": () => {
         requireAdmin(auth, session);
         return appService.recordBillingReconciliation(body);
@@ -286,6 +293,16 @@ async function serveStatic(response, pathname, staticDir = publicDir) {
     response.writeHead(200, { "content-type": contentTypes[extname(fullPath)] ?? "application/octet-stream" });
     response.end(content);
   } catch {
+    if (!extname(pathname)) {
+      try {
+        const content = await readFile(join(staticDir, "index.html"));
+        response.writeHead(200, { "content-type": contentTypes[".html"] });
+        response.end(content);
+        return;
+      } catch {
+        // fall through to plain 404
+      }
+    }
     response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     response.end("未找到\n");
   }
