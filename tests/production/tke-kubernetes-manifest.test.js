@@ -45,8 +45,10 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
   assert.equal(container.readinessProbe.httpGet.path, "/api/production/readiness");
   assert.deepEqual(container.envFrom, [{ configMapRef: { name: "opl-cloud-config" } }]);
   assert.deepEqual(container.env.filter((item) => item.valueFrom).map((item) => `${item.name}->${item.valueFrom.secretKeyRef.name}/${item.valueFrom.secretKeyRef.key}`), [
-    "DATABASE_URL->opl-cloud-database/DATABASE_URL"
+    "DATABASE_URL->opl-cloud-database/DATABASE_URL",
+    "OPL_OPERATOR_SUMMARY_TOKEN->opl-cloud-operator/OPL_OPERATOR_SUMMARY_TOKEN"
   ]);
+  assert.equal(container.env.find((item) => item.name === "OPL_OPERATOR_SUMMARY_TOKEN").valueFrom.secretKeyRef.optional, true);
   assert.deepEqual(deployment.spec.template.spec.volumes.map((volume) => volume.name), [
     "runtime-state",
     "deploy-kubeconfig",

@@ -110,7 +110,7 @@ async function handleWorkspaceUrl(request, response, pathname, searchParams, app
   }
 }
 
-async function handleApi(request, response, pathname, appService) {
+async function handleApi(request, response, pathname, appService, operatorSummaryToken = process.env.OPL_OPERATOR_SUMMARY_TOKEN) {
   try {
     if (request.method === "GET" && pathname === "/api/state") {
       const url = new URL(request.url, "http://localhost");
@@ -121,6 +121,15 @@ async function handleApi(request, response, pathname, appService) {
     }
     if (request.method === "GET" && pathname === "/api/production/readiness") {
       return sendJson(response, 200, await appService.productionReadiness());
+    }
+    if (request.method === "GET" && pathname === "/api/operator/summary") {
+      const url = new URL(request.url, "http://localhost");
+      const providedToken = request.headers["x-opl-operator-token"] || url.searchParams.get("operatorToken") || "";
+      if (!operatorSummaryToken) return sendJson(response, 403, { ok: false, error: "operator_summary_token_not_configured" });
+      if (providedToken !== operatorSummaryToken) return sendJson(response, 403, { ok: false, error: "operator_summary_token_invalid" });
+      return sendJson(response, 200, await appService.operatorSummary({
+        accountId: url.searchParams.get("accountId") || null
+      }));
     }
 
     const body = await readJson(request);
@@ -164,10 +173,10 @@ async function serveStatic(response, pathname, staticDir = publicDir) {
   }
 }
 
-export function createRequestHandler({ appService = service, staticDir = publicDir } = {}) {
+export function createRequestHandler({ appService = service, staticDir = publicDir, operatorSummaryToken = process.env.OPL_OPERATOR_SUMMARY_TOKEN } = {}) {
   return (request, response) => {
     const url = new URL(request.url, "http://localhost");
-    if (url.pathname.startsWith("/api/")) return handleApi(request, response, url.pathname, appService);
+    if (url.pathname.startsWith("/api/")) return handleApi(request, response, url.pathname, appService, operatorSummaryToken);
     if (url.pathname.startsWith("/workspaces/")) {
       return handleWorkspaceUrl(request, response, url.pathname, url.searchParams, appService);
     }

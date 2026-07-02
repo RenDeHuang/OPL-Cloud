@@ -34,6 +34,11 @@ button:hover {
   border-color: #648198;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 button.primary {
   background: #0e766f;
   border-color: #0e766f;
@@ -200,6 +205,13 @@ h2 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.policyGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .metric,
@@ -374,6 +386,7 @@ code {
     display: grid;
   }
   .metrics,
+  .policyGrid,
   .readiness,
   .planGrid,
   .resourceGrid,

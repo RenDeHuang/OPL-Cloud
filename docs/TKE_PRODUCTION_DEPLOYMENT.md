@@ -155,12 +155,17 @@ Recommended Kubernetes Secret keys:
 Secret opl-cloud-database
   DATABASE_URL
 
+Secret opl-cloud-operator
+  OPL_OPERATOR_SUMMARY_TOKEN
+
 Secret opl-cloud-deploy
   TENCENT_DEPLOY_KUBECONFIG_REF
 
 Secret tcr-pull-secret
   .dockerconfigjson
 ```
+
+`OPL_OPERATOR_SUMMARY_TOKEN` is optional. When it is absent, `GET /api/operator/summary` is disabled with a 403 response. When it is present, call the endpoint with the `x-opl-operator-token` header.
 
 The tracked production manifest is a contract, not the live secret payload. Keep real secret values outside git.
 

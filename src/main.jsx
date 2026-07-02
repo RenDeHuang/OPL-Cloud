@@ -106,6 +106,7 @@ function App() {
           <a href="#create">Create</a>
           <a href="#access">URL & Token</a>
           <a href="#resources">Compute & Storage</a>
+          <a href="#alerts">Alerts</a>
           <a href="#billing">Billing</a>
           <a href="#audit">Audit</a>
         </nav>
@@ -219,16 +220,16 @@ function App() {
           <div className="sectionHeader">
             <div>
               <h2>Workspace URL</h2>
-              <p>Permanent token until owner resets or deletes it.</p>
+              <p>Permanent token until owner resets it, deletes it, or destroys storage.</p>
             </div>
             <LinkIcon />
           </div>
           {selected ? (
             <div className="urlBox">
               <code>{selected.url}</code>
-              <button onClick={() => navigator.clipboard?.writeText(selected.url)}><Copy size={16} /> Copy</button>
-              <button onClick={() => run(() => api("/api/workspaces/reset-token", { accountId, workspaceId: selected.id }))}><RefreshCw size={16} /> Reset token</button>
-              <button className="danger" onClick={() => run(() => api("/api/workspaces/delete-token", { accountId, workspaceId: selected.id }))}><Trash2 size={16} /> Delete token</button>
+              <button disabled={selected.access.tokenStatus !== "active"} onClick={() => navigator.clipboard?.writeText(selected.url)}><Copy size={16} /> Copy</button>
+              <button disabled={selected.access.tokenStatus !== "active"} onClick={() => run(() => api("/api/workspaces/reset-token", { accountId, workspaceId: selected.id }))}><RefreshCw size={16} /> Reset token</button>
+              <button className="danger" disabled={selected.access.tokenStatus !== "active"} onClick={() => run(() => api("/api/workspaces/delete-token", { accountId, workspaceId: selected.id }))}><Trash2 size={16} /> Delete token</button>
             </div>
           ) : <div className="empty">Create a Workspace to get a URL.</div>}
         </section>
@@ -265,6 +266,16 @@ function App() {
           ) : <div className="empty">No resource binding yet.</div>}
         </section>
 
+        <section id="alerts" className="band">
+          <div className="sectionHeader">
+            <div>
+              <h2>Alerts</h2>
+              <p>Operator-visible billing and lifecycle notifications.</p>
+            </div>
+          </div>
+          <EventList events={state.notifications} />
+        </section>
+
         <section id="billing" className="band">
           <div className="sectionHeader">
             <div>
@@ -272,6 +283,7 @@ function App() {
               <p>Seven-day prepaid holds, hourly compute and storage debits, and release receipts.</p>
             </div>
           </div>
+          <PolicyGrid policy={state.billingPolicy} />
           <EventList events={state.billingLedger} />
         </section>
 
@@ -300,6 +312,18 @@ function ResourceCard({ icon, title, value, billing }) {
       <strong>{value}</strong>
       <small>{billing}</small>
     </article>
+  );
+}
+
+function PolicyGrid({ policy }) {
+  if (!policy) return null;
+  return (
+    <div className="policyGrid">
+      <Metric label="Hold window" value={`${policy.prepaidHoldDays} days`} />
+      <Metric label="Minimum charge" value={`${policy.minimumBillableHours}h`} />
+      <Metric label="Markup" value={`${Math.round(policy.markup * 100)}%`} />
+      <Metric label="Compute exhaustion" value={policy.computeHoldExhaustion} />
+    </div>
   );
 }
 

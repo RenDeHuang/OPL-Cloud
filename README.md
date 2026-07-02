@@ -81,6 +81,8 @@ Compute and storage must not operate unpaid. OPL Cloud freezes enough balance fo
 
 See [PRODUCT_DESIGN.md](./PRODUCT_DESIGN.md) for the frozen v1 product design.
 
+For the current launch boundary, use [docs/CONTROLLED_PILOT_CHECKLIST.md](./docs/CONTROLLED_PILOT_CHECKLIST.md). The current status is controlled production pilot readiness for Basic CPU Workspace, not public GA.
+
 ## Current Implementation
 
 The current app implements the local business-chain loop with the Local Docker provider:

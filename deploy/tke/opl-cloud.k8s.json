@@ -130,6 +130,16 @@
                         "key": "DATABASE_URL"
                       }
                     }
+                  },
+                  {
+                    "name": "OPL_OPERATOR_SUMMARY_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-operator",
+                        "key": "OPL_OPERATOR_SUMMARY_TOKEN",
+                        "optional": true
+                      }
+                    }
                   }
                 ],
                 "readinessProbe": {

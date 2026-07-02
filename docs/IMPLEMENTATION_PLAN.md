@@ -242,6 +242,6 @@ Legacy CVM-only inputs are no longer production blockers for the TKE route:
 
 Do not print secret values. Do not commit `.env.production*` or legacy `.env.preproduction*` files.
 
-## Next Step
+## Current Pilot Gate
 
-Close the remaining v1 semantics around destroyed Workspaces: when storage is destroyed, the URL/token state should become unavailable or revoked in the Console record even if historical audit data remains. After that, prepare the external tutorial screenshot refresh as a separate documentation task owned by the Gateway/App tutorial surface, not by the OPL Console control-plane implementation.
+Use [CONTROLLED_PILOT_CHECKLIST.md](./CONTROLLED_PILOT_CHECKLIST.md) as the current non-reconciliation pilot gate. Tencent bill reconciliation remains a separate finance validation task. The OPL Console control-plane should not claim public GA or full OPL Cloud completeness until payment settlement, data backup/restore policy, Gateway product surface, and full Ledger service boundaries are separately closed.

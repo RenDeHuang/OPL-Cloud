@@ -192,6 +192,24 @@ function billableHours(hours) {
   return Math.ceil(value);
 }
 
+function billingPolicy(pricing) {
+  return {
+    currency: "CNY",
+    markup: pricingMarkup(pricing),
+    prepaidHoldDays: 7,
+    minimumBillableHours: 1,
+    billingCadence: "hourly",
+    fundingOrder: ["available_balance", "frozen_hold"],
+    computeHoldExhaustion: "stop_compute",
+    storageHoldExhaustion: "freeze_workspace_until_top_up_or_storage_destroy",
+    storageDestroyConfirmation: "required"
+  };
+}
+
+function storageDestroyed(workspace) {
+  return workspace?.state === "destroyed" || workspace?.disk?.status === "destroyed";
+}
+
 export function createOplCloud({ store, runtimeProvider, pricing, productionReadiness = null }) {
   return new OplCloudService({ store, runtimeProvider, pricing, productionReadiness });
 }
@@ -483,6 +501,7 @@ export class OplCloudService {
         workspace.server.status = "destroyed";
         workspace.server.billingStatus = "stopped";
         workspace.docker.status = "destroyed";
+        workspace.access.tokenStatus = "unavailable";
         workspace.state = "destroyed";
         workspace.updatedAt = now();
         state.billingLedger.push(this.ledgerEntry({ state,
@@ -503,6 +522,7 @@ export class OplCloudService {
   async resetWorkspaceToken({ accountId, workspaceId }) {
     return this.store.update((state) => {
       const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
+      if (storageDestroyed(workspace)) throw new Error("workspace_storage_destroyed");
       workspace.access.token = makeToken(workspaceId, `reset-${Date.now()}`);
       workspace.access.tokenStatus = "active";
       workspace.url = this.runtimeProvider.workspaceUrl({
@@ -519,7 +539,7 @@ export class OplCloudService {
   async deleteWorkspaceToken({ accountId, workspaceId }) {
     return this.store.update((state) => {
       const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
-      workspace.access.tokenStatus = "deleted";
+      workspace.access.tokenStatus = storageDestroyed(workspace) ? "unavailable" : "deleted";
       workspace.updatedAt = now();
       state.billingLedger.push(this.ledgerEntry({ state, workspaceId, accountId, type: "token_deleted", amount: 0, sourceEventId: "delete_token" }));
       return clone(workspace);
@@ -590,6 +610,7 @@ export class OplCloudService {
         console: "OPL Console",
         workspace: "OPL Workspace"
       },
+      billingPolicy: billingPolicy(this.pricing),
       packages: this.packages(),
       account: clone(state.accounts[accountId] ?? { id: accountId, balance: 0, frozen: 0, holds: {} }),
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
@@ -597,6 +618,67 @@ export class OplCloudService {
       audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
       notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
       runtimeOperations: state.runtimeOperations.filter((entry) => entry.accountId === accountId).map(clone)
+    };
+  }
+
+  async operatorSummary({ accountId = null } = {}) {
+    const state = await this.store.read();
+    const workspaces = Object.values(state.workspaces).filter((workspace) => !accountId || workspace.ownerAccountId === accountId);
+    const notifications = (state.notifications || []).filter((event) => !accountId || event.accountId === accountId);
+    const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
+    const accounts = Object.values(state.accounts).filter((account) => !accountId || account.id === accountId);
+    const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
+    const attentionWorkspaces = workspaces.filter((workspace) =>
+      workspace.state === "failed" ||
+      workspace.state === "storage_hold_exhausted" ||
+      workspace.state === "stopped_storage_hold_exhausted" ||
+      workspace.server?.routeCleanupStatus === "failed"
+    );
+
+    return {
+      product: "OPL Console",
+      generatedAt: now(),
+      accountScope: accountId || "all",
+      accounts: {
+        total: accounts.length,
+        frozen: money(accounts.reduce((sum, account) => sum + Number(account.frozen || 0), 0)),
+        balance: money(accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0))
+      },
+      workspaces: {
+        total: workspaces.length,
+        running: workspaces.filter((workspace) => workspace.state === "running").length,
+        stopped: workspaces.filter((workspace) => workspace.state === "stopped_server_disk_retained").length,
+        computeDestroyedStorageRetained: workspaces.filter((workspace) => workspace.state === "server_destroyed_disk_retained").length,
+        destroyed: workspaces.filter((workspace) => workspace.state === "destroyed").length,
+        needsAttention: attentionWorkspaces.length
+      },
+      notifications: {
+        total: notifications.length,
+        error: notifications.filter((event) => event.severity === "error").length,
+        warning: notifications.filter((event) => event.severity === "warning").length,
+        recent: notifications.slice(-10).reverse().map((event) => ({
+          id: event.id,
+          accountId: event.accountId,
+          workspaceId: event.workspaceId,
+          type: event.type,
+          severity: event.severity,
+          message: event.message,
+          createdAt: event.createdAt
+        }))
+      },
+      runtimeOperations: {
+        total: runtimeOperations.length,
+        failed: failedOperations.length,
+        recentFailed: failedOperations.slice(-10).reverse().map((operation) => ({
+          id: operation.id,
+          accountId: operation.accountId,
+          workspaceId: operation.workspaceId,
+          operationType: operation.operationType,
+          error: operation.error,
+          updatedAt: operation.updatedAt
+        }))
+      },
+      billingPolicy: billingPolicy(this.pricing)
     };
   }
 

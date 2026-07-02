@@ -157,3 +157,61 @@ test("runtime status route returns structured Workspace resource evidence withou
     await close();
   }
 });
+
+test("operator summary route returns notification and failed operation aggregates without tokens", async () => {
+  const appService = {
+    operatorSummary: async (input) => ({
+      product: "OPL Console",
+      accountScope: input.accountId,
+      workspaces: { total: 1, running: 0, needsAttention: 1 },
+      notifications: {
+        total: 1,
+        error: 1,
+        warning: 0,
+        recent: [
+          {
+            id: "notification-1",
+            accountId: "pi-route",
+            workspaceId: "ws-route001",
+            type: "workspace.create_failed",
+            severity: "error",
+            message: "image_pull_failed",
+            createdAt: "2026-07-01T00:00:00.000Z"
+          }
+        ]
+      },
+      runtimeOperations: {
+        total: 1,
+        failed: 1,
+        recentFailed: [
+          {
+            id: "op-1",
+            accountId: "pi-route",
+            workspaceId: "ws-route001",
+            operationType: "create_workspace",
+            error: "image_pull_failed",
+            updatedAt: "2026-07-01T00:00:00.000Z"
+          }
+        ]
+      }
+    })
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService, operatorSummaryToken: "operator-test-token" }));
+  try {
+    const blockedResponse = await fetch(`${origin}/api/operator/summary?accountId=pi-route`);
+    assert.equal(blockedResponse.status, 403);
+
+    const response = await fetch(`${origin}/api/operator/summary?accountId=pi-route`, {
+      headers: { "x-opl-operator-token": "operator-test-token" }
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.accountScope, "pi-route");
+    assert.equal(payload.notifications.error, 1);
+    assert.equal(payload.runtimeOperations.failed, 1);
+    assert.equal(JSON.stringify(payload).includes("share_"), false);
+  } finally {
+    await close();
+  }
+});

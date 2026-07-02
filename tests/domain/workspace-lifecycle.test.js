@@ -129,6 +129,14 @@ test("records failed runtime operations for retry and audit", async () => {
   assert.equal(state.runtimeOperations[0].operationType, "create_workspace");
   assert.equal(state.runtimeOperations[0].status, "failed");
   assert.equal(state.runtimeOperations[0].error, "runtime_create_failed");
+
+  const summary = await service.operatorSummary({ accountId: "pi-alpha" });
+  assert.equal(summary.product, "OPL Console");
+  assert.equal(summary.notifications.error, 1);
+  assert.equal(summary.notifications.recent[0].type, "workspace.create_failed");
+  assert.equal(summary.runtimeOperations.failed, 1);
+  assert.equal(summary.workspaces.total, 0);
+  assert.equal(JSON.stringify(summary).includes("share_"), false);
 });
 
 test("records failed lifecycle runtime operations without mutating the Workspace", async () => {
@@ -348,6 +356,22 @@ test("destroying disk requires explicit confirmation and is the only action that
     assert.equal(destroyed.state, "destroyed");
     assert.equal(destroyed.disk.status, "destroyed");
     assert.equal(destroyed.disk.billingStatus, "stopped");
+    assert.equal(destroyed.access.tokenStatus, "unavailable");
+
+    await assert.rejects(
+      service.resetWorkspaceToken({
+        accountId: "pi-alpha",
+        workspaceId: workspace.id
+      }),
+      /workspace_storage_destroyed/
+    );
+    await assert.rejects(
+      service.resolveWorkspaceAccess({
+        slug: workspace.slug,
+        token: workspace.access.token
+      }),
+      /workspace_token_inactive/
+    );
 
     const ledger = await service.billingLedger("pi-alpha");
     assert.ok(ledger.some((entry) => entry.type === "storage_destroyed"));
@@ -399,6 +423,7 @@ test("destroying disk from a running Workspace releases server compute before de
   assert.equal(destroyed.server.billingStatus, "stopped");
   assert.equal(destroyed.disk.status, "destroyed");
   assert.equal(destroyed.disk.billingStatus, "stopped");
+  assert.equal(destroyed.access.tokenStatus, "unavailable");
   assert.deepEqual((await service.getState("pi-alpha")).runtimeOperations.map((operation) => `${operation.operationType}:${operation.status}`), [
     "create_workspace:succeeded",
     "destroy_disk:succeeded"

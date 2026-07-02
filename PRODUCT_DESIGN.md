@@ -261,6 +261,12 @@ Allowed actions:
 - no restore from this storage
 - create a new Workspace if needed
 
+Access:
+
+- Workspace URL is no longer usable.
+- token status is `unavailable`.
+- token reset must fail closed because there is no retained Workspace storage to reattach.
+
 ## Workspace State Model
 
 Workspace state is the standard status used by OPL Console to decide what the user sees, what actions are allowed, and what billing should happen.
