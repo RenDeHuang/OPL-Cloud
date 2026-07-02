@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { productionReadiness } from "../../services/api/src/production-readiness.js";
+import { productionReadiness } from "../../packages/console/src/production-readiness.js";
 
 const productionEnv = {
   OPL_RUNTIME_PROVIDER: "tencent-cvm",

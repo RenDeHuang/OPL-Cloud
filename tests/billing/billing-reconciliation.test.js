@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeTencentBillRows, reconcileTencentBills } from "../../services/api/src/billing-reconciliation.js";
+import { normalizeTencentBillRows, reconcileTencentBills } from "../../packages/ledger/src/billing-reconciliation.js";
 
 test("reconciles OPL ledger debits against Tencent bill totals plus platform markup", () => {
   const report = reconcileTencentBills({

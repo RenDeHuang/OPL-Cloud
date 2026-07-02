@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOplCloud, packageHoldAmount } from "../../services/api/src/opl-cloud.js";
-import { MemoryStore } from "../../services/api/src/store.js";
+import { createOplCloud, packageHoldAmount } from "../../packages/console/src/opl-cloud.js";
+import { MemoryStore } from "../../packages/console/src/store.js";
 
 const TEST_PRICING = {
   computeHourly: {

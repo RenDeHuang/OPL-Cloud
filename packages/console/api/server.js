@@ -3,12 +3,12 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createOplCloud } from "./src/opl-cloud.js";
-import { productionReadiness } from "./src/production-readiness.js";
-import { createRuntimeProvider } from "./src/runtime-provider-factory.js";
-import { JsonFileStore, PostgresStore } from "./src/store.js";
+import { createRuntimeProvider } from "../../fabric/src/runtime-provider-factory.js";
+import { createOplCloud } from "../src/opl-cloud.js";
+import { productionReadiness } from "../src/production-readiness.js";
+import { JsonFileStore, PostgresStore } from "../src/store.js";
 
-const root = fileURLToPath(new URL("../..", import.meta.url));
+const root = fileURLToPath(new URL("../../..", import.meta.url));
 const publicDir = join(root, "dist");
 const port = Number(process.env.PORT ?? 8787);
 const dataPath = process.env.OPL_CLOUD_DATA_PATH ?? join(root, ".runtime", "opl-cloud-state.json");

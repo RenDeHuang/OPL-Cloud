@@ -6,6 +6,8 @@ This repository is the OPL Cloud implementation workspace for the OPL Console an
 
 Implementation scope is fixed in [docs/IMPLEMENTATION_SCOPE.md](./docs/IMPLEMENTATION_SCOPE.md): [`one-person-lab`](https://github.com/gaofeng21cn/one-person-lab) provides the development framework concepts, [`one-person-lab-cloud`](https://github.com/gaofeng21cn/one-person-lab-cloud) provides the Cloud product definition, and this repository implements the OPL Console / OPL Workspace control-plane slice.
 
+The implementation is staged for future extraction under [packages](./packages): `console`, `fabric`, `ledger`, and `contracts`.
+
 ## Product Names
 
 - `OPL Cloud`: the external product name.

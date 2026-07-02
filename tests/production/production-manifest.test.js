@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateProductionManifest } from "../../services/api/src/production-manifest.js";
+import { validateProductionManifest } from "../../packages/console/src/production-manifest.js";
 
 test("production manifest requires deployment secret refs for every launch variable", () => {
   const report = validateProductionManifest({

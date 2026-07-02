@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createStoreFromEnv } from "../../services/api/server.js";
-import { createRuntimeProvider } from "../../services/api/src/runtime-provider-factory.js";
-import { TencentCvmProvider } from "../../services/api/src/runtime-providers/tencent-cvm.js";
-import { TencentTkeProvider } from "../../services/api/src/runtime-providers/tencent-tke.js";
-import { JsonFileStore, PostgresStore } from "../../services/api/src/store.js";
+import { createStoreFromEnv } from "../../packages/console/api/server.js";
+import { createRuntimeProvider } from "../../packages/fabric/src/runtime-provider-factory.js";
+import { TencentCvmProvider } from "../../packages/fabric/src/runtime-providers/tencent-cvm.js";
+import { TencentTkeProvider } from "../../packages/fabric/src/runtime-providers/tencent-tke.js";
+import { JsonFileStore, PostgresStore } from "../../packages/console/src/store.js";
 
 test("server default runtime provider is local Docker", () => {
   const provider = createRuntimeProvider({

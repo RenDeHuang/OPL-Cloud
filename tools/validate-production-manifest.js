@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { validateProductionManifest } from "../services/api/src/production-manifest.js";
+import { validateProductionManifest } from "../packages/console/src/production-manifest.js";
 
 function cliArgs(argv) {
   const args = {};

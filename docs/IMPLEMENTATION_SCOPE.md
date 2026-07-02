@@ -21,6 +21,17 @@ This repository is responsible for:
 - Runtime readiness, production readiness, and production chain verification.
 - Deployment handoff assets for Tencent TKE, TCR image validation, Kubernetes Ingress, PostgreSQL, and legacy Tencent CVM.
 
+## Package Layout
+
+The implementation is staged for future repository extraction under `packages/`:
+
+- `packages/console`: OPL Console API, control-plane service, store, readiness, manifest validation, and UI.
+- `packages/fabric`: runtime provider factory and Local Docker / Tencent TKE / legacy Tencent CVM adapters.
+- `packages/ledger`: billing reconciliation helpers and future Ledger extraction boundary.
+- `packages/contracts`: machine-readable product, lifecycle, and billing contracts.
+
+This is a migration layout, not a monorepo product claim. The service still deploys as one OPL Console control-plane process while imports are kept near the future package boundaries.
+
 ## Framework Alignment
 
 The implementation should map Cloud behavior back to One Person Lab framework concepts:
@@ -33,7 +44,7 @@ The implementation should map Cloud behavior back to One Person Lab framework co
 | Receipt / audit trail | billing ledger, audit events, verifier output, reconciliation output |
 | Human gate | explicit compute and storage lifecycle confirmations |
 | Recovery path | restart or recreate runtime compute from retained workspace storage |
-| Machine-readable contract | `contracts/`, tests, manifests, readiness payloads |
+| Machine-readable contract | `packages/contracts/`, tests, manifests, readiness payloads |
 
 ## Out Of Scope
 

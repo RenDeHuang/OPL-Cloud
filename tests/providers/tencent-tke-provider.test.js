@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { TencentTkeProvider } from "../../services/api/src/runtime-providers/tencent-tke.js";
+import { TencentTkeProvider } from "../../packages/fabric/src/runtime-providers/tencent-tke.js";
 
 const requiredEnv = {
   OPL_WORKSPACE_DOMAIN: "workspace.medopl.cn",

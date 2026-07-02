@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { TencentCvmProvider } from "../../services/api/src/runtime-providers/tencent-cvm.js";
+import { TencentCvmProvider } from "../../packages/fabric/src/runtime-providers/tencent-cvm.js";
 
 const requiredEnv = {
   TENCENTCLOUD_SECRET_ID: "sid",

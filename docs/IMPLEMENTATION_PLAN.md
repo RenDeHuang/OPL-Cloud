@@ -67,12 +67,12 @@ Attempt:
 
 Receipts:
 
-- `src/main.jsx`
-- `services/api/src/opl-cloud.js`
+- `packages/console/ui/main.jsx`
+- `packages/console/src/opl-cloud.js`
 - `tests/domain/workspace-lifecycle.test.js`
 - `tests/domain/workspace-url-route.test.js`
-- `contracts/opl-cloud-product-contract.json`
-- `contracts/opl-cloud-workspace-lifecycle-contract.json`
+- `packages/contracts/opl-cloud-product-contract.json`
+- `packages/contracts/opl-cloud-workspace-lifecycle-contract.json`
 
 ### OPL Fabric Runtime Providers
 
@@ -85,10 +85,10 @@ Attempt:
 
 Receipts:
 
-- `services/api/src/runtime-provider-factory.js`
-- `services/api/src/runtime-providers/local-docker.js`
-- `services/api/src/runtime-providers/tencent-tke.js`
-- `services/api/src/runtime-providers/tencent-cvm.js`
+- `packages/fabric/src/runtime-provider-factory.js`
+- `packages/fabric/src/runtime-providers/local-docker.js`
+- `packages/fabric/src/runtime-providers/tencent-tke.js`
+- `packages/fabric/src/runtime-providers/tencent-cvm.js`
 - `deploy/tke/opl-cloud.k8s.json`
 - `deploy/tke/opl-cloud-production.env.example`
 - `docs/TKE_PRODUCTION_DEPLOYMENT.md`
@@ -108,8 +108,8 @@ Attempt:
 
 Receipts:
 
-- `services/api/src/billing-reconciliation.js`
-- `services/api/src/store.js`
+- `packages/ledger/src/billing-reconciliation.js`
+- `packages/console/src/store.js`
 - `tools/reconcile-tencent-bills.js`
 - `tools/production-verifier.js`
 - `tests/billing/`
@@ -126,8 +126,8 @@ Attempt:
 
 Receipts:
 
-- `services/api/src/production-readiness.js`
-- `services/api/src/production-manifest.js`
+- `packages/console/src/production-readiness.js`
+- `packages/console/src/production-manifest.js`
 - `deploy/production-manifest.example.json`
 - `docs/PRODUCTION_RUNBOOK.md`
 - `tools/validate-production-manifest.js`

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { normalizeTencentBillRows, reconcileTencentBills } from "../services/api/src/billing-reconciliation.js";
+import { normalizeTencentBillRows, reconcileTencentBills } from "../packages/ledger/src/billing-reconciliation.js";
 
 function cliArgs(argv) {
   const args = {};

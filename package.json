@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "start": "node services/api/server.js",
+    "start": "node packages/console/api/server.js",
     "test": "node --test \"tests/**/*.test.js\"",
     "build": "vite build",
     "verify:production": "node tools/production-verifier.js",

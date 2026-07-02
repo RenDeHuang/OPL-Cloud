@@ -22,9 +22,9 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 COPY --from=build /app/dist ./dist
-COPY services ./services
+COPY packages ./packages
 RUN mkdir -p /app/.runtime && chown -R node:node /app/.runtime
 
 USER node
 EXPOSE 8787
-CMD ["node", "services/api/server.js"]
+CMD ["node", "packages/console/api/server.js"]

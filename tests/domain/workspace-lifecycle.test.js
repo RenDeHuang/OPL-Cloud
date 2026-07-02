@@ -4,9 +4,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createOplCloud } from "../../services/api/src/opl-cloud.js";
-import { MemoryStore } from "../../services/api/src/store.js";
-import { LocalDockerProvider } from "../../services/api/src/runtime-providers/local-docker.js";
+import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
+import { MemoryStore } from "../../packages/console/src/store.js";
+import { LocalDockerProvider } from "../../packages/fabric/src/runtime-providers/local-docker.js";
 
 const TEST_PRICING = {
   serverHourly: {

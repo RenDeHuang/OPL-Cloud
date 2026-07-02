@@ -11,8 +11,9 @@ test("OPL Cloud control-plane image build includes app build output and kubectl"
   assert.match(dockerfile, /npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000/);
   assert.match(dockerfile, /npm run build/);
   assert.match(dockerfile, /kubectl/);
+  assert.match(dockerfile, /COPY packages \.\/packages/);
   assert.match(dockerfile, /EXPOSE 8787/);
-  assert.match(dockerfile, /node", "services\/api\/server\.js"/);
+  assert.match(dockerfile, /node", "packages\/console\/api\/server\.js"/);
   assert.match(dockerignore, /^\.env/m);
   assert.match(dockerignore, /^\.runtime/m);
   assert.match(dockerignore, /^node_modules/m);
