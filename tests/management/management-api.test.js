@@ -185,3 +185,55 @@ test("billing reconciliation API records guard reports before provisioning", asy
     await close();
   }
 });
+
+test("task evidence API records and queries Ledger task receipts", async () => {
+  const calls = [];
+  const appService = {
+    async recordTaskEvidenceReceipt(input) {
+      calls.push(["recordTaskEvidenceReceipt", input]);
+      return {
+        id: "task-receipt-1",
+        type: "task.evidence.v1",
+        accountId: input.accountId,
+        workspaceId: input.workspaceId,
+        taskId: input.taskId,
+        executionRefs: input.executionRefs
+      };
+    },
+    async taskEvidenceReceipts(input) {
+      calls.push(["taskEvidenceReceipts", input]);
+      return [
+        {
+          id: "task-receipt-1",
+          type: "task.evidence.v1",
+          accountId: input.accountId,
+          workspaceId: input.workspaceId,
+          taskId: input.taskId
+        }
+      ];
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const recorded = await postJson(origin, "/api/ledger/task-receipts", {
+      accountId: "pi-alpha",
+      workspaceId: "ws-alpha",
+      taskId: "task-alpha",
+      plan: { goal: "draft report" },
+      approval: { status: "approved" },
+      environment: { runtimeProvider: "tencent-tke" },
+      executionRefs: [{ type: "run", uri: "opl://run/1" }]
+    });
+    assert.equal(recorded.response.status, 200);
+    assert.equal(recorded.payload.type, "task.evidence.v1");
+    assert.equal(recorded.payload.executionRefs[0].uri, "opl://run/1");
+
+    const queryResponse = await fetch(`${origin}/api/ledger/task-receipts?accountId=pi-alpha&workspaceId=ws-alpha&taskId=task-alpha`);
+    const queried = await queryResponse.json();
+    assert.equal(queryResponse.status, 200);
+    assert.equal(queried[0].id, "task-receipt-1");
+    assert.deepEqual(calls.map(([name]) => name), ["recordTaskEvidenceReceipt", "taskEvidenceReceipts"]);
+  } finally {
+    await close();
+  }
+});

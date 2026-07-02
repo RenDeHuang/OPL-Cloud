@@ -8,7 +8,7 @@ This directory is a migration staging layout. It keeps the current repository de
 | --- | --- | --- |
 | `console` | OPL Console API, control-plane service, minimal commercial management model, PostgreSQL store, production readiness, production manifest validation, and Console UI | `opl-console` |
 | `fabric` | Resource catalog, runtime provider factory, and Local Docker / Tencent TKE / legacy Tencent CVM adapters | `opl-fabric` or `opl-fabric-adapters` |
-| `ledger` | Tencent bill normalization, reconciliation guard helpers, and control-plane evidence receipt helpers; billing and evidence contracts are still called by Console service | `opl-ledger` |
+| `ledger` | Tencent bill normalization, reconciliation guard helpers, control-plane evidence helpers, and task evidence receipt helpers; billing and evidence contracts are still called by Console service | `opl-ledger` |
 | `contracts` | Machine-readable product, lifecycle, management, billing, storage backup, and evidence contracts shared by Console, Fabric, Workspace, and Ledger | shared contract package or product contract repository |
 
 ## Current Boundary
@@ -27,7 +27,7 @@ When a package becomes independently deployable, move it out with its tests and 
 
 - Console should depend on Workspace/Fabric/Ledger contracts.
 - Fabric should own resource catalog, runtime execution, and cloud adapter details.
-- Ledger should own billing events, reconciliation guard semantics, and later provenance receipts.
+- Ledger should own billing events, reconciliation guard semantics, control-plane evidence, and task evidence receipts.
 - Storage backup contracts should stay shared: Console owns the user-visible operation and receipts, while Fabric owns the provider-specific snapshot/restore mechanics.
 - Workspace runtime behavior remains owned by `one-person-lab-app`.
 

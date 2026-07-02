@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Ledger",
-  "currentScope": "control-plane evidence receipts",
+  "currentScope": "control-plane evidence receipts and task evidence receipt v1 baseline",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
@@ -12,7 +12,8 @@
     "workspace.storage_restored",
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
-    "workspace.access_token_deleted"
+    "workspace.access_token_deleted",
+    "task.evidence.v1"
   ],
   "requiredFields": [
     "id",
@@ -26,6 +27,7 @@
     "resourceRefs",
     "billingRefs",
     "inputRefs",
+    "executionRefs",
     "outputRefs",
     "reviewResults",
     "createdAt"
@@ -57,6 +59,28 @@
       "storage_debit"
     ],
     "continuation": "open_workspace_url"
+  },
+  "taskEvidenceReceiptV1": {
+    "api": {
+      "record": "POST /api/ledger/task-receipts",
+      "query": "GET /api/ledger/task-receipts?accountId=<accountId>&workspaceId=<workspaceId>&taskId=<taskId>"
+    },
+    "requiredFields": [
+      "accountId",
+      "taskId",
+      "plan",
+      "approval",
+      "environment"
+    ],
+    "refs": [
+      "inputRefs",
+      "executionRefs",
+      "outputRefs"
+    ],
+    "review": "reviewResults",
+    "continuation": "continue_task",
+    "ownershipRule": "workspaceId must belong to accountId when provided",
+    "appendOnlyState": "evidenceLedger"
   },
   "nonGoals": [
     "full research task provenance",

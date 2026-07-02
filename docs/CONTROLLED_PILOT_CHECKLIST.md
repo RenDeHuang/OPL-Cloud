@@ -140,5 +140,5 @@ What is not included in this pilot:
 - payment provider settlement
 - GPU Workspace package
 - full OPL Gateway product surface
-- full OPL Ledger service
+- full OPL Ledger service beyond task evidence receipt v1 baseline
 - OPL Connect, Environments, Agent Registry, or domain-agent marketplace

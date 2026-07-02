@@ -137,6 +137,14 @@ async function handleApi(request, response, pathname, appService, operatorSummar
         organizationId: url.searchParams.get("organizationId") || ""
       }));
     }
+    if (request.method === "GET" && pathname === "/api/ledger/task-receipts") {
+      const url = new URL(request.url, "http://localhost");
+      return sendJson(response, 200, await appService.taskEvidenceReceipts({
+        accountId: url.searchParams.get("accountId") || "",
+        workspaceId: url.searchParams.get("workspaceId") || null,
+        taskId: url.searchParams.get("taskId") || null
+      }));
+    }
 
     const body = await readJson(request);
     const routes = {
@@ -156,7 +164,8 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       "POST /api/workspaces/reset-token": () => appService.resetWorkspaceToken(body),
       "POST /api/workspaces/delete-token": () => appService.deleteWorkspaceToken(body),
       "POST /api/billing/settle": () => appService.settleBilling(body),
-      "POST /api/billing/reconciliation": () => appService.recordBillingReconciliation(body)
+      "POST /api/billing/reconciliation": () => appService.recordBillingReconciliation(body),
+      "POST /api/ledger/task-receipts": () => appService.recordTaskEvidenceReceipt(body)
     };
     const handler = routes[`${request.method} ${pathname}`];
     if (!handler) return sendJson(response, 404, { ok: false, error: "route_not_found" });

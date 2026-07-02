@@ -12,6 +12,11 @@ import {
   selectWorkspacePackage
 } from "../../fabric/src/resource-catalog.js";
 import { appendEvidenceReceipt, createEvidenceReceipt } from "../../ledger/src/evidence-ledger.js";
+import {
+  appendTaskEvidenceReceipt,
+  createTaskEvidenceReceipt,
+  filterTaskEvidenceReceipts
+} from "../../ledger/src/task-evidence.js";
 import { billingReconciliationGuard } from "../../ledger/src/billing-reconciliation.js";
 
 function now() {
@@ -995,6 +1000,29 @@ export class OplCloudService {
   async billingLedger(accountId) {
     const state = await this.store.read();
     return state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone);
+  }
+
+  async recordTaskEvidenceReceipt(input) {
+    return this.store.update((state) => {
+      if (input.workspaceId) latestWorkspaceForAccount(state, input.accountId, input.workspaceId);
+      const receipt = createTaskEvidenceReceipt({
+        state,
+        ...input
+      });
+      appendTaskEvidenceReceipt(state, receipt);
+      state.audit.push(this.auditEvent({
+        accountId: input.accountId,
+        workspaceId: input.workspaceId || "",
+        type: "ledger.task_evidence_recorded",
+        sourceEventId: receipt.id
+      }));
+      return clone(receipt);
+    });
+  }
+
+  async taskEvidenceReceipts({ accountId, workspaceId = null, taskId = null }) {
+    const state = await this.store.read();
+    return filterTaskEvidenceReceipts(state, { accountId, workspaceId, taskId });
   }
 
   async recordBillingReconciliation({ report, source = "manual" }) {
