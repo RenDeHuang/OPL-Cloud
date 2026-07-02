@@ -41,7 +41,7 @@ export class LocalDockerProvider {
   constructor({
     rootDir = ".runtime/workspaces",
     baseUrl = "http://127.0.0.1:8787",
-    image = "ghcr.io/gaofeng21cn/one-person-lab-webui:latest",
+    image = "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
     execute = process.env.OPL_LOCAL_DOCKER_EXECUTE === "1"
   } = {}) {
     this.name = "local-docker";

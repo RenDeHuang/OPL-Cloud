@@ -96,7 +96,7 @@ The current app implements the local business-chain loop with the Local Docker p
 - disk destroy with explicit confirmation
 - 7-day compute and storage prepaid holds
 - Local Docker Compose workspace artifacts under `.runtime/workspaces`
-- real OPL WebUI image default: `ghcr.io/gaofeng21cn/one-person-lab-webui:latest`
+- real OPL Workspace app image default: `ghcr.io/gaofeng21cn/one-person-lab-app:latest`
 - bind-mounted Workspace disk paths mapped to `/data` and `/projects`
 - Workspace URL route with token validation
 - optional real local Docker execution with `OPL_LOCAL_DOCKER_EXECUTE=1`
@@ -104,9 +104,7 @@ The current app implements the local business-chain loop with the Local Docker p
 - billing ledger
 - audit receipts
 
-Production Tencent CVM handoff files are in [infra/tencent-cvm](./infra/tencent-cvm). They define the OpenTofu, Ansible, and Caddy shape for route A.
-
-The Tencent CVM provider now has the runner boundary wired into the API. It remains fail-closed unless the required environment variables and tools are present. Runtime readiness is exposed at:
+Production runtime readiness is exposed at:
 
 ```text
 GET /api/runtime/readiness
@@ -120,7 +118,7 @@ Production launch readiness is exposed at:
 GET /api/production/readiness
 ```
 
-It checks the production runtime provider, image registry, workspace domain, PostgreSQL, Tencent environment, and required host tools before launch.
+It checks the Tencent TKE production runtime provider, TCR images, workspace domain, PostgreSQL, Tencent environment, and required host tools before launch.
 
 ## Run Locally
 
@@ -191,7 +189,7 @@ To also start the local OPL Docker container when a Workspace is created:
 
 ```bash
 OPL_LOCAL_DOCKER_EXECUTE=1 \
-OPL_WORKSPACE_IMAGE=ghcr.io/gaofeng21cn/one-person-lab-webui:latest \
+OPL_WORKSPACE_IMAGE=ghcr.io/gaofeng21cn/one-person-lab-app:latest \
 PORT=8787 npm start
 ```
 
@@ -208,9 +206,9 @@ Then open:
 http://127.0.0.1:5173
 ```
 
-## Tencent CVM Provider
+## Production Deployment Contract
 
-Install OpenTofu and Ansible on the API host, then inject this repo's environment variables from your secret manager:
+Production deployment uses Tencent TKE only. Inject this repo's environment variables from your secret manager:
 
 ```bash
 cp .env.example .env
@@ -226,41 +224,7 @@ npm run validate:production-manifest -- --manifest deploy/production-manifest.ex
 
 The manifest format requires sensitive values to use `secretRef`, not inline plaintext.
 
-Run with Tencent CVM provisioning enabled:
-
-```bash
-OPL_RUNTIME_PROVIDER=tencent-cvm \
-OPL_WORKSPACE_IMAGE=<harbor-image> \
-PORT=8787 npm start
-```
-
-On Workspace creation, the provider runs:
-
-```text
-tofu init
-tofu apply
-tofu output -json
-ansible-playbook ansible/workspace.yml
-```
-
-Then it maps OpenTofu outputs back into the OPL Workspace record: server ID, disk ID, public IP, Docker image, stable URL, and token access state.
-
-Each Workspace gets isolated OpenTofu state under ignored `.runtime/tencent-cvm/<workspaceId>/`. Do not commit tfstate, `.terraform/`, `.runtime/`, plans, or credentials.
-
-Cloud lifecycle controls use Tencent Cloud CLI on the API host:
-
-```text
-tccli cvm StopInstances --StoppedMode STOP_CHARGING
-tccli cvm StartInstances
-tccli cvm RunInstances
-tccli cbs AttachDisks
-tccli cvm DescribeInstances
-tccli cbs DetachDisks
-tccli cvm TerminateInstances
-tccli cbs TerminateDisks
-```
-
-Server actions intentionally retain CBS storage. `TerminateDisks` is used only by the explicit disk destruction action.
+Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, and Workspace storage class. Each Workspace maps to a Deployment, Service, Ingress path, token Secret, and retained PVC. Compute lifecycle actions intentionally retain the PVC; storage deletion is a separate explicit action.
 
 ## Production Verification
 

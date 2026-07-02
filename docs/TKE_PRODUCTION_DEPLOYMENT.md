@@ -6,8 +6,6 @@ OPL Cloud production uses Tencent TKE as the runtime.
 
 The former v22 MedOPL TKE cluster, TCR namespace, kubeconfig, and PostgreSQL are now treated as the OPL Cloud production resource pool. Existing external resource names may still contain `medopl` until they are deliberately renamed, but repository language and new deployment assets should use OPL Cloud.
 
-The CVM route is legacy fallback/debug only. `OPL_IMAGE_ID` and `OPL_SSH_KEY_ID` are not required for `OPL_RUNTIME_PROVIDER=tencent-tke`.
-
 ## Domains
 
 Use two public domains:
@@ -198,10 +196,10 @@ The tracked production manifest is a contract, not the live secret payload. Keep
 
 OPL Ledger is the v1 billing truth. Workspace pricing uses a local Tencent price catalog snapshot and applies `OPL_BILLING_MARKUP`, defaulting to `0.2`.
 
-Current production defaults were queried from Tencent Cloud in `na-siliconvalley` on 2026-07-02 using CVM `DescribeZoneInstanceConfigInfos` and the existing CBS storage price snapshot:
+Current production defaults were derived from the Tencent Cloud catalog in `na-siliconvalley` on 2026-07-02, using the current TKE node capacity backing classes and the existing CBS storage price snapshot:
 
 - Basic compute cost: `SA5.MEDIUM4`, `0.39 CNY/hour`; billed user price after markup: `0.468 CNY/hour`.
-- Pro compute cost: `SA5.4XLARGE32`, `3.09 CNY/hour`; billed user price after markup: `3.708 CNY/hour`. The Pro Pod requests `8 CPU / 16Gi`; this larger CPU node class is the current capacity backing because an `8 CPU / 16GB` CVM does not expose enough Kubernetes allocatable CPU and memory for a single Pro Pod after system reservations.
+- Pro compute cost: `SA5.4XLARGE32`, `3.09 CNY/hour`; billed user price after markup: `3.708 CNY/hour`. The Pro Pod requests `8 CPU / 16Gi`; this larger node capacity backing leaves enough Kubernetes allocatable CPU and memory after system reservations.
 - Storage cost: `CLOUD_PREMIUM`, `0.36 CNY/GB-month`; billed user price after markup: `0.432 CNY/GB-month`.
 
 GPU pricing is intentionally not part of the current production package set. GPU Workspaces require a verified GPU node pool before they can be exposed without drifting from the OPL Cloud product truth.

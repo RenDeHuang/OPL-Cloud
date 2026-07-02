@@ -1,4 +1,4 @@
-const DEFAULT_WORKSPACE_IMAGE = "ghcr.io/gaofeng21cn/one-person-lab-webui:latest";
+const DEFAULT_WORKSPACE_IMAGE = "ghcr.io/gaofeng21cn/one-person-lab-app:latest";
 const DEFAULT_WORKSPACE_DOMAIN = "workspace.medopl.cn";
 const DEFAULT_STORAGE_CLASS = "cbs";
 

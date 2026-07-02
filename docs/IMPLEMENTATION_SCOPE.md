@@ -14,8 +14,8 @@ This repository is responsible for:
 
 - OPL Console workspace provisioning and management.
 - Minimal OPL Console commercial management model for users, organizations, memberships, billing accounts, packages, balances, and holds.
-- OPL Workspace lifecycle control for local Docker, Tencent TKE, and legacy Tencent CVM runtimes.
-- OPL Fabric handoff through Local Docker, Tencent TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy Tencent CVM contracts.
+- OPL Workspace lifecycle control for local Docker development and Tencent TKE production runtimes.
+- OPL Fabric handoff through Local Docker, Tencent TKE, TCR, Kubernetes Ingress, and persistent workspace storage.
 - OPL Fabric resource catalog for compute profiles, storage classes, Workspace runtime image, Ingress domain, environment template, and placeholder connector/agent registries.
 - Long-lived Workspace URL token access. Tokens are permanent until the owner resets or deletes them after leakage.
 - Compute and persistent workspace storage lifecycle separation.
@@ -24,14 +24,14 @@ This repository is responsible for:
 - OPL Ledger control-plane evidence receipts for actions that affect workspace access, runtime, storage, cost, or continuation.
 - OPL Ledger task evidence receipt v1 baseline for plan, approval, environment, input refs, execution refs, output refs, review results, and continuation.
 - Runtime readiness, production readiness, and production chain verification.
-- Deployment handoff assets for Tencent TKE, TCR image validation, Kubernetes Ingress, PostgreSQL, and legacy Tencent CVM.
+- Deployment handoff assets for Tencent TKE, TCR image validation, Kubernetes Ingress, and PostgreSQL.
 
 ## Package Layout
 
 The implementation is staged for future repository extraction under `packages/`:
 
 - `packages/console`: OPL Console API, control-plane service, management model, store, readiness, manifest validation, and UI.
-- `packages/fabric`: resource catalog, runtime provider factory, and Local Docker / Tencent TKE / legacy Tencent CVM adapters.
+- `packages/fabric`: resource catalog, runtime provider factory, and Local Docker / Tencent TKE adapters.
 - `packages/ledger`: billing reconciliation helpers, control-plane evidence helpers, task evidence receipt helpers, and future Ledger extraction boundary.
 - `packages/contracts`: machine-readable product, lifecycle, management, billing, storage backup, and evidence contracts.
 
@@ -43,7 +43,7 @@ The implementation should map Cloud behavior back to One Person Lab framework co
 
 | One Person Lab concept | This repository |
 | --- | --- |
-| Runtime provider / Fabric resource | resource catalog, Local Docker provider, Tencent TKE production target, and Tencent CVM legacy fallback |
+| Runtime provider / Fabric resource | resource catalog, Local Docker development provider, and Tencent TKE production target |
 | Attempt / operation ledger | `runtime_operations` |
 | Readiness gate | `/api/runtime/readiness` and `/api/production/readiness` |
 | Receipt / audit trail | billing ledger, control-plane evidence ledger, task evidence receipts, audit events, verifier output, reconciliation output |

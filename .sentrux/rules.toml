@@ -7,27 +7,42 @@ no_god_files = true
 
 [[layers]]
 name = "truth_and_docs"
-paths = ["docs/*", "docs/**/*", "contracts/*", "deploy/*", "PRODUCT_DESIGN.md", "README.md"]
+paths = [
+  "docs/*",
+  "docs/**/*",
+  "packages/contracts/*",
+  "packages/contracts/**/*",
+  "deploy/*",
+  "deploy/**/*",
+  "PRODUCT_DESIGN.md",
+  "README.md",
+  "packages/README.md"
+]
 order = 6
 
 [[layers]]
 name = "frontend"
-paths = ["src/*", "src/**/*", "index.html", "vite.config.js"]
+paths = ["packages/console/ui/*", "packages/console/ui/**/*", "index.html", "vite.config.js"]
 order = 1
 
 [[layers]]
 name = "api"
-paths = ["services/api/*", "services/api/**/*"]
+paths = ["packages/console/api/*", "packages/console/api/**/*", "packages/console/src/*", "packages/console/src/**/*"]
 order = 3
 
 [[layers]]
-name = "runtime_infra"
-paths = ["infra/*", "infra/**/*"]
+name = "fabric"
+paths = ["packages/fabric/*", "packages/fabric/**/*"]
+order = 4
+
+[[layers]]
+name = "ledger"
+paths = ["packages/ledger/*", "packages/ledger/**/*"]
 order = 4
 
 [[layers]]
 name = "ops_tools"
-paths = ["tools/*", "tools/**/*"]
+paths = ["tools/*", "tools/**/*", ".github/workflows/*", ".github/workflows/**/*"]
 order = 2
 
 [[layers]]
@@ -36,21 +51,21 @@ paths = ["tests/*", "tests/**/*", "package.json"]
 order = 0
 
 [[boundaries]]
-from = "services/api/src/**/*"
-to = "src/**/*"
+from = "packages/console/api/**/*"
+to = "packages/console/ui/**/*"
 reason = "API control-plane code must not import Console UI implementation."
 
 [[boundaries]]
-from = "src/**/*"
-to = "services/api/src/runtime-providers/**/*"
+from = "packages/console/ui/**/*"
+to = "packages/fabric/**/*"
 reason = "Console UI must call API routes instead of importing runtime providers."
 
 [[boundaries]]
-from = "services/api/src/runtime-providers/**/*"
-to = "src/**/*"
+from = "packages/fabric/**/*"
+to = "packages/console/ui/**/*"
 reason = "Runtime providers must not depend on UI code."
 
 [[boundaries]]
 from = "tools/**/*"
-to = "src/**/*"
+to = "packages/console/ui/**/*"
 reason = "Operator tools verify deployed APIs and must not import Console UI implementation."

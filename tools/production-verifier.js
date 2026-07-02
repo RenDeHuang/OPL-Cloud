@@ -141,14 +141,6 @@ function assertReady({ checks, name, payload }) {
 }
 
 function providerResourceShape(workspace) {
-  if (workspace?.provider === "tencent-cvm") {
-    return Boolean(
-      workspace?.server?.id &&
-      workspace?.docker?.id &&
-      workspace?.disk?.id &&
-      workspace?.url
-    );
-  }
   if (workspace?.provider === "tencent-tke") {
     let url = null;
     try {

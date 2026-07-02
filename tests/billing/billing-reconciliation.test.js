@@ -89,11 +89,11 @@ test("fails closed on mixed currencies", () => {
 test("normalizes Tencent billing export rows into Workspace resource bills", () => {
   const rows = normalizeTencentBillRows([
     {
-      InstanceType: "Cloud Virtual Machine CVM",
+      ProductName: "Tencent Kubernetes Engine",
       Cost: "10.00",
       Currency: "CNY",
       Tags: "product:opl-cloud,workspace_id:ws-alpha",
-      ResourceId: "ins-alpha"
+      ResourceId: "pod-alpha"
     },
     {
       ProductName: "Cloud Block Storage",
@@ -111,7 +111,7 @@ test("normalizes Tencent billing export rows into Workspace resource bills", () 
   ]);
 
   assert.deepEqual(rows, [
-    { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY", sourceResourceId: "ins-alpha" },
+    { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY", sourceResourceId: "pod-alpha" },
     { workspaceId: "ws-alpha", resourceType: "storage", amount: 2, currency: "CNY", sourceResourceId: "disk-alpha" }
   ]);
 });
@@ -119,8 +119,8 @@ test("normalizes Tencent billing export rows into Workspace resource bills", () 
 test("normalizing Tencent billing rows fails closed when Workspace identity is missing", () => {
   assert.throws(
     () => normalizeTencentBillRows([
-      { ProductName: "Cloud Virtual Machine CVM", Cost: "10.00", Currency: "CNY", ResourceId: "ins-alpha" }
+      { ProductName: "Tencent Kubernetes Engine", Cost: "10.00", Currency: "CNY", ResourceId: "pod-alpha" }
     ]),
-    /tencent_bill_workspace_id_missing:ins-alpha/
+    /tencent_bill_workspace_id_missing:pod-alpha/
   );
 });

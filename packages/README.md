@@ -7,7 +7,7 @@ This directory is a migration staging layout. It keeps the current repository de
 | Package | Current role | Future extraction target |
 | --- | --- | --- |
 | `console` | OPL Console API, control-plane service, minimal commercial management model, PostgreSQL store, production readiness, production manifest validation, and Console UI | `opl-console` |
-| `fabric` | Resource catalog, runtime provider factory, and Local Docker / Tencent TKE / legacy Tencent CVM adapters | `opl-fabric` or `opl-fabric-adapters` |
+| `fabric` | Resource catalog, runtime provider factory, and Local Docker / Tencent TKE adapters | `opl-fabric` or `opl-fabric-adapters` |
 | `ledger` | Tencent bill normalization, reconciliation guard helpers, control-plane evidence helpers, and task evidence receipt helpers; billing and evidence contracts are still called by Console service | `opl-ledger` |
 | `contracts` | Machine-readable product, lifecycle, management, billing, storage backup, and evidence contracts shared by Console, Fabric, Workspace, and Ledger | shared contract package or product contract repository |
 

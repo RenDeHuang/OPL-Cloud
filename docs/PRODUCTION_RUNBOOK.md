@@ -138,7 +138,6 @@ Do not commit:
 .env
 .runtime/
 dist/
-infra/tencent-cvm/.terraform/
 terraform.tfstate*
 *.tfplan
 cloud credentials

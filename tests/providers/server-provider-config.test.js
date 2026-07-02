@@ -3,7 +3,6 @@ import test from "node:test";
 
 import { createStoreFromEnv } from "../../packages/console/api/server.js";
 import { createRuntimeProvider } from "../../packages/fabric/src/runtime-provider-factory.js";
-import { TencentCvmProvider } from "../../packages/fabric/src/runtime-providers/tencent-cvm.js";
 import { TencentTkeProvider } from "../../packages/fabric/src/runtime-providers/tencent-tke.js";
 import { JsonFileStore, PostgresStore } from "../../packages/console/src/store.js";
 
@@ -23,15 +22,6 @@ test("unknown provider is not selectable for runtime execution", () => {
   );
 });
 
-test("Tencent CVM provider is selectable for cloud runtime execution", () => {
-  const provider = createRuntimeProvider({
-    env: { OPL_RUNTIME_PROVIDER: "tencent-cvm" },
-    rootDir: ".runtime/test-provider"
-  });
-
-  assert.equal(provider.name, "tencent-cvm");
-});
-
 test("Tencent TKE provider is selectable for production runtime execution", () => {
   const provider = createRuntimeProvider({
     env: { OPL_RUNTIME_PROVIDER: "tencent-tke" },
@@ -42,16 +32,10 @@ test("Tencent TKE provider is selectable for production runtime execution", () =
   assert.equal(provider.name, "tencent-tke");
 });
 
-test("Tencent CVM provider fails closed until required cloud environment is present", async () => {
-  const provider = new TencentCvmProvider({ env: {} });
-  await assert.rejects(
-    provider.createWorkspaceRuntime({
-      workspaceId: "ws-test",
-      workspaceName: "Cloud Lab",
-      packagePlan: { id: "basic", server: "2c4g", diskGb: 10 },
-      token: "share_test"
-    }),
-    /tencent_cvm_provider_missing_env/
+test("non-TKE production provider names are not selectable for runtime execution", () => {
+  assert.throws(
+    () => createRuntimeProvider({ env: { OPL_RUNTIME_PROVIDER: "unsupported-production-runtime" }, rootDir: ".runtime/test-provider" }),
+    /unknown_runtime_provider:unsupported-production-runtime/
   );
 });
 

@@ -1,5 +1,4 @@
 const PROVIDERS = {
-  TENCENT_CVM: "tencent-cvm",
   TENCENT_TKE: "tencent-tke"
 };
 
@@ -8,21 +7,6 @@ const REQUIRED_COMMON_ENV = [
   "DATABASE_URL",
   "OPL_WORKSPACE_DOMAIN",
   "OPL_WORKSPACE_IMAGE"
-];
-
-const REQUIRED_CVM_ENV = [
-  "TENCENTCLOUD_SECRET_ID",
-  "TENCENTCLOUD_SECRET_KEY",
-  "TENCENTCLOUD_REGION",
-  "OPL_HARBOR_REGISTRY",
-  "OPL_WORKSPACE_DOMAIN",
-  "OPL_WORKSPACE_IMAGE",
-  "OPL_VPC_ID",
-  "OPL_SUBNET_ID",
-  "OPL_SECURITY_GROUP_ID",
-  "OPL_AVAILABILITY_ZONE",
-  "OPL_IMAGE_ID",
-  "OPL_SSH_KEY_ID"
 ];
 
 const REQUIRED_TKE_ENV = [
@@ -44,25 +28,11 @@ const SECRET_COMMON_ENV = [
   "DATABASE_URL",
 ];
 
-const SECRET_CVM_ENV = [
-  "TENCENTCLOUD_SECRET_ID",
-  "TENCENTCLOUD_SECRET_KEY",
-  "OPL_VPC_ID",
-  "OPL_SUBNET_ID",
-  "OPL_SECURITY_GROUP_ID",
-  "OPL_IMAGE_ID",
-  "OPL_SSH_KEY_ID"
-];
-
 const SECRET_TKE_ENV = [
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
 
 const PROVIDER_CONFIG = {
-  [PROVIDERS.TENCENT_CVM]: {
-    requiredEnv: REQUIRED_CVM_ENV,
-    secretEnv: SECRET_CVM_ENV
-  },
   [PROVIDERS.TENCENT_TKE]: {
     requiredEnv: REQUIRED_TKE_ENV,
     secretEnv: SECRET_TKE_ENV
@@ -87,11 +57,6 @@ function normalizeRegistry(registry) {
   return String(registry || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
-function looksLikeHarborImage({ image, registry }) {
-  const normalizedRegistry = normalizeRegistry(registry);
-  return Boolean(image && normalizedRegistry && image.startsWith(`${normalizedRegistry}/`) && image.includes(":"));
-}
-
 function looksLikeRegistryImage({ image, registry }) {
   const normalizedRegistry = normalizeRegistry(registry);
   return Boolean(image && normalizedRegistry && image.startsWith(`${normalizedRegistry}/`) && image.includes(":"));
@@ -104,7 +69,6 @@ function looksLikeProductionDomain(domain) {
 export function productionManifestRequiredEnv() {
   return [...new Set([
     ...REQUIRED_COMMON_ENV,
-    ...REQUIRED_CVM_ENV,
     ...REQUIRED_TKE_ENV
   ])];
 }
@@ -126,19 +90,13 @@ export function validateProductionManifest({ env = {} } = {}) {
   const checks = [
     check("required_env", missingEnv.length === 0, "Every production launch variable must be declared"),
     check("secret_refs", inlineSecretEnv.length === 0, "Sensitive production values must use secretRef"),
-    check("runtime_provider", Boolean(PROVIDER_CONFIG[provider]), "OPL_RUNTIME_PROVIDER must be tencent-cvm or tencent-tke"),
-    provider === PROVIDERS.TENCENT_TKE
-      ? check(
-        "registry_images",
-        looksLikeRegistryImage({ image: values.OPL_CLOUD_IMAGE, registry: values.TENCENT_TCR_REGISTRY }) &&
-          looksLikeRegistryImage({ image: values.OPL_WORKSPACE_IMAGE, registry: values.TENCENT_TCR_REGISTRY }),
-        "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must point to TENCENT_TCR_REGISTRY"
-      )
-      : check(
-        "harbor_image",
-        looksLikeHarborImage({ image: values.OPL_WORKSPACE_IMAGE, registry: values.OPL_HARBOR_REGISTRY }),
-        "OPL_WORKSPACE_IMAGE must point to OPL_HARBOR_REGISTRY"
-      ),
+    check("runtime_provider", provider === PROVIDERS.TENCENT_TKE, "OPL_RUNTIME_PROVIDER must be tencent-tke"),
+    check(
+      "registry_images",
+      looksLikeRegistryImage({ image: values.OPL_CLOUD_IMAGE, registry: values.TENCENT_TCR_REGISTRY }) &&
+        looksLikeRegistryImage({ image: values.OPL_WORKSPACE_IMAGE, registry: values.TENCENT_TCR_REGISTRY }),
+      "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must point to TENCENT_TCR_REGISTRY"
+    ),
     check("workspace_domain", looksLikeProductionDomain(values.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain")
   ];
   const failedChecks = checks.filter((item) => !item.ok).map((item) => item.id);

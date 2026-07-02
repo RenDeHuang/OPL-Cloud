@@ -1,6 +1,0 @@
-{{ workspace_slug }}.{{ workspace_domain }} {
-  @missingToken not query token={{ workspace_token }}
-  respond @missingToken "workspace token invalid" 403
-
-  reverse_proxy 127.0.0.1:3000
-}

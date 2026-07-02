@@ -64,10 +64,10 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
 test("runtime readiness route reports provider execution gaps without creating resources", async () => {
   const appService = {
     runtimeReadiness: async () => ({
-      provider: "tencent-cvm",
+      provider: "tencent-tke",
       ready: false,
-      missingEnv: ["OPL_VPC_ID"],
-      missingTools: ["ansible-playbook"]
+      missingEnv: ["OPL_WORKSPACE_STORAGE_CLASS"],
+      missingTools: ["kubectl"]
     })
   };
   const { origin, close } = await listen(createRequestHandler({ appService }));
@@ -77,10 +77,10 @@ test("runtime readiness route reports provider execution gaps without creating r
 
     assert.equal(response.status, 200);
     assert.deepEqual(payload, {
-      provider: "tencent-cvm",
+      provider: "tencent-tke",
       ready: false,
-      missingEnv: ["OPL_VPC_ID"],
-      missingTools: ["ansible-playbook"]
+      missingEnv: ["OPL_WORKSPACE_STORAGE_CLASS"],
+      missingTools: ["kubectl"]
     });
   } finally {
     await close();
@@ -92,7 +92,7 @@ test("production readiness route reports launch blockers without creating resour
     productionReadiness: async () => ({
       ready: false,
       missingEnv: ["DATABASE_URL"],
-      missingTools: ["caddy"],
+      missingTools: ["kubectl"],
       failedChecks: ["database_url", "tools"],
       checks: []
     })
@@ -106,7 +106,7 @@ test("production readiness route reports launch blockers without creating resour
     assert.deepEqual(payload, {
       ready: false,
       missingEnv: ["DATABASE_URL"],
-      missingTools: ["caddy"],
+      missingTools: ["kubectl"],
       failedChecks: ["database_url", "tools"],
       checks: []
     });

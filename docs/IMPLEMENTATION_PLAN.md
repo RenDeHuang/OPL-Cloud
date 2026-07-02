@@ -93,9 +93,8 @@ Attempt:
 
 - Keep Local Docker as the local runtime loop.
 - Keep Tencent TKE as the production runtime provider.
-- Keep Tencent CVM as a legacy fallback/debug provider.
 - Keep Fabric resource catalog ownership in `packages/fabric`, with Console opening only `available=true` Workspace packages.
-- Hand off cloud provisioning through TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy CVM contracts.
+- Hand off cloud provisioning through TKE, TCR, Kubernetes Ingress, and persistent workspace storage.
 - Hand off retained Workspace storage backup and restore through TKE/CBS `VolumeSnapshot` and PVC `dataSource` contracts.
 - Keep GPU packages unavailable until a GPU node pool is verified.
 
@@ -105,17 +104,13 @@ Receipts:
 - `packages/fabric/src/resource-catalog.js`
 - `packages/fabric/src/runtime-providers/local-docker.js`
 - `packages/fabric/src/runtime-providers/tencent-tke.js`
-- `packages/fabric/src/runtime-providers/tencent-cvm.js`
 - `packages/contracts/opl-cloud-fabric-resource-catalog-contract.json`
 - `deploy/tke/opl-cloud.k8s.json`
 - `deploy/tke/opl-cloud-production.env.example`
 - `docs/TKE_PRODUCTION_DEPLOYMENT.md`
 - `packages/contracts/opl-cloud-storage-backup-contract.json`
-- `infra/tencent-cvm/`
 - `tests/providers/local-docker-provider.test.js`
 - `tests/domain/storage-backup-recovery.test.js`
-- `tests/providers/tencent-cvm-provider.test.js`
-- `tests/providers/tencent-cvm-ansible.test.js`
 - `tests/providers/server-provider-config.test.js`
 
 ### OPL Ledger And Evidence
@@ -264,12 +259,7 @@ Verified production Workspace lifecycle:
 - Console state after cleanup: `state=destroyed`, `server.billingStatus=stopped`, `disk.billingStatus=stopped`, `access.tokenStatus=unavailable`, `account.frozen=0`.
 - Previous successful run: `20260701T234830Z-console-decoupling`.
 
-Legacy CVM-only inputs are no longer production blockers for the TKE route:
-
-- `OPL_IMAGE_ID`
-- `OPL_SSH_KEY_ID`
-
-Do not print secret values. Do not commit `.env.production*` or legacy `.env.preproduction*` files.
+Do not print secret values. Do not commit `.env.production*` or `.env.preproduction*` files.
 
 ## Current Pilot Gate
 

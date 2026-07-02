@@ -120,7 +120,7 @@ async function handleWorkspaceUrl(request, response, pathname, searchParams, app
   <body>
     <main>
       <h1>${workspace.name}</h1>
-      <p>此 URL 令牌有效。Local Docker 模式已生成下方 OPL Workspace 运行时资产。生产模式会把这个入口连接到 Caddy，并代理到正在运行的 one-person-lab-app 容器。</p>
+      <p>此 URL 令牌有效。Local Docker 模式已生成下方 OPL Workspace 运行时资产。生产模式通过 TKE Ingress 路由到 Workspace Service 和正在运行的 one-person-lab-app Deployment。</p>
       <dl>
         <dt>状态</dt><dd>${statusText(workspace.state)}</dd>
         <dt>计算</dt><dd>${statusText(workspace.server.status)}</dd>

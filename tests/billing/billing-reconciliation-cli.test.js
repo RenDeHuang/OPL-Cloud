@@ -48,7 +48,7 @@ test("Tencent reconciliation CLI can normalize raw Tencent export rows before re
     ]));
     await writeFile(tencentPath, JSON.stringify({
       rows: [
-        { ProductName: "Cloud Virtual Machine CVM", RealTotalCost: "10", Currency: "CNY", Tags: "workspace_id:ws-alpha", ResourceId: "ins-alpha" },
+        { ProductName: "Tencent Kubernetes Engine", RealTotalCost: "10", Currency: "CNY", Tags: "workspace_id:ws-alpha", ResourceId: "pod-alpha" },
         { ProductName: "Cloud Block Storage", RealTotalCost: "2", Currency: "CNY", Tags: "workspace_id:ws-alpha", ResourceId: "disk-alpha" }
       ]
     }));

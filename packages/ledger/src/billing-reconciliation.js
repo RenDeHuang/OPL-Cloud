@@ -94,7 +94,13 @@ function productNameFrom(row) {
 
 function resourceTypeFrom(row) {
   const product = productNameFrom(row);
-  if (row.resourceType === "server" || product.includes("cvm") || product.includes("virtual machine") || product.includes("compute")) return "server";
+  if (
+    row.resourceType === "server" ||
+    product.includes("compute") ||
+    product.includes("kubernetes") ||
+    product.includes("container") ||
+    product.includes("tke")
+  ) return "server";
   if (row.resourceType === "storage" || product.includes("block storage") || product.includes("cbs") || product.includes("disk")) return "storage";
   return "";
 }

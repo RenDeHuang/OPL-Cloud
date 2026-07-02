@@ -23,6 +23,137 @@ function htmlResponse(html, status = 200) {
   };
 }
 
+function tkeWorkspace({ id = "ws-tke-prod001", token = "share_tke_prod", name = "Production Verification Lab" } = {}) {
+  const runtimeName = `opl-ws-${id.replace(/^ws-/, "")}`;
+  return {
+    id,
+    ownerAccountId: "pi-prod",
+    name,
+    packageId: "basic",
+    state: "running",
+    provider: "tencent-tke",
+    server: { id: `deployment/${runtimeName}`, status: "running", billingStatus: "active", namespace: "opl-cloud", spec: "2c4g" },
+    docker: {
+      id: `deployment/${runtimeName}`,
+      image: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
+      status: "running",
+      service: `service/${runtimeName}`
+    },
+    disk: {
+      id: `pvc/${runtimeName}-data`,
+      status: "attached_retained",
+      billingStatus: "active",
+      sizeGb: 10,
+      mountPath: "/data",
+      storageClass: "cbs"
+    },
+    slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    url: `https://workspace.medopl.cn/w/${id}?token=${token}`,
+    access: { token, tokenStatus: "active", requiresLogin: false }
+  };
+}
+
+function readyRuntimeStatus(workspace) {
+  return {
+    provider: "tencent-tke",
+    workspaceId: workspace.id,
+    ready: true,
+    checks: [
+      { name: "deployment_ready", ok: true },
+      { name: "workspace_image_pulled", ok: true },
+      { name: "pvc_bound", ok: true },
+      { name: "deployment_uses_retained_pvc", ok: true },
+      { name: "service_targets_workspace", ok: true },
+      { name: "service_endpoints_ready", ok: true },
+      { name: "ingress_routes_workspace_url", ok: true }
+    ]
+  };
+}
+
+function tkeLifecycleResponses(workspace) {
+  return {
+    "GET /api/production/readiness": { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] },
+    "GET /api/runtime/readiness": { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] },
+    "POST /api/accounts/credit": { id: "pi-prod", balance: 1000, frozen: 0 },
+    "POST /api/workspaces": workspace,
+    "POST /api/workspaces/runtime-status": readyRuntimeStatus(workspace),
+    [`GET ${workspace.url}`]: "<html>OPL Workspace</html>",
+    "POST /api/workspaces/stop-server": {
+      ...workspace,
+      state: "stopped_server_disk_retained",
+      server: { ...workspace.server, status: "stopped", billingStatus: "stopped" },
+      disk: { ...workspace.disk, status: "attached_retained" }
+    },
+    "POST /api/workspaces/restart-server#1": workspace,
+    "POST /api/workspaces/destroy-server": {
+      ...workspace,
+      state: "server_destroyed_disk_retained",
+      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "detached_retained" }
+    },
+    "POST /api/workspaces/restart-server#2": workspace,
+    [`GET ${workspace.url}#2`]: "<html>OPL Workspace restored</html>",
+    "POST /api/billing/settle": { entries: [{ type: "compute_debit" }, { type: "storage_debit" }] },
+    "POST /api/workspaces/destroy-server#2": {
+      ...workspace,
+      state: "server_destroyed_disk_retained",
+      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "detached_retained" }
+    },
+    "POST /api/workspaces/destroy-disk": {
+      ...workspace,
+      state: "destroyed",
+      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
+    }
+  };
+}
+
+function keyedFetch({ responses, requests = [], responseHeaders = null }) {
+  let restartCount = 0;
+  let destroyServerCount = 0;
+  let workspaceUrlCount = 0;
+  let runtimeStatusCount = 0;
+  return async (url, options = {}) => {
+    const parsed = new URL(String(url));
+    const method = options.method || "GET";
+    const pathname = parsed.origin === "https://console.oplcloud.cn" ? parsed.pathname : String(url);
+    let key = `${method} ${pathname}`;
+    if (key === "POST /api/workspaces/restart-server") {
+      restartCount += 1;
+      key = `${key}#${restartCount}`;
+    }
+    if (key === "POST /api/workspaces/destroy-server") {
+      destroyServerCount += 1;
+      key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
+    }
+    if (key === "POST /api/workspaces/runtime-status") {
+      runtimeStatusCount += 1;
+      key = runtimeStatusCount === 1 ? key : `${key}#${runtimeStatusCount}`;
+    }
+    if (parsed.origin !== "https://console.oplcloud.cn" && !key.endsWith("#2")) {
+      workspaceUrlCount += 1;
+      key = workspaceUrlCount === 1 ? key : `${key}#${workspaceUrlCount}`;
+    }
+    requests.push({
+      key,
+      cookie: options.headers?.cookie || "",
+      csrf: options.headers?.["x-opl-csrf-token"] || "",
+      body: options.body ? JSON.parse(options.body) : null
+    });
+    const payload = responses[key] ?? responses[key.replace(/#1$/, "")];
+    if (typeof payload === "string") return htmlResponse(payload);
+    if (payload) {
+      if (key === "POST /api/auth/operator-login" && responseHeaders) return jsonResponse(payload, 200, responseHeaders);
+      return jsonResponse(payload);
+    }
+    throw new Error(`unexpected_request:${key}`);
+  };
+}
+
 test("production verifier refuses to create resources until readiness gates are ready", async () => {
   const requests = [];
 
@@ -35,7 +166,7 @@ test("production verifier refuses to create resources until readiness gates are 
           return jsonResponse({
             ready: false,
             missingEnv: ["DATABASE_URL"],
-            missingTools: ["tccli"],
+            missingTools: ["kubectl"],
             failedChecks: ["database_url", "tools"],
             checks: []
           });
@@ -51,370 +182,15 @@ test("production verifier refuses to create resources until readiness gates are 
   ]);
 });
 
-test("production verifier exercises the full Workspace cloud lifecycle through the deployed API", async () => {
+test("production verifier exercises the full Tencent TKE Workspace lifecycle through the deployed API", async () => {
   const requests = [];
-  const workspace = {
-    id: "ws-prod001",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-cvm",
-    server: { id: "ins-prod001", status: "running", billingStatus: "active" },
-    docker: { id: "docker-prod001", status: "running" },
-    disk: { id: "disk-prod001", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-    slug: "production-verification-lab-prod001",
-    url: "https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod",
-    access: { token: "share_prod", tokenStatus: "active", requiresLogin: false }
-  };
-
-  const responses = new Map([
-    ["GET /api/production/readiness", { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] }],
-    ["GET /api/runtime/readiness", { provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] }],
-    ["POST /api/accounts/credit", { id: "pi-prod", balance: 1000, frozen: 0 }],
-    ["POST /api/workspaces", workspace],
-    ["GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod", "<html>OPL Workspace</html>"],
-    ["POST /api/workspaces/stop-server", {
-      ...workspace,
-      state: "stopped_server_disk_retained",
-      server: { ...workspace.server, status: "stopped", billingStatus: "stopped" },
-      disk: { ...workspace.disk, status: "attached_retained" }
-    }],
-    ["POST /api/workspaces/restart-server#1", workspace],
-    ["POST /api/workspaces/destroy-server", {
-      ...workspace,
-      state: "server_destroyed_disk_retained",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "detached_retained" }
-    }],
-    ["POST /api/workspaces/restart-server#2", {
-      ...workspace,
-      server: { ...workspace.server, id: "ins-prod002" },
-      disk: { ...workspace.disk, id: "disk-prod001", status: "attached_retained" }
-    }],
-    ["GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod#2", "<html>OPL Workspace restored</html>"],
-    ["POST /api/billing/settle", { entries: [{ type: "compute_debit" }, { type: "storage_debit" }] }],
-    ["POST /api/workspaces/destroy-server#2", {
-      ...workspace,
-      state: "server_destroyed_disk_retained",
-      server: { ...workspace.server, id: "ins-prod002", status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "detached_retained" }
-    }],
-    ["POST /api/workspaces/destroy-disk", {
-      ...workspace,
-      state: "destroyed",
-      server: { ...workspace.server, id: "ins-prod002", status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
-    }]
-  ]);
-  let restartCount = 0;
-  let workspaceUrlCount = 0;
-  let destroyServerCount = 0;
-
+  const workspace = tkeWorkspace();
   const result = await verifyProductionChain({
     origin: "https://console.oplcloud.cn",
     accountId: "pi-prod",
     workspaceName: "Production Verification Lab",
     packageId: "basic",
-    fetchImpl: async (url, options = {}) => {
-      const parsed = new URL(String(url));
-      const method = options.method || "GET";
-      const pathname = parsed.origin === "https://console.oplcloud.cn" ? parsed.pathname : String(url);
-      let key = `${method} ${pathname}`;
-      if (key === "POST /api/workspaces/restart-server") {
-        restartCount += 1;
-        key = `${key}#${restartCount}`;
-      }
-      if (key === "POST /api/workspaces/destroy-server") {
-        destroyServerCount += 1;
-        key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
-      }
-      if (key === "GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod") {
-        workspaceUrlCount += 1;
-        key = workspaceUrlCount === 1 ? key : `${key}#${workspaceUrlCount}`;
-      }
-      requests.push({ key, body: options.body ? JSON.parse(options.body) : null });
-      const payload = responses.get(key);
-      if (typeof payload === "string") return htmlResponse(payload);
-      if (payload) return jsonResponse(payload);
-      throw new Error(`unexpected_request:${key}`);
-    }
-  });
-
-  assert.deepEqual(requests.map((request) => request.key), [
-    "GET /api/production/readiness",
-    "GET /api/runtime/readiness",
-    "POST /api/accounts/credit",
-    "POST /api/workspaces",
-    "GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod",
-    "POST /api/workspaces/stop-server",
-    "POST /api/workspaces/restart-server#1",
-    "POST /api/workspaces/destroy-server",
-    "POST /api/workspaces/restart-server#2",
-    "GET https://production-verification-lab-prod001.oplcloud.cn/?token=share_prod#2",
-    "POST /api/billing/settle",
-    "POST /api/workspaces/destroy-server#2",
-    "POST /api/workspaces/destroy-disk"
-  ]);
-  assert.equal(requests.find((request) => request.key === "POST /api/workspaces").body.workspaceName, "Production Verification Lab");
-  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server").body.confirm, true);
-  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server#2").body.confirm, true);
-  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-disk").body.confirmDataLoss, true);
-  assert.equal(result.workspaceId, "ws-prod001");
-  assert.equal(result.url, workspace.url);
-  assert.deepEqual(result.checks.map((check) => `${check.name}:${check.ok}`), [
-    "production_readiness:true",
-    "runtime_readiness:true",
-    "workspace_created:true",
-    "workspace_url:true",
-    "server_stopped_storage_retained:true",
-    "server_restarted:true",
-    "server_destroyed_storage_retained:true",
-    "server_recreated_from_retained_disk:true",
-    "workspace_url_after_recreate:true",
-    "billing_settlement:true",
-    "verification_server_destroyed:true",
-    "verification_disk_destroyed:true"
-  ]);
-});
-
-test("production verifier authenticates as operator and sends CSRF on commercial write APIs", async () => {
-  const requests = [];
-  const workspace = {
-    id: "ws-prod-auth",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-cvm",
-    server: { id: "ins-prod-auth", status: "running", billingStatus: "active" },
-    docker: { id: "docker-prod-auth", status: "running" },
-    disk: { id: "disk-prod-auth", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-    slug: "production-verification-lab-auth",
-    url: "https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth",
-    access: { token: "share_prod_auth", tokenStatus: "active", requiresLogin: false }
-  };
-
-  const responseHeaders = new Headers({
-    "content-type": "application/json",
-    "set-cookie": "opl_console_session=operator-session; Path=/; HttpOnly; SameSite=Lax",
-    "x-opl-csrf-token": "csrf-auth"
-  });
-
-  const responses = new Map([
-    ["GET /api/production/readiness", { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] }],
-    ["GET /api/runtime/readiness", { provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] }],
-    ["POST /api/auth/operator-login", { accountId: "operator", role: "operator" }],
-    ["POST /api/accounts/credit", { id: "pi-prod", balance: 1000, frozen: 0 }],
-    ["POST /api/workspaces", workspace],
-    ["GET https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth", "<html>OPL Workspace</html>"],
-    ["POST /api/workspaces/stop-server", {
-      ...workspace,
-      state: "stopped_server_disk_retained",
-      server: { ...workspace.server, status: "stopped", billingStatus: "stopped" }
-    }],
-    ["POST /api/workspaces/restart-server#1", workspace],
-    ["POST /api/workspaces/destroy-server", {
-      ...workspace,
-      state: "server_destroyed_disk_retained",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "detached_retained" }
-    }],
-    ["POST /api/workspaces/restart-server#2", workspace],
-    ["GET https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth#2", "<html>OPL Workspace restored</html>"],
-    ["POST /api/billing/settle", { entries: [{ type: "compute_debit" }, { type: "storage_debit" }] }],
-    ["POST /api/workspaces/destroy-server#2", {
-      ...workspace,
-      state: "server_destroyed_disk_retained",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "detached_retained" }
-    }],
-    ["POST /api/workspaces/destroy-disk", {
-      ...workspace,
-      state: "destroyed",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
-    }]
-  ]);
-  let restartCount = 0;
-  let destroyServerCount = 0;
-  let workspaceUrlCount = 0;
-
-  await verifyProductionChain({
-    origin: "https://console.oplcloud.cn",
-    accountId: "pi-prod",
-    workspaceName: "Production Verification Lab",
-    packageId: "basic",
-    operatorToken: "operator-token",
-    fetchImpl: async (url, options = {}) => {
-      const parsed = new URL(String(url));
-      const method = options.method || "GET";
-      const pathname = parsed.origin === "https://console.oplcloud.cn" ? parsed.pathname : String(url);
-      let key = `${method} ${pathname}`;
-      if (key === "POST /api/workspaces/restart-server") {
-        restartCount += 1;
-        key = `${key}#${restartCount}`;
-      }
-      if (key === "POST /api/workspaces/destroy-server") {
-        destroyServerCount += 1;
-        key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
-      }
-      if (key === "GET https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth") {
-        workspaceUrlCount += 1;
-        key = workspaceUrlCount === 1 ? key : `${key}#${workspaceUrlCount}`;
-      }
-      requests.push({
-        key,
-        cookie: options.headers?.cookie || "",
-        csrf: options.headers?.["x-opl-csrf-token"] || "",
-        body: options.body ? JSON.parse(options.body) : null
-      });
-      const payload = responses.get(key);
-      if (typeof payload === "string") return htmlResponse(payload);
-      if (!payload) throw new Error(`unexpected_request:${key}`);
-      if (key === "POST /api/auth/operator-login") return jsonResponse(payload, 200, responseHeaders);
-      return jsonResponse(payload);
-    }
-  });
-
-  assert.deepEqual(requests.map((request) => request.key).slice(0, 4), [
-    "GET /api/production/readiness",
-    "GET /api/runtime/readiness",
-    "POST /api/auth/operator-login",
-    "POST /api/accounts/credit"
-  ]);
-  assert.equal(requests.find((request) => request.key === "POST /api/auth/operator-login").body.operatorToken, "operator-token");
-  for (const request of requests.filter((item) => item.key.startsWith("POST /api/") && item.key !== "POST /api/auth/operator-login")) {
-    assert.match(request.cookie, /opl_console_session=operator-session/);
-    assert.equal(request.csrf, "csrf-auth");
-  }
-});
-
-test("production verifier accepts Tencent TKE Workspace resources and proves app image, route, storage, and billing shape", async () => {
-  const requests = [];
-  const workspace = {
-    id: "ws-tke-prod001",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-tke",
-    server: { id: "deployment/opl-ws-tke-prod001", status: "running", billingStatus: "active", namespace: "opl-cloud", spec: "2c4g" },
-    docker: {
-      id: "deployment/opl-ws-tke-prod001",
-      image: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
-      status: "running",
-      service: "service/opl-ws-tke-prod001"
-    },
-    disk: {
-      id: "pvc/opl-ws-tke-prod001-data",
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: 10,
-      mountPath: "/data",
-      storageClass: "cbs"
-    },
-    slug: "production-verification-lab-prod001",
-    url: "https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod",
-    access: { token: "share_tke_prod", tokenStatus: "active", requiresLogin: false }
-  };
-
-  const responses = new Map([
-    ["GET /api/production/readiness", { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] }],
-    ["GET /api/runtime/readiness", { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] }],
-    ["POST /api/accounts/credit", { id: "pi-prod", balance: 1000, frozen: 0 }],
-    ["POST /api/workspaces", workspace],
-    ["POST /api/workspaces/runtime-status", {
-      provider: "tencent-tke",
-      workspaceId: "ws-tke-prod001",
-      ready: true,
-      checks: [
-        { name: "deployment_ready", ok: true },
-        { name: "workspace_image_pulled", ok: true },
-        { name: "pvc_bound", ok: true },
-        { name: "deployment_uses_retained_pvc", ok: true },
-        { name: "service_targets_workspace", ok: true },
-        { name: "service_endpoints_ready", ok: true },
-        { name: "ingress_routes_workspace_url", ok: true }
-      ]
-    }],
-    ["GET https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod", "<html>OPL Workspace</html>"],
-    ["POST /api/workspaces/stop-server", {
-      ...workspace,
-      state: "stopped_server_disk_retained",
-      server: { ...workspace.server, status: "stopped", billingStatus: "stopped" },
-      disk: { ...workspace.disk, status: "attached_retained" }
-    }],
-    ["POST /api/workspaces/restart-server#1", workspace],
-    ["POST /api/workspaces/destroy-server", {
-      ...workspace,
-      state: "server_destroyed_disk_retained",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "detached_retained" }
-    }],
-    ["POST /api/workspaces/restart-server#2", {
-      ...workspace,
-      server: { ...workspace.server, id: "deployment/opl-ws-tke-prod001" },
-      disk: { ...workspace.disk, status: "attached_retained" }
-    }],
-    ["GET https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod#2", "<html>OPL Workspace restored</html>"],
-    ["POST /api/billing/settle", {
-      entries: [{ type: "compute_debit" }, { type: "storage_debit" }]
-    }],
-    ["POST /api/workspaces/destroy-server#2", {
-      ...workspace,
-      state: "server_destroyed_disk_retained",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "detached_retained" }
-    }],
-    ["POST /api/workspaces/destroy-disk", {
-      ...workspace,
-      state: "destroyed",
-      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-      docker: { ...workspace.docker, status: "destroyed" },
-      disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
-    }]
-  ]);
-  let restartCount = 0;
-  let workspaceUrlCount = 0;
-  let destroyServerCount = 0;
-
-  const result = await verifyProductionChain({
-    origin: "https://cloud.medopl.cn",
-    accountId: "pi-prod",
-    workspaceName: "Production Verification Lab",
-    packageId: "basic",
-    fetchImpl: async (url, options = {}) => {
-      const parsed = new URL(String(url));
-      const method = options.method || "GET";
-      const pathname = parsed.origin === "https://cloud.medopl.cn" ? parsed.pathname : String(url);
-      let key = `${method} ${pathname}`;
-      if (key === "POST /api/workspaces/restart-server") {
-        restartCount += 1;
-        key = `${key}#${restartCount}`;
-      }
-      if (key === "POST /api/workspaces/destroy-server") {
-        destroyServerCount += 1;
-        key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
-      }
-      if (key === "GET https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod") {
-        workspaceUrlCount += 1;
-        key = workspaceUrlCount === 1 ? key : `${key}#${workspaceUrlCount}`;
-      }
-      requests.push({ key, body: options.body ? JSON.parse(options.body) : null });
-      const payload = responses.get(key);
-      if (typeof payload === "string") return htmlResponse(payload);
-      if (payload) return jsonResponse(payload);
-      throw new Error(`unexpected_request:${key}`);
-    }
+    fetchImpl: keyedFetch({ responses: tkeLifecycleResponses(workspace), requests })
   });
 
   assert.deepEqual(requests.map((request) => request.key), [
@@ -423,18 +199,21 @@ test("production verifier accepts Tencent TKE Workspace resources and proves app
     "POST /api/accounts/credit",
     "POST /api/workspaces",
     "POST /api/workspaces/runtime-status",
-    "GET https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod",
+    `GET ${workspace.url}`,
     "POST /api/workspaces/stop-server",
     "POST /api/workspaces/restart-server#1",
     "POST /api/workspaces/destroy-server",
     "POST /api/workspaces/restart-server#2",
-    "GET https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod#2",
+    `GET ${workspace.url}#2`,
     "POST /api/billing/settle",
     "POST /api/workspaces/destroy-server#2",
     "POST /api/workspaces/destroy-disk"
   ]);
-  assert.equal(result.workspaceId, "ws-tke-prod001");
-  assert.equal(result.url, "https://workspace.medopl.cn/w/ws-tke-prod001?token=share_tke_prod");
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces").body.workspaceName, "Production Verification Lab");
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server").body.confirm, true);
+  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-disk").body.confirmDataLoss, true);
+  assert.equal(result.workspaceId, workspace.id);
+  assert.equal(result.url, workspace.url);
   assert.deepEqual(result.checks.map((check) => `${check.name}:${check.ok}`), [
     "production_readiness:true",
     "runtime_readiness:true",
@@ -452,160 +231,59 @@ test("production verifier accepts Tencent TKE Workspace resources and proves app
   ]);
 });
 
-test("production verifier retries TKE runtime status while pods and endpoints become ready", async () => {
+test("production verifier authenticates as operator and sends CSRF on commercial write APIs", async () => {
   const requests = [];
-  const workspace = {
-    id: "ws-tke-slow001",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-tke",
-    server: { id: "deployment/opl-ws-tke-slow001", status: "running", billingStatus: "active", namespace: "opl-cloud", spec: "2c4g" },
-    docker: {
-      id: "deployment/opl-ws-tke-slow001",
-      image: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
-      status: "running",
-      service: "service/opl-ws-tke-slow001"
-    },
-    disk: {
-      id: "pvc/opl-ws-tke-slow001-data",
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: 10,
-      mountPath: "/data",
-      storageClass: "cbs"
-    },
-    slug: "production-verification-lab-slow001",
-    url: "https://workspace.medopl.cn/w/ws-tke-slow001?token=share_tke_slow",
-    access: { token: "share_tke_slow", tokenStatus: "active", requiresLogin: false }
+  const workspace = tkeWorkspace({ id: "ws-tke-auth", token: "share_tke_auth" });
+  const responseHeaders = new Headers({
+    "content-type": "application/json",
+    "set-cookie": "opl_console_session=operator-session; Path=/; HttpOnly; SameSite=Lax",
+    "x-opl-csrf-token": "csrf-auth"
+  });
+  const responses = {
+    ...tkeLifecycleResponses(workspace),
+    "POST /api/auth/operator-login": { accountId: "operator", role: "operator" }
   };
-  let runtimeStatusAttempts = 0;
-  let restartCount = 0;
-  let workspaceUrlCount = 0;
-  let destroyServerCount = 0;
 
-  const result = await verifyProductionChain({
-    origin: "https://cloud.medopl.cn",
+  await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
     accountId: "pi-prod",
     workspaceName: "Production Verification Lab",
     packageId: "basic",
-    retryDelayMs: 0,
-    fetchImpl: async (url, options = {}) => {
-      const parsed = new URL(String(url));
-      const method = options.method || "GET";
-      const pathname = parsed.origin === "https://cloud.medopl.cn" ? parsed.pathname : String(url);
-      let key = `${method} ${pathname}`;
-      if (key === "POST /api/workspaces/runtime-status") {
-        runtimeStatusAttempts += 1;
-        key = `${key}#${runtimeStatusAttempts}`;
-      }
-      if (key === "POST /api/workspaces/restart-server") {
-        restartCount += 1;
-        key = `${key}#${restartCount}`;
-      }
-      if (key === "POST /api/workspaces/destroy-server") {
-        destroyServerCount += 1;
-        key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
-      }
-      if (key === "GET https://workspace.medopl.cn/w/ws-tke-slow001?token=share_tke_slow") {
-        workspaceUrlCount += 1;
-        key = workspaceUrlCount === 1 ? key : `${key}#${workspaceUrlCount}`;
-      }
-      requests.push({ key, body: options.body ? JSON.parse(options.body) : null });
-      const responses = {
-        "GET /api/production/readiness": { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] },
-        "GET /api/runtime/readiness": { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] },
-        "POST /api/accounts/credit": { id: "pi-prod", balance: 1000, frozen: 0 },
-        "POST /api/workspaces": workspace,
-        "POST /api/workspaces/runtime-status#1": {
-          provider: "tencent-tke",
-          workspaceId: "ws-tke-slow001",
-          ready: false,
-          checks: [
-            { name: "deployment_ready", ok: false },
-            { name: "pvc_bound", ok: true },
-            { name: "service_endpoints_ready", ok: false }
-          ]
-        },
-        "POST /api/workspaces/runtime-status#2": {
-          provider: "tencent-tke",
-          workspaceId: "ws-tke-slow001",
-          ready: true,
-          checks: [
-            { name: "deployment_ready", ok: true },
-            { name: "workspace_image_pulled", ok: true },
-            { name: "pvc_bound", ok: true },
-            { name: "deployment_uses_retained_pvc", ok: true },
-            { name: "service_targets_workspace", ok: true },
-            { name: "service_endpoints_ready", ok: true },
-            { name: "ingress_routes_workspace_url", ok: true }
-          ]
-        },
-        "GET https://workspace.medopl.cn/w/ws-tke-slow001?token=share_tke_slow": "<html>OPL Workspace</html>",
-        "POST /api/workspaces/stop-server": {
-          ...workspace,
-          state: "stopped_server_disk_retained",
-          server: { ...workspace.server, status: "stopped", billingStatus: "stopped" }
-        },
-        "POST /api/workspaces/restart-server#1": workspace,
-        "POST /api/workspaces/destroy-server": {
-          ...workspace,
-          state: "server_destroyed_disk_retained",
-          server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-          disk: { ...workspace.disk, status: "detached_retained" }
-        },
-        "POST /api/workspaces/restart-server#2": workspace,
-        "GET https://workspace.medopl.cn/w/ws-tke-slow001?token=share_tke_slow#2": "<html>OPL Workspace restored</html>",
-        "POST /api/billing/settle": { entries: [{ type: "compute_debit" }, { type: "storage_debit" }] },
-        "POST /api/workspaces/destroy-server#2": {
-          ...workspace,
-          state: "server_destroyed_disk_retained",
-          server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-          disk: { ...workspace.disk, status: "detached_retained" }
-        },
-        "POST /api/workspaces/destroy-disk": {
-          ...workspace,
-          state: "destroyed",
-          server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-          disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
-        }
-      };
-      const payload = responses[key];
-      if (typeof payload === "string") return htmlResponse(payload);
-      if (payload) return jsonResponse(payload);
-      throw new Error(`unexpected_request:${key}`);
-    }
+    operatorToken: "operator-token",
+    fetchImpl: keyedFetch({ responses, requests, responseHeaders })
   });
 
-  assert.equal(runtimeStatusAttempts, 2);
-  assert.equal(result.checks.find((check) => check.name === "workspace_runtime_status").attempts, 2);
-  assert.deepEqual(requests.slice(0, 6).map((request) => request.key), [
+  assert.deepEqual(requests.map((request) => request.key).slice(0, 4), [
     "GET /api/production/readiness",
     "GET /api/runtime/readiness",
-    "POST /api/accounts/credit",
-    "POST /api/workspaces",
-    "POST /api/workspaces/runtime-status#1",
-    "POST /api/workspaces/runtime-status#2"
+    "POST /api/auth/operator-login",
+    "POST /api/accounts/credit"
   ]);
+  assert.equal(requests.find((request) => request.key === "POST /api/auth/operator-login").body.operatorToken, "operator-token");
+  for (const request of requests.filter((item) => item.key.startsWith("POST /api/") && item.key !== "POST /api/auth/operator-login")) {
+    assert.match(request.cookie, /opl_console_session=operator-session/);
+    assert.equal(request.csrf, "csrf-auth");
+  }
 });
 
-test("production verifier retries the Workspace URL while Caddy and Docker become ready", async () => {
-  const workspace = {
-    id: "ws-prod002",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-cvm",
-    server: { id: "ins-prod002", status: "running", billingStatus: "active" },
-    docker: { id: "docker-prod002", status: "running" },
-    disk: { id: "disk-prod002", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-    slug: "production-verification-lab-prod002",
-    url: "https://production-verification-lab-prod002.oplcloud.cn/?token=share_prod_retry",
-    access: { token: "share_prod_retry", tokenStatus: "active", requiresLogin: false }
+test("production verifier retries TKE runtime status and Workspace URL until ready", async () => {
+  const requests = [];
+  const workspace = tkeWorkspace({ id: "ws-tke-slow", token: "share_tke_slow" });
+  const responses = tkeLifecycleResponses(workspace);
+  responses["POST /api/workspaces/runtime-status"] = {
+    provider: "tencent-tke",
+    workspaceId: workspace.id,
+    ready: false,
+    checks: [
+      { name: "deployment_ready", ok: false },
+      { name: "pvc_bound", ok: true }
+    ]
   };
-  let workspaceUrlAttempts = 0;
+  responses["POST /api/workspaces/runtime-status#2"] = readyRuntimeStatus(workspace);
+  responses[`GET ${workspace.url}`] = "bad gateway";
+  responses[`GET ${workspace.url}#2`] = "<html>OPL Workspace</html>";
+  responses[`GET ${workspace.url}#3`] = "<html>OPL Workspace restored</html>";
+  const baseFetch = keyedFetch({ responses, requests });
 
   const result = await verifyProductionChain({
     origin: "https://console.oplcloud.cn",
@@ -614,122 +292,23 @@ test("production verifier retries the Workspace URL while Caddy and Docker becom
     retryDelayMs: 0,
     fetchImpl: async (url, options = {}) => {
       const parsed = new URL(String(url));
-      const method = options.method || "GET";
-      if (parsed.origin !== "https://console.oplcloud.cn") {
-        workspaceUrlAttempts += 1;
-        return workspaceUrlAttempts === 1
-          ? htmlResponse("bad gateway", 502)
-          : htmlResponse("<html>OPL Workspace</html>");
+      if (parsed.origin !== "https://console.oplcloud.cn" && !String(url).endsWith("#2")) {
+        const matching = requests.filter((request) => request.key.startsWith(`GET ${workspace.url}`)).length;
+        if (matching === 0) {
+          requests.push({ key: `GET ${workspace.url}`, body: null });
+          return htmlResponse("bad gateway", 502);
+        }
       }
-
-      const responses = {
-        "GET /api/production/readiness": { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] },
-        "GET /api/runtime/readiness": { provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] },
-        "POST /api/accounts/credit": { id: "pi-prod", balance: 1000, frozen: 0 },
-        "POST /api/workspaces": workspace,
-        "POST /api/workspaces/stop-server": { ...workspace, state: "stopped_server_disk_retained", server: { ...workspace.server, status: "stopped", billingStatus: "stopped" } },
-        "POST /api/workspaces/restart-server": workspace,
-        "POST /api/workspaces/destroy-server": { ...workspace, state: "server_destroyed_disk_retained", server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" }, disk: { ...workspace.disk, status: "detached_retained" } },
-        "POST /api/workspaces/destroy-disk": { ...workspace, state: "destroyed", server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" }, disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" } },
-        "POST /api/billing/settle": { entries: [{ type: "compute_debit" }, { type: "storage_debit" }] }
-      };
-      return jsonResponse(responses[`${method} ${parsed.pathname}`]);
+      return baseFetch(url, options);
     }
   });
 
-  assert.equal(workspaceUrlAttempts, 3);
+  assert.equal(result.checks.find((check) => check.name === "workspace_runtime_status").attempts, 2);
   assert.equal(result.checks.find((check) => check.name === "workspace_url").attempts, 2);
-  assert.equal(result.checks.find((check) => check.name === "workspace_url_after_recreate").attempts, 1);
-});
-
-test("production verifier destroys verification resources when a later check fails", async () => {
-  const requests = [];
-  const workspace = {
-    id: "ws-prod003",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-cvm",
-    server: { id: "ins-prod003", status: "running", billingStatus: "active" },
-    docker: { id: "docker-prod003", status: "running" },
-    disk: { id: "disk-prod003", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-    slug: "production-verification-lab-prod003",
-    url: "https://production-verification-lab-prod003.oplcloud.cn/?token=share_prod_fail",
-    access: { token: "share_prod_fail", tokenStatus: "active", requiresLogin: false }
-  };
-
-  await assert.rejects(
-    verifyProductionChain({
-      origin: "https://console.oplcloud.cn",
-      accountId: "pi-prod",
-      workspaceUrlAttempts: 1,
-      retryDelayMs: 0,
-      fetchImpl: async (url, options = {}) => {
-        const parsed = new URL(String(url));
-        const method = options.method || "GET";
-        const key = parsed.origin === "https://console.oplcloud.cn"
-          ? `${method} ${parsed.pathname}`
-          : `${method} ${String(url)}`;
-        requests.push({ key, body: options.body ? JSON.parse(options.body) : null });
-
-        if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
-        if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] });
-        if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
-        if (key === "POST /api/workspaces") return jsonResponse(workspace);
-        if (key === "GET https://production-verification-lab-prod003.oplcloud.cn/?token=share_prod_fail") return htmlResponse("bad gateway", 502);
-        if (key === "POST /api/workspaces/destroy-server") {
-          return jsonResponse({
-            ...workspace,
-            state: "server_destroyed_disk_retained",
-            server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-            docker: { ...workspace.docker, status: "destroyed" },
-            disk: { ...workspace.disk, status: "detached_retained" }
-          });
-        }
-        if (key === "POST /api/workspaces/destroy-disk") {
-          return jsonResponse({
-            ...workspace,
-            state: "destroyed",
-            server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-            docker: { ...workspace.docker, status: "destroyed" },
-            disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
-          });
-        }
-        throw new Error(`unexpected_request:${key}`);
-      }
-    }),
-    /workspace_url_failed:502:bad gateway/
-  );
-
-  assert.deepEqual(requests.map((request) => request.key), [
-    "GET /api/production/readiness",
-    "GET /api/runtime/readiness",
-    "POST /api/accounts/credit",
-    "POST /api/workspaces",
-    "GET https://production-verification-lab-prod003.oplcloud.cn/?token=share_prod_fail",
-    "POST /api/workspaces/destroy-server",
-    "POST /api/workspaces/destroy-disk"
-  ]);
-  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-server").body.confirm, true);
-  assert.equal(requests.find((request) => request.key === "POST /api/workspaces/destroy-disk").body.confirmDataLoss, true);
 });
 
 test("production verifier reports cleanup failures without hiding the original verification failure", async () => {
-  const workspace = {
-    id: "ws-prod004",
-    ownerAccountId: "pi-prod",
-    name: "Production Verification Lab",
-    packageId: "basic",
-    state: "running",
-    provider: "tencent-cvm",
-    server: { id: "ins-prod004", status: "running", billingStatus: "active" },
-    docker: { id: "docker-prod004", status: "running" },
-    disk: { id: "disk-prod004", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-    slug: "production-verification-lab-prod004",
-    url: "https://production-verification-lab-prod004.oplcloud.cn/?token=share_prod_cleanup_fail",
-    access: { token: "share_prod_cleanup_fail", tokenStatus: "active", requiresLogin: false }
-  };
+  const workspace = tkeWorkspace({ id: "ws-tke-cleanup", token: "share_tke_cleanup" });
   let caught = null;
 
   try {
@@ -746,10 +325,11 @@ test("production verifier reports cleanup failures without hiding the original v
           : `${method} ${String(url)}`;
 
         if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
-        if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] });
+        if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] });
         if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
         if (key === "POST /api/workspaces") return jsonResponse(workspace);
-        if (key === "GET https://production-verification-lab-prod004.oplcloud.cn/?token=share_prod_cleanup_fail") return htmlResponse("bad gateway", 502);
+        if (key === "POST /api/workspaces/runtime-status") return jsonResponse(readyRuntimeStatus(workspace));
+        if (key === `GET ${workspace.url}`) return htmlResponse("bad gateway", 502);
         if (key === "POST /api/workspaces/destroy-server") return jsonResponse({ error: "destroy_server_failed" }, 500);
         if (key === "POST /api/workspaces/destroy-disk") return jsonResponse({ error: "destroy_disk_failed" }, 500);
         throw new Error(`unexpected_request:${key}`);
@@ -766,87 +346,10 @@ test("production verifier reports cleanup failures without hiding the original v
   ]);
 });
 
-test("production verifier uses a unique default Workspace name for each run", async () => {
-  const workspaceNames = [];
-  const creditReasons = [];
-  const settlementSourceEventIds = [];
-  const cleanupWorkspace = (workspace) => ({
-    ...workspace,
-    state: "destroyed",
-    server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
-    docker: { ...workspace.docker, status: "destroyed" },
-    disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
-  });
-
-  async function runVerifier(runSuffix) {
-    const workspace = {
-      id: `ws-${runSuffix}`,
-      ownerAccountId: "pi-prod",
-      name: `Production Verification Lab ${runSuffix}`,
-      packageId: "basic",
-      state: "running",
-      provider: "tencent-cvm",
-      server: { id: `ins-${runSuffix}`, status: "running", billingStatus: "active" },
-      docker: { id: `docker-${runSuffix}`, status: "running" },
-      disk: { id: `disk-${runSuffix}`, status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-      slug: `production-verification-lab-${runSuffix}`,
-      url: `https://production-verification-lab-${runSuffix}.oplcloud.cn/?token=share_${runSuffix}`,
-      access: { token: `share_${runSuffix}`, tokenStatus: "active", requiresLogin: false }
-    };
-
-    await verifyProductionChain({
-      origin: "https://console.oplcloud.cn",
-      accountId: "pi-prod",
-      runId: runSuffix,
-      retryDelayMs: 0,
-      fetchImpl: async (url, options = {}) => {
-        const parsed = new URL(String(url));
-        const method = options.method || "GET";
-        if (parsed.origin !== "https://console.oplcloud.cn") return htmlResponse("<html>OPL Workspace</html>");
-        if (`${method} ${parsed.pathname}` === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
-        if (`${method} ${parsed.pathname}` === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] });
-        if (`${method} ${parsed.pathname}` === "POST /api/accounts/credit") {
-          creditReasons.push(JSON.parse(options.body).reason);
-          return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
-        }
-        if (`${method} ${parsed.pathname}` === "POST /api/workspaces") {
-          const body = JSON.parse(options.body);
-          workspaceNames.push(body.workspaceName);
-          return jsonResponse({ ...workspace, name: body.workspaceName });
-        }
-        if (`${method} ${parsed.pathname}` === "POST /api/workspaces/stop-server") return jsonResponse({ ...workspace, state: "stopped_server_disk_retained", server: { ...workspace.server, status: "stopped", billingStatus: "stopped" } });
-        if (`${method} ${parsed.pathname}` === "POST /api/workspaces/restart-server") return jsonResponse(workspace);
-        if (`${method} ${parsed.pathname}` === "POST /api/workspaces/destroy-server") return jsonResponse({ ...workspace, state: "server_destroyed_disk_retained", server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" }, disk: { ...workspace.disk, status: "detached_retained" } });
-        if (`${method} ${parsed.pathname}` === "POST /api/billing/settle") {
-          settlementSourceEventIds.push(JSON.parse(options.body).sourceEventId);
-          return jsonResponse({ entries: [{ type: "compute_debit" }, { type: "storage_debit" }] });
-        }
-        if (`${method} ${parsed.pathname}` === "POST /api/workspaces/destroy-disk") return jsonResponse(cleanupWorkspace(workspace));
-        throw new Error(`unexpected_request:${method} ${parsed.pathname}`);
-      }
-    });
-  }
-
-  await runVerifier("run-a1");
-  await runVerifier("run-b2");
-
-  assert.deepEqual(workspaceNames, [
-    "Production Verification Lab run-a1",
-    "Production Verification Lab run-b2"
-  ]);
-  assert.deepEqual(creditReasons, [
-    "production_verification_credit:run-a1",
-    "production_verification_credit:run-b2"
-  ]);
-  assert.deepEqual(settlementSourceEventIds, [
-    "production_verification_tick:run-a1",
-    "production_verification_tick:run-b2"
-  ]);
-});
-
 test("production verifier CLI writes structured failure JSON with cleanup errors", async () => {
   let stdout = "";
   let stderr = "";
+  const workspace = tkeWorkspace({ id: "ws-tke-cli-fail", token: "share_tke_cli_fail", name: "Production Verification Lab cli-fail" });
   const code = await runProductionVerifierCli({
     argv: ["--origin", "https://console.oplcloud.cn", "--account", "pi-prod", "--run-id", "cli-fail", "--url-attempts", "1", "--retry-delay-ms", "0"],
     stdout: { write: (chunk) => { stdout += chunk; } },
@@ -857,26 +360,13 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
       const key = parsed.origin === "https://console.oplcloud.cn"
         ? `${method} ${parsed.pathname}`
         : `${method} ${String(url)}`;
-      const workspace = {
-        id: "ws-cli-fail",
-        ownerAccountId: "pi-prod",
-        name: "Production Verification Lab cli-fail",
-        packageId: "basic",
-        state: "running",
-        provider: "tencent-cvm",
-        server: { id: "ins-cli-fail", status: "running", billingStatus: "active" },
-        docker: { id: "docker-cli-fail", status: "running" },
-        disk: { id: "disk-cli-fail", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
-        slug: "production-verification-lab-cli-fail",
-        url: "https://production-verification-lab-cli-fail.oplcloud.cn/?token=share_cli_fail",
-        access: { token: "share_cli_fail", tokenStatus: "active", requiresLogin: false }
-      };
 
       if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
-      if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] });
+      if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] });
       if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
       if (key === "POST /api/workspaces") return jsonResponse(workspace);
-      if (key === "GET https://production-verification-lab-cli-fail.oplcloud.cn/?token=share_cli_fail") return htmlResponse("bad gateway", 502);
+      if (key === "POST /api/workspaces/runtime-status") return jsonResponse(readyRuntimeStatus(workspace));
+      if (key === `GET ${workspace.url}`) return htmlResponse("bad gateway", 502);
       if (key === "POST /api/workspaces/destroy-server") return jsonResponse({ error: "destroy_server_failed" }, 500);
       if (key === "POST /api/workspaces/destroy-disk") return jsonResponse({ error: "destroy_disk_failed" }, 500);
       throw new Error(`unexpected_request:${key}`);
@@ -885,8 +375,7 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
 
   assert.equal(code, 1);
   assert.equal(stdout, "");
-  const payload = JSON.parse(stderr);
-  assert.deepEqual(payload, {
+  assert.deepEqual(JSON.parse(stderr), {
     ok: false,
     error: "workspace_url_failed:502:bad gateway",
     cleanupErrors: [

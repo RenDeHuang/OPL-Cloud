@@ -62,7 +62,7 @@ test("local Docker provider creates real compose, disk, URL, and preserves disk 
     assert.equal(await exists(envPath), true);
 
     const compose = await readFile(composePath, "utf8");
-    assert.match(compose, /ghcr\.io\/gaofeng21cn\/one-person-lab-webui:latest/);
+    assert.match(compose, /ghcr\.io\/gaofeng21cn\/one-person-lab-app:latest/);
     assert.match(compose, /AIONUI_DATA_DIR: \/data/);
     assert.match(compose, /OPL_PROJECTS_DIR: \/projects/);
     assert.match(compose, /- \.\/disk\/data:\/data/);
