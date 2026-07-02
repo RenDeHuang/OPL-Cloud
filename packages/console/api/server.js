@@ -13,7 +13,6 @@ const root = fileURLToPath(new URL("../../..", import.meta.url));
 const publicDir = join(root, "dist");
 const port = Number(process.env.PORT ?? 8787);
 const dataPath = process.env.OPL_CLOUD_DATA_PATH ?? join(root, ".runtime", "opl-cloud-state.json");
-const defaultAuth = createAuthController({ env: process.env });
 
 export { createAuthController };
 
@@ -27,8 +26,10 @@ export function createStoreFromEnv(env = process.env) {
   return new JsonFileStore(env.OPL_CLOUD_DATA_PATH ?? dataPath);
 }
 
+export const appStore = createStoreFromEnv(process.env);
+
 export const service = createOplCloud({
-  store: createStoreFromEnv(process.env),
+  store: appStore,
   runtimeProvider: createRuntimeProvider({
     env: process.env,
     rootDir: join(root, ".runtime", "workspaces")
@@ -43,6 +44,8 @@ export const service = createOplCloud({
   },
   productionReadiness: () => productionReadiness({ env: process.env })
 });
+
+const defaultAuth = createAuthController({ env: process.env, store: appStore });
 
 function sendJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -154,6 +157,9 @@ function requireAdmin(auth, session) {
 
 async function handleApi(request, response, pathname, appService, operatorSummaryToken = process.env.OPL_OPERATOR_SUMMARY_TOKEN, auth = null) {
   try {
+    if (request.method === "GET" && pathname === "/api/healthz") {
+      return sendJson(response, 200, { ok: true, service: "opl-console" });
+    }
     if (auth && request.method === "POST" && pathname === "/api/auth/login") {
       return sendJson(response, 200, await auth.login(await readJson(request), { request, response }));
     }

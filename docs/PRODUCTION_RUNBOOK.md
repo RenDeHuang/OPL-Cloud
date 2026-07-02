@@ -27,6 +27,7 @@ Inject values through a deployment secret manager or host environment. Do not co
 
 ```text
 DATABASE_URL
+OPL_CONSOLE_USERS_JSON
 OPL_RUNTIME_PROVIDER=tencent-tke
 OPL_PUBLIC_URL=https://cloud.medopl.cn
 OPL_CONSOLE_DOMAIN=cloud.medopl.cn
@@ -51,6 +52,8 @@ TENCENT_TCR_REGION
 `OPL_CLOUD_IMAGE` and `OPL_WORKSPACE_IMAGE` must start with `TENCENT_TCR_REGISTRY/` and point to TCR images, not public development images.
 
 `one-person-lab-app` WebUI contract is fixed at port `3000` with persistent `/data` and `/projects`. Keep API/model keys out of CLI arguments, environment variables, and Docker Compose; they are entered inside WebUI.
+
+`OPL_CONSOLE_USERS_JSON` is the bootstrap seed for the initial PI and admin login users. With `DATABASE_URL` set, OPL Console writes those auth users into PostgreSQL alongside account balances, Workspaces, billing ledger entries, and audit events. After the first boot, Kubernetes rollouts must preserve those records through PostgreSQL rather than `.runtime` files.
 
 ## Required Host Tools
 

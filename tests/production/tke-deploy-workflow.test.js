@@ -24,6 +24,7 @@ test("TKE production deploy workflow runs only on the VPC self-hosted runner", a
   assert.match(workflow, /OPL_TLS_SOURCE_SECRET_NAME: \$\{\{ vars\.OPL_TLS_SOURCE_SECRET_NAME \|\| '' \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_B64: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG_B64 \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG \}\}/);
+  assert.match(workflow, /OPL_CONSOLE_USERS_JSON: \$\{\{ secrets\.OPL_CONSOLE_USERS_JSON \}\}/);
   assert.match(workflow, /OPL_OPERATOR_SUMMARY_TOKEN: \$\{\{ secrets\.OPL_OPERATOR_SUMMARY_TOKEN \}\}/);
   assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
   assert.match(workflow, /tools\/render-tke-manifest\.js/);
@@ -50,9 +51,11 @@ test("TKE production deploy workflow installs secrets without command-line secre
   const workflow = await readFile(".github/workflows/deploy-tke-production.yml", "utf8");
 
   assert.doesNotMatch(workflow, /--from-literal=DATABASE_URL/);
+  assert.doesNotMatch(workflow, /--from-literal=OPL_CONSOLE_USERS_JSON/);
   assert.doesNotMatch(workflow, /--from-literal=OPL_OPERATOR_SUMMARY_TOKEN/);
   assert.doesNotMatch(workflow, /--docker-password/);
   assert.match(workflow, /--from-file=DATABASE_URL="\$secret_dir\/database-url"/);
+  assert.match(workflow, /--from-file=OPL_CONSOLE_USERS_JSON="\$secret_dir\/auth-users-json"/);
   assert.match(workflow, /--from-file=OPL_OPERATOR_SUMMARY_TOKEN="\$secret_dir\/operator-summary-token"/);
   assert.match(workflow, /--from-file=\.dockerconfigjson="\$docker_config"/);
   assert.match(workflow, /--from-file=kubeconfig="\$KUBECONFIG"/);

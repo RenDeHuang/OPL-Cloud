@@ -133,6 +133,15 @@
                     }
                   },
                   {
+                    "name": "OPL_CONSOLE_USERS_JSON",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-auth",
+                        "key": "OPL_CONSOLE_USERS_JSON"
+                      }
+                    }
+                  },
+                  {
                     "name": "OPL_OPERATOR_SUMMARY_TOKEN",
                     "valueFrom": {
                       "secretKeyRef": {
@@ -153,7 +162,7 @@
                 },
                 "livenessProbe": {
                   "httpGet": {
-                    "path": "/api/state",
+                    "path": "/api/healthz",
                     "port": 8787
                   },
                   "initialDelaySeconds": 20,

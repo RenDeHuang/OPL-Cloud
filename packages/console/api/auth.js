@@ -32,6 +32,41 @@ function publicUser(user) {
   };
 }
 
+function now() {
+  return new Date().toISOString();
+}
+
+function isAuthUser(user) {
+  return Boolean(user?.id && user.email && user.accountId && user.passwordHash);
+}
+
+function normalizeStoredAuthUser(user) {
+  return {
+    ...user,
+    email: normalizeEmail(user.email),
+    name: user.name || "",
+    role: user.role || "pi",
+    organizationId: user.organizationId || null,
+    status: user.status || "active"
+  };
+}
+
+function authUsersFromState(state) {
+  return Object.values(state.users || {})
+    .filter(isAuthUser)
+    .map(normalizeStoredAuthUser);
+}
+
+function ensureAuthUserAccount(state, user) {
+  state.accounts ??= {};
+  state.accounts[user.accountId] ??= {
+    id: user.accountId,
+    balance: 0,
+    frozen: 0,
+    holds: {}
+  };
+}
+
 function parseCookies(header = "") {
   return String(header)
     .split(";")
@@ -119,26 +154,78 @@ async function normalizeSeedUser(user) {
   };
 }
 
+async function readUsers(usersPath) {
+  const raw = await readFile(usersPath, "utf8");
+  const parsed = JSON.parse(raw);
+  const users = Array.isArray(parsed) ? parsed : parsed.users || [];
+  return Promise.all(users.map(normalizeSeedUser));
+}
+
 async function writeUsers(usersPath, users) {
   await mkdir(dirname(usersPath), { recursive: true });
   await writeFile(usersPath, `${JSON.stringify({ users }, null, 2)}\n`);
+}
+
+async function readLegacyUsers(usersPath) {
+  try {
+    return await readUsers(usersPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return null;
+  }
 }
 
 export function createAuthController({
   env = process.env,
   usersPath = env.OPL_CONSOLE_USERS_PATH || defaultUsersPath,
   seedUsers = null,
-  sessionTtlMs = defaultSessionTtlMs
+  sessionTtlMs = defaultSessionTtlMs,
+  store = null
 } = {}) {
   const sessions = new Map();
   let cachedUsers = null;
 
+  async function loadStoreUsers() {
+    const state = await store.read();
+    const existing = authUsersFromState(state);
+    if (existing.length > 0) {
+      if (existing.every((user) => state.accounts?.[user.accountId])) return existing;
+      return store.update((nextState) => {
+        const current = authUsersFromState(nextState);
+        for (const user of current) ensureAuthUserAccount(nextState, user);
+        return current;
+      });
+    }
+
+    const legacyUsers = await readLegacyUsers(usersPath);
+    const usersToSeed = legacyUsers?.length
+      ? legacyUsers
+      : await Promise.all((seedUsers || defaultSeedUsers(env)).map(normalizeSeedUser));
+
+    return store.update((nextState) => {
+      const current = authUsersFromState(nextState);
+      if (current.length > 0) return current;
+
+      nextState.users ??= {};
+      for (const user of usersToSeed) {
+        const timestamp = now();
+        nextState.users[user.id] = {
+          ...nextState.users[user.id],
+          ...user,
+          createdAt: nextState.users[user.id]?.createdAt || timestamp,
+          updatedAt: timestamp
+        };
+        ensureAuthUserAccount(nextState, user);
+      }
+      return authUsersFromState(nextState);
+    });
+  }
+
   async function loadUsers() {
+    if (store) return loadStoreUsers();
     if (cachedUsers) return cachedUsers;
     try {
-      const raw = await readFile(usersPath, "utf8");
-      const parsed = JSON.parse(raw);
-      cachedUsers = Array.isArray(parsed) ? parsed : parsed.users || [];
+      cachedUsers = await readUsers(usersPath);
       return cachedUsers;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;

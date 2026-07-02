@@ -21,6 +21,24 @@ const tkeProductionEnv = {
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
   OPL_WORKSPACE_STORAGE_CLASS: "cbs",
   DATABASE_URL: "postgresql://opl:secret@db.example.com:5432/opl_cloud",
+  OPL_CONSOLE_USERS_JSON: JSON.stringify([
+    {
+      id: "usr-pi-production",
+      email: "pi@medopl.cn",
+      password: "ProdPiPass2026!",
+      name: "Production PI",
+      role: "pi",
+      accountId: "pi-production"
+    },
+    {
+      id: "usr-admin-production",
+      email: "admin@medopl.cn",
+      password: "ProdAdminPass2026!",
+      name: "Production Admin",
+      role: "admin",
+      accountId: "admin"
+    }
+  ]),
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig",
   TENCENT_DEPLOY_CLUSTER_ID: "cls-123",
   TENCENT_TCR_REGISTRY: "registry.example.com",
@@ -44,6 +62,7 @@ test("productionReadiness passes only when the TKE production runtime, images, p
     "opl_app_contract:true",
     "workspace_domain:true",
     "database_url:true",
+    "auth_seed:true",
     "provider_env:true",
     "tools:true"
   ]);
@@ -65,6 +84,38 @@ test("productionReadiness reports only TKE-specific blockers", async () => {
   assert.deepEqual(report.missingTools, ["kubectl"]);
   assert.ok(report.failedChecks.includes("registry_images"));
   assert.ok(report.failedChecks.includes("provider_env"));
+});
+
+test("productionReadiness fails closed without a production auth user seed", async () => {
+  const { OPL_CONSOLE_USERS_JSON, ...envWithoutAuthSeed } = tkeProductionEnv;
+  const report = await productionReadiness({
+    env: envWithoutAuthSeed,
+    commandExists: (command) => command === "kubectl"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.failedChecks.includes("auth_seed"));
+  assert.equal(
+    report.checks.find((check) => check.id === "auth_seed").message,
+    "OPL_CONSOLE_USERS_JSON or explicit PI/Admin auth credentials are required for production"
+  );
+});
+
+test("productionReadiness rejects built-in demo auth credentials", async () => {
+  const report = await productionReadiness({
+    env: {
+      ...tkeProductionEnv,
+      OPL_CONSOLE_USERS_JSON: "",
+      OPL_PI_EMAIL: "pi@opl.local",
+      OPL_PI_PASSWORD: "opl-pi-demo",
+      OPL_ADMIN_EMAIL: "admin@opl.local",
+      OPL_ADMIN_PASSWORD: "opl-admin-demo"
+    },
+    commandExists: (command) => command === "kubectl"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.failedChecks.includes("auth_seed"));
 });
 
 test("productionReadiness rejects non-TKE production providers", async () => {

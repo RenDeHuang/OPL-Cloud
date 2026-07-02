@@ -64,6 +64,47 @@ function matchesOplAppContract(env) {
   );
 }
 
+function seedUsersFromJson(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : parsed.users || [];
+  } catch {
+    return [];
+  }
+}
+
+function hasNonDefaultSecret(user) {
+  if (user.passwordHash) return true;
+  const password = String(user.password || "");
+  return Boolean(password && password !== "opl-pi-demo" && password !== "opl-admin-demo");
+}
+
+function hasSeedUser(users, role) {
+  return users.some((user) =>
+    user?.role === role &&
+    user.email &&
+    user.accountId &&
+    user.status !== "disabled" &&
+    hasNonDefaultSecret(user)
+  );
+}
+
+function hasProductionAuthSeed(env) {
+  const users = seedUsersFromJson(env.OPL_CONSOLE_USERS_JSON);
+  if (users.length > 0) return hasSeedUser(users, "pi") && hasSeedUser(users, "admin");
+  return Boolean(
+    env.OPL_PI_EMAIL &&
+    env.OPL_PI_ACCOUNT_ID &&
+    env.OPL_PI_PASSWORD &&
+    env.OPL_PI_PASSWORD !== "opl-pi-demo" &&
+    env.OPL_ADMIN_EMAIL &&
+    env.OPL_ADMIN_ACCOUNT_ID &&
+    env.OPL_ADMIN_PASSWORD &&
+    env.OPL_ADMIN_PASSWORD !== "opl-admin-demo"
+  );
+}
+
 async function commandExistsInPath(command, env) {
   const pathValue = env.PATH || process.env.PATH || "";
   for (const dir of pathValue.split(delimiter).filter(Boolean)) {
@@ -105,6 +146,7 @@ export async function productionReadiness({ env = process.env, commandExists = (
     check("opl_app_contract", matchesOplAppContract(env), "one-person-lab-app WebUI must expose port 3000 and persist /data plus /projects"),
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),
+    check("auth_seed", hasProductionAuthSeed(env), "OPL_CONSOLE_USERS_JSON or explicit PI/Admin auth credentials are required for production"),
     check("provider_env", providerConfig.requiredEnv.every((key) => Boolean(env[key])), "Runtime provider environment is incomplete"),
     check("tools", missingTools.length === 0, "Required production tools are missing")
   ];

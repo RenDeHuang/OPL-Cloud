@@ -137,7 +137,7 @@ DATABASE_URL=postgres://opl:secret@127.0.0.1:5432/opl_cloud \
 PORT=8787 npm start
 ```
 
-When `DATABASE_URL` is set, OPL Console stores accounts, Workspaces, billing ledger entries, audit events, and runtime operation scaffolding in PostgreSQL tables.
+When `DATABASE_URL` is set, OPL Console stores login users, account balances, Workspaces, billing ledger entries, audit events, and runtime operation scaffolding in PostgreSQL tables. `OPL_CONSOLE_USERS_JSON` is only the bootstrap seed for the first PI/admin login users; after those users are written to the control-plane store, account status, roles, ownership, balances, Workspaces, billing, and audit records persist with the database across Console rollouts.
 
 OPL Ledger is the v1 billing truth. External metering systems are not required for production billing.
 

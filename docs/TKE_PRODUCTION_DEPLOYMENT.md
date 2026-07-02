@@ -169,7 +169,7 @@ Use three locations:
 | Value type | Local dry-run location | Cluster/runtime location | Git-tracked reference |
 | --- | --- | --- | --- |
 | Non-secret config such as domains, namespace, ingress class, image refs, storage class | ignored `.env.production` | ConfigMap or Deployment env | `deploy/tke/opl-cloud-production.env.example` and `deploy/production-manifest.example.json` |
-| Secret references such as `DATABASE_URL`, kubeconfig ref, TCR credentials | ignored `.env.production` only if needed locally | Kubernetes Secret, GitHub environment secret, or secret manager | only `secretRef` names in `deploy/production-manifest.example.json` |
+| Secret references such as `DATABASE_URL`, `OPL_CONSOLE_USERS_JSON`, kubeconfig ref, TCR credentials | ignored `.env.production` only if needed locally | Kubernetes Secret, GitHub environment secret, or secret manager | only `secretRef` names in `deploy/production-manifest.example.json` |
 | DNS record values | not known until Ingress exists | Tencent DNS console | documented in this file only |
 
 Recommended Kubernetes Secret keys:
@@ -177,6 +177,9 @@ Recommended Kubernetes Secret keys:
 ```text
 Secret opl-cloud-database
   DATABASE_URL
+
+Secret opl-cloud-auth
+  OPL_CONSOLE_USERS_JSON
 
 Secret opl-cloud-operator
   OPL_OPERATOR_SUMMARY_TOKEN
@@ -189,6 +192,8 @@ Secret tcr-pull-secret
 ```
 
 `OPL_OPERATOR_SUMMARY_TOKEN` is optional. When it is absent, `GET /api/operator/summary` is disabled with a 403 response. When it is present, call the endpoint with the `x-opl-operator-token` header.
+
+`OPL_CONSOLE_USERS_JSON` must contain the initial PI and admin login users. It is a bootstrap seed, not the long-term account database. On first boot, OPL Console imports it into the control-plane store; with `DATABASE_URL` configured, roles, disabled status, account ownership, balances, Workspaces, billing, and audit data survive TKE rollouts in PostgreSQL.
 
 The tracked production manifest is a contract, not the live secret payload. Keep real secret values outside git.
 
