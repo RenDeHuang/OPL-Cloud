@@ -14,12 +14,17 @@
     "validate:production-manifest": "node tools/validate-production-manifest.js"
   },
   "dependencies": {
+    "@ant-design/pro-components": "^2.8.10",
     "@vitejs/plugin-react": "^4.3.4",
+    "antd": "^5.29.3",
     "lucide-react": "^0.468.0",
     "pg": "^8.22.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
+  },
+  "overrides": {
+    "path-to-regexp": "8.4.2"
   }
 }

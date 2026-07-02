@@ -26,10 +26,25 @@ async function readResponse(response) {
   return response.text();
 }
 
-async function requestJson({ fetchImpl, origin, path, method = "GET", body = null }) {
+function authHeaderValues(auth = null) {
+  const headers = {};
+  if (auth?.cookie) headers.cookie = auth.cookie;
+  if (auth?.csrf) headers["x-opl-csrf-token"] = auth.csrf;
+  return headers;
+}
+
+function requestHeaders({ body = null, auth = null } = {}) {
+  const headers = {
+    ...(body ? { "content-type": "application/json" } : {}),
+    ...authHeaderValues(auth)
+  };
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+async function requestJsonWithResponse({ fetchImpl, origin, path, method = "GET", body = null, auth = null }) {
   const response = await fetchImpl(endpoint(origin, path), {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: requestHeaders({ body, auth }),
     body: body ? JSON.stringify(body) : undefined
   });
   const payload = await readResponse(response);
@@ -37,7 +52,35 @@ async function requestJson({ fetchImpl, origin, path, method = "GET", body = nul
     const message = typeof payload === "string" ? payload : payload.error || JSON.stringify(payload);
     throw new Error(`request_failed:${method}:${path}:${response.status}:${message}`);
   }
+  return { payload, response };
+}
+
+async function requestJson(args) {
+  const { payload } = await requestJsonWithResponse(args);
   return payload;
+}
+
+function cookieHeaderFromSetCookie(setCookie = "") {
+  return String(setCookie)
+    .split(/,(?=[^;,]+=)/)
+    .map((cookie) => cookie.split(";")[0]?.trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
+  if (!operatorToken) return null;
+  const { payload, response } = await requestJsonWithResponse({
+    fetchImpl,
+    origin,
+    path: "/api/auth/operator-login",
+    method: "POST",
+    body: { operatorToken }
+  });
+  return {
+    cookie: cookieHeaderFromSetCookie(response.headers?.get?.("set-cookie") || ""),
+    csrf: response.headers?.get?.("x-opl-csrf-token") || payload?.csrfToken || ""
+  };
 }
 
 function sleep(ms) {
@@ -57,7 +100,7 @@ async function requestWorkspaceUrl({ fetchImpl, url, attempts, retryDelayMs }) {
   throw lastError;
 }
 
-async function requestRuntimeStatus({ fetchImpl, origin, accountId, workspaceId, attempts, retryDelayMs }) {
+async function requestRuntimeStatus({ fetchImpl, origin, accountId, workspaceId, attempts, retryDelayMs, auth = null }) {
   let lastStatus = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const status = await requestJson({
@@ -65,6 +108,7 @@ async function requestRuntimeStatus({ fetchImpl, origin, accountId, workspaceId,
       origin,
       path: "/api/workspaces/runtime-status",
       method: "POST",
+      auth,
       body: { accountId, workspaceId }
     });
     lastStatus = { ...status, attempts: attempt };
@@ -158,7 +202,7 @@ function assertRuntimeStatus(checks, runtimeStatus) {
   });
 }
 
-async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, workspaceId, workspaceDiskId, checks = null }) {
+async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, workspaceId, workspaceDiskId, checks = null, auth = null }) {
   const cleanupErrors = [];
 
   try {
@@ -167,6 +211,7 @@ async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, work
       origin,
       path: "/api/workspaces/destroy-server",
       method: "POST",
+      auth,
       body: { accountId, workspaceId, confirm: true }
     });
     if (checks) {
@@ -187,6 +232,7 @@ async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, work
       origin,
       path: "/api/workspaces/destroy-disk",
       method: "POST",
+      auth,
       body: { accountId, workspaceId, confirmDataLoss: true }
     });
     if (checks) {
@@ -214,6 +260,7 @@ export async function verifyProductionChain({
   creditAmount = DEFAULT_CREDIT_AMOUNT,
   workspaceUrlAttempts = DEFAULT_WORKSPACE_URL_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+  operatorToken = "",
   fetchImpl = globalThis.fetch
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch_required");
@@ -223,6 +270,7 @@ export async function verifyProductionChain({
   const creditSourceEventId = `production_verification_credit:${runId}`;
   const settlementSourceEventId = `production_verification_tick:${runId}`;
   let workspace = null;
+  let auth = null;
 
   try {
     const productionReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/production/readiness" });
@@ -231,11 +279,14 @@ export async function verifyProductionChain({
     const runtimeReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/runtime/readiness" });
     assertReady({ checks, name: "runtime_readiness", payload: runtimeReadiness });
 
+    auth = await requestOperatorSession({ fetchImpl, origin: normalizedOrigin, operatorToken });
+
     await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
       path: "/api/accounts/credit",
       method: "POST",
+      auth,
       body: { accountId, amount: creditAmount, reason: creditSourceEventId }
     });
 
@@ -244,6 +295,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/workspaces",
       method: "POST",
+      auth,
       body: { accountId, workspaceName: effectiveWorkspaceName, packageId }
     });
     assertWorkspaceShape(checks, workspace);
@@ -255,7 +307,8 @@ export async function verifyProductionChain({
         accountId,
         workspaceId: workspace.id,
         attempts: workspaceUrlAttempts,
-        retryDelayMs
+        retryDelayMs,
+        auth
       });
       assertRuntimeStatus(checks, runtimeStatus);
     }
@@ -273,6 +326,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/workspaces/stop-server",
       method: "POST",
+      auth,
       body: { accountId, workspaceId: workspace.id, confirm: true }
     });
     addCheck(checks, "server_stopped_storage_retained", Boolean(
@@ -287,6 +341,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/workspaces/restart-server",
       method: "POST",
+      auth,
       body: { accountId, workspaceId: workspace.id }
     });
     addCheck(checks, "server_restarted", Boolean(
@@ -302,6 +357,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/workspaces/destroy-server",
       method: "POST",
+      auth,
       body: { accountId, workspaceId: workspace.id, confirm: true }
     });
     addCheck(checks, "server_destroyed_storage_retained", Boolean(
@@ -317,6 +373,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/workspaces/restart-server",
       method: "POST",
+      auth,
       body: { accountId, workspaceId: workspace.id }
     });
     addCheck(checks, "server_recreated_from_retained_disk", Boolean(
@@ -344,6 +401,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/billing/settle",
       method: "POST",
+      auth,
       body: { accountId, workspaceId: workspace.id, hours: 1, sourceEventId: settlementSourceEventId }
     });
     assertBillingSettlement(checks, settlement);
@@ -354,7 +412,8 @@ export async function verifyProductionChain({
       accountId,
       workspaceId: workspace.id,
       workspaceDiskId: workspace.disk.id,
-      checks
+      checks,
+      auth
     });
     if (cleanupErrors.length > 0) {
       const error = new Error(`production_verification_cleanup_failed:${cleanupErrors.join("|")}`);
@@ -378,7 +437,8 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       accountId,
       workspaceId: workspace.id,
-      workspaceDiskId: workspace.disk?.id
+      workspaceDiskId: workspace.disk?.id,
+      auth
     });
     if (cleanupErrors.length > 0) error.cleanupErrors = cleanupErrors;
     throw error;
@@ -408,6 +468,7 @@ function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalTh
     creditAmount: Number(args.credit || env.OPL_VERIFY_CREDIT_AMOUNT || DEFAULT_CREDIT_AMOUNT),
     workspaceUrlAttempts: Number(args["url-attempts"] || env.OPL_VERIFY_URL_ATTEMPTS || DEFAULT_WORKSPACE_URL_ATTEMPTS),
     retryDelayMs: Number(args["retry-delay-ms"] || env.OPL_VERIFY_RETRY_DELAY_MS || DEFAULT_RETRY_DELAY_MS),
+    operatorToken: args["operator-token"] || env.OPL_VERIFY_OPERATOR_TOKEN || "",
     fetchImpl
   };
 }

@@ -15,6 +15,11 @@ const productionEnv = {
   OPL_WORKSPACE_PROJECTS_DIR: "/projects",
   OPL_WORKSPACE_DOMAIN: "workspaces.oplcloud.cn",
   DATABASE_URL: "postgres://opl:secret@db.example.com:5432/opl_cloud",
+  OPL_ENFORCE_SESSION_SCOPE: "1",
+  OPL_CONSOLE_ACCESS_TOKEN: "pilot-login-secret",
+  OPL_OPERATOR_SUMMARY_TOKEN: "operator-secret",
+  OPL_ENFORCE_CSRF: "1",
+  OPL_COOKIE_SECURE: "1",
   TENCENTCLOUD_SECRET_ID: "sid",
   TENCENTCLOUD_SECRET_KEY: "skey",
   TENCENTCLOUD_REGION: "ap-guangzhou",
@@ -41,6 +46,11 @@ const tkeProductionEnv = {
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
   OPL_WORKSPACE_STORAGE_CLASS: "cbs",
   DATABASE_URL: "postgresql://opl:secret@db.example.com:5432/opl_cloud",
+  OPL_ENFORCE_SESSION_SCOPE: "1",
+  OPL_CONSOLE_ACCESS_TOKEN: "pilot-login-secret",
+  OPL_OPERATOR_SUMMARY_TOKEN: "operator-secret",
+  OPL_ENFORCE_CSRF: "1",
+  OPL_COOKIE_SECURE: "1",
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig",
   TENCENT_DEPLOY_CLUSTER_ID: "cls-123",
   TENCENT_TCR_REGISTRY: "registry.example.com",
@@ -64,6 +74,11 @@ test("productionReadiness passes only when production runtime, image, persistenc
     "opl_app_contract:true",
     "workspace_domain:true",
     "database_url:true",
+    "session_scope:true",
+    "console_access_token:true",
+    "operator_token:true",
+    "csrf:true",
+    "secure_cookie:true",
     "provider_env:true",
     "tools:true"
   ]);
@@ -87,9 +102,40 @@ test("productionReadiness supports Tencent TKE without CVM image or SSH key fiel
     "opl_app_contract:true",
     "workspace_domain:true",
     "database_url:true",
+    "session_scope:true",
+    "console_access_token:true",
+    "operator_token:true",
+    "csrf:true",
+    "secure_cookie:true",
     "provider_env:true",
     "tools:true"
   ]);
+});
+
+test("productionReadiness requires server-side account scope and operator token for commercial pilot", async () => {
+  const report = await productionReadiness({
+    env: {
+      ...tkeProductionEnv,
+      OPL_ENFORCE_SESSION_SCOPE: "",
+      OPL_CONSOLE_ACCESS_TOKEN: "",
+      OPL_OPERATOR_SUMMARY_TOKEN: "",
+      OPL_ENFORCE_CSRF: "",
+      OPL_COOKIE_SECURE: ""
+    },
+    commandExists: (command) => command === "kubectl"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.missingEnv.includes("OPL_ENFORCE_SESSION_SCOPE"));
+  assert.ok(report.missingEnv.includes("OPL_CONSOLE_ACCESS_TOKEN"));
+  assert.ok(report.missingEnv.includes("OPL_OPERATOR_SUMMARY_TOKEN"));
+  assert.ok(report.missingEnv.includes("OPL_ENFORCE_CSRF"));
+  assert.ok(report.missingEnv.includes("OPL_COOKIE_SECURE"));
+  assert.ok(report.failedChecks.includes("session_scope"));
+  assert.ok(report.failedChecks.includes("console_access_token"));
+  assert.ok(report.failedChecks.includes("operator_token"));
+  assert.ok(report.failedChecks.includes("csrf"));
+  assert.ok(report.failedChecks.includes("secure_cookie"));
 });
 
 test("productionReadiness reports TKE-specific blockers without requiring CVM fields", async () => {

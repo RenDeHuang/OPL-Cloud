@@ -3,11 +3,11 @@ import test from "node:test";
 
 import { runProductionVerifierCli, verifyProductionChain } from "../../tools/production-verifier.js";
 
-function jsonResponse(payload, status = 200) {
+function jsonResponse(payload, status = 200, headers = new Headers({ "content-type": "application/json" })) {
   return {
     status,
     ok: status >= 200 && status < 300,
-    headers: new Headers({ "content-type": "application/json" }),
+    headers,
     json: async () => payload,
     text: async () => JSON.stringify(payload)
   };
@@ -179,6 +179,121 @@ test("production verifier exercises the full Workspace cloud lifecycle through t
     "verification_server_destroyed:true",
     "verification_disk_destroyed:true"
   ]);
+});
+
+test("production verifier authenticates as operator and sends CSRF on commercial write APIs", async () => {
+  const requests = [];
+  const workspace = {
+    id: "ws-prod-auth",
+    ownerAccountId: "pi-prod",
+    name: "Production Verification Lab",
+    packageId: "basic",
+    state: "running",
+    provider: "tencent-cvm",
+    server: { id: "ins-prod-auth", status: "running", billingStatus: "active" },
+    docker: { id: "docker-prod-auth", status: "running" },
+    disk: { id: "disk-prod-auth", status: "attached_retained", billingStatus: "active", mountPath: "/data" },
+    slug: "production-verification-lab-auth",
+    url: "https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth",
+    access: { token: "share_prod_auth", tokenStatus: "active", requiresLogin: false }
+  };
+
+  const responseHeaders = new Headers({
+    "content-type": "application/json",
+    "set-cookie": "opl_console_session=operator-session; Path=/; HttpOnly; SameSite=Lax",
+    "x-opl-csrf-token": "csrf-auth"
+  });
+
+  const responses = new Map([
+    ["GET /api/production/readiness", { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] }],
+    ["GET /api/runtime/readiness", { provider: "tencent-cvm", ready: true, missingEnv: [], missingTools: [] }],
+    ["POST /api/auth/operator-login", { accountId: "operator", role: "operator" }],
+    ["POST /api/accounts/credit", { id: "pi-prod", balance: 1000, frozen: 0 }],
+    ["POST /api/workspaces", workspace],
+    ["GET https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth", "<html>OPL Workspace</html>"],
+    ["POST /api/workspaces/stop-server", {
+      ...workspace,
+      state: "stopped_server_disk_retained",
+      server: { ...workspace.server, status: "stopped", billingStatus: "stopped" }
+    }],
+    ["POST /api/workspaces/restart-server#1", workspace],
+    ["POST /api/workspaces/destroy-server", {
+      ...workspace,
+      state: "server_destroyed_disk_retained",
+      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "detached_retained" }
+    }],
+    ["POST /api/workspaces/restart-server#2", workspace],
+    ["GET https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth#2", "<html>OPL Workspace restored</html>"],
+    ["POST /api/billing/settle", { entries: [{ type: "compute_debit" }, { type: "storage_debit" }] }],
+    ["POST /api/workspaces/destroy-server#2", {
+      ...workspace,
+      state: "server_destroyed_disk_retained",
+      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "detached_retained" }
+    }],
+    ["POST /api/workspaces/destroy-disk", {
+      ...workspace,
+      state: "destroyed",
+      server: { ...workspace.server, status: "destroyed", billingStatus: "stopped" },
+      docker: { ...workspace.docker, status: "destroyed" },
+      disk: { ...workspace.disk, status: "destroyed", billingStatus: "stopped" }
+    }]
+  ]);
+  let restartCount = 0;
+  let destroyServerCount = 0;
+  let workspaceUrlCount = 0;
+
+  await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    workspaceName: "Production Verification Lab",
+    packageId: "basic",
+    operatorToken: "operator-token",
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(String(url));
+      const method = options.method || "GET";
+      const pathname = parsed.origin === "https://console.oplcloud.cn" ? parsed.pathname : String(url);
+      let key = `${method} ${pathname}`;
+      if (key === "POST /api/workspaces/restart-server") {
+        restartCount += 1;
+        key = `${key}#${restartCount}`;
+      }
+      if (key === "POST /api/workspaces/destroy-server") {
+        destroyServerCount += 1;
+        key = destroyServerCount === 1 ? key : `${key}#${destroyServerCount}`;
+      }
+      if (key === "GET https://production-verification-lab-auth.oplcloud.cn/?token=share_prod_auth") {
+        workspaceUrlCount += 1;
+        key = workspaceUrlCount === 1 ? key : `${key}#${workspaceUrlCount}`;
+      }
+      requests.push({
+        key,
+        cookie: options.headers?.cookie || "",
+        csrf: options.headers?.["x-opl-csrf-token"] || "",
+        body: options.body ? JSON.parse(options.body) : null
+      });
+      const payload = responses.get(key);
+      if (typeof payload === "string") return htmlResponse(payload);
+      if (!payload) throw new Error(`unexpected_request:${key}`);
+      if (key === "POST /api/auth/operator-login") return jsonResponse(payload, 200, responseHeaders);
+      return jsonResponse(payload);
+    }
+  });
+
+  assert.deepEqual(requests.map((request) => request.key).slice(0, 4), [
+    "GET /api/production/readiness",
+    "GET /api/runtime/readiness",
+    "POST /api/auth/operator-login",
+    "POST /api/accounts/credit"
+  ]);
+  assert.equal(requests.find((request) => request.key === "POST /api/auth/operator-login").body.operatorToken, "operator-token");
+  for (const request of requests.filter((item) => item.key.startsWith("POST /api/") && item.key !== "POST /api/auth/operator-login")) {
+    assert.match(request.cookie, /opl_console_session=operator-session/);
+    assert.equal(request.csrf, "csrf-auth");
+  }
 });
 
 test("production verifier accepts Tencent TKE Workspace resources and proves app image, route, storage, and billing shape", async () => {

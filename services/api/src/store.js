@@ -11,7 +11,11 @@ export function emptyState() {
     billingLedger: [],
     audit: [],
     notifications: [],
-    runtimeOperations: []
+    runtimeOperations: [],
+    consoleSession: null,
+    consoleSessions: {},
+    identityUsers: {},
+    identityInvites: {}
   };
 }
 
@@ -79,13 +83,14 @@ export class PostgresStore {
   async read(client = this.pool) {
     await this.ensureSchema(client);
     const state = emptyState();
-    const [accounts, workspaces, billingLedger, audit, notifications, runtimeOperations] = await Promise.all([
+    const [accounts, workspaces, billingLedger, audit, notifications, runtimeOperations, consoleState] = await Promise.all([
       client.query("SELECT id, state FROM accounts ORDER BY id"),
       client.query("SELECT id, state FROM workspaces ORDER BY id"),
       client.query("SELECT state FROM billing_ledger ORDER BY created_at, id"),
       client.query("SELECT state FROM audit_events ORDER BY created_at, id"),
       client.query("SELECT state FROM notifications ORDER BY created_at, id"),
-      client.query("SELECT state FROM runtime_operations ORDER BY created_at, id")
+      client.query("SELECT state FROM runtime_operations ORDER BY created_at, id"),
+      client.query("SELECT key, state FROM console_state ORDER BY key")
     ]);
 
     for (const row of accounts.rows) state.accounts[row.id] = row.state;
@@ -94,12 +99,18 @@ export class PostgresStore {
     state.audit = audit.rows.map((row) => row.state);
     state.notifications = notifications.rows.map((row) => row.state);
     state.runtimeOperations = runtimeOperations.rows.map((row) => row.state);
+    for (const row of consoleState.rows) {
+      if (row.key in state) state[row.key] = row.state;
+    }
+    state.consoleSessions ??= {};
+    state.identityUsers ??= {};
+    state.identityInvites ??= {};
     return clone(state);
   }
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
-    await client.query("TRUNCATE accounts, workspaces, billing_ledger, audit_events, notifications, runtime_operations");
+    await client.query("TRUNCATE accounts, workspaces, billing_ledger, audit_events, notifications, runtime_operations, console_state");
 
     for (const account of Object.values(nextState.accounts || {})) {
       await client.query(
@@ -149,6 +160,14 @@ export class PostgresStore {
         operation.createdAt || new Date().toISOString(),
         operation.updatedAt || operation.createdAt || new Date().toISOString()
       ]);
+    }
+    for (const key of ["consoleSession", "consoleSessions", "identityUsers", "identityInvites"]) {
+      if (nextState[key] && (typeof nextState[key] !== "object" || Object.keys(nextState[key]).length > 0)) {
+        await client.query(
+          "INSERT INTO console_state (key, state, updated_at) VALUES ($1, $2, now()) ON CONFLICT (key) DO UPDATE SET state = EXCLUDED.state, updated_at = now()",
+          [key, nextState[key]]
+        );
+      }
     }
     return this.read(client);
   }
@@ -230,6 +249,13 @@ export class PostgresStore {
         operation_type text NOT NULL,
         state jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS console_state (
+        key text PRIMARY KEY,
+        state jsonb NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now()
       )
     `);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +22,28 @@ async function listen(handler) {
   };
 }
 
+test("static app routes fall back to index.html for commercial Home and Login routes", async () => {
+  const staticDir = await mkdtemp(join(tmpdir(), "opl-cloud-static-"));
+  const indexHtml = "<!doctype html><title>OPL Console</title><div id=\"root\"></div>";
+  await writeFile(join(staticDir, "index.html"), indexHtml);
+
+  const { origin, close } = await listen(createRequestHandler({ staticDir }));
+  try {
+    const homeResponse = await fetch(`${origin}/`);
+    const loginResponse = await fetch(`${origin}/login`);
+    const assetResponse = await fetch(`${origin}/assets/missing.js`);
+
+    assert.equal(homeResponse.status, 200);
+    assert.equal(await homeResponse.text(), indexHtml);
+    assert.equal(loginResponse.status, 200);
+    assert.equal(await loginResponse.text(), indexHtml);
+    assert.equal(assetResponse.status, 404);
+  } finally {
+    await close();
+    await rm(staticDir, { recursive: true, force: true });
+  }
+});
+
 test("workspace URL route validates token and returns OPL Workspace entry page", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-cloud-route-"));
   const appService = createOplCloud({
@@ -37,7 +59,11 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
       markup: 0.2
     }
   });
-  const { origin, close } = await listen(createRequestHandler({ appService }));
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    enforceSessionScope: false,
+    enforceCsrf: false
+  }));
   try {
     await appService.creditAccount({ accountId: "pi-route", amount: 250, reason: "route_test_credit" });
     const workspace = await appService.createWorkspace({
@@ -54,7 +80,8 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
     assert.equal(validResponse.status, 200);
     assert.match(html, /Route Lab/);
     assert.match(html, /OPL Workspace/);
-    assert.match(html, /docker-compose\.yml|runtime target/);
+    assert.match(html, /Workspace link is valid/);
+    assert.doesNotMatch(html, /docker-compose|runtime target|Docker|mountPath|\.runtime/);
   } finally {
     await close();
     await rm(root, { recursive: true, force: true });
@@ -70,7 +97,11 @@ test("runtime readiness route reports provider execution gaps without creating r
       missingTools: ["ansible-playbook"]
     })
   };
-  const { origin, close } = await listen(createRequestHandler({ appService }));
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    enforceSessionScope: false,
+    enforceCsrf: false
+  }));
   try {
     const response = await fetch(`${origin}/api/runtime/readiness`);
     const payload = await response.json();
@@ -132,7 +163,11 @@ test("runtime status route returns structured Workspace resource evidence withou
       };
     }
   };
-  const { origin, close } = await listen(createRequestHandler({ appService }));
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    enforceSessionScope: false,
+    enforceCsrf: false
+  }));
   try {
     const response = await fetch(`${origin}/api/workspaces/runtime-status`, {
       method: "POST",
@@ -211,6 +246,292 @@ test("operator summary route returns notification and failed operation aggregate
     assert.equal(payload.notifications.error, 1);
     assert.equal(payload.runtimeOperations.failed, 1);
     assert.equal(JSON.stringify(payload).includes("share_"), false);
+  } finally {
+    await close();
+  }
+});
+
+test("console session route persists account profile and scopes default state", async () => {
+  const appService = createOplCloud({
+    store: new MemoryStore(),
+    runtimeProvider: { name: "test-provider" },
+    pricing: {
+      serverHourly: { basic: 1, pro: 4 },
+      diskGbMonth: 0.2,
+      markup: 0.2
+    }
+  });
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const updateResponse = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "pi-session",
+        tenantId: "tenant-session",
+        displayName: "Session PI",
+        email: "session@example.com",
+        role: "pi"
+      })
+    });
+    assert.equal(updateResponse.status, 200);
+    const cookie = updateResponse.headers.get("set-cookie");
+    assert.match(cookie, /opl_console_session=/);
+    assert.match(cookie, /HttpOnly/);
+
+    const sessionResponse = await fetch(`${origin}/api/session`, { headers: { cookie } });
+    const session = await sessionResponse.json();
+    assert.deepEqual(session, {
+      accountId: "pi-session",
+      tenantId: "tenant-session",
+      displayName: "Session PI",
+      email: "session@example.com",
+      role: "pi"
+    });
+
+    const stateResponse = await fetch(`${origin}/api/state`, { headers: { cookie } });
+    const state = await stateResponse.json();
+    assert.equal(state.account.id, "pi-session");
+    assert.equal(state.account.displayName, "Session PI");
+  } finally {
+    await close();
+  }
+});
+
+test("console session cookies isolate account profiles across browser sessions", async () => {
+  const appService = createOplCloud({
+    store: new MemoryStore(),
+    runtimeProvider: { name: "test-provider" },
+    pricing: {
+      serverHourly: { basic: 1, pro: 4 },
+      diskGbMonth: 0.2,
+      markup: 0.2
+    }
+  });
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const alphaResponse = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "pi-alpha-browser",
+        tenantId: "tenant-alpha",
+        displayName: "Alpha Browser PI",
+        email: "alpha@example.com",
+        role: "pi"
+      })
+    });
+    const alphaCookie = alphaResponse.headers.get("set-cookie");
+
+    const betaResponse = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "pi-beta-browser",
+        tenantId: "tenant-beta",
+        displayName: "Beta Browser PI",
+        email: "beta@example.com",
+        role: "pi"
+      })
+    });
+    const betaCookie = betaResponse.headers.get("set-cookie");
+
+    const alphaSession = await (await fetch(`${origin}/api/session`, { headers: { cookie: alphaCookie } })).json();
+    const betaSession = await (await fetch(`${origin}/api/session`, { headers: { cookie: betaCookie } })).json();
+
+    assert.equal(alphaSession.accountId, "pi-alpha-browser");
+    assert.equal(alphaSession.tenantId, "tenant-alpha");
+    assert.equal(betaSession.accountId, "pi-beta-browser");
+    assert.equal(betaSession.tenantId, "tenant-beta");
+  } finally {
+    await close();
+  }
+});
+
+test("configured console access token gates first PI login and preserves profile updates", async () => {
+  const appService = createOplCloud({
+    store: new MemoryStore(),
+    runtimeProvider: { name: "test-provider" },
+    pricing: {
+      serverHourly: { basic: 1, pro: 4 },
+      diskGbMonth: 0.2,
+      markup: 0.2
+    }
+  });
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    enforceSessionScope: true,
+    consoleAccessToken: "pilot-login-token"
+  }));
+  try {
+    const blockedResponse = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "pi-token",
+        tenantId: "tenant-token",
+        displayName: "Token PI",
+        role: "pi"
+      })
+    });
+    const blockedPayload = await blockedResponse.json();
+    assert.equal(blockedResponse.status, 401);
+    assert.equal(blockedPayload.error, "console_access_token_required");
+
+    const loginResponse = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "pi-token",
+        tenantId: "tenant-token",
+        displayName: "Token PI",
+        email: "token@example.com",
+        accessToken: "pilot-login-token",
+        role: "pi"
+      })
+    });
+    const cookie = loginResponse.headers.get("set-cookie");
+    assert.equal(loginResponse.status, 200);
+    assert.match(cookie, /opl_console_session=/);
+
+    const updateResponse = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        accountId: "pi-token",
+        tenantId: "tenant-other",
+        displayName: "Updated Token PI",
+        email: "updated-token@example.com",
+        role: "pi"
+      })
+    });
+    const updated = await updateResponse.json();
+    assert.equal(updateResponse.status, 200);
+    assert.deepEqual(updated, {
+      accountId: "pi-token",
+      tenantId: "tenant-token",
+      displayName: "Updated Token PI",
+      email: "updated-token@example.com",
+      role: "pi"
+    });
+  } finally {
+    await close();
+  }
+});
+
+test("PI state hides runtime evidence while operator state keeps it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-cloud-runtime-scope-"));
+  const appService = createOplCloud({
+    store: new MemoryStore(),
+    runtimeProvider: new LocalDockerProvider({
+      rootDir: root,
+      baseUrl: "http://127.0.0.1:8787",
+      execute: false
+    }),
+    pricing: {
+      serverHourly: { basic: 1, pro: 4 },
+      diskGbMonth: 0.2,
+      markup: 0.2
+    }
+  });
+  await appService.creditAccount({ accountId: "pi-runtime", amount: 300, reason: "runtime_scope_seed" });
+  await appService.createWorkspace({
+    accountId: "pi-runtime",
+    workspaceName: "Runtime Scope Lab",
+    packageId: "basic"
+  });
+
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    enforceSessionScope: true,
+    consoleAccessToken: "pilot-login-token",
+    operatorSummaryToken: "operator-token"
+  }));
+  try {
+    const piLogin = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "pi-runtime",
+        tenantId: "tenant-runtime",
+        displayName: "Runtime PI",
+        accessToken: "pilot-login-token",
+        role: "pi"
+      })
+    });
+    const piCookie = piLogin.headers.get("set-cookie");
+    const piState = await (await fetch(`${origin}/api/state`, { headers: { cookie: piCookie } })).json();
+    const piWorkspace = piState.workspaces[0];
+
+    assert.equal(piWorkspace.docker, undefined);
+    assert.equal(piWorkspace.server.localPath, undefined);
+    assert.equal(piWorkspace.disk.localPath, undefined);
+    assert.equal(piWorkspace.access.token, undefined);
+    assert.deepEqual(piState.runtimeOperations, []);
+
+    const operatorLogin = await fetch(`${origin}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        accountId: "operator",
+        tenantId: "ops",
+        displayName: "Operator",
+        operatorToken: "operator-token",
+        role: "operator"
+      })
+    });
+    const operatorCookie = operatorLogin.headers.get("set-cookie");
+    const operatorState = await (await fetch(`${origin}/api/state?accountId=pi-runtime`, { headers: { cookie: operatorCookie } })).json();
+
+    assert.match(operatorState.workspaces[0].docker.image, /one-person-lab-webui/);
+    assert.ok(operatorState.workspaces[0].server.localPath);
+    assert.equal(operatorState.runtimeOperations.length, 1);
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("enforced console session scope blocks PI account switching and pilot credits", async () => {
+  const appService = createOplCloud({
+    store: new MemoryStore(),
+    runtimeProvider: { name: "test-provider" },
+    pricing: {
+      serverHourly: { basic: 1, pro: 4 },
+      diskGbMonth: 0.2,
+      markup: 0.2
+    }
+  });
+  const { origin, close } = await listen(createRequestHandler({ appService, enforceSessionScope: true }));
+  const loginResponse = await fetch(`${origin}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      accountId: "pi-session",
+      displayName: "Session PI",
+      role: "pi"
+    })
+  });
+  const cookie = loginResponse.headers.get("set-cookie");
+  const csrf = loginResponse.headers.get("x-opl-csrf-token");
+  try {
+    const creditResponse = await fetch(`${origin}/api/accounts/credit`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, "x-opl-csrf-token": csrf },
+      body: JSON.stringify({ accountId: "pi-other", amount: 200, reason: "ui_demo_credit" })
+    });
+    const creditPayload = await creditResponse.json();
+    assert.equal(creditResponse.status, 403);
+    assert.equal(creditPayload.error, "operator_role_required");
+
+    const createResponse = await fetch(`${origin}/api/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, "x-opl-csrf-token": csrf },
+      body: JSON.stringify({ accountId: "pi-other", workspaceName: "Other Lab", packageId: "basic" })
+    });
+    const createPayload = await createResponse.json();
+    assert.equal(createResponse.status, 403);
+    assert.equal(createPayload.error, "account_scope_mismatch");
   } finally {
     await close();
   }

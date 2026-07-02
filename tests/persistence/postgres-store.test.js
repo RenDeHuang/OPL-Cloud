@@ -10,7 +10,8 @@ function createFakePool() {
     billing_ledger: [],
     audit_events: [],
     notifications: [],
-    runtime_operations: []
+    runtime_operations: [],
+    console_state: new Map()
   };
   const statements = [];
 
@@ -34,6 +35,7 @@ function createFakePool() {
         tables.audit_events = [];
         tables.notifications = [];
         tables.runtime_operations = [];
+        tables.console_state.clear();
         return { rows: [] };
       }
       if (normalized.startsWith("SELECT id, state FROM accounts")) {
@@ -53,6 +55,9 @@ function createFakePool() {
       }
       if (normalized.startsWith("SELECT state FROM runtime_operations")) {
         return { rows: tables.runtime_operations.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT key, state FROM console_state")) {
+        return { rows: [...tables.console_state.entries()].map(([key, state]) => ({ key, state })) };
       }
       if (normalized.startsWith("INSERT INTO accounts")) {
         tables.accounts.set(params[0], params[1]);
@@ -76,6 +81,10 @@ function createFakePool() {
       }
       if (normalized.startsWith("INSERT INTO runtime_operations")) {
         tables.runtime_operations.push(params[3]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO console_state")) {
+        tables.console_state.set(params[0], params[1]);
         return { rows: [] };
       }
       throw new Error(`unexpected_sql:${normalized}`);
@@ -119,7 +128,25 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         status: "succeeded",
         attempts: 1
       }
-    ]
+    ],
+    consoleSession: {
+      accountId: "pi-alpha",
+      tenantId: "tenant-alpha",
+      displayName: "Alpha Lab PI",
+      email: "pi-alpha@example.com",
+      role: "pi"
+    },
+    consoleSessions: {
+      "session-alpha": {
+        accountId: "pi-alpha",
+        tenantId: "tenant-alpha",
+        displayName: "Alpha Lab PI",
+        email: "pi-alpha@example.com",
+        role: "pi"
+      }
+    },
+    identityUsers: {},
+    identityInvites: {}
   };
 
   await store.write(state);
@@ -132,6 +159,7 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS audit_events")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS notifications")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS runtime_operations")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS console_state")));
 });
 
 test("PostgresStore update reads, mutates, and writes state transactionally", async () => {

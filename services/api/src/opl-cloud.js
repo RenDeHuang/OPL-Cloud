@@ -1,3 +1,8 @@
+import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+
+const scrypt = promisify(scryptCallback);
+
 const PACKAGES = {
   basic: {
     id: "basic",
@@ -41,12 +46,37 @@ function makeToken(workspaceId, sequence = "initial") {
   return `share_${stableHash(`${workspaceId}:${sequence}`)}${stableHash(`${sequence}:${workspaceId}`).slice(0, 6)}`;
 }
 
+function randomToken(prefix) {
+  return `${prefix}_${randomBytes(24).toString("base64url")}`;
+}
+
 function money(value) {
   return Number(value.toFixed(4));
 }
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+async function hashPassword(password) {
+  const value = String(password || "");
+  if (value.length < 12) throw new Error("password_too_short");
+  const salt = randomBytes(16).toString("hex");
+  const hash = await scrypt(value, salt, 64);
+  return `scrypt:${salt}:${hash.toString("hex")}`;
+}
+
+async function verifyPassword(password, passwordHash) {
+  const [scheme, salt, expectedHex] = String(passwordHash || "").split(":");
+  if (scheme !== "scrypt" || !salt || !expectedHex) return false;
+  const actual = await scrypt(String(password || ""), salt, 64);
+  const expected = Buffer.from(expectedHex, "hex");
+  if (actual.length !== expected.length) return false;
+  return timingSafeEqual(actual, expected);
 }
 
 function getPackage(packageId) {
@@ -60,9 +90,46 @@ function ensureAccount(state, accountId) {
     id: accountId,
     balance: 0,
     frozen: 0,
+    holds: {},
+    role: "pi",
+    tenantId: "default",
+    displayName: accountId,
     createdAt: now()
   };
+  state.accounts[accountId].holds ??= {};
+  state.accounts[accountId].role ??= "pi";
+  state.accounts[accountId].tenantId ??= "default";
+  state.accounts[accountId].displayName ??= accountId;
   return state.accounts[accountId];
+}
+
+function normalizeRole(role) {
+  return role === "operator" ? "operator" : "pi";
+}
+
+function publicSession(account) {
+  return {
+    accountId: account.id,
+    tenantId: account.tenantId || "default",
+    displayName: account.displayName || account.id,
+    email: account.email || "",
+    role: normalizeRole(account.role)
+  };
+}
+
+function publicUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    email: user.email,
+    accountId: user.accountId,
+    tenantId: user.tenantId,
+    displayName: user.displayName,
+    role: normalizeRole(user.role),
+    status: user.status || "active",
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
 }
 
 function accountAvailable(account) {
@@ -210,6 +277,25 @@ function storageDestroyed(workspace) {
   return workspace?.state === "destroyed" || workspace?.disk?.status === "destroyed";
 }
 
+function publicWorkspace(workspace, { includeOperatorEvidence = false } = {}) {
+  const next = clone(workspace);
+  if (includeOperatorEvidence) return next;
+
+  delete next.provider;
+  delete next.docker;
+  if (next.server) {
+    delete next.server.localPath;
+  }
+  if (next.disk) {
+    delete next.disk.localPath;
+    delete next.disk.mountPath;
+  }
+  if (next.access) {
+    delete next.access.token;
+  }
+  return next;
+}
+
 export function createOplCloud({ store, runtimeProvider, pricing, productionReadiness = null }) {
   return new OplCloudService({ store, runtimeProvider, pricing, productionReadiness });
 }
@@ -234,6 +320,311 @@ export class OplCloudService {
         source: "tencent_price_catalog_snapshot"
       }
     }));
+  }
+
+  sessionFromUser(state, user, { sessionId }) {
+    if ((user.status || "active") === "disabled") throw new Error("user_disabled");
+    const account = ensureAccount(state, user.accountId);
+    account.tenantId = user.tenantId || account.tenantId || "default";
+    account.displayName = user.displayName || account.displayName || user.accountId;
+    account.email = user.email || account.email || "";
+    account.role = normalizeRole(user.role);
+    const session = {
+      accountId: user.accountId,
+      tenantId: account.tenantId,
+      displayName: account.displayName,
+      email: user.email,
+      role: normalizeRole(user.role),
+      userId: user.id,
+      userEmail: user.email,
+      csrfToken: randomToken("csrf"),
+      createdAt: now(),
+      updatedAt: now()
+    };
+    if (sessionId) {
+      state.consoleSessions ??= {};
+      state.consoleSessions[sessionId] = session;
+    }
+    state.consoleSession = publicSession({ ...account, email: user.email, role: user.role });
+    return session;
+  }
+
+  publicConsoleSession(session, { includeSecurity = false } = {}) {
+    const next = {
+      accountId: session.accountId,
+      tenantId: session.tenantId || "default",
+      displayName: session.displayName || session.accountId,
+      email: session.email || session.userEmail || "",
+      role: normalizeRole(session.role)
+    };
+    if (includeSecurity && session.csrfToken) next.csrfToken = session.csrfToken;
+    if (includeSecurity && session.userId) next.userId = session.userId;
+    if (includeSecurity && session.userEmail) next.userEmail = session.userEmail;
+    return next;
+  }
+
+  async getConsoleSession(sessionId = "", options = {}) {
+    const state = await this.store.read();
+    const savedSession = sessionId ? state.consoleSessions?.[sessionId] : null;
+    if (sessionId && !savedSession) return null;
+
+    if (savedSession?.userEmail) {
+      const user = state.identityUsers?.[normalizeEmail(savedSession.userEmail)];
+      if (!user) return null;
+      if ((user.status || "active") === "disabled") throw new Error("user_disabled");
+      return this.publicConsoleSession({
+        ...savedSession,
+        accountId: user.accountId,
+        tenantId: user.tenantId,
+        displayName: user.displayName,
+        email: user.email,
+        role: user.role
+      }, options);
+    }
+
+    const saved = state.consoleSession || {};
+    const active = savedSession || saved;
+    const accountId = active.accountId || "pi-alpha";
+    const account = {
+      ...ensureAccount(state, accountId),
+      ...active,
+      id: accountId
+    };
+    return this.publicConsoleSession({
+      ...publicSession(account),
+      csrfToken: active.csrfToken,
+      userId: active.userId,
+      userEmail: active.userEmail
+    }, options);
+  }
+
+  async deleteConsoleSession(sessionId = "") {
+    if (!sessionId) return false;
+    return this.store.update((state) => {
+      state.consoleSessions ??= {};
+      const existed = Boolean(state.consoleSessions[sessionId]);
+      delete state.consoleSessions[sessionId];
+      return existed;
+    });
+  }
+
+  async updateConsoleSession({ accountId, tenantId = "default", displayName, email = "", role = "pi" }, { sessionId = "" } = {}) {
+    if (!accountId) throw new Error("account_required");
+    const normalizedRole = normalizeRole(role);
+
+    return this.store.update((state) => {
+      state.consoleSessions ??= {};
+      const account = ensureAccount(state, accountId);
+      account.tenantId = tenantId || account.tenantId || "default";
+      account.displayName = displayName || account.displayName || accountId;
+      account.email = email || account.email || "";
+      account.role = normalizedRole;
+      account.updatedAt = now();
+      state.consoleSession = publicSession(account);
+      if (sessionId) {
+        state.consoleSessions[sessionId] = {
+          ...state.consoleSession,
+          csrfToken: state.consoleSessions[sessionId]?.csrfToken || randomToken("csrf"),
+          createdAt: state.consoleSessions[sessionId]?.createdAt || now(),
+          updatedAt: now()
+        };
+      }
+      return clone(state.consoleSession);
+    });
+  }
+
+  async operatorLogin({ accountId = "operator", tenantId = "ops", displayName = "OPL Operator", email = "operator@opl.local" }, { sessionId = "" } = {}) {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) throw new Error("email_required");
+
+    return this.store.update((state) => {
+      state.identityUsers ??= {};
+      state.identityInvites ??= {};
+      const account = ensureAccount(state, accountId);
+      account.tenantId = tenantId || account.tenantId || "ops";
+      account.displayName = displayName || account.displayName || accountId;
+      account.email = normalizedEmail;
+      account.role = "operator";
+      account.updatedAt = now();
+      const user = {
+        ...(state.identityUsers[normalizedEmail] || {}),
+        id: state.identityUsers[normalizedEmail]?.id || makeId("user", normalizedEmail),
+        email: normalizedEmail,
+        accountId,
+        tenantId: account.tenantId,
+        displayName: account.displayName,
+        role: "operator",
+        status: "active",
+        createdAt: state.identityUsers[normalizedEmail]?.createdAt || now(),
+        updatedAt: now()
+      };
+      state.identityUsers[normalizedEmail] = user;
+      const session = this.sessionFromUser(state, user, { sessionId });
+      state.audit.push(this.auditEvent({ accountId, type: "identity.operator_login", sourceEventId: sessionId || user.id }));
+      return this.publicConsoleSession(session, { includeSecurity: true });
+    });
+  }
+
+  async inviteUser({ actor, email, accountId, tenantId = "default", displayName, role = "pi" }) {
+    if (actor?.role !== "operator") throw new Error("operator_role_required");
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) throw new Error("email_required");
+    if (!accountId) throw new Error("account_required");
+    const normalizedRole = normalizeRole(role);
+
+    return this.store.update((state) => {
+      state.identityUsers ??= {};
+      state.identityInvites ??= {};
+      const account = ensureAccount(state, accountId);
+      account.tenantId = tenantId || account.tenantId || "default";
+      account.displayName = displayName || account.displayName || accountId;
+      account.email = normalizedEmail;
+      account.role = normalizedRole;
+      account.updatedAt = now();
+
+      const user = {
+        ...(state.identityUsers[normalizedEmail] || {}),
+        id: state.identityUsers[normalizedEmail]?.id || makeId("user", normalizedEmail),
+        email: normalizedEmail,
+        accountId,
+        tenantId: account.tenantId,
+        displayName: account.displayName,
+        role: normalizedRole,
+        status: state.identityUsers[normalizedEmail]?.status === "active" ? "active" : "invited",
+        createdAt: state.identityUsers[normalizedEmail]?.createdAt || now(),
+        updatedAt: now(),
+        invitedBy: actor.userEmail || actor.email || actor.accountId
+      };
+      state.identityUsers[normalizedEmail] = user;
+
+      const inviteToken = randomToken("invite");
+      const invite = {
+        token: inviteToken,
+        email: normalizedEmail,
+        accountId,
+        tenantId: account.tenantId,
+        role: normalizedRole,
+        status: "pending",
+        createdAt: now(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        invitedBy: actor.userEmail || actor.email || actor.accountId
+      };
+      state.identityInvites[inviteToken] = invite;
+      state.audit.push(this.auditEvent({ accountId, type: "identity.user_invited", sourceEventId: inviteToken }));
+      return {
+        inviteToken,
+        expiresAt: invite.expiresAt,
+        user: publicUser(user)
+      };
+    });
+  }
+
+  async createIdentityUser({ actor, email, accountId, tenantId = "default", displayName, password }) {
+    if (actor?.role !== "operator") throw new Error("operator_role_required");
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) throw new Error("email_required");
+    if (!accountId) throw new Error("account_required");
+    const passwordHash = await hashPassword(password);
+
+    return this.store.update((state) => {
+      state.identityUsers ??= {};
+      state.identityInvites ??= {};
+      const account = ensureAccount(state, accountId);
+      account.tenantId = tenantId || account.tenantId || "default";
+      account.displayName = displayName || account.displayName || accountId;
+      account.email = normalizedEmail;
+      account.role = "pi";
+      account.updatedAt = now();
+
+      const user = {
+        ...(state.identityUsers[normalizedEmail] || {}),
+        id: state.identityUsers[normalizedEmail]?.id || makeId("user", normalizedEmail),
+        email: normalizedEmail,
+        accountId,
+        tenantId: account.tenantId,
+        displayName: account.displayName,
+        role: "pi",
+        status: "active",
+        passwordHash,
+        createdAt: state.identityUsers[normalizedEmail]?.createdAt || now(),
+        updatedAt: now(),
+        createdBy: actor.userEmail || actor.email || actor.accountId
+      };
+      state.identityUsers[normalizedEmail] = user;
+      state.audit.push(this.auditEvent({ accountId, type: "identity.user_created", sourceEventId: user.id }));
+      return { user: publicUser(user) };
+    });
+  }
+
+  async acceptInvite({ inviteToken, password }, { sessionId = "" } = {}) {
+    if (!inviteToken) throw new Error("invite_token_required");
+    const passwordHash = await hashPassword(password);
+
+    return this.store.update((state) => {
+      state.identityUsers ??= {};
+      state.identityInvites ??= {};
+      const invite = state.identityInvites[inviteToken];
+      if (!invite || invite.status !== "pending") throw new Error("invite_invalid");
+      if (new Date(invite.expiresAt).getTime() < Date.now()) throw new Error("invite_expired");
+      const user = state.identityUsers[invite.email];
+      if (!user) throw new Error("invite_user_not_found");
+      if ((user.status || "invited") === "disabled") throw new Error("user_disabled");
+
+      user.passwordHash = passwordHash;
+      user.status = "active";
+      user.updatedAt = now();
+      invite.status = "accepted";
+      invite.acceptedAt = now();
+      const session = this.sessionFromUser(state, user, { sessionId });
+      state.audit.push(this.auditEvent({ accountId: user.accountId, type: "identity.invite_accepted", sourceEventId: inviteToken }));
+      return this.publicConsoleSession(session, { includeSecurity: true });
+    });
+  }
+
+  async loginUser({ email, password }, { sessionId = "" } = {}) {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) throw new Error("email_required");
+    const state = await this.store.read();
+    const user = state.identityUsers?.[normalizedEmail];
+    if (!user || !user.passwordHash) throw new Error("invalid_credentials");
+    if ((user.status || "active") === "disabled") throw new Error("user_disabled");
+    if (!(await verifyPassword(password, user.passwordHash))) throw new Error("invalid_credentials");
+
+    return this.store.update((nextState) => {
+      const activeUser = nextState.identityUsers?.[normalizedEmail];
+      if (!activeUser || (activeUser.status || "active") === "disabled") throw new Error("user_disabled");
+      const session = this.sessionFromUser(nextState, activeUser, { sessionId });
+      activeUser.lastLoginAt = now();
+      activeUser.updatedAt = now();
+      nextState.audit.push(this.auditEvent({ accountId: activeUser.accountId, type: "identity.user_login", sourceEventId: sessionId || activeUser.id }));
+      return this.publicConsoleSession(session, { includeSecurity: true });
+    });
+  }
+
+  async disableUser({ actor, email, reason = "disabled_by_operator" }) {
+    if (actor?.role !== "operator") throw new Error("operator_role_required");
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) throw new Error("email_required");
+
+    return this.store.update((state) => {
+      const user = state.identityUsers?.[normalizedEmail];
+      if (!user) throw new Error("user_not_found");
+      user.status = "disabled";
+      user.disabledAt = now();
+      user.disabledBy = actor.userEmail || actor.email || actor.accountId;
+      user.disableReason = reason;
+      user.updatedAt = now();
+      state.audit.push(this.auditEvent({ accountId: user.accountId, type: "identity.user_disabled", sourceEventId: reason }));
+      return { user: publicUser(user) };
+    });
+  }
+
+  async listIdentityUsers({ actor }) {
+    if (actor?.role !== "operator") throw new Error("operator_role_required");
+    const state = await this.store.read();
+    return Object.values(state.identityUsers || {})
+      .map(publicUser)
+      .sort((left, right) => left.email.localeCompare(right.email));
   }
 
   async creditAccount({ accountId, amount, reason }) {
@@ -602,7 +993,7 @@ export class OplCloudService {
     return clone(workspace);
   }
 
-  async getState(accountId = "pi-alpha") {
+  async getState(accountId = "pi-alpha", { includeOperatorEvidence = true } = {}) {
     const state = await this.store.read();
     return {
       product: {
@@ -613,11 +1004,15 @@ export class OplCloudService {
       billingPolicy: billingPolicy(this.pricing),
       packages: this.packages(),
       account: clone(state.accounts[accountId] ?? { id: accountId, balance: 0, frozen: 0, holds: {} }),
-      workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
+      workspaces: Object.values(state.workspaces)
+        .filter((workspace) => workspace.ownerAccountId === accountId)
+        .map((workspace) => publicWorkspace(workspace, { includeOperatorEvidence })),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
       audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
       notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
-      runtimeOperations: state.runtimeOperations.filter((entry) => entry.accountId === accountId).map(clone)
+      runtimeOperations: includeOperatorEvidence
+        ? state.runtimeOperations.filter((entry) => entry.accountId === accountId).map(clone)
+        : []
     };
   }
 

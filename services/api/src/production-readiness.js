@@ -11,7 +11,12 @@ const REQUIRED_COMMON_ENV = [
   "OPL_RUNTIME_PROVIDER",
   "OPL_WORKSPACE_IMAGE",
   "OPL_WORKSPACE_DOMAIN",
-  "DATABASE_URL"
+  "DATABASE_URL",
+  "OPL_ENFORCE_SESSION_SCOPE",
+  "OPL_CONSOLE_ACCESS_TOKEN",
+  "OPL_OPERATOR_SUMMARY_TOKEN",
+  "OPL_ENFORCE_CSRF",
+  "OPL_COOKIE_SECURE"
 ];
 
 const REQUIRED_CVM_ENV = [
@@ -140,6 +145,11 @@ export async function productionReadiness({ env = process.env, commandExists = (
     check("opl_app_contract", matchesOplAppContract(env), "one-person-lab-app WebUI must expose port 3000 and persist /data plus /projects"),
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),
+    check("session_scope", env.OPL_ENFORCE_SESSION_SCOPE === "1", "OPL_ENFORCE_SESSION_SCOPE must be 1 so PI requests cannot switch accountId"),
+    check("console_access_token", Boolean(env.OPL_CONSOLE_ACCESS_TOKEN), "OPL_CONSOLE_ACCESS_TOKEN is required before PI login is exposed"),
+    check("operator_token", Boolean(env.OPL_OPERATOR_SUMMARY_TOKEN), "OPL_OPERATOR_SUMMARY_TOKEN is required for operator-only evidence"),
+    check("csrf", env.OPL_ENFORCE_CSRF === "1", "OPL_ENFORCE_CSRF must be 1 so authenticated writes require a CSRF token"),
+    check("secure_cookie", env.OPL_COOKIE_SECURE === "1", "OPL_COOKIE_SECURE must be 1 behind HTTPS so session cookies carry Secure"),
     check("provider_env", providerConfig.requiredEnv.every((key) => Boolean(env[key])), "Runtime provider environment is incomplete"),
     check("tools", missingTools.length === 0, "Required production tools are missing")
   ];

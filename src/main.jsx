@@ -1,346 +1,280 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  Copy,
-  CreditCard,
-  Database,
-  HardDrive,
-  Link as LinkIcon,
-  Play,
-  RefreshCw,
-  RotateCw,
-  Server,
-  ShieldCheck,
-  Square,
-  Trash2
-} from "lucide-react";
 import "./styles.css";
+import {
+  commercialLoginMethods,
+  landingFeatureCards,
+  publicNavigationItems,
+  unauthenticatedViewForPath
+} from "./console-model.js";
 
-const accountId = "pi-alpha";
+const ConsoleApp = lazy(() => import("./console-app.jsx"));
 
-async function api(path, body) {
-  const response = await fetch(path, {
+async function loginRequest(values) {
+  const response = await fetch("/api/auth/login", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(values)
   });
   const payload = await response.json();
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || "request_failed");
+  if (!response.ok || payload.ok === false) throw new Error(payload.error || "login_failed");
+  const csrfToken = response.headers.get("x-opl-csrf-token") || payload.csrfToken || "";
+  if (csrfToken) globalThis.window.__OPL_CSRF_TOKEN = csrfToken;
   return payload;
 }
 
-function money(value) {
-  return `¥${Number(value || 0).toFixed(2)}`;
+async function sessionRequest() {
+  const response = await fetch("/api/session", { credentials: "same-origin" });
+  if (response.status === 401) return null;
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) throw new Error(payload.error || "session_failed");
+  const csrfToken = response.headers.get("x-opl-csrf-token") || payload.csrfToken || "";
+  if (csrfToken) globalThis.window.__OPL_CSRF_TOKEN = csrfToken;
+  return payload;
 }
 
-function packageSummary(plan) {
-  return `${plan.cpu} CPU / ${plan.memoryGb}GB + ${plan.diskGb}GB storage`;
+function FeatureIcon({ title }) {
+  const type = title.includes("billing") ? "billing" : title.includes("runtime") ? "runtime" : "workspace";
+  return <span className={`cssFeatureIcon ${type}`} aria-hidden="true" />;
 }
 
-function statusLabel(workspace) {
-  if (!workspace) return "No workspace";
-  const labels = {
-    running: "Running",
-    stopped_server_disk_retained: "Stopped, disk retained",
-    server_destroyed_disk_retained: "Compute destroyed, storage retained",
-    storage_hold_exhausted: "Storage hold exhausted",
-    stopped_storage_hold_exhausted: "Stopped, storage hold exhausted",
-    destroyed: "Destroyed",
-    failed: "Failed"
-  };
-  return labels[workspace.state] || workspace.state;
-}
-
-function App() {
-  const [state, setState] = useState(null);
-  const [readiness, setReadiness] = useState(null);
-  const [productionReadiness, setProductionReadiness] = useState(null);
-  const [selectedId, setSelectedId] = useState("");
-  const [error, setError] = useState("");
-
-  async function refresh() {
-    const [stateResponse, readinessResponse, productionReadinessResponse] = await Promise.all([
-      fetch(`/api/state?accountId=${accountId}`),
-      fetch("/api/runtime/readiness"),
-      fetch("/api/production/readiness")
-    ]);
-    const next = await stateResponse.json();
-    const nextReadiness = await readinessResponse.json();
-    const nextProductionReadiness = await productionReadinessResponse.json();
-    setState(next);
-    setReadiness(nextReadiness);
-    setProductionReadiness(nextProductionReadiness);
-    setSelectedId((current) => current || next.workspaces[0]?.id || "");
-  }
-
-  async function run(action) {
-    try {
-      setError("");
-      await action();
-      await refresh();
-    } catch (err) {
-      setError(err.message);
-    }
-  }
-
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const selected = useMemo(() => state?.workspaces.find((item) => item.id === selectedId) || state?.workspaces[0], [state, selectedId]);
-
-  if (!state) return <div className="loading">Loading OPL Console...</div>;
-
+function PublicHeader({ onLoginClick, onHomeClick }) {
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brandIcon">OPL</div>
-          <div>
-            <strong>OPL Console</strong>
-            <span>OPL Cloud management</span>
-          </div>
-        </div>
-        <nav>
-          <a href="#workspaces">Workspaces</a>
-          <a href="#create">Create</a>
-          <a href="#access">URL & Token</a>
-          <a href="#resources">Compute & Storage</a>
-          <a href="#alerts">Alerts</a>
-          <a href="#billing">Billing</a>
-          <a href="#audit">Audit</a>
-        </nav>
-        <div className="sidebarNote">1 Workspace = 1 compute unit + 1 Docker runtime + 1 storage volume + 1 URL</div>
-      </aside>
+    <header className="publicHeader">
+      <a
+        className="publicBrand"
+        href="/"
+        onClick={(event) => {
+          event.preventDefault();
+          onHomeClick?.();
+        }}
+      >
+        <span className="brandMark">OPL</span>
+        <span>OPL Cloud</span>
+      </a>
+      <nav className="publicNav" aria-label="Public navigation">
+        {publicNavigationItems.map((item) => (
+          <a
+            key={item.path}
+            href={item.path}
+            onClick={(event) => {
+              event.preventDefault();
+              item.path === "/login" ? onLoginClick?.() : onHomeClick?.();
+            }}
+          >
+            {item.label}
+          </a>
+        ))}
+      </nav>
+    </header>
+  );
+}
 
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">OPL Cloud</p>
-            <h1>Workspace distribution for PI labs</h1>
-          </div>
-          <button onClick={() => run(() => api("/api/accounts/credit", { accountId, amount: 200, reason: "owner_credit" }))}>
-            <CreditCard size={16} /> Grant ¥200
-          </button>
-        </header>
-
-        {error && <div className="error">{error}</div>}
-
-        {readiness && (
-          <section className={`readiness ${readiness.ready ? "ready" : "blocked"}`}>
-            <div>
-              <strong>{readiness.provider}</strong>
-              <span>{readiness.ready ? "Ready for runtime execution" : "Runtime setup incomplete"}</span>
+function PublicHome({ onLoginClick, onHomeClick }) {
+  return (
+    <div className="publicShell">
+      <PublicHeader onLoginClick={onLoginClick} onHomeClick={onHomeClick} />
+      <main>
+        <section className="homeHero">
+          <div className="homeHeroPreview" aria-hidden="true">
+            <div className="previewTopbar">
+              <span />
+              <span />
+              <span />
             </div>
-            {!readiness.ready && (
-              <code>
-                {[...readiness.missingEnv, ...readiness.missingTools.map((tool) => `tool:${tool}`)].join(" · ")}
-              </code>
-            )}
-          </section>
-        )}
-
-        {productionReadiness && (
-          <section className={`readiness ${productionReadiness.ready ? "ready" : "blocked"}`}>
-            <div>
-              <strong>production</strong>
-              <span>{productionReadiness.ready ? "Ready for production launch" : "Production launch blockers"}</span>
-            </div>
-            {!productionReadiness.ready && (
-              <code>
-                {[
-                  ...productionReadiness.failedChecks,
-                  ...productionReadiness.missingEnv,
-                  ...productionReadiness.missingTools.map((tool) => `tool:${tool}`)
-                ].join(" · ")}
-              </code>
-            )}
-          </section>
-        )}
-
-        <section className="metrics">
-          <Metric label="Account" value={state.account.id} />
-          <Metric label="Balance" value={money(state.account.balance)} />
-          <Metric label="Frozen holds" value={money(state.account.frozen)} />
-          <Metric label="Workspaces" value={state.workspaces.length} />
-        </section>
-
-        <section id="create" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Create OPL Workspace</h2>
-              <p>Creates one compute unit, one persistent storage volume, one Docker runtime, and one URL.</p>
+            <div className="previewGrid">
+              <div className="previewSidebar">
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+              <div className="previewMain">
+                <div className="previewStats">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="previewTable">
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
             </div>
           </div>
-          <div className="planGrid">
-            {state.packages.map((plan) => (
-              <article className="plan" key={plan.id}>
-                <span>{plan.id === "basic" ? "Default" : "CPU"}</span>
-                <h3>{plan.name}</h3>
-                <p>{packageSummary(plan)}</p>
-                <p>{money(plan.price.computeHourly)}/compute hour · {money(plan.price.storageGbMonth)}/GB-month storage</p>
-                <button
-                  className="primary"
-                  onClick={() => run(() => api("/api/workspaces", {
-                    accountId,
-                    workspaceName: plan.id === "basic" ? "Grant Lab" : "Protein Lab",
-                    packageId: plan.id
-                  }))}
-                >
-                  <Play size={16} /> Create {plan.id}
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="workspaces" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Workspaces</h2>
-              <p>Each URL can be copied and shared with members. Members do not log in.</p>
+          <div className="homeHeroContent">
+            <span className="homeTag">Commercial pilot console</span>
+            <h1>OPL Cloud</h1>
+            <p>
+              Give each PI a private OPL Workspace with prepaid balance control, managed runtime, and clean audit receipts.
+            </p>
+            <div className="homeProofs">
+              <span><i className="cssCheckIcon" aria-hidden="true" /> PI-safe console</span>
+              <span><i className="cssCheckIcon" aria-hidden="true" /> Manual recharge</span>
+              <span><i className="cssCheckIcon" aria-hidden="true" /> Audit receipts</span>
             </div>
-          </div>
-          <div className="workspaceList">
-            {state.workspaces.length === 0 && <div className="empty">No OPL Workspace yet. Grant balance, then create a CPU package.</div>}
-            {state.workspaces.map((workspace) => (
-              <button
-                className={`workspaceRow ${workspace.id === selected?.id ? "active" : ""}`}
-                key={workspace.id}
-                onClick={() => setSelectedId(workspace.id)}
-              >
-                <span>{workspace.name}</span>
-                <strong>{statusLabel(workspace)}</strong>
+            <div className="publicActions">
+              <button className="publicButton primary" type="button" onClick={onLoginClick}>
+                Login to Console <i className="cssArrowIcon" aria-hidden="true" />
               </button>
-            ))}
+              <a
+                className="publicButton"
+                href="https://github.com/gaofeng21cn/one-person-lab-cloud/blob/main/README.zh-CN.md"
+                target="_blank"
+                rel="noreferrer"
+              >
+                OPL modules
+              </a>
+            </div>
           </div>
         </section>
 
-        <section id="access" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Workspace URL</h2>
-              <p>Permanent token until owner resets it, deletes it, or destroys storage.</p>
+        <section className="homeFeatures" aria-label="OPL Cloud capabilities">
+          {landingFeatureCards.map((feature) => (
+            <div className="homeFeature" key={feature.title}>
+              <div className="homeFeatureIcon"><FeatureIcon title={feature.title.toLowerCase()} /></div>
+              <h3>{feature.title}</h3>
+              <p>{feature.description}</p>
             </div>
-            <LinkIcon />
-          </div>
-          {selected ? (
-            <div className="urlBox">
-              <code>{selected.url}</code>
-              <button disabled={selected.access.tokenStatus !== "active"} onClick={() => navigator.clipboard?.writeText(selected.url)}><Copy size={16} /> Copy</button>
-              <button disabled={selected.access.tokenStatus !== "active"} onClick={() => run(() => api("/api/workspaces/reset-token", { accountId, workspaceId: selected.id }))}><RefreshCw size={16} /> Reset token</button>
-              <button className="danger" disabled={selected.access.tokenStatus !== "active"} onClick={() => run(() => api("/api/workspaces/delete-token", { accountId, workspaceId: selected.id }))}><Trash2 size={16} /> Delete token</button>
-            </div>
-          ) : <div className="empty">Create a Workspace to get a URL.</div>}
-        </section>
-
-        <section id="resources" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Compute & Storage</h2>
-              <p>Compute lifecycle is separate from persistent storage lifecycle.</p>
-            </div>
-            <Server />
-          </div>
-          {selected ? (
-            <>
-              <div className="resourceGrid">
-                <ResourceCard icon={<Server />} title="Compute" value={`${selected.server.spec} / ${selected.server.status}`} billing={selected.server.billingStatus} />
-                <ResourceCard icon={<HardDrive />} title="Storage" value={`${selected.disk.sizeGb}GB / ${selected.disk.status}`} billing={selected.disk.billingStatus} />
-                <ResourceCard icon={<Database />} title="Docker" value={selected.docker.image} billing={selected.docker.status} />
-                <ResourceCard icon={<ShieldCheck />} title="Access" value={selected.access.tokenStatus} billing="No login required" />
-              </div>
-              <div className="actions">
-                <button onClick={() => run(() => api("/api/workspaces/stop-server", { accountId, workspaceId: selected.id, confirm: true }))}><Square size={16} /> Stop compute</button>
-                <button onClick={() => run(() => api("/api/workspaces/restart-server", { accountId, workspaceId: selected.id }))}><RotateCw size={16} /> Restart</button>
-                <button className="danger" onClick={() => run(() => api("/api/workspaces/destroy-server", { accountId, workspaceId: selected.id, confirm: true }))}><Trash2 size={16} /> Destroy compute</button>
-                <button className="danger strong" onClick={() => run(() => api("/api/workspaces/destroy-disk", { accountId, workspaceId: selected.id, confirmDataLoss: true }))}><Trash2 size={16} /> Destroy storage</button>
-                <button onClick={() => run(() => api("/api/billing/settle", {
-                  accountId,
-                  workspaceId: selected.id,
-                  hours: 1,
-                  sourceEventId: `console_billing_tick_${Date.now()}`
-                }))}><CreditCard size={16} /> Settle 1h</button>
-              </div>
-            </>
-          ) : <div className="empty">No resource binding yet.</div>}
-        </section>
-
-        <section id="alerts" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Alerts</h2>
-              <p>Operator-visible billing and lifecycle notifications.</p>
-            </div>
-          </div>
-          <EventList events={state.notifications} />
-        </section>
-
-        <section id="billing" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Billing Ledger</h2>
-              <p>Seven-day prepaid holds, hourly compute and storage debits, and release receipts.</p>
-            </div>
-          </div>
-          <PolicyGrid policy={state.billingPolicy} />
-          <EventList events={state.billingLedger} />
-        </section>
-
-        <section id="audit" className="band">
-          <div className="sectionHeader">
-            <div>
-              <h2>Audit Receipts</h2>
-              <p>Lifecycle receipts for workspace operations.</p>
-            </div>
-          </div>
-          <EventList events={state.audit} />
+          ))}
         </section>
       </main>
     </div>
   );
 }
 
-function Metric({ label, value }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
-}
+function LoginPage({ error, loading, onLogin, onBackHome }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-function ResourceCard({ icon, title, value, billing }) {
   return (
-    <article className="resourceCard">
-      <div>{icon}<span>{title}</span></div>
-      <strong>{value}</strong>
-      <small>{billing}</small>
-    </article>
-  );
-}
-
-function PolicyGrid({ policy }) {
-  if (!policy) return null;
-  return (
-    <div className="policyGrid">
-      <Metric label="Hold window" value={`${policy.prepaidHoldDays} days`} />
-      <Metric label="Minimum charge" value={`${policy.minimumBillableHours}h`} />
-      <Metric label="Markup" value={`${Math.round(policy.markup * 100)}%`} />
-      <Metric label="Compute exhaustion" value={policy.computeHoldExhaustion} />
+    <div className="publicShell loginPublicShell">
+      <PublicHeader onLoginClick={() => {}} onHomeClick={onBackHome} />
+      <main className="loginShell">
+        <section className="loginPanel">
+          <div className="loginTitle">
+            <span className="brandMark">OPL</span>
+            <div>
+              <h1>Login to OPL Console</h1>
+              <p>{commercialLoginMethods[0].label}</p>
+            </div>
+          </div>
+          {error && <div className="loginError">{error}</div>}
+          <form
+            className="loginForm"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onLogin({ email, password });
+            }}
+          >
+            <label className="formField">
+              <span>Email</span>
+              <input
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </label>
+            <label className="formField">
+              <span>Password</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+            <button className="publicButton primary fullWidth" type="submit" disabled={loading}>
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
+        </section>
+      </main>
     </div>
   );
 }
 
-function EventList({ events }) {
-  if (!events.length) return <div className="empty">No events yet.</div>;
-  return (
-    <div className="eventList">
-      {events.slice().reverse().map((event) => (
-        <article className="event" key={event.id}>
-          <strong>{event.type}</strong>
-          <span>{event.workspaceId}</span>
-          <code>{event.sourceEventId}</code>
-          <em>{event.amount !== undefined ? money(event.amount) : event.createdAt}</em>
-        </article>
-      ))}
-    </div>
-  );
+function App() {
+  const [session, setSession] = useState(null);
+  const [mode, setMode] = useState("checking");
+  const [publicView, setPublicView] = useState(() => unauthenticatedViewForPath(globalThis.window?.location?.pathname || "/"));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const onSignedOut = useMemo(() => () => {
+    setSession(null);
+    setMode("public");
+    setPublicView("home");
+    setError("");
+    globalThis.window?.history.replaceState({}, "", "/");
+  }, []);
+
+  function showPublicView(nextView) {
+    const nextPath = nextView === "login" ? "/login" : "/";
+    setPublicView(nextView);
+    globalThis.window?.history.pushState({}, "", nextPath);
+  }
+
+  useEffect(() => {
+    sessionRequest()
+      .then((nextSession) => {
+        if (nextSession) {
+          setSession(nextSession);
+          setMode("console");
+          return;
+        }
+        setMode("public");
+        setPublicView(unauthenticatedViewForPath(globalThis.window?.location?.pathname || "/"));
+      })
+      .catch((err) => {
+        setMode("public");
+        setError(err.message);
+      });
+  }, []);
+
+  async function login(values) {
+    try {
+      setLoading(true);
+      setError("");
+      const nextSession = await loginRequest(values);
+      setSession(nextSession);
+      setMode("console");
+      globalThis.window?.history.replaceState({}, "", "/");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (mode === "checking") return <div className="loadingScreen">Loading OPL Cloud...</div>;
+
+  if (mode === "console") {
+    return (
+      <Suspense fallback={<div className="loadingScreen">Loading OPL Console...</div>}>
+        <ConsoleApp initialSession={session} onSignedOut={onSignedOut} />
+      </Suspense>
+    );
+  }
+
+  if (publicView === "login") {
+    return (
+      <LoginPage
+        error={error}
+        loading={loading}
+        onLogin={login}
+        onBackHome={() => showPublicView("home")}
+      />
+    );
+  }
+
+  return <PublicHome onLoginClick={() => showPublicView("login")} onHomeClick={() => showPublicView("home")} />;
 }
 
 createRoot(document.getElementById("root")).render(<App />);
