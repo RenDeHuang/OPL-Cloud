@@ -184,7 +184,7 @@ The OPL Cloud TKE production entrypoint is deployed and externally reachable.
 
 Verified production inputs:
 
-- `OPL_CLOUD_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:bca3a0d`
+- `OPL_CLOUD_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:fc1609074f2e`
 - `OPL_WORKSPACE_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest`
 - `OPL_RUNTIME_PROVIDER=tencent-tke`
 - `OPL_PUBLIC_URL=https://cloud.medopl.cn`
@@ -211,9 +211,9 @@ Verified external entrypoints:
 
 Verified production Workspace lifecycle:
 
-- Run id: `20260701T234830Z-console-decoupling`.
-- Verification Workspace: `ws-17j7ziq`.
-- Receipt path: `.runtime/verification/20260701T234830Z-console-decoupling.stdout.json` (ignored, not committed).
+- Run id: `20260702T001006Z-pilot-gaps`.
+- Verification Workspace: `ws-9w6zwy`.
+- Receipt path: `.runtime/verification/20260702T001006Z-pilot-gaps.stdout.json` (ignored, not committed).
 - Result: `ok: true`.
 - Runtime status passed on first attempt:
   - `deployment_ready`
@@ -233,7 +233,8 @@ Verified production Workspace lifecycle:
   - destroy verification compute
   - destroy verification storage
 - Cleanup errors: none.
-- Console state after cleanup: `state=destroyed`, `server.billingStatus=stopped`, `disk.billingStatus=stopped`, `account.frozen=0`.
+- Console state after cleanup: `state=destroyed`, `server.billingStatus=stopped`, `disk.billingStatus=stopped`, `access.tokenStatus=unavailable`, `account.frozen=0`.
+- Previous successful run: `20260701T234830Z-console-decoupling`.
 
 Legacy CVM-only inputs are no longer production blockers for the TKE route:
 

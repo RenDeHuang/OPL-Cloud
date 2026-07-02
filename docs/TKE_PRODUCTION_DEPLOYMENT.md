@@ -97,7 +97,7 @@ Do not commit a filled env file. Real values belong in ignored local files, Kube
 
 ## Current Production Inputs
 
-- `OPL_CLOUD_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:bca3a0d`
+- `OPL_CLOUD_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:fc1609074f2e`
 - `OPL_WORKSPACE_IMAGE=uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest`
 - `OPL_K8S_NAMESPACE=opl-cloud`
 - `OPL_IMAGE_PULL_SECRET_NAME=tcr-pull-secret`
