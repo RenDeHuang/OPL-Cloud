@@ -47,14 +47,99 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function ensureAccount(state, accountId) {
-  state.accounts[accountId] ??= {
+function ensureBillingCollections(state) {
+  state.resourceUsageLogs ??= [];
+  state.requestUsageLogs ??= [];
+}
+
+function userIdForAccount(state, accountId) {
+  return Object.values(state.users || {}).find((user) => user.accountId === accountId)?.id || `usr-${accountId}`;
+}
+
+function syncAccountWallet(state, user) {
+  state.accounts ??= {};
+  const accountId = user.accountId;
+  const existing = state.accounts[accountId] || {};
+  const account = {
+    ...existing,
     id: accountId,
-    balance: 0,
-    frozen: 0,
-    createdAt: now()
+    balance: money(Number(user.balance || 0)),
+    frozen: money(Number(user.frozen || 0)),
+    holds: clone(user.holds || {})
   };
-  return state.accounts[accountId];
+  if (existing.totalRecharged !== undefined || Number(user.totalRecharged || 0) > 0) {
+    account.totalRecharged = money(Number(user.totalRecharged || 0));
+  }
+  state.accounts[accountId] = account;
+  return account;
+}
+
+function ensureUserWallet(state, { userId = "", accountId, email = "" } = {}) {
+  if (!accountId) throw new Error("account_required");
+  ensureBillingCollections(state);
+  state.accounts ??= {};
+  state.users ??= {};
+  const existingUser = userId
+    ? state.users[userId]
+    : Object.values(state.users).find((user) => user.accountId === accountId);
+  const id = existingUser?.id || userId || userIdForAccount(state, accountId);
+  const legacyAccount = state.accounts[accountId] || {};
+  state.users[id] ??= {
+    id,
+    email,
+    accountId,
+    role: "pi",
+    status: "active",
+    createdAt: now(),
+    updatedAt: now()
+  };
+  const user = state.users[id];
+  user.accountId ||= accountId;
+  user.email ||= email;
+  user.status ||= "active";
+  user.balance = money(Number(user.balance ?? legacyAccount.balance ?? 0));
+  user.frozen = money(Number(user.frozen ?? legacyAccount.frozen ?? 0));
+  user.holds ??= clone(legacyAccount.holds || {});
+  user.totalRecharged = money(Number(user.totalRecharged ?? legacyAccount.totalRecharged ?? 0));
+  syncAccountWallet(state, user);
+  return user;
+}
+
+function ensureAccount(state, accountId) {
+  return ensureUserWallet(state, { accountId });
+}
+
+function publicWalletUser(user) {
+  if (!user) return null;
+  const { password, passwordHash, ...safe } = clone(user);
+  return safe;
+}
+
+function walletSnapshot(user, accountId) {
+  return {
+    id: user.id,
+    userId: user.id,
+    accountId,
+    balance: money(Number(user.balance || 0)),
+    frozen: money(Number(user.frozen || 0)),
+    available: accountAvailable(user),
+    holds: clone(user.holds || {}),
+    totalRecharged: money(Number(user.totalRecharged || 0))
+  };
+}
+
+function accountSnapshotForState(state, accountId) {
+  const user = Object.values(state.users || {}).find((item) => item.accountId === accountId);
+  const account = state.accounts?.[accountId] || { id: accountId, balance: 0, frozen: 0, holds: {} };
+  if (!user) return clone(account);
+  return {
+    ...clone(account),
+    id: accountId,
+    userId: user.id,
+    balance: money(Number(user.balance || 0)),
+    frozen: money(Number(user.frozen || 0)),
+    holds: clone(user.holds || {})
+  };
 }
 
 function accountAvailable(account) {
@@ -277,6 +362,8 @@ export class OplCloudService {
     return this.store.update((state) => {
       const account = ensureAccount(state, accountId);
       account.balance = money(account.balance + credit);
+      account.totalRecharged = money(Number(account.totalRecharged || 0) + credit);
+      syncAccountWallet(state, account);
       const entry = this.ledgerEntry({ state,
         workspaceId: "account",
         accountId,
@@ -286,7 +373,7 @@ export class OplCloudService {
       });
       state.billingLedger.push(entry);
       state.audit.push(this.auditEvent({ accountId, type: "account.credit_granted", sourceEventId: entry.id }));
-      return clone(account);
+      return accountSnapshotForState(state, accountId);
     });
   }
 
@@ -359,10 +446,16 @@ export class OplCloudService {
       this.assertBillingReconciliationAllowsProvisioning(state);
       const resolvedOwner = resolveWorkspaceOwner(state, { accountId, organizationId, userId });
       accountId = resolvedOwner.accountId;
-      owner = resolvedOwner.owner;
+      const account = ensureUserWallet(state, {
+        accountId,
+        userId: resolvedOwner.owner?.userId || userId
+      });
+      owner = {
+        ...resolvedOwner.owner,
+        userId: account.id
+      };
       workspaceId = makeId("ws", accountId, workspaceName, packageId);
       token = makeToken(workspaceId);
-      const account = ensureAccount(state, accountId);
       if (state.workspaces[workspaceId]) return { existing: true, workspace: clone(state.workspaces[workspaceId]) };
       if (accountAvailable(account) < hold.total) {
         throw new Error("insufficient_prepaid_hold_balance");
@@ -370,6 +463,7 @@ export class OplCloudService {
 
       addHold(account, "compute", hold.compute);
       addHold(account, "storage", hold.storage);
+      syncAccountWallet(state, account);
       state.billingLedger.push(this.ledgerEntry({ state,
         workspaceId,
         accountId,
@@ -418,13 +512,14 @@ export class OplCloudService {
     }
 
     return this.store.update((state) => {
-      const account = ensureAccount(state, accountId);
+      const account = ensureUserWallet(state, { accountId, userId: owner?.userId });
       const operation = state.runtimeOperations.find((item) => item.id === reservation.operationId);
       if (operation) this.finishRuntimeOperation(operation, "succeeded");
 
       const workspace = {
         id: workspaceId,
         ownerAccountId: accountId,
+        ownerUserId: account.id,
         owner,
         name: workspaceName,
         packageId,
@@ -558,6 +653,7 @@ export class OplCloudService {
 
       addHold(account, "compute", hold.compute);
       addHold(account, "storage", hold.storage);
+      syncAccountWallet(state, account);
       state.billingLedger.push(this.ledgerEntry({ state,
         workspaceId,
         accountId,
@@ -616,6 +712,7 @@ export class OplCloudService {
       const workspace = {
         id: workspaceId,
         ownerAccountId: accountId,
+        ownerUserId: account.id,
         name: workspaceName,
         packageId,
         state: "running",
@@ -967,7 +1064,7 @@ export class OplCloudService {
       if (existingEntries.length > 0) {
         return {
           entries: existingEntries.map(clone),
-          account: clone(account)
+          account: accountSnapshotForState(state, accountId)
         };
       }
       const entries = this.debitWorkspaceUsage({
@@ -985,7 +1082,7 @@ export class OplCloudService {
       }
       return {
         entries: entries.map(clone),
-        account: clone(account)
+        account: accountSnapshotForState(state, accountId)
       };
     });
     if (autoStopRequested) {
@@ -1073,6 +1170,17 @@ export class OplCloudService {
 
   async getState(accountId = "pi-alpha") {
     const state = await this.store.read();
+    const user = Object.values(state.users || {}).find((item) => item.accountId === accountId) || {
+      id: userIdForAccount(state, accountId),
+      accountId,
+      role: "pi",
+      status: "active",
+      balance: Number(state.accounts?.[accountId]?.balance || 0),
+      frozen: Number(state.accounts?.[accountId]?.frozen || 0),
+      holds: clone(state.accounts?.[accountId]?.holds || {}),
+      totalRecharged: Number(state.accounts?.[accountId]?.totalRecharged || 0)
+    };
+    const wallet = walletSnapshot(user, accountId);
     return {
       product: {
         name: "OPL Cloud",
@@ -1081,7 +1189,9 @@ export class OplCloudService {
       },
       billingPolicy: billingPolicy(this.pricing),
       packages: this.packages(),
-      account: clone(state.accounts[accountId] ?? { id: accountId, balance: 0, frozen: 0, holds: {} }),
+      account: accountSnapshotForState(state, accountId),
+      user: publicWalletUser(user),
+      wallet,
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
       storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === accountId).map(clone),
@@ -1105,7 +1215,13 @@ export class OplCloudService {
     const workspaces = Object.values(state.workspaces).filter((workspace) => !accountId || workspace.ownerAccountId === accountId);
     const notifications = (state.notifications || []).filter((event) => operatorNotificationInScope(event, accountId));
     const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
-    const accounts = Object.values(state.accounts).filter((account) => !accountId || account.id === accountId);
+    const accountIds = new Set([
+      ...Object.keys(state.accounts || {}),
+      ...Object.values(state.users || {}).map((user) => user.accountId).filter(Boolean)
+    ]);
+    const accounts = [...accountIds]
+      .filter((id) => !accountId || id === accountId)
+      .map((id) => accountSnapshotForState(state, id));
     const storageBackups = (state.storageBackups || []).filter((backup) => !accountId || backup.accountId === accountId);
     const latestReconciliation = latestBillingReconciliationReport(state);
     const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
@@ -1384,6 +1500,7 @@ export class OplCloudService {
       }
     }
 
+    syncAccountWallet(state, account);
     return entries;
   }
 
@@ -1393,6 +1510,7 @@ export class OplCloudService {
     const delta = money(requiredAmount - current);
     if (accountAvailable(account) < delta) throw new Error("insufficient_prepaid_hold_balance");
     addHold(account, holdType, delta);
+    syncAccountWallet(state, account);
     state.billingLedger.push(this.ledgerEntry({ state,
       workspaceId,
       accountId,
@@ -1407,6 +1525,7 @@ export class OplCloudService {
   releaseHoldToLedger({ state, accountId, workspaceId, holdType, sourceEventId }) {
     const account = ensureAccount(state, accountId);
     const released = releaseHold(account, holdType);
+    syncAccountWallet(state, account);
     if (released <= 0) return null;
     const entry = this.ledgerEntry({ state,
       workspaceId,
@@ -1551,10 +1670,12 @@ export class OplCloudService {
 
   ledgerEntry({ state, workspaceId, accountId, type, amount, sourceEventId, holdType, billableHours, metadata }) {
     const sequence = state?.billingLedger?.length ?? 0;
+    const userId = userIdForAccount(state, accountId);
     return {
       id: makeId("ledger", accountId, workspaceId, type, sourceEventId, String(sequence)),
       workspaceId,
       accountId,
+      userId,
       type,
       amount: money(Number(amount)),
       currency: "CNY",

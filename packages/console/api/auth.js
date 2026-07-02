@@ -59,12 +59,30 @@ function authUsersFromState(state) {
 
 function ensureAuthUserAccount(state, user) {
   state.accounts ??= {};
-  state.accounts[user.accountId] ??= {
+  state.users ??= {};
+  const account = state.accounts[user.accountId] ?? {
     id: user.accountId,
     balance: 0,
     frozen: 0,
     holds: {}
   };
+  const storedUser = state.users[user.id] || user;
+  storedUser.accountId ||= user.accountId;
+  storedUser.balance = Number(storedUser.balance ?? account.balance ?? 0);
+  storedUser.frozen = Number(storedUser.frozen ?? account.frozen ?? 0);
+  storedUser.holds ??= account.holds || {};
+  storedUser.totalRecharged = Number(storedUser.totalRecharged ?? account.totalRecharged ?? 0);
+  state.users[storedUser.id] = storedUser;
+  state.accounts[user.accountId] = {
+    ...account,
+    id: user.accountId,
+    balance: storedUser.balance,
+    frozen: storedUser.frozen,
+    holds: storedUser.holds
+  };
+  if (account.totalRecharged !== undefined || storedUser.totalRecharged > 0) {
+    state.accounts[user.accountId].totalRecharged = storedUser.totalRecharged;
+  }
 }
 
 function parseCookies(header = "") {
@@ -189,11 +207,10 @@ export function createAuthController({
     const state = await store.read();
     const existing = authUsersFromState(state);
     if (existing.length > 0) {
-      if (existing.every((user) => state.accounts?.[user.accountId])) return existing;
       return store.update((nextState) => {
         const current = authUsersFromState(nextState);
         for (const user of current) ensureAuthUserAccount(nextState, user);
-        return current;
+        return authUsersFromState(nextState);
       });
     }
 

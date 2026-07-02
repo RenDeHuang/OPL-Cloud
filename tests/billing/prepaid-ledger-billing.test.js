@@ -103,6 +103,14 @@ test("opening a Workspace freezes seven days of compute and storage and charges 
   const state = await service.getState("pi-alpha");
   assert.equal(state.account.balance, 248.7967);
   assert.equal(state.account.frozen, 202.16);
+  assert.equal(state.user.id, "usr-pi-alpha");
+  assert.equal(state.user.balance, 248.7967);
+  assert.equal(state.user.frozen, 202.16);
+  assert.equal(state.user.totalRecharged, 250);
+  assert.equal(state.wallet.balance, 248.7967);
+  assert.equal(state.wallet.frozen, 202.16);
+  assert.equal(state.billingLedger[0].userId, "usr-pi-alpha");
+  assert.equal(state.billingLedger.every((entry) => entry.userId === "usr-pi-alpha"), true);
   assert.deepEqual(workspace.billing, {
     holdPolicy: "seven_day_prepaid",
     minimumBillableHours: 1,

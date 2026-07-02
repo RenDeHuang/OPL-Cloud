@@ -435,3 +435,60 @@ test("store-backed auth repairs missing account records for persisted login user
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("store-backed auth migrates legacy account wallet fields onto persisted users", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-wallet-"));
+  const usersPath = join(root, "users.json");
+  const store = new MemoryStore({
+    accounts: {
+      "pi-wallet": {
+        id: "pi-wallet",
+        balance: 248.7967,
+        frozen: 202.16,
+        holds: {
+          compute: 201.6,
+          storage: 0.56
+        },
+        totalRecharged: 250
+      }
+    },
+    organizations: {},
+    users: {
+      "usr-pi-wallet": {
+        id: "usr-pi-wallet",
+        email: "wallet@example.com",
+        name: "Wallet PI",
+        role: "pi",
+        accountId: "pi-wallet",
+        status: "active",
+        passwordHash: "scrypt:94ffcb9fc02bdc377ead1ae046cfe792:71389fc96c628b6779c107f28bbdce446a6b82f1a4d6cd1a3643801fff81d52e95a1271b02b999f56ae5f63072b0a5609a893fdfb7cf106b9a18bed169391167"
+      }
+    },
+    memberships: [],
+    workspaces: {},
+    storageBackups: [],
+    billingReconciliationReports: [],
+    evidenceLedger: [],
+    billingLedger: [],
+    audit: [],
+    notifications: [],
+    runtimeOperations: [],
+    resourceUsageLogs: [],
+    requestUsageLogs: []
+  });
+  try {
+    const auth = createAuthController({ store, usersPath, seedUsers: [] });
+    await auth.listUsers();
+
+    const persisted = await store.read();
+    assert.equal(persisted.users["usr-pi-wallet"].balance, 248.7967);
+    assert.equal(persisted.users["usr-pi-wallet"].frozen, 202.16);
+    assert.deepEqual(persisted.users["usr-pi-wallet"].holds, {
+      compute: 201.6,
+      storage: 0.56
+    });
+    assert.equal(persisted.users["usr-pi-wallet"].totalRecharged, 250);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
