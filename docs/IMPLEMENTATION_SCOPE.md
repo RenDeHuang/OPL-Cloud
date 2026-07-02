@@ -13,11 +13,13 @@ This repository implements the OPL Cloud control-plane slice for OPL Console and
 This repository is responsible for:
 
 - OPL Console workspace provisioning and management.
+- Minimal OPL Console commercial management model for users, organizations, memberships, billing accounts, packages, balances, and holds.
 - OPL Workspace lifecycle control for local Docker, Tencent TKE, and legacy Tencent CVM runtimes.
 - OPL Fabric handoff through Local Docker, Tencent TKE, TCR, Kubernetes Ingress, persistent workspace storage, and legacy Tencent CVM contracts.
-- Workspace URL and token access.
+- Long-lived Workspace URL token access. Tokens are permanent until the owner resets or deletes them after leakage.
 - Compute and persistent workspace storage lifecycle separation.
 - OPL Ledger records for prepaid compute/storage holds, hourly debits, hold releases, audit events, notifications, verifier output, and Tencent bill reconciliation.
+- OPL Ledger evidence receipts v0 for control-plane actions that affect workspace access, runtime, storage, cost, or continuation.
 - Runtime readiness, production readiness, and production chain verification.
 - Deployment handoff assets for Tencent TKE, TCR image validation, Kubernetes Ingress, PostgreSQL, and legacy Tencent CVM.
 
@@ -25,10 +27,10 @@ This repository is responsible for:
 
 The implementation is staged for future repository extraction under `packages/`:
 
-- `packages/console`: OPL Console API, control-plane service, store, readiness, manifest validation, and UI.
+- `packages/console`: OPL Console API, control-plane service, management model, store, readiness, manifest validation, and UI.
 - `packages/fabric`: runtime provider factory and Local Docker / Tencent TKE / legacy Tencent CVM adapters.
-- `packages/ledger`: billing reconciliation helpers and future Ledger extraction boundary.
-- `packages/contracts`: machine-readable product, lifecycle, and billing contracts.
+- `packages/ledger`: billing reconciliation helpers, evidence receipt helpers, and future Ledger extraction boundary.
+- `packages/contracts`: machine-readable product, lifecycle, management, billing, and evidence contracts.
 
 This is a migration layout, not a monorepo product claim. The service still deploys as one OPL Console control-plane process while imports are kept near the future package boundaries.
 
@@ -41,7 +43,7 @@ The implementation should map Cloud behavior back to One Person Lab framework co
 | Runtime provider | Local Docker provider, Tencent TKE production target, and Tencent CVM legacy fallback |
 | Attempt / operation ledger | `runtime_operations` |
 | Readiness gate | `/api/runtime/readiness` and `/api/production/readiness` |
-| Receipt / audit trail | billing ledger, audit events, verifier output, reconciliation output |
+| Receipt / audit trail | billing ledger, evidence ledger, audit events, verifier output, reconciliation output |
 | Human gate | explicit compute and storage lifecycle confirmations |
 | Recovery path | restart or recreate runtime compute from retained workspace storage |
 | Machine-readable contract | `packages/contracts/`, tests, manifests, readiness payloads |

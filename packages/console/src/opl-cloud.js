@@ -1,3 +1,12 @@
+import {
+  addMembershipRecord,
+  createOrganizationRecord,
+  createUserRecord,
+  managementSnapshot,
+  resolveWorkspaceOwner
+} from "./management-model.js";
+import { appendEvidenceReceipt, createEvidenceReceipt } from "../../ledger/src/evidence-ledger.js";
+
 const PACKAGES = {
   basic: {
     id: "basic",
@@ -257,13 +266,77 @@ export class OplCloudService {
     });
   }
 
-  async createWorkspace({ accountId, workspaceName, packageId }) {
+  async createOrganization(input) {
+    return this.store.update((state) => {
+      const organization = createOrganizationRecord(state, input);
+      ensureAccount(state, organization.billingAccountId);
+      state.audit.push(this.auditEvent({
+        accountId: organization.billingAccountId,
+        type: "organization.created",
+        sourceEventId: organization.id
+      }));
+      return organization;
+    });
+  }
+
+  async createUser(input) {
+    return this.store.update((state) => {
+      const user = createUserRecord(state, input);
+      state.audit.push(this.auditEvent({
+        accountId: "management",
+        type: "user.created",
+        sourceEventId: user.id
+      }));
+      return user;
+    });
+  }
+
+  async addOrganizationMember(input) {
+    return this.store.update((state) => {
+      const membership = addMembershipRecord(state, input);
+      const organization = state.organizations[membership.organizationId];
+      state.audit.push(this.auditEvent({
+        accountId: organization.billingAccountId,
+        type: "organization.member_added",
+        sourceEventId: membership.id
+      }));
+      return membership;
+    });
+  }
+
+  async managementState({ organizationId }) {
+    const state = await this.store.read();
+    const organization = state.organizations?.[organizationId];
+    if (!organization) throw new Error("organization_not_found");
+    const billingAccount = state.accounts[organization.billingAccountId] ?? {
+      id: organization.billingAccountId,
+      balance: 0,
+      frozen: 0,
+      holds: {}
+    };
+    const workspaces = Object.values(state.workspaces)
+      .filter((workspace) => workspace.owner?.organizationId === organizationId || workspace.ownerAccountId === organization.billingAccountId);
+    return managementSnapshot(state, {
+      organizationId,
+      packages: this.packages(),
+      account: billingAccount,
+      workspaces
+    });
+  }
+
+  async createWorkspace({ accountId, organizationId, userId, workspaceName, packageId }) {
     const packagePlan = getPackage(packageId);
-    const workspaceId = makeId("ws", accountId, workspaceName, packageId);
-    const token = makeToken(workspaceId);
     const hold = packageHoldAmount({ packagePlan, pricing: this.pricing });
+    let workspaceId = null;
+    let token = null;
+    let owner = null;
 
     const reservation = await this.store.update((state) => {
+      const resolvedOwner = resolveWorkspaceOwner(state, { accountId, organizationId, userId });
+      accountId = resolvedOwner.accountId;
+      owner = resolvedOwner.owner;
+      workspaceId = makeId("ws", accountId, workspaceName, packageId);
+      token = makeToken(workspaceId);
       const account = ensureAccount(state, accountId);
       if (state.workspaces[workspaceId]) return { existing: true, workspace: clone(state.workspaces[workspaceId]) };
       if (accountAvailable(account) < hold.total) {
@@ -327,6 +400,7 @@ export class OplCloudService {
       const workspace = {
         id: workspaceId,
         ownerAccountId: accountId,
+        owner,
         name: workspaceName,
         packageId,
         state: "running",
@@ -337,9 +411,11 @@ export class OplCloudService {
         slug: runtime.slug,
         url: runtime.url,
         access: {
+          mode: "long_lived_url_token",
           requiresLogin: false,
           token,
-          tokenStatus: "active"
+          tokenStatus: "active",
+          rotationPolicy: "reset_or_delete_on_leak"
         },
         billing: {
           holdPolicy: "seven_day_prepaid",
@@ -366,6 +442,25 @@ export class OplCloudService {
         type: "billing.first_hour_charged",
         sourceEventId: "open_workspace_initial_hour"
       }));
+      this.recordEvidence({
+        state,
+        type: "workspace.created",
+        accountId,
+        workspace,
+        packagePlan,
+        billingRefs: [
+          ...state.billingLedger.filter((entry) =>
+            entry.accountId === accountId &&
+            entry.workspaceId === workspaceId &&
+            ["compute_hold", "storage_hold"].includes(entry.type)
+          ),
+          ...firstHourEntries
+        ],
+        continuation: {
+          action: "open_workspace_url",
+          uri: workspace.url
+        }
+      });
       return {
         ...clone(workspace),
         initialBilling: firstHourEntries.map(clone)
@@ -397,6 +492,13 @@ export class OplCloudService {
         }));
         this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "stop_server" });
         state.audit.push(this.auditEvent({ accountId, workspaceId, type: "server.stopped", sourceEventId: "stop_server" }));
+        this.recordEvidence({
+          state,
+          type: "workspace.compute_stopped",
+          accountId,
+          workspace,
+          continuation: { action: "restart_workspace_compute" }
+        });
         return clone(workspace);
       }
     });
@@ -442,6 +544,13 @@ export class OplCloudService {
           type: recreate ? "server.recreated" : "server.restarted",
           sourceEventId: operationType
         }));
+        this.recordEvidence({
+          state,
+          type: recreate ? "workspace.compute_recreated" : "workspace.compute_restarted",
+          accountId,
+          workspace,
+          continuation: { action: "open_workspace_url", uri: workspace.url }
+        });
         return clone(workspace);
       }
     });
@@ -478,6 +587,13 @@ export class OplCloudService {
         }));
         this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "destroy_server" });
         state.audit.push(this.auditEvent({ accountId, workspaceId, type: "server.destroyed", sourceEventId: "destroy_server" }));
+        this.recordEvidence({
+          state,
+          type: "workspace.compute_destroyed",
+          accountId,
+          workspace,
+          continuation: { action: "restart_workspace_compute_from_retained_storage" }
+        });
         return clone(workspace);
       }
     });
@@ -514,6 +630,13 @@ export class OplCloudService {
         this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "compute", sourceEventId: "destroy_disk" });
         this.releaseHoldToLedger({ state, accountId, workspaceId, holdType: "storage", sourceEventId: "destroy_disk" });
         state.audit.push(this.auditEvent({ accountId, workspaceId, type: "disk.destroyed", sourceEventId: "destroy_disk" }));
+        this.recordEvidence({
+          state,
+          type: "workspace.storage_destroyed",
+          accountId,
+          workspace,
+          continuation: { action: "workspace_deleted" }
+        });
         return clone(workspace);
       }
     });
@@ -532,6 +655,13 @@ export class OplCloudService {
       });
       workspace.updatedAt = now();
       state.billingLedger.push(this.ledgerEntry({ state, workspaceId, accountId, type: "token_reset", amount: 0, sourceEventId: "reset_token" }));
+      this.recordEvidence({
+        state,
+        type: "workspace.access_token_reset",
+        accountId,
+        workspace,
+        continuation: { action: "open_workspace_url", uri: workspace.url }
+      });
       return clone(workspace);
     });
   }
@@ -542,6 +672,13 @@ export class OplCloudService {
       workspace.access.tokenStatus = storageDestroyed(workspace) ? "unavailable" : "deleted";
       workspace.updatedAt = now();
       state.billingLedger.push(this.ledgerEntry({ state, workspaceId, accountId, type: "token_deleted", amount: 0, sourceEventId: "delete_token" }));
+      this.recordEvidence({
+        state,
+        type: "workspace.access_token_deleted",
+        accountId,
+        workspace,
+        continuation: { action: "reset_workspace_token" }
+      });
       return clone(workspace);
     });
   }
@@ -615,6 +752,7 @@ export class OplCloudService {
       account: clone(state.accounts[accountId] ?? { id: accountId, balance: 0, frozen: 0, holds: {} }),
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
+      evidenceLedger: (state.evidenceLedger || []).filter((entry) => entry.accountId === accountId).map(clone),
       audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
       notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
       runtimeOperations: state.runtimeOperations.filter((entry) => entry.accountId === accountId).map(clone)
@@ -1063,6 +1201,47 @@ export class OplCloudService {
       ...(metadata ? { metadata: clone(metadata) } : {}),
       createdAt: now()
     };
+  }
+
+  recordEvidence({ state, type, accountId, workspace, packagePlan = null, billingRefs = [], continuation = null }) {
+    const effectivePackagePlan = packagePlan || getPackage(workspace.packageId);
+    const receipt = createEvidenceReceipt({
+      state,
+      type,
+      accountId,
+      workspaceId: workspace.id,
+      actor: workspace.owner?.userId
+        ? { type: "user", id: workspace.owner.userId, organizationId: workspace.owner.organizationId }
+        : { type: "account", id: accountId },
+      plan: {
+        workspaceName: workspace.name,
+        packageId: workspace.packageId,
+        computeProfile: effectivePackagePlan.server,
+        storageGb: effectivePackagePlan.diskGb
+      },
+      approval: { status: "implicit_console_policy" },
+      environment: {
+        runtimeProvider: workspace.provider,
+        workspaceImage: workspace.docker?.image
+      },
+      resourceRefs: {
+        serverId: workspace.server?.id,
+        dockerId: workspace.docker?.id,
+        storageId: workspace.disk?.id,
+        storageMountPath: workspace.disk?.mountPath,
+        urlTokenMode: workspace.access?.mode || "long_lived_url_token",
+        tokenStatus: workspace.access?.tokenStatus
+      },
+      billingRefs: billingRefs.map((entry) => ({
+        id: entry.id,
+        type: entry.type,
+        amount: entry.amount,
+        currency: entry.currency
+      })),
+      continuation
+    });
+    appendEvidenceReceipt(state, receipt);
+    return receipt;
   }
 
   auditEvent({ accountId, workspaceId = "", type, sourceEventId }) {

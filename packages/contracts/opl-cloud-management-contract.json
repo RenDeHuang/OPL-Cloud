@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Console",
+  "entities": {
+    "organization": {
+      "requiredFields": [
+        "id",
+        "name",
+        "billingAccountId",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "user": {
+      "requiredFields": [
+        "id",
+        "email",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "membership": {
+      "requiredFields": [
+        "id",
+        "organizationId",
+        "userId",
+        "role",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ],
+      "roles": [
+        "owner",
+        "admin",
+        "member"
+      ]
+    },
+    "billingAccount": {
+      "source": "accounts",
+      "holds": [
+        "compute",
+        "storage"
+      ],
+      "fundingOrder": [
+        "available_balance",
+        "frozen_hold"
+      ]
+    }
+  },
+  "workspaceOwnership": {
+    "personalWorkspace": "ownerAccountId is the accountId",
+    "organizationWorkspace": "ownerAccountId is organization.billingAccountId and userId must have active membership"
+  },
+  "api": {
+    "createOrganization": "POST /api/organizations",
+    "createUser": "POST /api/users",
+    "addOrganizationMember": "POST /api/organizations/members",
+    "managementState": "GET /api/management/state?organizationId=<id>"
+  }
+}

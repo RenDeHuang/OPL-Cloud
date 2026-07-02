@@ -19,8 +19,10 @@
   },
   "access": {
     "urlPattern": "https://workspace.medopl.cn/w/<workspaceId>?token=<share-token>",
+    "mode": "long_lived_url_token",
     "requiresLogin": false,
-    "tokenLifetime": "permanent_until_owner_reset_or_delete"
+    "tokenLifetime": "permanent_until_owner_reset_or_delete",
+    "rotationPolicy": "reset_or_delete_on_leak"
   },
   "defaultPackages": [
     {

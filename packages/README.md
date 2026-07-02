@@ -6,10 +6,10 @@ This directory is a migration staging layout. It keeps the current repository de
 
 | Package | Current role | Future extraction target |
 | --- | --- | --- |
-| `console` | OPL Console API, control-plane service, PostgreSQL store, production readiness, production manifest validation, and Console UI | `opl-console` |
+| `console` | OPL Console API, control-plane service, minimal commercial management model, PostgreSQL store, production readiness, production manifest validation, and Console UI | `opl-console` |
 | `fabric` | Runtime provider factory and Local Docker / Tencent TKE / legacy Tencent CVM adapters | `opl-fabric` or `opl-fabric-adapters` |
-| `ledger` | Tencent bill normalization and reconciliation helpers; billing ledger contracts are still called by Console service | `opl-ledger` |
-| `contracts` | Machine-readable product, lifecycle, and billing contracts shared by Console, Fabric, Workspace, and Ledger | shared contract package or product contract repository |
+| `ledger` | Tencent bill normalization, reconciliation helpers, and control-plane evidence receipt helpers; billing and evidence contracts are still called by Console service | `opl-ledger` |
+| `contracts` | Machine-readable product, lifecycle, management, billing, and evidence contracts shared by Console, Fabric, Workspace, and Ledger | shared contract package or product contract repository |
 
 ## Current Boundary
 

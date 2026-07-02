@@ -131,10 +131,19 @@ async function handleApi(request, response, pathname, appService, operatorSummar
         accountId: url.searchParams.get("accountId") || null
       }));
     }
+    if (request.method === "GET" && pathname === "/api/management/state") {
+      const url = new URL(request.url, "http://localhost");
+      return sendJson(response, 200, await appService.managementState({
+        organizationId: url.searchParams.get("organizationId") || ""
+      }));
+    }
 
     const body = await readJson(request);
     const routes = {
       "POST /api/accounts/credit": () => appService.creditAccount(body),
+      "POST /api/organizations": () => appService.createOrganization(body),
+      "POST /api/users": () => appService.createUser(body),
+      "POST /api/organizations/members": () => appService.addOrganizationMember(body),
       "POST /api/workspaces": () => appService.createWorkspace(body),
       "POST /api/workspaces/stop-server": () => appService.stopServer(body),
       "POST /api/workspaces/restart-server": () => appService.restartServer(body),

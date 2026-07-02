@@ -6,7 +6,11 @@ import { emptyState, PostgresStore } from "../../packages/console/src/store.js";
 function createFakePool() {
   const tables = {
     accounts: new Map(),
+    organizations: new Map(),
+    users: new Map(),
+    memberships: [],
     workspaces: new Map(),
+    evidence_ledger: [],
     billing_ledger: [],
     audit_events: [],
     notifications: [],
@@ -27,9 +31,13 @@ function createFakePool() {
       if (normalized.startsWith("CREATE TABLE IF NOT EXISTS")) {
         return { rows: [] };
       }
-      if (normalized.startsWith("TRUNCATE accounts, workspaces, billing_ledger, audit_events, notifications, runtime_operations")) {
+      if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations")) {
         tables.accounts.clear();
+        tables.organizations.clear();
+        tables.users.clear();
+        tables.memberships = [];
         tables.workspaces.clear();
+        tables.evidence_ledger = [];
         tables.billing_ledger = [];
         tables.audit_events = [];
         tables.notifications = [];
@@ -39,8 +47,20 @@ function createFakePool() {
       if (normalized.startsWith("SELECT id, state FROM accounts")) {
         return { rows: [...tables.accounts.entries()].map(([id, state]) => ({ id, state })) };
       }
+      if (normalized.startsWith("SELECT id, state FROM organizations")) {
+        return { rows: [...tables.organizations.entries()].map(([id, state]) => ({ id, state })) };
+      }
+      if (normalized.startsWith("SELECT id, state FROM users")) {
+        return { rows: [...tables.users.entries()].map(([id, state]) => ({ id, state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM memberships")) {
+        return { rows: tables.memberships.map((state) => ({ state })) };
+      }
       if (normalized.startsWith("SELECT id, state FROM workspaces")) {
         return { rows: [...tables.workspaces.entries()].map(([id, state]) => ({ id, state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM evidence_ledger")) {
+        return { rows: tables.evidence_ledger.map((state) => ({ state })) };
       }
       if (normalized.startsWith("SELECT state FROM billing_ledger")) {
         return { rows: tables.billing_ledger.map((state) => ({ state })) };
@@ -58,8 +78,24 @@ function createFakePool() {
         tables.accounts.set(params[0], params[1]);
         return { rows: [] };
       }
+      if (normalized.startsWith("INSERT INTO organizations")) {
+        tables.organizations.set(params[0], params[1]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO users")) {
+        tables.users.set(params[0], params[1]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO memberships")) {
+        tables.memberships.push(params[3]);
+        return { rows: [] };
+      }
       if (normalized.startsWith("INSERT INTO workspaces")) {
         tables.workspaces.set(params[0], params[2]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO evidence_ledger")) {
+        tables.evidence_ledger.push(params[3]);
         return { rows: [] };
       }
       if (normalized.startsWith("INSERT INTO billing_ledger")) {
@@ -90,9 +126,19 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   const pool = createFakePool();
   const store = new PostgresStore({ pool });
   const state = {
+    ...emptyState(),
     accounts: {
       "pi-alpha": { id: "pi-alpha", balance: 200, frozen: 0, createdAt: "2026-07-01T00:00:00.000Z" }
     },
+    organizations: {
+      "org-lab": { id: "org-lab", name: "OPL Lab", billingAccountId: "pi-alpha" }
+    },
+    users: {
+      "usr-ada": { id: "usr-ada", email: "ada@example.com" }
+    },
+    memberships: [
+      { id: "membership-1", organizationId: "org-lab", userId: "usr-ada", role: "owner", status: "active" }
+    ],
     workspaces: {
       "ws-alpha": {
         id: "ws-alpha",
@@ -102,6 +148,9 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         url: "https://grant-lab-alpha.oplcloud.cn/?token=share_alpha"
       }
     },
+    evidenceLedger: [
+      { id: "receipt-1", workspaceId: "ws-alpha", accountId: "pi-alpha", type: "workspace.created" }
+    ],
     billingLedger: [
       { id: "ledger-1", workspaceId: "ws-alpha", accountId: "pi-alpha", type: "storage_hold", amount: 0.5 }
     ],
@@ -127,7 +176,11 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
 
   assert.deepEqual(persisted, state);
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS accounts")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS organizations")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS users")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS memberships")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS workspaces")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS evidence_ledger")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS billing_ledger")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS audit_events")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS notifications")));

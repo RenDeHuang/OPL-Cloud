@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Ledger",
+  "currentScope": "control-plane evidence receipts",
+  "receiptTypes": [
+    "workspace.created",
+    "workspace.compute_stopped",
+    "workspace.compute_restarted",
+    "workspace.compute_recreated",
+    "workspace.compute_destroyed",
+    "workspace.storage_destroyed",
+    "workspace.access_token_reset",
+    "workspace.access_token_deleted"
+  ],
+  "requiredFields": [
+    "id",
+    "type",
+    "accountId",
+    "workspaceId",
+    "actor",
+    "plan",
+    "approval",
+    "environment",
+    "resourceRefs",
+    "billingRefs",
+    "inputRefs",
+    "outputRefs",
+    "reviewResults",
+    "createdAt"
+  ],
+  "workspaceCreateReceipt": {
+    "plan": [
+      "workspaceName",
+      "packageId",
+      "computeProfile",
+      "storageGb"
+    ],
+    "approval": "implicit_console_policy",
+    "environment": [
+      "runtimeProvider",
+      "workspaceImage"
+    ],
+    "resourceRefs": [
+      "serverId",
+      "dockerId",
+      "storageId",
+      "storageMountPath",
+      "urlTokenMode",
+      "tokenStatus"
+    ],
+    "billingRefs": [
+      "compute_hold",
+      "storage_hold",
+      "compute_debit",
+      "storage_debit"
+    ],
+    "continuation": "open_workspace_url"
+  },
+  "nonGoals": [
+    "full research task provenance",
+    "domain reviewer authority",
+    "artifact storage ownership",
+    "agent run registry"
+  ]
+}

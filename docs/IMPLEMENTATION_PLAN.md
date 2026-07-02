@@ -104,15 +104,19 @@ Attempt:
 
 - Keep OPL Console as the v1 billing truth.
 - Keep OPL Ledger as the v1 billing truth with prepaid compute/storage holds, hourly internal debits from available balance first, frozen-hold consumption after balance exhaustion, hold release, and auto-stop/freeze receipts.
-- Preserve operation attempts, billing ledger entries, audit events, notifications, verifier output, and Tencent bill reconciliation evidence.
+- Preserve operation attempts, billing ledger entries, evidence receipts, audit events, notifications, verifier output, and Tencent bill reconciliation evidence.
+- Keep Evidence Ledger v0 limited to control-plane receipts until full task/agent provenance moves into the owning OPL Ledger surface.
 
 Receipts:
 
+- `packages/ledger/src/evidence-ledger.js`
 - `packages/ledger/src/billing-reconciliation.js`
 - `packages/console/src/store.js`
+- `packages/contracts/opl-cloud-evidence-ledger-contract.json`
 - `tools/reconcile-tencent-bills.js`
 - `tools/production-verifier.js`
 - `tests/billing/`
+- `tests/ledger/`
 - `tests/persistence/postgres-store.test.js`
 - `tests/production/production-verifier.test.js`
 

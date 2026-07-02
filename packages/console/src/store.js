@@ -7,7 +7,11 @@ const { Pool } = pg;
 export function emptyState() {
   return {
     accounts: {},
+    organizations: {},
+    users: {},
+    memberships: [],
     workspaces: {},
+    evidenceLedger: [],
     billingLedger: [],
     audit: [],
     notifications: [],
@@ -79,9 +83,13 @@ export class PostgresStore {
   async read(client = this.pool) {
     await this.ensureSchema(client);
     const state = emptyState();
-    const [accounts, workspaces, billingLedger, audit, notifications, runtimeOperations] = await Promise.all([
+    const [accounts, organizations, users, memberships, workspaces, evidenceLedger, billingLedger, audit, notifications, runtimeOperations] = await Promise.all([
       client.query("SELECT id, state FROM accounts ORDER BY id"),
+      client.query("SELECT id, state FROM organizations ORDER BY id"),
+      client.query("SELECT id, state FROM users ORDER BY id"),
+      client.query("SELECT state FROM memberships ORDER BY created_at, id"),
       client.query("SELECT id, state FROM workspaces ORDER BY id"),
+      client.query("SELECT state FROM evidence_ledger ORDER BY created_at, id"),
       client.query("SELECT state FROM billing_ledger ORDER BY created_at, id"),
       client.query("SELECT state FROM audit_events ORDER BY created_at, id"),
       client.query("SELECT state FROM notifications ORDER BY created_at, id"),
@@ -89,7 +97,11 @@ export class PostgresStore {
     ]);
 
     for (const row of accounts.rows) state.accounts[row.id] = row.state;
+    for (const row of organizations.rows) state.organizations[row.id] = row.state;
+    for (const row of users.rows) state.users[row.id] = row.state;
+    state.memberships = memberships.rows.map((row) => row.state);
     for (const row of workspaces.rows) state.workspaces[row.id] = row.state;
+    state.evidenceLedger = evidenceLedger.rows.map((row) => row.state);
     state.billingLedger = billingLedger.rows.map((row) => row.state);
     state.audit = audit.rows.map((row) => row.state);
     state.notifications = notifications.rows.map((row) => row.state);
@@ -99,7 +111,7 @@ export class PostgresStore {
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
-    await client.query("TRUNCATE accounts, workspaces, billing_ledger, audit_events, notifications, runtime_operations");
+    await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations");
 
     for (const account of Object.values(nextState.accounts || {})) {
       await client.query(
@@ -107,11 +119,45 @@ export class PostgresStore {
         [account.id, account]
       );
     }
+    for (const organization of Object.values(nextState.organizations || {})) {
+      await client.query(
+        "INSERT INTO organizations (id, state, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()",
+        [organization.id, organization]
+      );
+    }
+    for (const user of Object.values(nextState.users || {})) {
+      await client.query(
+        "INSERT INTO users (id, state, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()",
+        [user.id, user]
+      );
+    }
+    for (const membership of nextState.memberships || []) {
+      await client.query(
+        "INSERT INTO memberships (id, organization_id, user_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
+        [
+          membership.id,
+          membership.organizationId,
+          membership.userId,
+          membership,
+          membership.createdAt || new Date().toISOString(),
+          membership.updatedAt || membership.createdAt || new Date().toISOString()
+        ]
+      );
+    }
     for (const workspace of Object.values(nextState.workspaces || {})) {
       await client.query(
         "INSERT INTO workspaces (id, owner_account_id, state, updated_at) VALUES ($1, $2, $3, now()) ON CONFLICT (id) DO UPDATE SET owner_account_id = EXCLUDED.owner_account_id, state = EXCLUDED.state, updated_at = now()",
         [workspace.id, workspace.ownerAccountId, workspace]
       );
+    }
+    for (const entry of nextState.evidenceLedger || []) {
+      await client.query("INSERT INTO evidence_ledger (id, account_id, workspace_id, state, created_at) VALUES ($1, $2, $3, $4, $5)", [
+        entry.id,
+        entry.accountId,
+        entry.workspaceId || "",
+        entry,
+        entry.createdAt || new Date().toISOString()
+      ]);
     }
     for (const entry of nextState.billingLedger || []) {
       await client.query("INSERT INTO billing_ledger (id, account_id, workspace_id, state, created_at) VALUES ($1, $2, $3, $4, $5)", [
@@ -189,11 +235,44 @@ export class PostgresStore {
       )
     `);
     await client.query(`
+      CREATE TABLE IF NOT EXISTS organizations (
+        id text PRIMARY KEY,
+        state jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id text PRIMARY KEY,
+        state jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS memberships (
+        id text PRIMARY KEY,
+        organization_id text NOT NULL,
+        user_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS workspaces (
         id text PRIMARY KEY,
         owner_account_id text NOT NULL,
         state jsonb NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS evidence_ledger (
+        id text PRIMARY KEY,
+        account_id text NOT NULL,
+        workspace_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
       )
     `);
     await client.query(`
