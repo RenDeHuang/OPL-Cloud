@@ -85,6 +85,22 @@ function ensureAuthUserAccount(state, user) {
   }
 }
 
+function sameHolds(left = {}, right = {}) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {});
+}
+
+function authUserNeedsWalletRepair(state, user) {
+  const storedUser = state.users?.[user.id];
+  const account = state.accounts?.[user.accountId];
+  if (!storedUser || !account) return true;
+  if (storedUser.accountId !== user.accountId) return true;
+  if (storedUser.balance === undefined || storedUser.frozen === undefined || storedUser.holds === undefined) return true;
+  if (storedUser.totalRecharged === undefined) return true;
+  if (Number(account.balance ?? 0) !== Number(storedUser.balance ?? 0)) return true;
+  if (Number(account.frozen ?? 0) !== Number(storedUser.frozen ?? 0)) return true;
+  return !sameHolds(account.holds, storedUser.holds);
+}
+
 function parseCookies(header = "") {
   return String(header)
     .split(";")
@@ -207,6 +223,7 @@ export function createAuthController({
     const state = await store.read();
     const existing = authUsersFromState(state);
     if (existing.length > 0) {
+      if (existing.every((user) => !authUserNeedsWalletRepair(state, user))) return existing;
       return store.update((nextState) => {
         const current = authUsersFromState(nextState);
         for (const user of current) ensureAuthUserAccount(nextState, user);

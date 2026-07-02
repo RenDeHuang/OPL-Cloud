@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createAuthController, createRequestHandler } from "../../packages/console/api/server.js";
-import { MemoryStore } from "../../packages/console/src/store.js";
+import { emptyState, MemoryStore } from "../../packages/console/src/store.js";
 
 async function listen(handler) {
   const server = createServer(handler);
@@ -488,6 +488,55 @@ test("store-backed auth migrates legacy account wallet fields onto persisted use
       storage: 0.56
     });
     assert.equal(persisted.users["usr-pi-wallet"].totalRecharged, 250);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("store-backed auth does not rewrite already repaired wallet users", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-no-rewrite-"));
+  const baseStore = new MemoryStore({
+    ...emptyState(),
+    accounts: {
+      "pi-stable": {
+        id: "pi-stable",
+        balance: 25,
+        frozen: 0,
+        holds: {}
+      }
+    },
+    users: {
+      "usr-pi-stable": {
+        id: "usr-pi-stable",
+        email: "stable@example.com",
+        name: "Stable PI",
+        role: "pi",
+        accountId: "pi-stable",
+        status: "active",
+        passwordHash: "scrypt:salt:hash",
+        balance: 25,
+        frozen: 0,
+        holds: {},
+        totalRecharged: 25
+      }
+    }
+  });
+  let updateCalls = 0;
+  const store = {
+    read: () => baseStore.read(),
+    update: async (mutator) => {
+      updateCalls += 1;
+      return baseStore.update(mutator);
+    }
+  };
+
+  try {
+    const auth = createAuthController({ store, usersPath: join(root, "users.json"), seedUsers: [] });
+    const users = await auth.listUsers();
+
+    assert.equal(users.length, 1);
+    assert.equal(users[0].email, "stable@example.com");
+    assert.equal(updateCalls, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
