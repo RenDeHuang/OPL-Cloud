@@ -3,7 +3,18 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const routesPath = new URL("../../packages/console/ui/consoleRoutes.js", import.meta.url);
-const consolePagePath = new URL("../../packages/console/ui/pages/ConsolePage.jsx", import.meta.url);
+const ownerPagePaths = [
+  "../../packages/console/ui/pages/ConsolePage.jsx",
+  "../../packages/console/ui/pages/OverviewPage.jsx",
+  "../../packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
+  "../../packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx",
+  "../../packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx",
+  "../../packages/console/ui/pages/gateway/GatewayPage.jsx",
+  "../../packages/console/ui/pages/billing/BillingPage.jsx",
+  "../../packages/console/ui/pages/account/AccountPage.jsx",
+  "../../packages/console/ui/pages/support/SupportPage.jsx",
+  "../../packages/console/ui/pages/catalog/FabricPages.jsx"
+].map((item) => new URL(item, import.meta.url));
 
 async function source(path) {
   return readFile(path, "utf8");
@@ -85,7 +96,7 @@ test("Lab Owner menu stays commercial and hides operator internals", async () =>
 });
 
 test("commercial UI source keeps Lab Owner away from low-level billing and runtime evidence", async () => {
-  const page = await source(consolePagePath);
+  const page = (await Promise.all(ownerPagePaths.map(source))).join("\n");
 
   assert.doesNotMatch(page, /结算 1 小时/);
   assert.doesNotMatch(page, /requestUsageDedup/);

@@ -18,404 +18,51 @@ import {
   filterTaskEvidenceReceipts
 } from "../../ledger/src/task-evidence.js";
 import { billingReconciliationGuard } from "../../ledger/src/billing-reconciliation.js";
+import { clone, makeId, makeToken, money, now } from "./services/core-utils.js";
+import {
+  accountAvailable,
+  accountHold,
+  accountSnapshotForState,
+  addHold,
+  appendWalletTransaction,
+  chargeAccount,
+  debitAvailableBalance,
+  ensureAccount,
+  ensureBillingCollections,
+  ensureUserWallet,
+  publicWalletUser,
+  releaseHold,
+  syncAccountWallet,
+  userIdForAccount,
+  walletSnapshot
+} from "./services/wallet-service.js";
+import { incrementRequestQuota, requestUsageFingerprint } from "./services/usage-billing-service.js";
+import {
+  billableHours,
+  billingPolicy,
+  computeHourlyBase,
+  hourlyComputeAmount,
+  hourlyStorageAmount,
+  packageHoldAmount,
+  pricedComputeHourly,
+  pricedStorageGbMonth,
+  pricingMarkup,
+  storageGbHourPrice,
+  storageGbMonthBase,
+  storageHoldAmount
+} from "./services/pricing-service.js";
+import {
+  backupRetentionPolicy,
+  defaultStorageBackupPolicy,
+  latestBillingReconciliationReport,
+  latestStorageBackupForAccount,
+  latestWorkspaceForAccount,
+  operatorNotificationInScope,
+  storageDestroyed,
+  workspaceBySlug
+} from "./services/workspace-service.js";
 
-function now() {
-  return new Date().toISOString();
-}
-
-function stableHash(input) {
-  let hash = 0;
-  for (const char of input) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  }
-  return hash.toString(36).padStart(6, "0");
-}
-
-function makeId(prefix, ...parts) {
-  return `${prefix}-${stableHash(parts.join(":"))}`;
-}
-
-function makeToken(workspaceId, sequence = "initial") {
-  return `share_${stableHash(`${workspaceId}:${sequence}`)}${stableHash(`${sequence}:${workspaceId}`).slice(0, 6)}`;
-}
-
-function money(value) {
-  return Number(value.toFixed(4));
-}
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function ensureBillingCollections(state) {
-  state.resourceUsageLogs ??= [];
-  state.requestUsageLogs ??= [];
-  state.walletTransactions ??= [];
-  state.manualTopups ??= [];
-  state.requestUsageDedup ??= [];
-}
-
-function userIdForAccount(state, accountId) {
-  return Object.values(state.users || {}).find((user) => user.accountId === accountId)?.id || `usr-${accountId}`;
-}
-
-function syncAccountWallet(state, user) {
-  state.accounts ??= {};
-  const accountId = user.accountId;
-  const existing = state.accounts[accountId] || {};
-  const account = {
-    ...existing,
-    id: accountId,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    holds: clone(user.holds || {})
-  };
-  if (existing.totalRecharged !== undefined || Number(user.totalRecharged || 0) > 0) {
-    account.totalRecharged = money(Number(user.totalRecharged || 0));
-  }
-  state.accounts[accountId] = account;
-  return account;
-}
-
-function ensureUserWallet(state, { userId = "", accountId, email = "" } = {}) {
-  if (!accountId) throw new Error("account_required");
-  ensureBillingCollections(state);
-  state.accounts ??= {};
-  state.users ??= {};
-  const existingUser = userId
-    ? state.users[userId]
-    : Object.values(state.users).find((user) => user.accountId === accountId);
-  const id = existingUser?.id || userId || userIdForAccount(state, accountId);
-  const legacyAccount = state.accounts[accountId] || {};
-  state.users[id] ??= {
-    id,
-    email,
-    accountId,
-    role: "pi",
-    status: "active",
-    createdAt: now(),
-    updatedAt: now()
-  };
-  const user = state.users[id];
-  user.accountId ||= accountId;
-  user.email ||= email;
-  user.status ||= "active";
-  user.balance = money(Number(user.balance ?? legacyAccount.balance ?? 0));
-  user.frozen = money(Number(user.frozen ?? legacyAccount.frozen ?? 0));
-  user.holds ??= clone(legacyAccount.holds || {});
-  user.totalRecharged = money(Number(user.totalRecharged ?? legacyAccount.totalRecharged ?? 0));
-  syncAccountWallet(state, user);
-  return user;
-}
-
-function ensureAccount(state, accountId) {
-  return ensureUserWallet(state, { accountId });
-}
-
-function publicWalletUser(user) {
-  if (!user) return null;
-  const { password, passwordHash, ...safe } = clone(user);
-  return safe;
-}
-
-function walletSnapshot(user, accountId) {
-  return {
-    id: user.id,
-    userId: user.id,
-    accountId,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    available: accountAvailable(user),
-    holds: clone(user.holds || {}),
-    totalRecharged: money(Number(user.totalRecharged || 0))
-  };
-}
-
-function accountSnapshotForState(state, accountId) {
-  const user = Object.values(state.users || {}).find((item) => item.accountId === accountId);
-  const account = state.accounts?.[accountId] || { id: accountId, balance: 0, frozen: 0, holds: {} };
-  if (!user) return clone(account);
-  return {
-    ...clone(account),
-    id: accountId,
-    userId: user.id,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    holds: clone(user.holds || {})
-  };
-}
-
-function accountAvailable(account) {
-  return money(account.balance - account.frozen);
-}
-
-function accountHold(account, holdType) {
-  account.holds ??= {};
-  account.holds[holdType] = money(Number(account.holds[holdType] || 0));
-  account.frozen = money(Object.values(account.holds).reduce((total, amount) => total + Number(amount || 0), 0));
-  return account.holds[holdType];
-}
-
-function addHold(account, holdType, amount) {
-  const current = accountHold(account, holdType);
-  account.holds[holdType] = money(current + amount);
-  account.frozen = money(account.frozen + amount);
-}
-
-function releaseHold(account, holdType, amount = accountHold(account, holdType)) {
-  const current = accountHold(account, holdType);
-  const released = money(Math.min(current, Math.max(0, Number(amount || 0))));
-  if (released <= 0) return 0;
-  account.holds[holdType] = money(current - released);
-  account.frozen = money(account.frozen - released);
-  return released;
-}
-
-function debitAccount(account, holdType, amount) {
-  const debit = money(Math.max(0, Number(amount || 0)));
-  if (debit <= 0) return 0;
-  const currentHold = accountHold(account, holdType);
-  const captured = money(Math.min(currentHold, debit));
-  if (captured <= 0) return 0;
-  account.holds[holdType] = money(currentHold - captured);
-  account.frozen = money(Math.max(0, account.frozen - captured));
-  account.balance = money(account.balance - captured);
-  return captured;
-}
-
-function debitAvailableBalance(account, amount) {
-  const debit = money(Math.max(0, Number(amount || 0)));
-  if (debit <= 0) return 0;
-  const captured = money(Math.min(accountAvailable(account), debit));
-  if (captured <= 0) return 0;
-  account.balance = money(account.balance - captured);
-  return captured;
-}
-
-function chargeAccount(account, holdType, amount) {
-  const requested = money(Math.max(0, Number(amount || 0)));
-  const available = debitAvailableBalance(account, requested);
-  const remainingAfterAvailable = money(requested - available);
-  const hold = debitAccount(account, holdType, remainingAfterAvailable);
-  return {
-    requested,
-    available,
-    hold,
-    charged: money(available + hold),
-    unpaid: money(requested - available - hold),
-    usedHold: hold > 0,
-    exhaustedHold: hold > 0 && accountHold(account, holdType) <= 0
-  };
-}
-
-function appendWalletTransaction(state, {
-  user,
-  accountId,
-  workspaceId = "account",
-  type,
-  amount,
-  sourceEventId,
-  ledgerEntryId = "",
-  usageLogId = "",
-  fundingSource = "",
-  balanceBefore,
-  balanceAfter,
-  frozenBefore,
-  frozenAfter,
-  metadata = null
-}) {
-  ensureBillingCollections(state);
-  const transaction = {
-    id: makeId("wallet-tx", user.id, accountId, workspaceId, type, sourceEventId, String(state.walletTransactions.length)),
-    userId: user.id,
-    accountId,
-    workspaceId,
-    type,
-    amount: money(Number(amount || 0)),
-    currency: "CNY",
-    balanceBefore: money(Number(balanceBefore || 0)),
-    balanceAfter: money(Number(balanceAfter || 0)),
-    frozenBefore: money(Number(frozenBefore || 0)),
-    frozenAfter: money(Number(frozenAfter || 0)),
-    sourceEventId,
-    ...(ledgerEntryId ? { ledgerEntryId } : {}),
-    ...(usageLogId ? { usageLogId } : {}),
-    ...(fundingSource ? { fundingSource } : {}),
-    ...(metadata ? { metadata: clone(metadata) } : {}),
-    createdAt: now()
-  };
-  state.walletTransactions.push(transaction);
-  return transaction;
-}
-
-function requestUsageFingerprint({
-  provider = "",
-  model = "",
-  inputTokens = 0,
-  outputTokens = 0,
-  requestedAmount = 0,
-  sourceEventId = ""
-}) {
-  return `fp-${stableHash(JSON.stringify({
-    provider,
-    model,
-    inputTokens: Number(inputTokens || 0),
-    outputTokens: Number(outputTokens || 0),
-    requestedAmount: money(Number(requestedAmount || 0)),
-    sourceEventId
-  }))}`;
-}
-
-function requestQuotaWindowExpired(quota) {
-  const windowSeconds = Number(quota.windowSeconds || 0);
-  if (!windowSeconds || !quota.windowStartedAt) return false;
-  const startedAt = Date.parse(quota.windowStartedAt);
-  if (!Number.isFinite(startedAt)) return false;
-  return Date.now() - startedAt >= windowSeconds * 1000;
-}
-
-function incrementRequestQuota(user, units = 1) {
-  const quota = user.requestQuota;
-  if (!quota) return null;
-  const amount = Number(units || 0);
-  if (!Number.isFinite(amount) || amount <= 0) return clone(quota);
-  quota.used = Number(quota.used || 0);
-  if (quota.limit !== undefined && Number(quota.limit) >= 0 && quota.used + amount > Number(quota.limit)) {
-    throw new Error("request_quota_exceeded");
-  }
-  if (requestQuotaWindowExpired(quota)) {
-    quota.windowUsed = 0;
-    quota.windowStartedAt = now();
-  }
-  if (quota.windowLimit !== undefined) {
-    quota.windowUsed = Number(quota.windowUsed || 0);
-    if (Number(quota.windowLimit) >= 0 && quota.windowUsed + amount > Number(quota.windowLimit)) {
-      throw new Error("request_quota_exceeded");
-    }
-    quota.windowUsed = money(quota.windowUsed + amount);
-    quota.windowStartedAt ||= now();
-  }
-  quota.used = money(quota.used + amount);
-  return clone(quota);
-}
-
-function latestWorkspaceForAccount(state, accountId, workspaceId) {
-  const workspace = state.workspaces[workspaceId];
-  if (!workspace || workspace.ownerAccountId !== accountId) {
-    throw new Error("workspace_not_found");
-  }
-  return workspace;
-}
-
-function workspaceBySlug(state, slug) {
-  return Object.values(state.workspaces).find((workspace) => workspace.slug === slug);
-}
-
-export function storageHoldAmount({ packagePlan, pricing }) {
-  return packageHoldAmount({ packagePlan, pricing }).storage;
-}
-
-function pricingMarkup(pricing) {
-  return pricing.markup ?? 0.2;
-}
-
-function computeHourlyBase({ packagePlan, pricing }) {
-  return pricing.computeHourly?.[packagePlan.id] ?? pricing.serverHourly?.[packagePlan.id] ?? 0;
-}
-
-function storageGbMonthBase(pricing) {
-  return pricing.storageGbMonth ?? pricing.diskGbMonth ?? 0.2;
-}
-
-function pricedComputeHourly({ packagePlan, pricing }) {
-  return money(computeHourlyBase({ packagePlan, pricing }) * (1 + pricingMarkup(pricing)));
-}
-
-function pricedStorageGbMonth(pricing) {
-  return money(storageGbMonthBase(pricing) * (1 + pricingMarkup(pricing)));
-}
-
-export function packageHoldAmount({ packagePlan, pricing }) {
-  const compute = money(pricedComputeHourly({ packagePlan, pricing }) * 24 * 7);
-  const storage = money((packagePlan.diskGb * pricedStorageGbMonth(pricing) / 30) * 7);
-  return {
-    compute,
-    storage,
-    total: money(compute + storage)
-  };
-}
-
-function hourlyStorageAmount({ packagePlan, pricing, hours }) {
-  const gbMonth = storageGbMonthBase(pricing);
-  const markup = pricingMarkup(pricing);
-  return money((packagePlan.diskGb * gbMonth * (1 + markup) / 30 / 24) * hours);
-}
-
-function storageGbHourPrice(pricing) {
-  return money(storageGbMonthBase(pricing) * (1 + pricingMarkup(pricing)) / 30 / 24);
-}
-
-function hourlyComputeAmount({ packagePlan, pricing, hours }) {
-  const hourly = computeHourlyBase({ packagePlan, pricing });
-  const markup = pricingMarkup(pricing);
-  return money(hourly * (1 + markup) * hours);
-}
-
-function billableHours(hours) {
-  const value = Number(hours);
-  if (!Number.isFinite(value) || value <= 0) throw new Error("positive_hours_required");
-  return Math.ceil(value);
-}
-
-function billingPolicy(pricing) {
-  return {
-    currency: "CNY",
-    markup: pricingMarkup(pricing),
-    prepaidHoldDays: 7,
-    minimumBillableHours: 1,
-    billingCadence: "hourly",
-    fundingOrder: ["available_balance", "frozen_hold"],
-    computeHoldExhaustion: "stop_compute",
-    storageHoldExhaustion: "freeze_workspace_until_top_up_or_storage_destroy",
-    storageDestroyConfirmation: "required"
-  };
-}
-
-function storageDestroyed(workspace) {
-  return workspace?.state === "destroyed" || workspace?.disk?.status === "destroyed";
-}
-
-function defaultStorageBackupPolicy() {
-  return {
-    name: "daily_7_weekly_4",
-    retainDaily: 7,
-    retainWeekly: 4,
-    retainLast: 11
-  };
-}
-
-function backupRetentionPolicy(inputPolicy = null) {
-  return {
-    ...defaultStorageBackupPolicy(),
-    ...(inputPolicy || {})
-  };
-}
-
-function latestStorageBackupForAccount(state, accountId, backupId) {
-  const backup = (state.storageBackups || []).find((item) => item.id === backupId && item.accountId === accountId);
-  if (!backup) throw new Error("storage_backup_not_found");
-  return backup;
-}
-
-function latestBillingReconciliationReport(state) {
-  return (state.billingReconciliationReports || []).at(-1) || null;
-}
-
-function operatorNotificationInScope(event, accountId) {
-  if (!accountId) return true;
-  if (event.accountId === accountId) return true;
-  return event.accountId === "billing" && event.workspaceId === "billing";
-}
+export { packageHoldAmount, storageHoldAmount };
 
 export function createOplCloud({ store, runtimeProvider, pricing, productionReadiness = null, fabricCatalog = defaultFabricResourceCatalog() }) {
   return new OplCloudService({ store, runtimeProvider, pricing, productionReadiness, fabricCatalog });
