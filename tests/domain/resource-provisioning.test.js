@@ -18,7 +18,7 @@ const TEST_PRICING = {
   markup: 0.2
 };
 
-function createService() {
+function createService(runtimeProviderOverrides = {}) {
   return createOplCloud({
     store: new MemoryStore(),
     pricing: TEST_PRICING,
@@ -55,7 +55,8 @@ function createService() {
           url: `https://workspace.example.test/w/${workspaceId}?token=${token}`,
           status: "ready"
         };
-      }
+      },
+      ...runtimeProviderOverrides
     }
   });
 }
@@ -172,6 +173,54 @@ test("Workspace URL creation requires an attached storage and compute pair", asy
     }),
     /storage_attachment_not_attached/
   );
+});
+
+test("storage detach retry completes when a previous provider attempt left the attachment detaching", async () => {
+  let failDetach = true;
+  const service = createService({
+    async detachStorage() {
+      if (failDetach) throw new Error("provider_detach_transient_failure");
+      return { status: "detached" };
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const compute = await service.createComputeResource({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    name: "CPU analysis node"
+  });
+  const storage = await service.createStorageVolume({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    sizeGb: 10,
+    name: "Grant data volume"
+  });
+  const attachment = await service.attachStorage({
+    accountId: "pi-alpha",
+    computeId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+
+  await assert.rejects(
+    service.detachStorage({ accountId: "pi-alpha", attachmentId: attachment.id, confirm: true }),
+    /provider_detach_transient_failure/
+  );
+  assert.equal((await service.getState("pi-alpha")).storageAttachments[0].status, "detaching");
+
+  failDetach = false;
+  const detached = await service.detachStorage({
+    accountId: "pi-alpha",
+    attachmentId: attachment.id,
+    confirm: true
+  });
+
+  assert.equal(detached.status, "detached");
+  const state = await service.getState("pi-alpha");
+  assert.equal(state.storageAttachments[0].status, "detached");
+  assert.deepEqual(state.computeResources[0].attachedStorageIds, []);
+  assert.deepEqual(state.storageVolumes[0].attachmentIds, []);
 });
 
 test("storage cannot attach across accounts", async () => {

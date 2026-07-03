@@ -409,11 +409,16 @@ export class ResourceProvisioningService extends OplDomainService {
     const attachment = await this.store.update((state) => {
       ensureResourceCollections(state);
       const current = findOwnedResource(state.storageAttachments, accountId, attachmentId, "storage_attachment_not_found");
-      if (current.status !== "attached") throw new Error("storage_attachment_not_attached");
-      current.status = "detaching";
-      current.updatedAt = now();
+      if (current.status === "detached") return clone(current);
+      if (!["attached", "detaching"].includes(current.status)) throw new Error("storage_attachment_not_attached");
+      if (current.status === "attached") {
+        current.status = "detaching";
+        current.updatedAt = now();
+      }
       return clone(current);
     });
+
+    if (attachment.status === "detached") return attachment;
 
     if (typeof this.runtimeProvider.detachStorage === "function") {
       await this.runtimeProvider.detachStorage({ attachment });
