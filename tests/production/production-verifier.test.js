@@ -74,7 +74,7 @@ function tkeLifecycleResponses(workspace) {
   return {
     "GET /api/production/readiness": { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] },
     "GET /api/runtime/readiness": { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] },
-    "POST /api/accounts/credit": { id: "pi-prod", balance: 1000, frozen: 0 },
+    "POST /api/billing/topups": { id: "pi-prod", balance: 1000, frozen: 0 },
     "POST /api/workspaces": workspace,
     "POST /api/workspaces/runtime-status": readyRuntimeStatus(workspace),
     [`GET ${workspace.url}`]: "<html>OPL Workspace</html>",
@@ -196,7 +196,7 @@ test("production verifier exercises the full Tencent TKE Workspace lifecycle thr
   assert.deepEqual(requests.map((request) => request.key), [
     "GET /api/production/readiness",
     "GET /api/runtime/readiness",
-    "POST /api/accounts/credit",
+    "POST /api/billing/topups",
     "POST /api/workspaces",
     "POST /api/workspaces/runtime-status",
     `GET ${workspace.url}`,
@@ -257,7 +257,7 @@ test("production verifier authenticates as operator and sends CSRF on commercial
     "GET /api/production/readiness",
     "GET /api/runtime/readiness",
     "POST /api/auth/operator-login",
-    "POST /api/accounts/credit"
+    "POST /api/billing/topups"
   ]);
   assert.equal(requests.find((request) => request.key === "POST /api/auth/operator-login").body.operatorToken, "operator-token");
   for (const request of requests.filter((item) => item.key.startsWith("POST /api/") && item.key !== "POST /api/auth/operator-login")) {
@@ -326,7 +326,7 @@ test("production verifier reports cleanup failures without hiding the original v
 
         if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
         if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] });
-        if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
+        if (key === "POST /api/billing/topups") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
         if (key === "POST /api/workspaces") return jsonResponse(workspace);
         if (key === "POST /api/workspaces/runtime-status") return jsonResponse(readyRuntimeStatus(workspace));
         if (key === `GET ${workspace.url}`) return htmlResponse("bad gateway", 502);
@@ -363,7 +363,7 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
 
       if (key === "GET /api/production/readiness") return jsonResponse({ ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
       if (key === "GET /api/runtime/readiness") return jsonResponse({ provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] });
-      if (key === "POST /api/accounts/credit") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
+      if (key === "POST /api/billing/topups") return jsonResponse({ id: "pi-prod", balance: 1000, frozen: 0 });
       if (key === "POST /api/workspaces") return jsonResponse(workspace);
       if (key === "POST /api/workspaces/runtime-status") return jsonResponse(readyRuntimeStatus(workspace));
       if (key === `GET ${workspace.url}`) return htmlResponse("bad gateway", 502);

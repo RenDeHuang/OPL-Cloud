@@ -2,76 +2,68 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const routesPath = new URL("../../packages/console/ui/consoleRoutes.js", import.meta.url);
-const ownerPagePaths = [
-  "../../packages/console/ui/pages/ConsolePage.jsx",
-  "../../packages/console/ui/pages/OverviewPage.jsx",
-  "../../packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
-  "../../packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx",
-  "../../packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx",
-  "../../packages/console/ui/pages/gateway/GatewayPage.jsx",
-  "../../packages/console/ui/pages/billing/BillingPage.jsx",
-  "../../packages/console/ui/pages/account/AccountPage.jsx",
-  "../../packages/console/ui/pages/support/SupportPage.jsx",
-  "../../packages/console/ui/pages/catalog/FabricPages.jsx"
-].map((item) => new URL(item, import.meta.url));
+import { adminMenuRoutes, consoleRoutes, ownerMenuRoutes } from "../../packages/console/ui/consoleRoutes.js";
 
-async function source(path) {
-  return readFile(path, "utf8");
+const contractPath = new URL("../../packages/contracts/opl-cloud-route-api-contract.json", import.meta.url);
+
+async function readContract() {
+  return JSON.parse(await readFile(contractPath, "utf8"));
 }
 
-test("commercial Console route contract covers public, auth, console, support, and admin routes", async () => {
-  const routes = await source(routesPath);
+function allContractRoutes(contract) {
+  return [
+    ...(contract.publicRoutes || []),
+    ...(contract.authRoutes || []),
+    ...(contract.consoleRoutes || []),
+    ...(contract.adminRoutes || []),
+    ...(contract.errorRoutes || [])
+  ];
+}
+
+test("commercial Console route contract covers current public, auth, owner, and admin surfaces", async () => {
+  const contract = await readContract();
+  const routes = allContractRoutes(contract);
+  const byPath = new Map(routes.map((route) => [route.path, route]));
+
+  for (const [path, status] of [
+    ["/", "folded_into_parent"],
+    ["/pricing", "folded_into_parent"],
+    ["/docs", "folded_into_parent"],
+    ["/status", "folded_into_parent"],
+    ["/login", "implemented"],
+    ["/console/overview", "implemented"],
+    ["/console/workspaces", "implemented"],
+    ["/console/workspaces/new", "implemented"],
+    ["/console/workspaces/:id", "implemented"],
+    ["/console/gateway", "implemented"],
+    ["/console/billing", "implemented"],
+    ["/console/account", "implemented"],
+    ["/console/support", "folded_into_parent"],
+    ["/console/alerts", "implemented"],
+    ["/admin/overview", "implemented"],
+    ["/admin/users", "implemented"],
+    ["/admin/billing", "implemented"],
+    ["/admin/ledger", "implemented"],
+    ["/admin/runtime", "implemented"]
+  ]) {
+    assert.equal(byPath.get(path)?.status, status, `${path} must have current commercial route status ${status}`);
+  }
 
   for (const path of [
-    "/",
-    "/pricing",
-    "/docs",
-    "/status",
-    "/login",
     "/register",
     "/invite/accept",
     "/email/verify",
     "/forgot-password",
     "/reset-password",
-    "/console/overview",
-    "/console/workspaces",
-    "/console/workspaces/new",
-    "/console/workspaces/:id/access",
-    "/console/gateway",
-    "/console/billing/wallet",
-    "/console/account/lab",
-    "/console/support",
-    "/console/support/new",
-    "/console/support/:id",
-    "/console/resources/connectors",
-    "/console/approvals",
-    "/console/receipts",
-    "/admin/overview",
-    "/admin/users/:id/wallet",
-    "/admin/governance/policies",
-    "/admin/billing/topups",
-    "/admin/fabric/connectors",
-    "/admin/ledger/events",
     "/admin/runtime/readiness",
-    "/admin/support",
-    "/403",
-    "/404",
-    "/500"
+    "/admin/ledger/events"
   ]) {
-    assert.match(routes, new RegExp(`path:\\s*["']${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`));
+    assert.equal(byPath.get(path)?.status, "reserved", `${path} must be reserved until backed by implementation`);
   }
-
-  assert.match(routes, /requiresAuth:\s*true/);
-  assert.match(routes, /requiresAdmin:\s*true/);
-  assert.match(routes, /hiddenInMenu:\s*true/);
-  assert.match(routes, /featureGate:\s*["']registration["']/);
 });
 
-test("Lab Owner menu stays commercial and hides operator internals", async () => {
-  const routes = await source(routesPath);
-
-  for (const label of [
+test("Lab Owner menu is commercial and excludes operator surfaces", () => {
+  assert.deepEqual(ownerMenuRoutes.map((route) => route.label), [
     "Overview",
     "Workspaces",
     "Gateway",
@@ -79,30 +71,46 @@ test("Lab Owner menu stays commercial and hides operator internals", async () =>
     "Account & Lab",
     "Support",
     "Alerts"
-  ]) {
-    assert.match(routes, new RegExp(`label:\\s*["']${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`));
-  }
+  ]);
 
-  for (const forbidden of [
-    "Manual settlement",
-    "Request fingerprint",
-    "Dedup rows",
-    "Production readiness",
-    "TKE/K8s",
-    "Raw Ledger events"
-  ]) {
-    assert.doesNotMatch(routes, new RegExp(`role:\\s*["']owner["'][\\s\\S]*${forbidden}`));
+  for (const route of ownerMenuRoutes) {
+    assert.equal(route.area, "console");
+    assert.equal(route.requiresAuth, true);
+    assert.notEqual(route.requiresAdmin, true);
+    assert.equal(route.adminMenu, undefined);
   }
 });
 
-test("commercial UI source keeps Lab Owner away from low-level billing and runtime evidence", async () => {
-  const page = (await Promise.all(ownerPagePaths.map(source))).join("\n");
+test("Admin menu owns operator surfaces behind admin permission", () => {
+  assert.deepEqual(adminMenuRoutes.map((route) => route.label), [
+    "Admin Overview",
+    "Users",
+    "Governance",
+    "All Workspaces",
+    "Billing Ops",
+    "Gateway Ops",
+    "Fabric",
+    "Ledger",
+    "Runtime",
+    "Support Ops",
+    "Audit",
+    "Settings"
+  ]);
 
-  assert.doesNotMatch(page, /结算 1 小时/);
-  assert.doesNotMatch(page, /requestUsageDedup/);
-  assert.doesNotMatch(page, /requestFingerprint/);
-  assert.doesNotMatch(page, /production readiness/i);
-  assert.match(page, /Support/);
-  assert.match(page, /Workspace URL/);
-  assert.match(page, /7-day hold/);
+  for (const route of adminMenuRoutes) {
+    assert.equal(route.area, "admin");
+    assert.equal(route.requiresAuth, true);
+    assert.equal(route.requiresAdmin, true);
+  }
+});
+
+test("route table does not expose reserved routes in visible owner or admin menus", () => {
+  const visiblePaths = new Set([...ownerMenuRoutes, ...adminMenuRoutes].map((route) => route.path));
+  const reservedPaths = consoleRoutes
+    .filter((route) => route.hiddenInMenu || route.featureGate)
+    .map((route) => route.path);
+
+  for (const path of reservedPaths) {
+    assert.equal(visiblePaths.has(path), false, `${path} must stay out of visible menus`);
+  }
 });

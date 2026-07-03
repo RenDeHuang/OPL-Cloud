@@ -90,7 +90,7 @@ test("manual top-up writes wallet transaction and top-up audit records", async (
     name: "manual-topup-provider"
   });
 
-  const account = await service.creditAccount({
+  const account = await service.manualTopUp({
     accountId: "pi-alpha",
     amount: 250,
     reason: "owner_credit",
@@ -156,7 +156,7 @@ test("opening a Workspace freezes seven days of compute and storage and charges 
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Prepaid Lab",
@@ -201,7 +201,7 @@ test("Workspace creation failure releases holds and records an operator-visible 
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   await assert.rejects(
     service.createWorkspace({
       accountId: "pi-alpha",
@@ -248,7 +248,7 @@ test("billing settlement rounds up to full hours, consumes available balance fir
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Auto Stop Lab",
@@ -307,7 +307,7 @@ test("prepaid billing uses available balance first and never debits beyond avail
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Bounded Debit Lab",
@@ -340,7 +340,7 @@ test("prepaid billing warns when available balance is exhausted before consuming
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 204, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 204, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Low Balance Lab",
@@ -378,7 +378,7 @@ test("billing settlement is idempotent for the same source event", async () => {
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Idempotent Billing Lab",
@@ -418,7 +418,7 @@ test("request usage charges the user wallet and records request logs", async () 
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Request Usage Lab",
@@ -467,7 +467,7 @@ test("request usage deduplicates same fingerprint and rejects conflicting replay
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Request Dedup Lab",
@@ -514,7 +514,7 @@ test("request usage quota rejects billing before wallet mutation", async () => {
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Request Quota Lab",
@@ -568,7 +568,7 @@ test("destroying compute and storage releases unused prepaid holds", async () =>
     }
   });
 
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Release Lab",

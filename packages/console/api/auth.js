@@ -57,50 +57,6 @@ function authUsersFromState(state) {
     .map(normalizeStoredAuthUser);
 }
 
-function ensureAuthUserAccount(state, user) {
-  state.accounts ??= {};
-  state.users ??= {};
-  const account = state.accounts[user.accountId] ?? {
-    id: user.accountId,
-    balance: 0,
-    frozen: 0,
-    holds: {}
-  };
-  const storedUser = state.users[user.id] || user;
-  storedUser.accountId ||= user.accountId;
-  storedUser.balance = Number(storedUser.balance ?? account.balance ?? 0);
-  storedUser.frozen = Number(storedUser.frozen ?? account.frozen ?? 0);
-  storedUser.holds ??= account.holds || {};
-  storedUser.totalRecharged = Number(storedUser.totalRecharged ?? account.totalRecharged ?? 0);
-  state.users[storedUser.id] = storedUser;
-  state.accounts[user.accountId] = {
-    ...account,
-    id: user.accountId,
-    balance: storedUser.balance,
-    frozen: storedUser.frozen,
-    holds: storedUser.holds
-  };
-  if (account.totalRecharged !== undefined || storedUser.totalRecharged > 0) {
-    state.accounts[user.accountId].totalRecharged = storedUser.totalRecharged;
-  }
-}
-
-function sameHolds(left = {}, right = {}) {
-  return JSON.stringify(left || {}) === JSON.stringify(right || {});
-}
-
-function authUserNeedsWalletRepair(state, user) {
-  const storedUser = state.users?.[user.id];
-  const account = state.accounts?.[user.accountId];
-  if (!storedUser || !account) return true;
-  if (storedUser.accountId !== user.accountId) return true;
-  if (storedUser.balance === undefined || storedUser.frozen === undefined || storedUser.holds === undefined) return true;
-  if (storedUser.totalRecharged === undefined) return true;
-  if (Number(account.balance ?? 0) !== Number(storedUser.balance ?? 0)) return true;
-  if (Number(account.frozen ?? 0) !== Number(storedUser.frozen ?? 0)) return true;
-  return !sameHolds(account.holds, storedUser.holds);
-}
-
 function parseCookies(header = "") {
   return String(header)
     .split(";")
@@ -200,15 +156,6 @@ async function writeUsers(usersPath, users) {
   await writeFile(usersPath, `${JSON.stringify({ users }, null, 2)}\n`);
 }
 
-async function readLegacyUsers(usersPath) {
-  try {
-    return await readUsers(usersPath);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    return null;
-  }
-}
-
 export function createAuthController({
   env = process.env,
   usersPath = env.OPL_CONSOLE_USERS_PATH || defaultUsersPath,
@@ -222,19 +169,9 @@ export function createAuthController({
   async function loadStoreUsers() {
     const state = await store.read();
     const existing = authUsersFromState(state);
-    if (existing.length > 0) {
-      if (existing.every((user) => !authUserNeedsWalletRepair(state, user))) return existing;
-      return store.update((nextState) => {
-        const current = authUsersFromState(nextState);
-        for (const user of current) ensureAuthUserAccount(nextState, user);
-        return authUsersFromState(nextState);
-      });
-    }
+    if (existing.length > 0) return existing;
 
-    const legacyUsers = await readLegacyUsers(usersPath);
-    const usersToSeed = legacyUsers?.length
-      ? legacyUsers
-      : await Promise.all((seedUsers || defaultSeedUsers(env)).map(normalizeSeedUser));
+    const usersToSeed = await Promise.all((seedUsers || defaultSeedUsers(env)).map(normalizeSeedUser));
 
     return store.update((nextState) => {
       const current = authUsersFromState(nextState);
@@ -246,10 +183,13 @@ export function createAuthController({
         nextState.users[user.id] = {
           ...nextState.users[user.id],
           ...user,
+          balance: Number(nextState.users[user.id]?.balance ?? user.balance ?? 0),
+          frozen: Number(nextState.users[user.id]?.frozen ?? user.frozen ?? 0),
+          holds: nextState.users[user.id]?.holds || user.holds || {},
+          totalRecharged: Number(nextState.users[user.id]?.totalRecharged ?? user.totalRecharged ?? 0),
           createdAt: nextState.users[user.id]?.createdAt || timestamp,
           updatedAt: timestamp
         };
-        ensureAuthUserAccount(nextState, user);
       }
       return authUsersFromState(nextState);
     });

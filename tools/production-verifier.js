@@ -276,7 +276,7 @@ export async function verifyProductionChain({
     await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
-      path: "/api/accounts/credit",
+      path: "/api/billing/topups",
       method: "POST",
       auth,
       body: { accountId, amount: creditAmount, reason: creditSourceEventId }

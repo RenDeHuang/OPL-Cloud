@@ -61,12 +61,7 @@ export class ConsoleReadModelService extends OplDomainService {
     const state = await this.store.read();
     const organization = state.organizations?.[organizationId];
     if (!organization) throw new Error("organization_not_found");
-    const billingAccount = state.accounts[organization.billingAccountId] ?? {
-      id: organization.billingAccountId,
-      balance: 0,
-      frozen: 0,
-      holds: {}
-    };
+    const billingAccount = accountSnapshotForState(state, organization.billingAccountId);
     const workspaces = Object.values(state.workspaces)
       .filter((workspace) => workspace.owner?.organizationId === organizationId || workspace.ownerAccountId === organization.billingAccountId);
     return managementSnapshot(state, {
@@ -84,10 +79,10 @@ export class ConsoleReadModelService extends OplDomainService {
       accountId,
       role: "pi",
       status: "active",
-      balance: Number(state.accounts?.[accountId]?.balance || 0),
-      frozen: Number(state.accounts?.[accountId]?.frozen || 0),
-      holds: clone(state.accounts?.[accountId]?.holds || {}),
-      totalRecharged: Number(state.accounts?.[accountId]?.totalRecharged || 0)
+      balance: 0,
+      frozen: 0,
+      holds: {},
+      totalRecharged: 0
     };
     const wallet = walletSnapshot(user, accountId);
     return {
@@ -130,7 +125,6 @@ export class ConsoleReadModelService extends OplDomainService {
     const notifications = (state.notifications || []).filter((event) => operatorNotificationInScope(event, accountId));
     const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
     const accountIds = new Set([
-      ...Object.keys(state.accounts || {}),
       ...Object.values(state.users || {}).map((user) => user.accountId).filter(Boolean)
     ]);
     const accounts = [...accountIds]

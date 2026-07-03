@@ -16,7 +16,7 @@ The current Console route map contains a mix of static pages, implemented contro
 - Dynamic control-plane objects need read/write/action evidence before `implemented` status.
 - Routes that are future product commitments but not implemented must be marked as `long_term_gap`.
 - Routes that are only subviews rendered by a parent page must be marked as `folded_parent`.
-- Placeholder routes that should be cleaned from active product claims must be marked as `dynamic_prune`.
+- Reserved routes that should be cleaned from active product claims must be marked as `dynamic_prune`.
 - Console must only cross Fabric and Ledger through package/service boundaries.
 
 ## Tasks

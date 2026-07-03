@@ -35,7 +35,7 @@ test("local Docker provider creates real compose, disk, URL, and preserves disk 
       }
     });
 
-    await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+    await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
     const workspace = await service.createWorkspace({
       accountId: "pi-alpha",
       workspaceName: "Real Docker Lab",

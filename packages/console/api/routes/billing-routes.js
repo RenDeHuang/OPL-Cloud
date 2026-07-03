@@ -1,8 +1,8 @@
 export function buildBillingRoutes({ appService, body, requireAdmin, session, scopedWorkspaceInput }) {
   return {
-    "POST /api/accounts/credit": () => {
+    "POST /api/billing/topups": () => {
       requireAdmin();
-      return appService.creditAccount(session
+      return appService.manualTopUp(session
         ? {
           ...body,
           operatorUserId: session.user.id,

@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Console and OPL Fabric",
+  "purpose": "Workspace persistent storage backup, restore-to-new-Workspace, and retention contract.",
+  "state": "current",
+  "machineBoundary": "VolumeSnapshot backup/restore behavior, retention deletion scope, API shape, and commercial billing rules.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "currentScope": "Workspace persistent storage backup, restore, and retention",
   "provider": "tencent-tke-volume-snapshot",
   "backupPolicy": {

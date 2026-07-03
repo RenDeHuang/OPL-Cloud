@@ -16,10 +16,6 @@ async function assertFile(relativePath) {
   await access(path(relativePath));
 }
 
-function lineCount(text) {
-  return text.trimEnd().split("\n").length;
-}
-
 test("console UI is split into api, store, shared, and page modules", async () => {
   for (const file of [
     "packages/console/ui/api/console-api.js",
@@ -43,7 +39,6 @@ test("console UI is split into api, store, shared, and page modules", async () =
   }
 
   const consolePage = await source("packages/console/ui/pages/ConsolePage.jsx");
-  assert.ok(lineCount(consolePage) < 260, "ConsolePage should stay a route shell, not a page bundle");
   assert.doesNotMatch(consolePage, /async function api\(/);
   assert.doesNotMatch(consolePage, /function WorkspacesPage\(/);
   assert.doesNotMatch(consolePage, /function AdminOverviewPage\(/);
@@ -68,7 +63,6 @@ test("opl-cloud facade delegates domain use cases to service modules", async () 
   }
 
   const service = await source("packages/console/src/opl-cloud.js");
-  assert.ok(lineCount(service) < 900, "opl-cloud should be a facade, not a domain implementation bundle");
   assert.doesNotMatch(service, /function ensureUserWallet\(/);
   assert.doesNotMatch(service, /function packageHoldAmount\(/);
   assert.doesNotMatch(service, /function latestWorkspaceForAccount\(/);

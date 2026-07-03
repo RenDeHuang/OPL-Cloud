@@ -30,9 +30,39 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function userIdForAccount(state, accountId) {
+  return Object.values(state.users || {}).find((user) => user.accountId === accountId)?.id || `usr-${accountId}`;
+}
+
+export function migrateLegacyState(rawState = {}) {
+  const state = { ...emptyState(), ...clone(rawState) };
+  state.users ??= {};
+  for (const account of Object.values(state.accounts || {})) {
+    if (!account?.id) continue;
+    const userId = userIdForAccount(state, account.id);
+    state.users[userId] ??= {
+      id: userId,
+      email: "",
+      accountId: account.id,
+      role: "pi",
+      status: "active",
+      createdAt: account.createdAt || new Date().toISOString(),
+      updatedAt: account.updatedAt || new Date().toISOString()
+    };
+    const user = state.users[userId];
+    user.accountId ||= account.id;
+    user.balance = Number(user.balance ?? account.balance ?? 0);
+    user.frozen = Number(user.frozen ?? account.frozen ?? 0);
+    user.holds ??= clone(account.holds || {});
+    user.totalRecharged = Number(user.totalRecharged ?? account.totalRecharged ?? 0);
+  }
+  state.accounts = {};
+  return state;
+}
+
 export class MemoryStore {
   constructor(initialState = emptyState()) {
-    this.state = clone(initialState);
+    this.state = migrateLegacyState(initialState);
   }
 
   async read() {
@@ -40,7 +70,7 @@ export class MemoryStore {
   }
 
   async write(nextState) {
-    this.state = clone(nextState);
+    this.state = migrateLegacyState(nextState);
     return this.read();
   }
 
@@ -60,7 +90,7 @@ export class JsonFileStore {
   async read() {
     try {
       const raw = await readFile(this.filePath, "utf8");
-      return { ...emptyState(), ...JSON.parse(raw) };
+      return migrateLegacyState(JSON.parse(raw));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       return emptyState();
@@ -145,19 +175,13 @@ export class PostgresStore {
     state.walletTransactions = walletTransactions.rows.map((row) => row.state);
     state.manualTopups = manualTopups.rows.map((row) => row.state);
     state.requestUsageDedup = requestUsageDedup.rows.map((row) => row.state);
-    return clone(state);
+    return migrateLegacyState(state);
   }
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
     await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
 
-    for (const account of Object.values(nextState.accounts || {})) {
-      await client.query(
-        "INSERT INTO accounts (id, state, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()",
-        [account.id, account]
-      );
-    }
     for (const organization of Object.values(nextState.organizations || {})) {
       await client.query(
         "INSERT INTO organizations (id, state, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, updated_at = now()",

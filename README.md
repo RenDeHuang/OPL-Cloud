@@ -4,7 +4,7 @@ OPL Cloud is the online hosted version of OPL.
 
 This repository is the OPL Cloud implementation workspace for the OPL Console and OPL Workspace control-plane flow.
 
-Implementation scope is fixed in [docs/IMPLEMENTATION_SCOPE.md](./docs/IMPLEMENTATION_SCOPE.md): [`one-person-lab`](https://github.com/gaofeng21cn/one-person-lab) provides the development framework concepts, [`one-person-lab-cloud`](https://github.com/gaofeng21cn/one-person-lab-cloud) provides the Cloud product definition, and this repository implements the OPL Console / OPL Workspace control-plane slice.
+Implementation scope is fixed in [docs/project.md](./docs/project.md): [`one-person-lab`](https://github.com/gaofeng21cn/one-person-lab) provides the development framework concepts and lifecycle rules, [`one-person-lab-cloud`](https://github.com/gaofeng21cn/one-person-lab-cloud) provides the Cloud product definition, and this repository implements the OPL Console / OPL Workspace control-plane slice.
 
 The implementation is staged for future extraction under [packages](./packages): `console`, `fabric`, `ledger`, and `contracts`.
 
@@ -81,9 +81,9 @@ Compute and storage must not operate unpaid. OPL Cloud freezes enough balance fo
 
 ## Product Design
 
-See [PRODUCT_DESIGN.md](./PRODUCT_DESIGN.md) for the frozen v1 product design.
+See [docs/product/console-workspace-v1.md](./docs/product/console-workspace-v1.md) for the current OPL Console commercial workspace product design.
 
-For the current launch boundary, use [docs/CONTROLLED_PILOT_CHECKLIST.md](./docs/CONTROLLED_PILOT_CHECKLIST.md). The current status is controlled production pilot readiness for Basic CPU Workspace, not public GA.
+For the current launch boundary, use [docs/status.md](./docs/status.md). The current status is controlled commercial pilot readiness for CPU Workspaces, not public GA.
 
 ## Current Implementation
 
@@ -296,9 +296,9 @@ API keys and model credentials must not be injected through CLI arguments, envir
 
 No-auth mode is acceptable only because OPL Cloud owns the Workspace URL token boundary. Do not expose the container directly without the OPL Workspace URL/token gateway or another trusted proxy boundary.
 
-## Implementation Goal Ledger
+## Documentation And Development Lifecycle
 
-See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) for the current goal ledger. Work in this repository follows the One Person Lab development frame:
+See [docs/README.md](./docs/README.md) for the active documentation map. Work in this repository follows the One Person Lab development frame:
 
 - goal
 - attempt
@@ -310,6 +310,6 @@ See [docs/IMPLEMENTATION_PLAN.md](./docs/IMPLEMENTATION_PLAN.md) for the current
 - recovery
 - evidence
 
-The goal ledger preserves the delivered Console, Workspace, Fabric, and Ledger capabilities while keeping real cloud verification behind an explicit human gate.
+Active docs describe current truth. Dated plans, design freezes, closeouts, run evidence, and completed implementation ledgers live in `docs/history/**`.
 
-For the production launch checklist and recovery notes, see [docs/PRODUCTION_RUNBOOK.md](./docs/PRODUCTION_RUNBOOK.md).
+For the production runbook and recovery notes, see [docs/runtime/production-runbook.md](./docs/runtime/production-runbook.md).

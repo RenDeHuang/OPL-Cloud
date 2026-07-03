@@ -22,6 +22,15 @@ function numberFromEnv(name, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+export const productionPricingDefaults = {
+  computeHourly: {
+    basic: 0.39,
+    pro: 3.09
+  },
+  storageGbMonth: 0.36,
+  markup: 0.2
+};
+
 export function createStoreFromEnv(env = process.env) {
   if (env.DATABASE_URL) return new PostgresStore({ connectionString: env.DATABASE_URL });
   return new JsonFileStore(env.OPL_CLOUD_DATA_PATH ?? dataPath);
@@ -37,11 +46,11 @@ export const service = createOplCloud({
   }),
   pricing: {
     computeHourly: {
-      basic: numberFromEnv("OPL_BASIC_COMPUTE_HOURLY_CNY", 0.39),
-      pro: numberFromEnv("OPL_PRO_COMPUTE_HOURLY_CNY", 3.09)
+      basic: numberFromEnv("OPL_BASIC_COMPUTE_HOURLY_CNY", productionPricingDefaults.computeHourly.basic),
+      pro: numberFromEnv("OPL_PRO_COMPUTE_HOURLY_CNY", productionPricingDefaults.computeHourly.pro)
     },
-    storageGbMonth: numberFromEnv("OPL_STORAGE_GB_MONTH_CNY", 0.36),
-    markup: numberFromEnv("OPL_BILLING_MARKUP", 0.2)
+    storageGbMonth: numberFromEnv("OPL_STORAGE_GB_MONTH_CNY", productionPricingDefaults.storageGbMonth),
+    markup: numberFromEnv("OPL_BILLING_MARKUP", productionPricingDefaults.markup)
   },
   productionReadiness: () => productionReadiness({ env: process.env })
 });

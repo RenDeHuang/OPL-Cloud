@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Console",
+  "purpose": "Versioned commercial pricing defaults consumed by local and Tencent TKE production environments.",
+  "state": "current",
+  "machineBoundary": "Default compute hourly price, storage GB-month price, markup, currency, and environment variable mapping.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current pricing contract and matching migration notes."
+  },
+  "catalogVersion": "2026-07-02-tencent-na-siliconvalley-cpu-v1",
+  "currency": "CNY",
+  "markup": 0.2,
+  "computeHourly": {
+    "basic": 0.39,
+    "pro": 3.09
+  },
+  "storageGbMonth": 0.36,
+  "env": {
+    "basicComputeHourly": "OPL_BASIC_COMPUTE_HOURLY_CNY",
+    "proComputeHourly": "OPL_PRO_COMPUTE_HOURLY_CNY",
+    "storageGbMonth": "OPL_STORAGE_GB_MONTH_CNY",
+    "markup": "OPL_BILLING_MARKUP"
+  },
+  "rules": [
+    "GPU pricing is not part of the current production catalog.",
+    "Environment templates and runtime defaults must use this catalog version until a newer contract replaces it."
+  ]
+}

@@ -12,34 +12,14 @@ export function userIdForAccount(state, accountId) {
   return Object.values(state.users || {}).find((user) => user.accountId === accountId)?.id || `usr-${accountId}`;
 }
 
-export function syncAccountWallet(state, user) {
-  state.accounts ??= {};
-  const accountId = user.accountId;
-  const existing = state.accounts[accountId] || {};
-  const account = {
-    ...existing,
-    id: accountId,
-    balance: money(Number(user.balance || 0)),
-    frozen: money(Number(user.frozen || 0)),
-    holds: clone(user.holds || {})
-  };
-  if (existing.totalRecharged !== undefined || Number(user.totalRecharged || 0) > 0) {
-    account.totalRecharged = money(Number(user.totalRecharged || 0));
-  }
-  state.accounts[accountId] = account;
-  return account;
-}
-
 export function ensureUserWallet(state, { userId = "", accountId, email = "" } = {}) {
   if (!accountId) throw new Error("account_required");
   ensureBillingCollections(state);
-  state.accounts ??= {};
   state.users ??= {};
   const existingUser = userId
     ? state.users[userId]
     : Object.values(state.users).find((user) => user.accountId === accountId);
   const id = existingUser?.id || userId || userIdForAccount(state, accountId);
-  const legacyAccount = state.accounts[accountId] || {};
   state.users[id] ??= {
     id,
     email,
@@ -53,11 +33,10 @@ export function ensureUserWallet(state, { userId = "", accountId, email = "" } =
   user.accountId ||= accountId;
   user.email ||= email;
   user.status ||= "active";
-  user.balance = money(Number(user.balance ?? legacyAccount.balance ?? 0));
-  user.frozen = money(Number(user.frozen ?? legacyAccount.frozen ?? 0));
-  user.holds ??= clone(legacyAccount.holds || {});
-  user.totalRecharged = money(Number(user.totalRecharged ?? legacyAccount.totalRecharged ?? 0));
-  syncAccountWallet(state, user);
+  user.balance = money(Number(user.balance ?? 0));
+  user.frozen = money(Number(user.frozen ?? 0));
+  user.holds ??= {};
+  user.totalRecharged = money(Number(user.totalRecharged ?? 0));
   return user;
 }
 
@@ -86,15 +65,14 @@ export function walletSnapshot(user, accountId) {
 
 export function accountSnapshotForState(state, accountId) {
   const user = Object.values(state.users || {}).find((item) => item.accountId === accountId);
-  const account = state.accounts?.[accountId] || { id: accountId, balance: 0, frozen: 0, holds: {} };
-  if (!user) return clone(account);
+  if (!user) return { id: accountId, balance: 0, frozen: 0, holds: {}, totalRecharged: 0 };
   return {
-    ...clone(account),
     id: accountId,
     userId: user.id,
     balance: money(Number(user.balance || 0)),
     frozen: money(Number(user.frozen || 0)),
-    holds: clone(user.holds || {})
+    holds: clone(user.holds || {}),
+    totalRecharged: money(Number(user.totalRecharged || 0))
   };
 }
 

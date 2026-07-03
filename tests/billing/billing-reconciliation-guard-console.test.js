@@ -39,7 +39,7 @@ function createService() {
 
 test("Console blocks new Workspace provisioning while billing reconciliation guard is active", async () => {
   const service = createService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
 
   const failedReport = await service.recordBillingReconciliation({
     report: {

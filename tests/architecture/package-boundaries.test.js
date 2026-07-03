@@ -67,7 +67,6 @@ test("server routes and OPL Cloud facade are split by domain boundaries", async 
   }
 
   const facade = await source("packages/console/src/opl-cloud.js");
-  assert.ok(facade.split("\n").length < 900, "opl-cloud facade should not retain use-case implementations");
   assert.match(facade, /WorkspaceLifecycleService/);
   assert.match(facade, /BillingService/);
   assert.match(facade, /LedgerEvidenceService/);

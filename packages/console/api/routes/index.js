@@ -13,7 +13,7 @@ export const apiRouteManifest = [
   "GET /api/state",
   "GET /api/operator/summary",
   "GET /api/management/state",
-  "POST /api/accounts/credit",
+  "POST /api/billing/topups",
   "POST /api/organizations",
   "POST /api/users",
   "POST /api/organizations/members",

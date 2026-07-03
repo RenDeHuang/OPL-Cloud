@@ -5,8 +5,7 @@ import {
   accountAvailable,
   addHold,
   ensureAccount,
-  ensureUserWallet,
-  syncAccountWallet
+  ensureUserWallet
 } from "./wallet-service.js";
 import {
   computeHourlyBase,
@@ -36,13 +35,16 @@ export class WorkspaceLifecycleService extends OplDomainService {
       this.assertBillingReconciliationAllowsProvisioning(state);
       const resolvedOwner = resolveWorkspaceOwner(state, { accountId, organizationId, userId });
       accountId = resolvedOwner.accountId;
+      const walletUserId = resolvedOwner.owner?.type === "organization"
+        ? ""
+        : resolvedOwner.owner?.userId || userId;
       const account = ensureUserWallet(state, {
         accountId,
-        userId: resolvedOwner.owner?.userId || userId
+        userId: walletUserId
       });
       owner = {
         ...resolvedOwner.owner,
-        userId: account.id
+        userId: resolvedOwner.owner?.userId || account.id
       };
       workspaceId = makeId("ws", accountId, workspaceName, packageId);
       token = makeToken(workspaceId);
@@ -53,7 +55,6 @@ export class WorkspaceLifecycleService extends OplDomainService {
 
       addHold(account, "compute", hold.compute);
       addHold(account, "storage", hold.storage);
-      syncAccountWallet(state, account);
       state.billingLedger.push(this.ledgerEntry({ state,
         workspaceId,
         accountId,
@@ -102,7 +103,10 @@ export class WorkspaceLifecycleService extends OplDomainService {
     }
 
     return this.store.update((state) => {
-      const account = ensureUserWallet(state, { accountId, userId: owner?.userId });
+      const account = ensureUserWallet(state, {
+        accountId,
+        userId: owner?.type === "organization" ? "" : owner?.userId
+      });
       const operation = state.runtimeOperations.find((item) => item.id === reservation.operationId);
       if (operation) this.finishRuntimeOperation(operation, "succeeded");
 
@@ -243,7 +247,6 @@ export class WorkspaceLifecycleService extends OplDomainService {
 
       addHold(account, "compute", hold.compute);
       addHold(account, "storage", hold.storage);
-      syncAccountWallet(state, account);
       state.billingLedger.push(this.ledgerEntry({ state,
         workspaceId,
         accountId,

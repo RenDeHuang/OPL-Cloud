@@ -49,7 +49,7 @@ test("Console package choices come from Fabric catalog and exclude unavailable G
 
   assert.deepEqual(service.packages().map((plan) => plan.id), ["basic", "pro"]);
   assert.equal(service.resourceCatalog().workspacePackages.find((plan) => plan.id === "gpu").available, false);
-  await service.creditAccount({ accountId: "pi-alpha", amount: 5000, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 5000, reason: "owner_credit" });
   await assert.rejects(
     service.createWorkspace({
       accountId: "pi-alpha",

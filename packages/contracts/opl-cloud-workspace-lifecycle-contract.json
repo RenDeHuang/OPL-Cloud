@@ -1,5 +1,13 @@
 {
   "schemaVersion": 1,
+  "owner": "OPL Console and OPL Fabric",
+  "purpose": "Workspace compute, storage, access token, backup, restore, and failure lifecycle states and rules.",
+  "state": "current",
+  "machineBoundary": "Workspace state names and lifecycle safety rules enforced by Console, Fabric provider, and tests.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "states": [
     "draft",
     "freezing_storage_balance",

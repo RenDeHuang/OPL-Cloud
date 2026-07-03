@@ -127,8 +127,8 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
       calls.push(["getState", accountId]);
       return { account: { id: accountId }, workspaces: [], packages: [], billingLedger: [], audit: [], notifications: [] };
     },
-    async creditAccount(input) {
-      calls.push(["creditAccount", input]);
+    async manualTopUp(input) {
+      calls.push(["manualTopUp", input]);
       return { id: input.accountId, balance: input.amount, frozen: 0 };
     }
   };
@@ -168,7 +168,7 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
     assert.equal(stateResponse.status, 200);
     assert.equal(state.account.id, "pi-alpha");
 
-    const piCredit = await postJson(origin, "/api/accounts/credit", {
+    const piCredit = await postJson(origin, "/api/billing/topups", {
       accountId: "pi-alpha",
       amount: 200,
       reason: "manual_top_up"
@@ -183,7 +183,7 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
       email: "admin@example.com",
       password: "secret-admin"
     });
-    const adminCredit = await postJson(origin, "/api/accounts/credit", {
+    const adminCredit = await postJson(origin, "/api/billing/topups", {
       accountId: "pi-alpha",
       amount: 200,
       reason: "manual_top_up"
@@ -194,7 +194,7 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
     assert.equal(adminCredit.response.status, 200);
     assert.deepEqual(calls, [
       ["getState", "pi-alpha"],
-      ["creditAccount", {
+      ["manualTopUp", {
         accountId: "pi-alpha",
         amount: 200,
         reason: "manual_top_up",
@@ -249,12 +249,11 @@ test("auth users seed into the control-plane store and survive controller recrea
     assert.equal(persisted.users["usr-pi-demo"].status, "active");
     assert.match(persisted.users["usr-pi-demo"].passwordHash, /^scrypt:/);
     assert.equal(persisted.users["usr-pi-demo"].password, undefined);
-    assert.deepEqual(persisted.accounts["pi-demo"], {
-      id: "pi-demo",
-      balance: 0,
-      frozen: 0,
-      holds: {}
-    });
+    assert.equal(persisted.users["usr-pi-demo"].balance, 0);
+    assert.equal(persisted.users["usr-pi-demo"].frozen, 0);
+    assert.deepEqual(persisted.users["usr-pi-demo"].holds, {});
+    assert.equal(persisted.users["usr-pi-demo"].totalRecharged, 0);
+    assert.deepEqual(persisted.accounts, {});
 
     const recreatedAuth = createAuthController({ store, usersPath, seedUsers: [] });
     const recreatedServer = await listen(createRequestHandler({ appService, auth: recreatedAuth }));
@@ -324,8 +323,8 @@ test("store-backed disabled users cannot login and existing sessions are revoked
   }
 });
 
-test("store-backed auth imports legacy JSON users before bootstrap seeds", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-legacy-"));
+test("store-backed auth ignores old usersPath data and seeds current store users", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-current-seed-"));
   const usersPath = join(root, "users.json");
   const store = new MemoryStore();
   const appService = {
@@ -366,26 +365,27 @@ test("store-backed auth imports legacy JSON users before bootstrap seeds", async
       email: "legacy@example.com",
       password: "legacy-secret"
     });
-    assert.equal(legacyLogin.response.status, 200);
-    assert.equal(legacyLogin.payload.user.accountId, "legacy-account");
+    assert.equal(legacyLogin.response.status, 401);
 
     const seedLogin = await postJson(origin, "/api/auth/login", {
       email: "seed@example.com",
       password: "seed-secret"
     });
-    assert.equal(seedLogin.response.status, 401);
+    assert.equal(seedLogin.response.status, 200);
+    assert.equal(seedLogin.payload.user.accountId, "seed-account");
 
     const persisted = await store.read();
-    assert.equal(persisted.users["usr-legacy"].email, "legacy@example.com");
-    assert.equal(persisted.users["usr-seed"], undefined);
+    assert.equal(persisted.users["usr-legacy"], undefined);
+    assert.equal(persisted.users["usr-seed"].email, "seed@example.com");
+    assert.deepEqual(persisted.accounts, {});
   } finally {
     await close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("store-backed auth repairs missing account records for persisted login users", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-account-"));
+test("store-backed auth does not create account wallet mirrors for persisted login users", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-no-account-mirror-"));
   const usersPath = join(root, "users.json");
   const store = new MemoryStore();
   const appService = {
@@ -416,28 +416,20 @@ test("store-backed auth repairs missing account records for persisted login user
     await firstServer.close();
   }
 
-  await store.update((state) => {
-    delete state.accounts["pi-repair"];
-  });
-
-  const repairedAuth = createAuthController({ store, usersPath, seedUsers: [] });
-  const repairedServer = await listen(createRequestHandler({ appService, auth: repairedAuth }));
+  const currentAuth = createAuthController({ store, usersPath, seedUsers: [] });
+  const currentServer = await listen(createRequestHandler({ appService, auth: currentAuth }));
   try {
-    const login = await postJson(repairedServer.origin, "/api/auth/login", {
+    const login = await postJson(currentServer.origin, "/api/auth/login", {
       email: "repair@example.com",
       password: "repair-secret"
     });
     assert.equal(login.response.status, 200);
 
     const persisted = await store.read();
-    assert.deepEqual(persisted.accounts["pi-repair"], {
-      id: "pi-repair",
-      balance: 0,
-      frozen: 0,
-      holds: {}
-    });
+    assert.equal(persisted.users["usr-pi-repair"].accountId, "pi-repair");
+    assert.deepEqual(persisted.accounts, {});
   } finally {
-    await repairedServer.close();
+    await currentServer.close();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -494,6 +486,7 @@ test("store-backed auth migrates legacy account wallet fields onto persisted use
       storage: 0.56
     });
     assert.equal(persisted.users["usr-pi-wallet"].totalRecharged, 250);
+    assert.deepEqual(persisted.accounts, {});
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -503,14 +496,6 @@ test("store-backed auth does not rewrite already repaired wallet users", async (
   const root = await mkdtemp(join(tmpdir(), "opl-store-auth-no-rewrite-"));
   const baseStore = new MemoryStore({
     ...emptyState(),
-    accounts: {
-      "pi-stable": {
-        id: "pi-stable",
-        balance: 25,
-        frozen: 0,
-        holds: {}
-      }
-    },
     users: {
       "usr-pi-stable": {
         id: "usr-pi-stable",

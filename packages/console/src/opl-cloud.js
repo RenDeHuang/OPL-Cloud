@@ -59,8 +59,8 @@ export class OplCloudService {
     }));
   }
 
-  async creditAccount(...args) {
-    return this.billing.creditAccount(...args);
+  async manualTopUp(...args) {
+    return this.billing.manualTopUp(...args);
   }
 
   async createOrganization(...args) {

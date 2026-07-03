@@ -2,6 +2,12 @@
   "schemaVersion": 1,
   "owner": "OPL Fabric",
   "purpose": "Expose productized resource choices to OPL Console without making Console own cloud resource inventory.",
+  "state": "current",
+  "machineBoundary": "Workspace package catalog, compute/storage classes, workspace image entries, ingress domains, and availability flags.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "catalogSections": [
     "workspacePackages",
     "computeProfiles",

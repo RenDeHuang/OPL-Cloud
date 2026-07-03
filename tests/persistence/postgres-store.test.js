@@ -190,14 +190,19 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   const store = new PostgresStore({ pool });
   const state = {
     ...emptyState(),
-    accounts: {
-      "pi-alpha": { id: "pi-alpha", balance: 200, frozen: 0, createdAt: "2026-07-01T00:00:00.000Z" }
-    },
     organizations: {
       "org-lab": { id: "org-lab", name: "OPL Lab", billingAccountId: "pi-alpha" }
     },
     users: {
-      "usr-ada": { id: "usr-ada", email: "ada@example.com" }
+      "usr-ada": {
+        id: "usr-ada",
+        email: "ada@example.com",
+        accountId: "pi-alpha",
+        balance: 200,
+        frozen: 0,
+        holds: {},
+        totalRecharged: 200
+      }
     },
     memberships: [
       { id: "membership-1", organizationId: "org-lab", userId: "usr-ada", role: "owner", status: "active" }
@@ -346,6 +351,7 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
 
   assert.deepEqual(persisted, state);
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS accounts")));
+  assert.equal(pool.statements.some((statement) => statement.sql.includes("INSERT INTO accounts")), false);
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS organizations")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS users")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS memberships")));
@@ -374,12 +380,20 @@ test("PostgresStore update reads, mutates, and writes state transactionally", as
 
   const result = await store.update((state) => {
     assert.deepEqual(state, emptyState());
-    state.accounts["pi-beta"] = { id: "pi-beta", balance: 50, frozen: 0 };
+    state.users["usr-pi-beta"] = {
+      id: "usr-pi-beta",
+      email: "pi-beta@example.com",
+      accountId: "pi-beta",
+      balance: 50,
+      frozen: 0,
+      holds: {},
+      totalRecharged: 50
+    };
     return { ok: true };
   });
 
   assert.deepEqual(result, { ok: true });
-  assert.equal((await store.read()).accounts["pi-beta"].balance, 50);
+  assert.equal((await store.read()).users["usr-pi-beta"].balance, 50);
   assert.deepEqual(
     pool.statements
       .map((statement) => statement.sql)

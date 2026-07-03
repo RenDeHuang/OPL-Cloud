@@ -54,7 +54,7 @@ function createTestService() {
 
 test("Workspace access uses a long-lived URL token that can be deleted and reset after leakage", async () => {
   const service = createTestService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Token Lab",

@@ -93,7 +93,7 @@ test("dynamic prune routes stay hidden and are not treated as committed product 
 
   assert.ok(pruneRoutes.length > 0, "contract should identify dynamic prune candidates");
   for (const route of pruneRoutes) {
-    assert.equal(route.status, "placeholder_hidden", `${route.path} prune route must be hidden`);
+    assert.equal(route.status, "reserved", `${route.path} prune route must stay reserved`);
     assert.match(route.reason, /prune/, `${route.path} prune reason must include prune`);
     if (businessContract.routeKinds.includes(route.routeKind)) {
       const objectSpec = businessContract.objectKinds.find((object) => object.kind === route.objectKind);

@@ -1,7 +1,7 @@
 import { postJson } from "./console-api.js";
 
-export function creditAccount(input, csrfToken) {
-  return postJson("/api/accounts/credit", input, csrfToken);
+export function manualTopUp(input, csrfToken) {
+  return postJson("/api/billing/topups", input, csrfToken);
 }
 
 export function settleBilling(input, csrfToken) {

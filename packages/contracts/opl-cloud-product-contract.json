@@ -1,5 +1,13 @@
 {
   "schemaVersion": 1,
+  "owner": "OPL Cloud",
+  "purpose": "Product layer, Workspace mapping, access, package, Fabric catalog, and production handoff contract.",
+  "state": "current",
+  "machineBoundary": "Cloud product resource mapping, URL access mode, package availability, and production handoff rules.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "product": "OPL Cloud",
   "layers": {
     "gateway": "OPL Gateway",

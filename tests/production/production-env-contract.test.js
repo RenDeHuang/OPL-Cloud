@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import test from "node:test";
 
+import { productionPricingDefaults } from "../../packages/console/api/server.js";
+
+const pricingContractPath = new URL("../../packages/contracts/opl-cloud-pricing-contract.json", import.meta.url);
+
 function envKeys(source) {
   return source
     .split("\n")
@@ -46,24 +50,25 @@ test("TKE production env template exposes only consumed production inputs", asyn
   }
 });
 
-test("price catalog defaults stay aligned with the production Tencent snapshot", async () => {
+test("price catalog defaults stay aligned with the versioned pricing contract", async () => {
+  const contract = JSON.parse(await readFile(pricingContractPath, "utf8"));
   const expected = {
-    OPL_BASIC_COMPUTE_HOURLY_CNY: "0.39",
-    OPL_PRO_COMPUTE_HOURLY_CNY: "3.09",
-    OPL_STORAGE_GB_MONTH_CNY: "0.36",
-    OPL_BILLING_MARKUP: "0.2"
+    [contract.env.basicComputeHourly]: String(contract.computeHourly.basic),
+    [contract.env.proComputeHourly]: String(contract.computeHourly.pro),
+    [contract.env.storageGbMonth]: String(contract.storageGbMonth),
+    [contract.env.markup]: String(contract.markup)
   };
   const template = await readFile("deploy/tke/opl-cloud-production.env.example", "utf8");
   const localExample = await readFile(".env.example", "utf8");
-  const server = await readFile("packages/console/api/server.js", "utf8");
 
   for (const [key, value] of Object.entries(expected)) {
-    assert.equal(envValue(template, key), value, `${key} should match the TKE template`);
-    assert.equal(envValue(localExample, key), value, `${key} should match the local env example`);
+    assert.equal(envValue(template, key), value, `${key} should match the TKE template and pricing contract`);
+    assert.equal(envValue(localExample, key), value, `${key} should match the local env example and pricing contract`);
   }
 
-  assert.match(server, /OPL_BASIC_COMPUTE_HOURLY_CNY", 0\.39\)/);
-  assert.match(server, /OPL_PRO_COMPUTE_HOURLY_CNY", 3\.09\)/);
-  assert.match(server, /OPL_STORAGE_GB_MONTH_CNY", 0\.36\)/);
-  assert.match(server, /OPL_BILLING_MARKUP", 0\.2\)/);
+  assert.deepEqual(productionPricingDefaults, {
+    computeHourly: contract.computeHourly,
+    storageGbMonth: contract.storageGbMonth,
+    markup: contract.markup
+  });
 });

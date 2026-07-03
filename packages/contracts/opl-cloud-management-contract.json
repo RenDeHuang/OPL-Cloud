@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Console",
+  "purpose": "Commercial identity, organization, membership, role, billing ownership, and user wallet management model.",
+  "state": "current",
+  "machineBoundary": "User, organization, membership, billing owner, wallet, role, disabled status, and management API shape.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "entities": {
     "organization": {
       "requiredFields": [
@@ -38,25 +45,30 @@
       ]
     },
     "billingAccount": {
-      "source": "accounts",
-      "holds": [
-        "compute",
-        "storage"
+      "source": "billing ownership identity used by Workspaces and Ledger records",
+      "walletTruth": "users",
+      "walletFields": [
+        "balance",
+        "frozen",
+        "holds",
+        "totalRecharged"
       ],
       "fundingOrder": [
         "available_balance",
         "frozen_hold"
-      ]
+      ],
+      "compatibilityAliasAllowed": false
     }
   },
   "workspaceOwnership": {
-    "personalWorkspace": "ownerAccountId is the accountId",
+    "personalWorkspace": "ownerAccountId is the user billing account id and userId identifies the wallet owner",
     "organizationWorkspace": "ownerAccountId is organization.billingAccountId and userId must have active membership"
   },
   "api": {
     "createOrganization": "POST /api/organizations",
     "createUser": "POST /api/users",
     "addOrganizationMember": "POST /api/organizations/members",
-    "managementState": "GET /api/management/state?organizationId=<id>"
+    "managementState": "GET /api/management/state?organizationId=<id>",
+    "manualTopUp": "POST /api/billing/topups"
   }
 }

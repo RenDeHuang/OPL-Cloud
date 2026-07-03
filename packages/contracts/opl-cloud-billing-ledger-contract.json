@@ -1,5 +1,13 @@
 {
   "schemaVersion": 1,
+  "owner": "OPL Ledger",
+  "purpose": "Commercial billing ledger, wallet transaction, usage debit, hold, top-up, and reconciliation policy.",
+  "state": "current",
+  "machineBoundary": "Ledger entries, wallet transactions, manual top-up audits, resource usage logs, request usage logs, and billing reconciliation guards.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "billingUnit": "hour",
   "markup": 0.2,
   "ledgerEntryTypes": [
@@ -15,7 +23,10 @@
     "server_destroyed",
     "storage_destroyed",
     "token_reset",
-    "token_deleted"
+    "token_deleted",
+    "request_debit",
+    "wallet_transaction",
+    "manual_topup"
   ],
   "requiredFields": [
     "id",
@@ -50,9 +61,6 @@
     "ledgerUsageTypes": [
       "compute_debit",
       "storage_debit"
-    ],
-    "legacyLedgerUsageTypes": [
-      "server_debit"
     ],
     "tencentBillFields": [
       "workspaceId",
@@ -89,5 +97,20 @@
       ],
       "operatorNotificationType": "billing.reconciliation_guard_blocked"
     }
+  },
+  "walletPolicy": {
+    "billingTruth": "users",
+    "balanceFields": [
+      "balance",
+      "frozen",
+      "holds",
+      "totalRecharged"
+    ],
+    "mutationRecords": [
+      "walletTransactions",
+      "manualTopups",
+      "billingLedger"
+    ],
+    "compatibilityMirrorsAllowed": false
   }
 }

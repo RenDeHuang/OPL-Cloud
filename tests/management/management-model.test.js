@@ -70,7 +70,7 @@ test("Console management model links users, organizations, memberships, billing 
   assert.equal(organization.billingAccountId, "org-lab");
   assert.equal(membership.status, "active");
 
-  await service.creditAccount({
+  await service.manualTopUp({
     accountId: organization.billingAccountId,
     amount: 250,
     reason: "org_top_up"
@@ -119,7 +119,7 @@ test("organization Workspace creation fails closed unless the user is an active 
   const service = createTestService();
   await service.createOrganization({ organizationId: "org-lab", name: "OPL Lab" });
   await service.createUser({ userId: "usr-ada", email: "ada@example.com" });
-  await service.creditAccount({ accountId: "org-lab", amount: 250, reason: "org_top_up" });
+  await service.manualTopUp({ accountId: "org-lab", amount: 250, reason: "org_top_up" });
 
   await assert.rejects(
     service.createWorkspace({

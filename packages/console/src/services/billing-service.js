@@ -12,8 +12,7 @@ import {
   ensureAccount,
   ensureBillingCollections,
   ensureUserWallet,
-  releaseHold,
-  syncAccountWallet
+  releaseHold
 } from "./wallet-service.js";
 import { incrementRequestQuota, requestUsageFingerprint } from "./usage-billing-service.js";
 import {
@@ -30,7 +29,7 @@ import { latestBillingReconciliationReport, latestWorkspaceForAccount } from "./
 import { OplDomainService } from "./opl-domain-service.js";
 
 export class BillingService extends OplDomainService {
-  async creditAccount({ accountId, amount, reason, operatorUserId = "", operatorAccountId = "" }) {
+  async manualTopUp({ accountId, amount, reason, operatorUserId = "", operatorAccountId = "" }) {
     if (!accountId) throw new Error("account_required");
     const credit = Number(amount);
     if (!Number.isFinite(credit) || credit <= 0) throw new Error("positive_credit_required");
@@ -43,7 +42,6 @@ export class BillingService extends OplDomainService {
       const frozenBefore = money(Number(account.frozen || 0));
       account.balance = money(account.balance + credit);
       account.totalRecharged = money(Number(account.totalRecharged || 0) + credit);
-      syncAccountWallet(state, account);
       const entry = this.ledgerEntry({ state,
         workspaceId: "account",
         accountId,
@@ -200,7 +198,6 @@ export class BillingService extends OplDomainService {
       const balanceBefore = money(Number(user.balance || 0));
       const frozenBefore = money(Number(user.frozen || 0));
       const charged = debitAvailableBalance(user, requestedAmount);
-      syncAccountWallet(state, user);
       const logId = makeId("usage-request", resolvedAccountId, workspaceId, requestId, eventId, String(state.requestUsageLogs.length));
       let ledgerEntry = null;
       if (charged > 0) {
@@ -544,7 +541,6 @@ export class BillingService extends OplDomainService {
       }
     }
 
-    syncAccountWallet(state, account);
     return entries;
   }
 
@@ -554,7 +550,6 @@ export class BillingService extends OplDomainService {
     const delta = money(requiredAmount - current);
     if (accountAvailable(account) < delta) throw new Error("insufficient_prepaid_hold_balance");
     addHold(account, holdType, delta);
-    syncAccountWallet(state, account);
     state.billingLedger.push(this.ledgerEntry({ state,
       workspaceId,
       accountId,
@@ -569,7 +564,6 @@ export class BillingService extends OplDomainService {
   releaseHoldToLedger({ state, accountId, workspaceId, holdType, sourceEventId }) {
     const account = ensureAccount(state, accountId);
     const released = releaseHold(account, holdType);
-    syncAccountWallet(state, account);
     if (released <= 0) return null;
     const entry = this.ledgerEntry({ state,
       workspaceId,

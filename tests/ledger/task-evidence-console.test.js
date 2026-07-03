@@ -36,7 +36,7 @@ function createService() {
 
 test("Console records and queries task evidence receipts without mixing them into billing ledger", async () => {
   const service = createService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Task Evidence Lab",
@@ -74,8 +74,8 @@ test("Console records and queries task evidence receipts without mixing them int
 
 test("Console task evidence receipt enforces workspace ownership", async () => {
   const service = createService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  await service.creditAccount({ accountId: "pi-beta", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-beta", amount: 250, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Owned Lab",

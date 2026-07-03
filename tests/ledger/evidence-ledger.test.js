@@ -55,7 +55,7 @@ function createTestService() {
 
 test("evidence ledger records inspectable Workspace receipts separately from billing ledger", async () => {
   const service = createTestService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
 
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",

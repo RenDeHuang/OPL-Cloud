@@ -86,7 +86,7 @@ function createService({ backupFailures = new Set() } = {}) {
 
 test("creates a retained storage backup and restores it into a new billable Workspace", async () => {
   const { service, providerCalls } = createService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 500, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 500, reason: "owner_credit" });
   const source = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Source Lab",
@@ -136,7 +136,7 @@ test("creates a retained storage backup and restores it into a new billable Work
 
 test("prunes retained storage backups beyond the retention window and records failures", async () => {
   const { service, providerCalls } = createService();
-  await service.creditAccount({ accountId: "pi-alpha", amount: 500, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 500, reason: "owner_credit" });
   const workspace = await service.createWorkspace({
     accountId: "pi-alpha",
     workspaceName: "Retention Lab",

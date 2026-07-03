@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Ledger",
+  "purpose": "Control-plane evidence receipts and task evidence receipt baseline.",
+  "state": "current",
+  "machineBoundary": "Evidence receipt types, required provenance fields, and query/record API shape.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "currentScope": "control-plane evidence receipts and task evidence receipt v1 baseline",
   "receiptTypes": [
     "workspace.created",
