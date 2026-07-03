@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { gzipSync } from "node:zlib";
 
 import { createRuntimeProvider } from "../../fabric/src/index.js";
 import { createAuthController } from "./auth.js";
@@ -267,24 +266,8 @@ function appendHeaderToken(value, token) {
     : [...tokens, token].join(", ");
 }
 
-function compressibleContentType(headers) {
-  const contentType = String(headers["content-type"] || "").toLowerCase();
-  return contentType.startsWith("text/") || /javascript|json|svg|xml/.test(contentType);
-}
-
-function acceptsGzip(request) {
-  return /\bgzip\b/i.test(String(request.headers["accept-encoding"] || ""));
-}
-
-function workspaceStaticBody({ request, headers, body }) {
+function workspaceStaticBody({ headers, body }) {
   headers["cache-control"] = appendHeaderToken(headers["cache-control"], "no-transform");
-  if (acceptsGzip(request) && compressibleContentType(headers)) {
-    const compressed = gzipSync(body);
-    headers["content-encoding"] = "gzip";
-    headers.vary = appendHeaderToken(headers.vary, "Accept-Encoding");
-    headers["content-length"] = String(compressed.byteLength);
-    return compressed;
-  }
   headers["content-length"] = String(body.byteLength);
   return body;
 }
@@ -398,7 +381,7 @@ async function handleWorkspaceGateway(request, response, url, appService) {
     appendSetCookie(headers, setCookie);
     if (shouldBufferWorkspaceResponse({ request, upstreamPath })) {
       const body = Buffer.from(await upstream.arrayBuffer());
-      const responseBody = workspaceStaticBody({ request, headers, body });
+      const responseBody = workspaceStaticBody({ headers, body });
       response.writeHead(upstream.status, headers);
       response.end(responseBody);
       return;

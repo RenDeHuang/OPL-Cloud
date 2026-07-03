@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
-import { gunzipSync } from "node:zlib";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -194,11 +193,10 @@ test("workspace gateway validates URL token, sets scoped cookies, and proxies We
       "accept-encoding": "gzip"
     });
     assert.equal(gzipAsset.statusCode, 200);
-    assert.equal(gzipAsset.headers["content-encoding"], "gzip");
+    assert.equal(gzipAsset.headers["content-encoding"], undefined);
     assert.match(gzipAsset.headers["cache-control"], /no-transform/);
-    assert.match(gzipAsset.headers.vary, /accept-encoding/i);
     assert.equal(gzipAsset.headers["content-length"], String(gzipAsset.body.byteLength));
-    assert.match(gunzipSync(gzipAsset.body).toString("utf8"), /OPL_WORKSPACE_LOADED/);
+    assert.match(gzipAsset.body.toString("utf8"), /OPL_WORKSPACE_LOADED/);
 
     const apiResponse = await fetch(`${origin}/api/chat?model=gpt`, {
       headers: { cookie: `${cookie}; app_session=runtime` }
