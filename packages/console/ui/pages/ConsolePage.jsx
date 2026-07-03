@@ -3,7 +3,7 @@ import { ProLayout } from "@ant-design/pro-components";
 import { Button, Tag } from "antd";
 import { LogOut, UserRound } from "lucide-react";
 import { logout as logoutSession } from "../api/auth-api.js";
-import { navigate } from "../consoleRoutes.js";
+import { navigate, routeTo } from "../consoleRoutes.js";
 import { useConsoleState } from "../store/console-state.js";
 import { AccountPage } from "./account/AccountPage.jsx";
 import {
@@ -36,7 +36,7 @@ export default function ConsolePage({ route, session, onLogout }) {
       await logoutSession(session.csrfToken);
     } finally {
       onLogout();
-      navigate("/");
+      navigate(routeTo("public.home"));
     }
   }
 
@@ -61,7 +61,7 @@ export default function ConsolePage({ route, session, onLogout }) {
       menuItemRender={(item, dom) => (
         <a onClick={(event) => {
           event.preventDefault();
-          navigate(item.path || "/console/overview");
+          navigate(item.path || routeTo("console.overview"));
         }} href={item.path}>{dom}</a>
       )}
       actionsRender={() => [

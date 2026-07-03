@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const businessObjectContractPath = new URL("../../packages/contracts/opl-cloud-business-object-contract.json", import.meta.url);
+const businessObjectBacklogPath = new URL("../../packages/contracts/opl-cloud-business-object-backlog.json", import.meta.url);
 const routeContractPath = new URL("../../packages/contracts/opl-cloud-route-api-contract.json", import.meta.url);
 
 async function readJson(path) {
@@ -19,15 +20,15 @@ function allRoutes(contract) {
   ];
 }
 
-test("business object contract defines the long-term dynamic control-plane boundary", async () => {
+test("business object contract defines the current commercial object boundary", async () => {
   const contract = await readJson(businessObjectContractPath);
 
   assert.equal(contract.schemaVersion, 1);
   assert.equal(contract.owner, "OPL Console");
-  assert.equal(contract.purpose, "Machine-readable requirements for dynamic control-plane route objects.");
+  assert.equal(contract.purpose, "Machine-readable requirements for current commercial Console objects.");
   assert.deepEqual(contract.repositoryBoundaries, ["opl-console", "opl-fabric", "opl-ledger"]);
-  assert.deepEqual(contract.routeKinds, ["business_object", "policy_or_approval_object"]);
-  assert.ok(contract.principles.includes("Static content may remain API-free; dynamic control-plane objects need read/write/action evidence before implemented status."));
+  assert.deepEqual(contract.routeKinds, ["read_model", "business_object", "external_integration"]);
+  assert.ok(contract.principles.includes("Active business object contract contains only current commercial objects."));
   assert.ok(contract.repoBoundaryRules.includes("Console owns UI, auth, route contracts, and read-model orchestration."));
   assert.ok(contract.repoBoundaryRules.includes("Fabric owns runtime, storage, connector, and agent resource execution boundaries."));
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
@@ -46,13 +47,14 @@ test("route object kinds map to committed object specs and owner repos", async (
   }
 });
 
-test("implemented dynamic objects satisfy capability requirements across their route cluster", async () => {
+test("implemented commercial objects satisfy capability requirements across their route cluster", async () => {
   const businessContract = await readJson(businessObjectContractPath);
   const routeContract = await readJson(routeContractPath);
   const objectSpecs = new Map(businessContract.objectKinds.map((object) => [object.kind, object]));
   const dynamicRoutes = allRoutes(routeContract).filter((route) => (
     route.status === "implemented"
     && businessContract.routeKinds.includes(route.routeKind)
+    && route.objectKind
   ));
 
   assert.ok(dynamicRoutes.length > 0, "there should be implemented dynamic routes");
@@ -71,34 +73,25 @@ test("implemented dynamic objects satisfy capability requirements across their r
   }
 });
 
-test("long-term gaps are committed objects but do not claim implementation", async () => {
+test("active business contract excludes future and prune object shells", async () => {
   const businessContract = await readJson(businessObjectContractPath);
-  const routeContract = await readJson(routeContractPath);
-  const objectSpecs = new Map(businessContract.objectKinds.map((object) => [object.kind, object]));
-  const gapRoutes = allRoutes(routeContract).filter((route) => route.contractLifecycle === "long_term_gap");
+  const backlog = await readJson(businessObjectBacklogPath);
+  const activeKinds = new Set(businessContract.objectKinds.map((object) => object.kind));
+  const backlogKinds = new Set((backlog.objectKinds || []).map((object) => object.kind));
 
-  assert.ok(gapRoutes.length > 0, "there should be long-term product gaps");
-  for (const route of gapRoutes) {
-    assert.notEqual(route.status, "implemented", `${route.path} long-term gap must not be implemented`);
-    if (businessContract.routeKinds.includes(route.routeKind)) {
-      assert.ok(objectSpecs.has(route.objectKind), `${route.path} must map long-term gap to object spec`);
-    }
+  for (const object of businessContract.objectKinds) {
+    assert.equal(object.lifecycle, "current", `${object.kind} must be a current commercial object`);
   }
-});
 
-test("dynamic prune routes stay hidden and are not treated as committed product objects", async () => {
-  const businessContract = await readJson(businessObjectContractPath);
-  const routeContract = await readJson(routeContractPath);
-  const pruneRoutes = allRoutes(routeContract).filter((route) => route.contractLifecycle === "dynamic_prune");
-
-  assert.ok(pruneRoutes.length > 0, "contract should identify dynamic prune candidates");
-  for (const route of pruneRoutes) {
-    assert.equal(route.status, "reserved", `${route.path} prune route must stay reserved`);
-    assert.match(route.reason, /prune/, `${route.path} prune reason must include prune`);
-    if (businessContract.routeKinds.includes(route.routeKind)) {
-      const objectSpec = businessContract.objectKinds.find((object) => object.kind === route.objectKind);
-      assert.ok(objectSpec, `${route.path} must still map to an object spec while it exists`);
-      assert.equal(objectSpec.lifecycle, "dynamic_prune", `${route.path} object spec must be dynamic_prune`);
-    }
+  for (const kind of [
+    "ApprovalQueue",
+    "ConnectorApproval",
+    "EnvironmentTemplateApproval",
+    "AgentPackageApproval",
+    "LedgerReviewPolicy",
+    "RuntimeProviderDiagnostics"
+  ]) {
+    assert.equal(activeKinds.has(kind), false, `${kind} must not be active commercial object truth`);
+    assert.equal(backlogKinds.has(kind), true, `${kind} must move to business object backlog`);
   }
 });

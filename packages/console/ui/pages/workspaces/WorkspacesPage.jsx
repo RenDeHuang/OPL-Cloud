@@ -3,7 +3,7 @@ import { PageContainer, ProTable } from "@ant-design/pro-components";
 import { Button, Tag, Typography } from "antd";
 import { Link as LinkIcon, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { deleteWorkspaceToken, resetWorkspaceToken } from "../../api/workspaces-api.js";
-import { navigate } from "../../consoleRoutes.js";
+import { navigate, routeTo } from "../../consoleRoutes.js";
 import { available, money, packageText, statusColor, statusLabel } from "../shared/formatters.js";
 
 export function WorkspacesPage({ state, wallet, runAction, session }) {
@@ -11,7 +11,7 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
   return (
     <PageContainer
       title="OPL Workspace"
-      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/workspaces/new")}>创建</Button>}
+      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建</Button>}
     >
       <ProTable
         rowKey="id"
@@ -20,7 +20,7 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
         pagination={false}
         dataSource={state.workspaces}
         columns={[
-          { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(`/console/workspaces/${row.id}`)}>{row.name}</Button> },
+          { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("workspace.detail", { id: row.id }))}>{row.name}</Button> },
           { title: "状态", dataIndex: "state", render: (_, row) => <Tag color={statusColor(row.state)}>{statusLabel(row)}</Tag> },
           { title: "套餐", dataIndex: "packageId", render: (value) => packageText(planById[value]) },
           { title: "Workspace URL", dataIndex: "url", ellipsis: true, render: (_, row) => <Typography.Text copyable={row.access?.tokenStatus === "active"}>{row.url}</Typography.Text> },

@@ -1,30 +1,31 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Console",
-  "purpose": "Machine-readable requirements for dynamic control-plane route objects.",
+  "purpose": "Machine-readable requirements for current commercial Console objects.",
   "state": "current",
-  "machineBoundary": "Dynamic business object kinds, route ownership, required implemented capabilities, and evidence requirements.",
+  "machineBoundary": "Current commercial business objects, route ownership, required route/action capabilities, and evidence requirements.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "productTruth": "one-person-lab-cloud",
+  "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "OPL Console / OPL Workspace control-plane",
+  "currentSlice": "Business-chain closure for wallet, Workspace provisioning, URL sharing, hourly settlement, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
     "opl-ledger"
   ],
   "routeKinds": [
+    "read_model",
     "business_object",
-    "policy_or_approval_object"
+    "external_integration"
   ],
   "principles": [
-    "Static content may remain API-free; dynamic control-plane objects need read/write/action evidence before implemented status.",
-    "A declared business object is implemented only when its route cluster exposes list/detail/action/read/write/evidence or a narrower object-specific equivalent.",
-    "Long-term gaps are product commitments without a complete API/action/evidence closure.",
-    "Dynamic prune candidates are active route-table residue and must not be counted as product commitments."
+    "Active business object contract contains only current commercial objects.",
+    "Business objects are protected by route ids, action ids, API clients, permission boundaries, and tests.",
+    "Lab Owner sees business outcomes; Admin sees operator evidence and commercial operations.",
+    "Future approval, policy, and raw provider diagnostics objects live in the backlog until implemented."
   ],
   "repoBoundaryRules": [
     "Console owns UI, auth, route contracts, and read-model orchestration.",
@@ -33,10 +34,37 @@
   ],
   "objectKinds": [
     {
+      "kind": "User",
+      "ownerRepo": "opl-console",
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "detail",
+        "read",
+        "audit"
+      ],
+      "evidenceRequired": false
+    },
+    {
+      "kind": "Wallet",
+      "ownerRepo": "opl-console",
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "detail",
+        "read",
+        "action",
+        "audit"
+      ],
+      "evidenceRequired": true
+    },
+    {
       "kind": "Workspace",
       "ownerRepo": "opl-console",
       "routeKind": "business_object",
-      "lifecycle": "long_term",
+      "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",
@@ -48,10 +76,59 @@
       "evidenceRequired": true
     },
     {
+      "kind": "WorkspaceAccess",
+      "ownerRepo": "opl-console",
+      "routeKind": "business_object",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "detail",
+        "read",
+        "action"
+      ],
+      "evidenceRequired": true
+    },
+    {
+      "kind": "WorkspaceCompute",
+      "ownerRepo": "opl-console",
+      "routeKind": "business_object",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "detail",
+        "read",
+        "action"
+      ],
+      "evidenceRequired": true
+    },
+    {
+      "kind": "WorkspaceStorage",
+      "ownerRepo": "opl-console",
+      "routeKind": "business_object",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "detail",
+        "read",
+        "action"
+      ],
+      "evidenceRequired": true
+    },
+    {
+      "kind": "Usage",
+      "ownerRepo": "opl-ledger",
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "read",
+        "evidence",
+        "audit"
+      ],
+      "evidenceRequired": true
+    },
+    {
       "kind": "SupportTicket",
       "ownerRepo": "opl-console",
       "routeKind": "business_object",
-      "lifecycle": "long_term",
+      "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",
@@ -62,103 +139,27 @@
       "evidenceRequired": true
     },
     {
-      "kind": "ApprovalQueue",
+      "kind": "RuntimeReadiness",
       "ownerRepo": "opl-console",
-      "routeKind": "policy_or_approval_object",
-      "lifecycle": "long_term_gap",
+      "routeKind": "read_model",
+      "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
-        "list",
         "detail",
         "read",
-        "approve",
-        "reject",
         "audit"
       ],
       "evidenceRequired": true
     },
     {
-      "kind": "ConnectorApproval",
-      "ownerRepo": "opl-fabric",
-      "routeKind": "policy_or_approval_object",
-      "lifecycle": "long_term_gap",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "detail",
-        "read",
-        "approve",
-        "reject",
-        "audit"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "EnvironmentTemplateApproval",
-      "ownerRepo": "opl-fabric",
-      "routeKind": "policy_or_approval_object",
-      "lifecycle": "long_term_gap",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "detail",
-        "read",
-        "approve",
-        "reject",
-        "audit"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "AgentPackageApproval",
-      "ownerRepo": "opl-fabric",
-      "routeKind": "policy_or_approval_object",
-      "lifecycle": "long_term_gap",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "detail",
-        "read",
-        "approve",
-        "reject",
-        "audit"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "LedgerReceipt",
-      "ownerRepo": "opl-ledger",
-      "routeKind": "business_object",
-      "lifecycle": "long_term_gap",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "detail",
-        "read",
-        "review",
-        "evidence"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "LedgerReviewPolicy",
-      "ownerRepo": "opl-ledger",
-      "routeKind": "policy_or_approval_object",
-      "lifecycle": "long_term_gap",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "detail",
-        "read",
-        "write",
-        "audit"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "RuntimeProviderDiagnostics",
-      "ownerRepo": "opl-fabric",
-      "routeKind": "business_object",
-      "lifecycle": "dynamic_prune",
+      "kind": "GatewayIntegration",
+      "ownerRepo": "opl-console",
+      "routeKind": "external_integration",
+      "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
         "read",
-        "audit"
+        "external_link"
       ],
-      "evidenceRequired": true
+      "evidenceRequired": false
     }
   ]
 }

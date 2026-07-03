@@ -2,11 +2,11 @@ import React from "react";
 import { PageContainer, ProCard, ProTable } from "@ant-design/pro-components";
 import { Button, Descriptions, Empty, Form, Input, Tag, Timeline, message } from "antd";
 import { Plus } from "lucide-react";
-import { navigate } from "../../consoleRoutes.js";
+import { navigate, routeTo } from "../../consoleRoutes.js";
 
 export function SupportPage({ tickets }) {
   return (
-    <PageContainer title="工单" extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/support/new")}>提交工单</Button>}>
+    <PageContainer title="工单" extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("support.create"))}>提交工单</Button>}>
       <ProTable
         rowKey="id"
         loading={tickets.loading}
@@ -16,7 +16,7 @@ export function SupportPage({ tickets }) {
         dataSource={tickets.tickets}
         locale={{ emptyText: <Empty description="暂无工单" /> }}
         columns={[
-          { title: "标题", dataIndex: "title", render: (_, row) => <Button type="link" onClick={() => navigate(`/console/support/${row.id}`)}>{row.title}</Button> },
+          { title: "标题", dataIndex: "title", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("support.detail", { id: row.id }))}>{row.title}</Button> },
           { title: "分类", dataIndex: "category" },
           { title: "优先级", dataIndex: "priority", render: (value) => <Tag color={value === "high" ? "red" : "blue"}>{value}</Tag> },
           { title: "状态", dataIndex: "status", render: (value) => <Tag color="green">{value}</Tag> }
@@ -34,7 +34,7 @@ export function NewSupportTicketPage({ state, tickets }) {
         <Form form={form} layout="vertical" onFinish={async (values) => {
           const ticket = await tickets.createTicket(values);
           message.success("工单已提交");
-          navigate(`/console/support/${ticket.id}`);
+          navigate(routeTo("support.detail", { id: ticket.id }));
         }}>
           <Form.Item name="title" label="标题" rules={[{ required: true }]}>
             <Input placeholder="Workspace 无法打开" />

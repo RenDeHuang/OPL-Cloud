@@ -2,7 +2,7 @@ import React from "react";
 import { PageContainer, ProCard, StatisticCard } from "@ant-design/pro-components";
 import { Button, Space } from "antd";
 import { Headphones, Plus, WalletCards } from "lucide-react";
-import { navigate } from "../consoleRoutes.js";
+import { navigate, routeTo } from "../consoleRoutes.js";
 import { AlertList } from "./shared/page-widgets.jsx";
 import { money } from "./shared/formatters.js";
 
@@ -20,9 +20,9 @@ export function OverviewPage({ state, wallet, tickets }) {
       <ProCard className="sectionCard" gutter={16} split="vertical">
         <ProCard title="下一步" colSpan="35%">
           <Space direction="vertical" size={12}>
-            <Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/workspaces/new")}>创建 Workspace</Button>
-            <Button icon={<Headphones size={15} />} onClick={() => navigate("/console/support/new")}>提交工单</Button>
-            <Button icon={<WalletCards size={15} />} onClick={() => navigate("/console/billing/wallet")}>查看钱包</Button>
+            <Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建 Workspace</Button>
+            <Button icon={<Headphones size={15} />} onClick={() => navigate(routeTo("support.create"))}>提交工单</Button>
+            <Button icon={<WalletCards size={15} />} onClick={() => navigate(routeTo("billing.wallet"))}>查看钱包</Button>
           </Space>
         </ProCard>
         <ProCard title="最近告警">

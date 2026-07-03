@@ -2,7 +2,7 @@ import React from "react";
 import { PageContainer, ProCard, ProFormSelect, ProFormText, StepsForm } from "@ant-design/pro-components";
 import { Alert, Descriptions } from "antd";
 import { createWorkspace } from "../../api/workspaces-api.js";
-import { navigate } from "../../consoleRoutes.js";
+import { navigate, routeTo } from "../../consoleRoutes.js";
 import { available, money, packageText, planHold } from "../shared/formatters.js";
 
 export function CreateWorkspacePage({ state, wallet, selectedCreatePlan, setCreatePackageId, session, runAction }) {
@@ -19,7 +19,7 @@ export function CreateWorkspacePage({ state, wallet, selectedCreatePlan, setCrea
               }, session.csrfToken),
               "Workspace 已创建"
             );
-            navigate("/console/workspaces");
+            navigate(routeTo("workspace.list"));
             return true;
           }}
         >

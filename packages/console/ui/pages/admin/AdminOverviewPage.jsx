@@ -1,9 +1,8 @@
 import React from "react";
 import { PageContainer, ProCard, ProTable, StatisticCard } from "@ant-design/pro-components";
-import { Alert, Button, Drawer, Form, Input, InputNumber, Tag } from "antd";
+import { Alert, Button, Drawer, Form, Input, InputNumber, Tag, Tooltip } from "antd";
 import { Plus } from "lucide-react";
 import { manualTopUp } from "../../api/billing-api.js";
-import { navigate } from "../../consoleRoutes.js";
 import { CatalogCard, ReadinessCard, TopupList, WalletList } from "../shared/page-widgets.jsx";
 import { money } from "../shared/formatters.js";
 
@@ -21,7 +20,7 @@ export function AdminOverviewPage({ state, adminOps }) {
 
 export function AdminUsersPage({ state, wallet, topUpOpen, setTopUpOpen, topUpForm, session, runAction }) {
   return (
-    <PageContainer title="用户管理" extra={<Button icon={<Plus size={15} />} onClick={() => navigate("/admin/users/new")}>新建用户</Button>}>
+    <PageContainer title="用户管理" extra={<Tooltip title="当前商业版先通过环境种子或后台数据接入用户，新建用户页在 backlog。"><Button icon={<Plus size={15} />} disabled>新建用户</Button></Tooltip>}>
       <ProTable
         rowKey="id"
         search={false}
@@ -46,7 +45,7 @@ export function AdminUsersPage({ state, wallet, topUpOpen, setTopUpOpen, topUpFo
             title: "操作",
             valueType: "option",
             render: (_, row) => [
-              <Button key="wallet" size="small" onClick={() => navigate(`/admin/users/${row.id}/wallet`)}>钱包</Button>,
+              <Tooltip key="wallet" title="独立用户钱包详情页在 backlog，当前从本表直接充值。"><Button size="small" disabled>钱包</Button></Tooltip>,
               <Button key="topup" size="small" type="primary" onClick={() => {
                 topUpForm.setFieldsValue({ accountId: row.accountId, amount: 200, reason: "commercial top-up" });
                 setTopUpOpen(true);

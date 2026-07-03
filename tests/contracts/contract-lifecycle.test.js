@@ -26,14 +26,20 @@ function walk(value, visit) {
   }
 }
 
-test("all active OPL Cloud contracts declare lifecycle metadata", async () => {
+test("all active OPL Cloud contracts declare lifecycle metadata and backlog files stay non-active", async () => {
   for (const file of await contractFiles()) {
     const contract = await readContract(file);
 
     assert.equal(contract.schemaVersion, 1, `${file} schemaVersion`);
     assert.ok(contract.owner, `${file} owner`);
     assert.ok(contract.purpose, `${file} purpose`);
-    assert.equal(contract.state, "current", `${file} state`);
+    assert.ok(["current", "backlog"].includes(contract.state), `${file} state`);
+    if (contract.state === "backlog") {
+      assert.ok(contract.activeContract, `${file} activeContract`);
+      assert.ok(Array.isArray(contract.rules), `${file} rules`);
+      assert.ok(contract.rules.some((rule) => rule.includes("not current commercial commitments")), `${file} must not read as active truth`);
+      continue;
+    }
     assert.ok(contract.machineBoundary, `${file} machineBoundary`);
     assert.equal(contract.lifecycle?.type, "long_term_contract", `${file} lifecycle.type`);
     assert.ok(contract.lifecycle?.removalCondition, `${file} lifecycle.removalCondition`);

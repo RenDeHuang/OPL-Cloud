@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 import "./styles.css";
 import { currentSession } from "./api/auth-api.js";
-import { findRoute, navigate } from "./consoleRoutes.js";
+import { findRoute, navigate, routeTo } from "./consoleRoutes.js";
 
 const HomePage = lazy(() => import("./pages/HomePage.jsx"));
 const LoginPage = lazy(() => import("./pages/LoginPage.jsx"));
@@ -15,13 +15,13 @@ function currentRoute() {
 
 function redirectToLogin(pathname) {
   const redirect = encodeURIComponent(pathname || "/console/overview");
-  navigate(`/login?redirect=${redirect}`);
+  navigate(`${routeTo("auth.login")}?redirect=${redirect}`);
 }
 
 function authRedirectTarget() {
   const params = new URLSearchParams(window.location.search);
   const redirect = params.get("redirect");
-  return redirect && redirect.startsWith("/") ? redirect : "/console/overview";
+  return redirect && redirect.startsWith("/") ? redirect : routeTo("console.overview");
 }
 
 function App() {
@@ -61,7 +61,7 @@ function App() {
       return;
     }
     if (route.requiresAdmin && session?.user?.role !== "admin") {
-      navigate("/403");
+      navigate(routeTo("error.forbidden"));
     }
   }, [authChecked, route, session]);
 
@@ -75,7 +75,7 @@ function App() {
     if (route.path === "/logout") {
       return <LoginPage route={route} onLogin={(payload) => {
         setSession(payload);
-        navigate("/console/overview");
+        navigate(routeTo("console.overview"));
       }} />;
     }
     if (route.area === "console" || route.area === "admin") {

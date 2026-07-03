@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { adminMenuRoutes, consoleRoutes, ownerMenuRoutes } from "../../packages/console/ui/consoleRoutes.js";
+import { adminMenuRoutes, consoleRoutes, ownerMenuRoutes, routeTo, routesById } from "../../packages/console/ui/consoleRoutes.js";
 
 const contractPath = new URL("../../packages/contracts/opl-cloud-route-api-contract.json", import.meta.url);
 
@@ -20,49 +20,41 @@ function allContractRoutes(contract) {
   ];
 }
 
-test("commercial Console route contract covers current public, auth, owner, and admin surfaces", async () => {
+test("commercial Console route contract covers current public, auth, owner, and admin surfaces only", async () => {
   const contract = await readContract();
   const routes = allContractRoutes(contract);
-  const byPath = new Map(routes.map((route) => [route.path, route]));
+  const byId = new Map(routes.map((route) => [route.id, route]));
 
-  for (const [path, status] of [
-    ["/", "folded_into_parent"],
-    ["/pricing", "folded_into_parent"],
-    ["/docs", "folded_into_parent"],
-    ["/status", "folded_into_parent"],
-    ["/login", "implemented"],
-    ["/console/overview", "implemented"],
-    ["/console/workspaces", "implemented"],
-    ["/console/workspaces/new", "implemented"],
-    ["/console/workspaces/:id", "implemented"],
-    ["/console/gateway", "implemented"],
-    ["/console/billing", "implemented"],
-    ["/console/account", "implemented"],
-    ["/console/support", "implemented"],
-    ["/console/support/new", "implemented"],
-    ["/console/support/:id", "implemented"],
-    ["/console/alerts", "implemented"],
-    ["/admin/overview", "implemented"],
-    ["/admin/users", "implemented"],
-    ["/admin/billing", "implemented"],
-    ["/admin/ledger", "implemented"],
-    ["/admin/runtime", "implemented"],
-    ["/admin/support", "implemented"]
+  for (const [id, status] of [
+    ["public.home", "implemented"],
+    ["public.pricing", "folded_into_parent"],
+    ["public.docs", "folded_into_parent"],
+    ["public.status", "folded_into_parent"],
+    ["auth.login", "implemented"],
+    ["console.overview", "implemented"],
+    ["workspace.list", "implemented"],
+    ["workspace.create", "implemented"],
+    ["workspace.detail", "implemented"],
+    ["gateway.external", "external"],
+    ["billing.overview", "implemented"],
+    ["billing.wallet", "folded_into_parent"],
+    ["account.overview", "implemented"],
+    ["support.list", "implemented"],
+    ["support.create", "implemented"],
+    ["support.detail", "implemented"],
+    ["alerts.list", "implemented"],
+    ["admin.overview", "implemented"],
+    ["admin.users", "implemented"],
+    ["admin.billing", "implemented"],
+    ["admin.ledger", "implemented"],
+    ["admin.runtime", "implemented"],
+    ["admin.support", "implemented"]
   ]) {
-    assert.equal(byPath.get(path)?.status, status, `${path} must have current commercial route status ${status}`);
+    assert.equal(byId.get(id)?.status, status, `${id} must have current commercial route status ${status}`);
   }
 
-  for (const path of [
-    "/register",
-    "/invite/accept",
-    "/email/verify",
-    "/forgot-password",
-    "/reset-password",
-    "/admin/runtime/readiness",
-    "/admin/ledger/events"
-  ]) {
-    assert.equal(byPath.get(path)?.status, "reserved", `${path} must be reserved until backed by implementation`);
-  }
+  assert.equal(routes.some((route) => route.status === "reserved"), false, "active UI route contract must not include reserved routes");
+  assert.equal(consoleRoutes.some((route) => route.featureGate), false, "runtime route table must not include future feature gates");
 });
 
 test("Lab Owner menu is commercial and excludes operator surfaces", () => {
@@ -78,9 +70,11 @@ test("Lab Owner menu is commercial and excludes operator surfaces", () => {
 
   for (const route of ownerMenuRoutes) {
     assert.equal(route.area, "console");
+    assert.equal(route.role, "lab_owner");
     assert.equal(route.requiresAuth, true);
     assert.notEqual(route.requiresAdmin, true);
     assert.equal(route.adminMenu, undefined);
+    assert.ok(routesById.has(route.id), `${route.id} must exist in route registry`);
   }
 });
 
@@ -88,32 +82,41 @@ test("Admin menu owns operator surfaces behind admin permission", () => {
   assert.deepEqual(adminMenuRoutes.map((route) => route.label), [
     "Admin Overview",
     "Users",
-    "Governance",
-    "All Workspaces",
     "Billing Ops",
-    "Gateway Ops",
-    "Fabric",
     "Ledger",
     "Runtime",
-    "Support Ops",
-    "Audit",
-    "Settings"
+    "Support Ops"
   ]);
 
   for (const route of adminMenuRoutes) {
     assert.equal(route.area, "admin");
+    assert.equal(route.role, "admin");
     assert.equal(route.requiresAuth, true);
     assert.equal(route.requiresAdmin, true);
+    assert.ok(routesById.has(route.id), `${route.id} must exist in route registry`);
   }
 });
 
-test("route table does not expose reserved routes in visible owner or admin menus", () => {
+test("route table and routeTo do not expose reserved routes in visible owner or admin menus", () => {
   const visiblePaths = new Set([...ownerMenuRoutes, ...adminMenuRoutes].map((route) => route.path));
-  const reservedPaths = consoleRoutes
-    .filter((route) => route.hiddenInMenu || route.featureGate)
-    .map((route) => route.path);
+  const reservedPaths = [
+    "/register",
+    "/invite/accept",
+    "/email/verify",
+    "/forgot-password",
+    "/reset-password",
+    "/console/resources",
+    "/console/approvals",
+    "/admin/fabric",
+    "/admin/governance",
+    "/admin/runtime/kubernetes"
+  ];
 
   for (const path of reservedPaths) {
     assert.equal(visiblePaths.has(path), false, `${path} must stay out of visible menus`);
+    assert.equal(consoleRoutes.some((route) => route.path === path), false, `${path} must stay out of runtime routes`);
   }
+
+  assert.equal(routeTo("workspace.detail", { id: "ws_demo" }), "/console/workspaces/ws_demo");
+  assert.equal(routeTo("support.detail", { id: "ticket_demo" }), "/console/support/ticket_demo");
 });

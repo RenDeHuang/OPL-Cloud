@@ -2,46 +2,62 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { consoleActions } from "../../packages/console/ui/routes/opl-actions.js";
+import { routeTo, routesById } from "../../packages/console/ui/consoleRoutes.js";
+
 const repoRoot = new URL("../../", import.meta.url);
 
 async function source(relativePath) {
   return readFile(new URL(relativePath, repoRoot), "utf8");
 }
 
-test("console menus use declared route groups and navigate through route paths", async () => {
-  const routes = await source("packages/console/ui/consoleRoutes.js");
-  const menu = await source("packages/console/ui/pages/shared/console-menu.jsx");
-  const consolePage = await source("packages/console/ui/pages/ConsolePage.jsx");
+test("console actions resolve through route ids or explicit non-route action types", () => {
+  assert.ok(consoleActions.length > 0, "action registry should declare current clickable objects");
+  const actionIds = new Set();
 
-  assert.match(routes, /export const ownerMenuRoutes/);
-  assert.match(routes, /export const adminMenuRoutes/);
-  assert.match(menu, /ownerMenuRoutes/);
-  assert.match(menu, /adminMenuRoutes/);
-  assert.match(consolePage, /navigate\(item\.path \|\| "\/console\/overview"\)/);
+  for (const action of consoleActions) {
+    assert.ok(action.id, "action must have id");
+    assert.equal(actionIds.has(action.id), false, `duplicate action id ${action.id}`);
+    actionIds.add(action.id);
+    assert.ok(action.objectKind, `${action.id} must declare objectKind`);
+    assert.ok(action.role === "lab_owner" || action.role === "admin", `${action.id} must declare allowed role`);
+
+    if (action.type === "route") {
+      const route = routesById.get(action.routeId);
+      assert.ok(route, `${action.id} points at missing route ${action.routeId}`);
+      const params = Object.fromEntries([...route.path.matchAll(/:([^/]+)/g)].map(([, key]) => [key, `${key}-demo`]));
+      assert.equal(routeTo(action.routeId, params, { role: action.role }), route.path.replace(/:([^/]+)/g, (_, key) => params[key]));
+      assert.equal(action.path, undefined, `${action.id} must not hard-code path`);
+    }
+
+    if (action.type === "disabled") {
+      assert.ok(action.disabledReason, `${action.id} disabled action must explain why`);
+    }
+
+    if (action.type === "api") {
+      assert.ok(action.apiClient, `${action.id} api action must name apiClient`);
+      assert.ok(action.apiName, `${action.id} api action must name apiName`);
+    }
+  }
 });
 
-test("workspace list routes users to workspace detail", async () => {
-  const page = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");
+test("workspace and support click targets are route/action registry backed", () => {
+  const actionsById = new Map(consoleActions.map((action) => [action.id, action]));
 
-  assert.match(page, /navigate\(`\/console\/workspaces\/\$\{row\.id\}`\)/);
-});
-
-test("workspace detail exposes runtime, storage, backup, and URL actions through the Workspace API client", async () => {
-  const detailPage = await source("packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx");
-  const apiClient = await source("packages/console/ui/api/workspaces-api.js");
-
-  assert.match(detailPage, /from "\.\.\/\.\.\/api\/workspaces-api\.js"/);
-  for (const apiName of [
-    "stopWorkspaceServer",
-    "restartWorkspaceServer",
-    "destroyWorkspaceServer",
-    "destroyWorkspaceDisk",
-    "createStorageBackup",
-    "resetWorkspaceToken",
-    "deleteWorkspaceToken"
+  for (const id of [
+    "workspace.create",
+    "workspace.detail",
+    "workspace.openUrl",
+    "workspace.resetUrl",
+    "workspace.deleteUrl",
+    "billing.wallet",
+    "support.create",
+    "support.detail",
+    "admin.manualTopup",
+    "admin.userCreate.disabled",
+    "admin.userWallet.disabled"
   ]) {
-    assert.match(detailPage, new RegExp(`\\b${apiName}\\b`), `Workspace detail should call ${apiName}`);
-    assert.match(apiClient, new RegExp(`export function ${apiName}\\(`), `Workspace API should export ${apiName}`);
+    assert.ok(actionsById.has(id), `missing action ${id}`);
   }
 });
 
