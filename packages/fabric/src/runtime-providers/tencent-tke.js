@@ -833,6 +833,9 @@ export class TencentTkeProvider {
                 automountServiceAccountToken: false,
                 imagePullSecrets: [{ name: this.env.OPL_IMAGE_PULL_SECRET_NAME }],
                 nodeSelector: nodeSelectorKey && nodeSelectorValue ? { [nodeSelectorKey]: nodeSelectorValue } : undefined,
+                initContainers: [
+                  this.codexBootstrapInitContainer({ secretName: `${name}-env` })
+                ],
                 containers: [
                   {
                     name: "workspace",
@@ -955,6 +958,9 @@ export class TencentTkeProvider {
                 automountServiceAccountToken: false,
                 imagePullSecrets: [{ name: this.env.OPL_IMAGE_PULL_SECRET_NAME }],
                 nodeSelector: nodeSelectorKey && nodeSelectorValue ? { [nodeSelectorKey]: nodeSelectorValue } : undefined,
+                initContainers: volumes
+                  ? [this.codexBootstrapInitContainer({ secretName: `${name}-env` })]
+                  : undefined,
                 containers: [
                   {
                     name: "workspace",
@@ -1053,6 +1059,28 @@ export class TencentTkeProvider {
     }));
   }
 
+  codexBootstrapInitContainer({ secretName }) {
+    return {
+      name: "bootstrap-codex-config",
+      image: this.env.OPL_WORKSPACE_IMAGE,
+      imagePullPolicy: "IfNotPresent",
+      envFrom: [{ secretRef: { name: secretName } }],
+      env: [
+        { name: "CODEX_HOME", value: "/data/codex" }
+      ],
+      command: ["node", "-e"],
+      args: [codexBootstrapScript()],
+      volumeMounts: [
+        { name: "workspace-data", mountPath: "/data", subPath: "data" }
+      ],
+      securityContext: {
+        allowPrivilegeEscalation: false,
+        readOnlyRootFilesystem: false,
+        capabilities: { drop: ["ALL"] }
+      }
+    };
+  }
+
   workspacePvcSpec({ packagePlan, restoreFromBackup = null }) {
     return {
       accessModes: ["ReadWriteOnce"],
@@ -1113,6 +1141,39 @@ export class TencentTkeProvider {
       spec: this.workspacePvcSpec({ packagePlan, restoreFromBackup: backup })
     };
   }
+}
+
+function codexBootstrapScript() {
+  return `
+const fs = require("node:fs");
+const path = require("node:path");
+const codexHome = process.env.CODEX_HOME || "/data/codex";
+const configPath = path.join(codexHome, "config.toml");
+const apiKey = String(process.env.OPL_CODEX_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+const model = String(process.env.OPL_CODEX_MODEL || process.env.CODEX_MODEL || "gpt-5.5").trim();
+const baseUrl = String(process.env.OPL_CODEX_BASE_URL || process.env.CODEX_BASE_URL || process.env.OPENAI_BASE_URL || "").trim();
+if (!apiKey || !model || !baseUrl) process.exit(0);
+const existing = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : "";
+if (/experimental_bearer_token\\s*=/.test(existing)) process.exit(0);
+const providerId = String(process.env.OPL_CODEX_MODEL_PROVIDER || process.env.CODEX_MODEL_PROVIDER || "gflabtoken").trim();
+const providerName = String(process.env.OPL_CODEX_PROVIDER_NAME || process.env.CODEX_PROVIDER_NAME || providerId).trim();
+const reasoningEffort = String(process.env.OPL_CODEX_REASONING_EFFORT || process.env.CODEX_REASONING_EFFORT || "").trim();
+const q = (value) => JSON.stringify(String(value));
+const lines = [
+  "model_provider = " + q(providerId),
+  "model = " + q(model),
+  ...(reasoningEffort ? ["model_reasoning_effort = " + q(reasoningEffort)] : []),
+  "",
+  "[model_providers." + providerId + "]",
+  "name = " + q(providerName),
+  "base_url = " + q(baseUrl),
+  "experimental_bearer_token = " + q(apiKey),
+  ""
+];
+fs.mkdirSync(codexHome, { recursive: true });
+fs.writeFileSync(configPath, lines.join("\\n"), { mode: 0o600 });
+fs.chmodSync(configPath, 0o600);
+`.trim();
 }
 
 function resourceName(resourceId) {

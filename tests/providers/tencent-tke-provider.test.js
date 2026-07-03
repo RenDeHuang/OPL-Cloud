@@ -96,6 +96,42 @@ test("Tencent TKE provider passes Codex provider settings through workspace secr
   assert.equal(JSON.stringify(computeEnv).includes("secret-codex-key"), false);
 });
 
+test("Tencent TKE provider bootstraps Codex config into retained workspace storage before WebUI starts", () => {
+  const provider = new TencentTkeProvider({
+    env: {
+      ...requiredEnv,
+      OPL_CODEX_MODEL: "gpt-5.5",
+      OPL_CODEX_REASONING_EFFORT: "xhigh",
+      OPL_CODEX_BASE_URL: "https://gflabtoken.cn/v1",
+      OPL_CODEX_API_KEY: "secret-codex-key"
+    },
+    commandExists: () => true
+  });
+  const manifest = provider.computeResourceManifest({
+    name: "opl-compute-codex",
+    computeId: "compute-codex",
+    accountId: "pi-alpha",
+    compute: { id: "compute-codex", name: "Codex node", token: "share_compute" },
+    packagePlan: { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, server: "2c4g", diskGb: 10 },
+    storageClaimName: "opl-storage-codex-data"
+  });
+  const deployment = manifest.items.find((item) => item.kind === "Deployment");
+  const initContainer = deployment.spec.template.spec.initContainers?.find((item) => item.name === "bootstrap-codex-config");
+
+  assert.ok(initContainer, "workspace deployment must write Codex config before WebUI starts");
+  assert.equal(initContainer.image, requiredEnv.OPL_WORKSPACE_IMAGE);
+  assert.deepEqual(initContainer.envFrom, [{ secretRef: { name: "opl-compute-codex-env" } }]);
+  assert.deepEqual(Object.fromEntries(initContainer.env.map((item) => [item.name, item.value])), {
+    CODEX_HOME: "/data/codex"
+  });
+  assert.deepEqual(initContainer.volumeMounts, [
+    { name: "workspace-data", mountPath: "/data", subPath: "data" }
+  ]);
+  assert.equal(JSON.stringify(initContainer).includes("secret-codex-key"), false);
+  assert.match(initContainer.command.join(" "), /node/);
+  assert.match(initContainer.args.join(" "), /experimental_bearer_token/);
+});
+
 test("Tencent TKE provider exposes split compute, storage, attachment, and Workspace entry operations", async () => {
   const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-resource-state-"));
   const calls = [];
