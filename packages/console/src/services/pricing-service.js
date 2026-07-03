@@ -64,7 +64,7 @@ export function billingPolicy(pricing) {
     minimumBillableHours: 1,
     billingCadence: "hourly",
     fundingOrder: ["available_balance", "frozen_hold"],
-    computeHoldExhaustion: "stop_compute",
+    computeHoldExhaustion: "block_new_resource_actions_until_top_up",
     storageHoldExhaustion: "freeze_workspace_until_top_up_or_storage_destroy",
     storageDestroyConfirmation: "required"
   };

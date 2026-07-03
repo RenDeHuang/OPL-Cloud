@@ -1,0 +1,204 @@
+name: Cleanup TKE Old Workspace Runtimes
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print cleanup targets without mutating TKE.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      confirm:
+        description: Type CLEAN_OLD_WORKSPACES to run a mutating cleanup.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Cleanup old OPL Workspace runtime objects
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    environment: production
+    env:
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      OPL_WORKSPACE_DOMAIN: ${{ vars.OPL_WORKSPACE_DOMAIN || 'workspace.medopl.cn' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+
+    steps:
+      - name: Prepare kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          chmod 700 "$secret_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No deploy kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Inventory old workspace resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Old Deployment/Service candidates:"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deploy,svc \
+            -l app.kubernetes.io/name=opl-workspace -o wide || true
+          echo "Old Secret/PVC candidates:"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret,pvc -o name \
+            | grep -E '^((secret|persistentvolumeclaim)/opl-ws-[a-z0-9-]+(-(env|data))?)$' || true
+          echo "Old Ingress path candidates:"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o json \
+            | node -e '
+                const fs = require("node:fs");
+                const ingress = JSON.parse(fs.readFileSync(0, "utf8"));
+                for (const rule of ingress.spec?.rules || []) {
+                  if (rule.host !== process.env.OPL_WORKSPACE_DOMAIN) continue;
+                  for (const path of rule.http?.paths || []) {
+                    const service = path.backend?.service?.name || "";
+                    if (/^opl-ws-/.test(service)) {
+                      console.log(`${path.path} -> ${service}`);
+                    }
+                  }
+                }
+              '
+
+      - name: Confirm cleanup boundary
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry-run mode: no Kubernetes objects will be mutated."
+            exit 0
+          fi
+          if [ "$CONFIRM" != "CLEAN_OLD_WORKSPACES" ]; then
+            echo "Mutating cleanup requires confirm=CLEAN_OLD_WORKSPACES." >&2
+            exit 1
+          fi
+          echo "Mutating cleanup confirmed for old opl-ws-* runtime objects only."
+
+      - name: Remove old workspace ingress paths
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          ingress_file="$(mktemp)"
+          next_ingress_file="$(mktemp)"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o json > "$ingress_file"
+          OPL_WORKSPACE_DOMAIN="$OPL_WORKSPACE_DOMAIN" node - "$ingress_file" "$next_ingress_file" <<'NODE'
+          const fs = require("node:fs");
+          const [source, target] = process.argv.slice(2);
+          const ingress = JSON.parse(fs.readFileSync(source, "utf8"));
+          delete ingress.status;
+          if (ingress.metadata) {
+            delete ingress.metadata.creationTimestamp;
+            delete ingress.metadata.generation;
+            delete ingress.metadata.managedFields;
+            delete ingress.metadata.resourceVersion;
+            delete ingress.metadata.uid;
+          }
+          const removed = [];
+          for (const rule of ingress.spec?.rules || []) {
+            if (rule.host !== process.env.OPL_WORKSPACE_DOMAIN) continue;
+            const paths = Array.isArray(rule.http?.paths) ? rule.http.paths : [];
+            rule.http.paths = paths.filter((path) => {
+              const service = path.backend?.service?.name || "";
+              const oldRuntime = /^opl-ws-/.test(service);
+              if (oldRuntime) removed.push(`${path.path} -> ${service}`);
+              return !oldRuntime;
+            });
+          }
+          console.log(removed.length ? removed.join("\n") : "No old Ingress paths found.");
+          fs.writeFileSync(target, `${JSON.stringify(ingress, null, 2)}\n`);
+          NODE
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry-run: not applying Ingress path cleanup."
+            exit 0
+          fi
+          kubectl --kubeconfig "$KUBECONFIG" apply -f "$next_ingress_file"
+
+      - name: Delete old workspace runtime resources
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          mapfile -t workspace_names < <(
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deploy \
+              -l app.kubernetes.io/name=opl-workspace -o json \
+              | node -e '
+                  const fs = require("node:fs");
+                  const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+                  for (const item of payload.items || []) {
+                    const name = item.metadata?.name || "";
+                    if (/^opl-ws-/.test(name)) console.log(name);
+                  }
+                '
+          )
+          if [ "${#workspace_names[@]}" -eq 0 ]; then
+            echo "No old opl-ws-* Deployment objects found."
+            exit 0
+          fi
+          for name in "${workspace_names[@]}"; do
+            echo "Cleanup target: deployment/$name service/$name secret/$name-env pvc/$name-data"
+            if [ "$DRY_RUN" = "true" ]; then
+              continue
+            fi
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" delete \
+              deployment "$name" \
+              service "$name" \
+              secret "$name-env" \
+              pvc "$name-data" \
+              --ignore-not-found=true
+          done
+
+      - name: Verify cleanup
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry-run verification skipped."
+            exit 0
+          fi
+          remaining_workloads="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deploy \
+            -l app.kubernetes.io/name=opl-workspace -o name \
+            | grep -E '^deployment.apps/opl-ws-' || true)"
+          remaining_paths="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o json \
+            | node -e '
+                const fs = require("node:fs");
+                const ingress = JSON.parse(fs.readFileSync(0, "utf8"));
+                for (const rule of ingress.spec?.rules || []) {
+                  if (rule.host !== process.env.OPL_WORKSPACE_DOMAIN) continue;
+                  for (const path of rule.http?.paths || []) {
+                    const service = path.backend?.service?.name || "";
+                    if (/^opl-ws-/.test(service)) console.log(`${path.path} -> ${service}`);
+                  }
+                }
+              ')"
+          if [ -n "$remaining_workloads" ] || [ -n "$remaining_paths" ]; then
+            echo "cleanup_failed: old workspace resources remain" >&2
+            printf '%s\n%s\n' "$remaining_workloads" "$remaining_paths" >&2
+            exit 1
+          fi
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deploy,svc,ingress -o wide

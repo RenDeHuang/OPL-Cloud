@@ -47,13 +47,15 @@
         "OPL_INGRESS_CLASS": "qcloud",
         "OPL_IMAGE_PULL_SECRET_NAME": "tcr-pull-secret",
         "OPL_WORKSPACE_STORAGE_CLASS": "cbs",
-        "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS": "cbs-snapshot",
         "OPL_WORKSPACE_WEBUI_PORT": "3000",
         "OPL_WORKSPACE_DATA_DIR": "/data",
         "OPL_WORKSPACE_PROJECTS_DIR": "/projects",
         "OPL_CONSOLE_TLS_SECRET_NAME": "opl-cloud-console-medopl-cn-tls",
         "OPL_WORKSPACE_TLS_SECRET_NAME": "opl-cloud-workspace-medopl-cn-tls",
         "TENCENT_DEPLOY_CLUSTER_ID": "cls-xxxxxxxx",
+        "TENCENT_TKE_REGION": "ap-guangzhou",
+        "OPL_TKE_NODEPOOL_AUTOSCALING_GROUP_PARA_JSON": "{\"MinSize\":0,\"MaxSize\":1,\"DesiredCapacity\":1,\"VpcId\":\"vpc-xxxxxxxx\",\"SubnetIds\":[\"subnet-xxxxxxxx\"]}",
+        "OPL_TKE_NODEPOOL_LAUNCH_CONFIGURE_PARA_JSON": "{\"InstanceType\":\"${INSTANCE_TYPE}\",\"SystemDisk\":{\"DiskType\":\"CLOUD_PREMIUM\",\"DiskSize\":\"${SYSTEM_DISK_GB}\"}}",
         "TENCENT_TCR_REGISTRY": "registry.example.com",
         "TENCENT_TCR_NAMESPACE": "opl",
         "TENCENT_TCR_REGION": "ap-guangzhou",
@@ -161,6 +163,24 @@
                         "name": "opl-cloud-workspace-codex",
                         "key": "OPL_CODEX_API_KEY",
                         "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "TENCENT_MUTATION_SECRET_ID",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-tencent-mutation",
+                        "key": "TENCENT_MUTATION_SECRET_ID"
+                      }
+                    }
+                  },
+                  {
+                    "name": "TENCENT_MUTATION_SECRET_KEY",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-tencent-mutation",
+                        "key": "TENCENT_MUTATION_SECRET_KEY"
                       }
                     }
                   }

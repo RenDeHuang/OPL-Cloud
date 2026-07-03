@@ -45,7 +45,7 @@ export class ConsoleReadModelService extends OplDomainService {
       if (input.workspaceId) {
         const workspace = state.workspaces?.[input.workspaceId];
         if (!workspace || workspace.ownerAccountId !== input.accountId) {
-          throw new Error("support_ticket_workspace_not_in_account");
+          throw new Error("workspace_not_found");
         }
       }
       const timestamp = now();
@@ -272,10 +272,10 @@ export class ConsoleReadModelService extends OplDomainService {
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       resourceUsageLogs: (state.resourceUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       requestUsageLogs: (state.requestUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      supportTickets: (state.supportTickets || []).filter((ticket) => ticket.accountId === resolvedAccountId).map(clone),
       walletTransactions: (state.walletTransactions || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       manualTopups: (state.manualTopups || []).filter((entry) => entry.targetAccountId === resolvedAccountId).map(clone),
       requestUsageDedup: (state.requestUsageDedup || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
-      storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       billingReconciliation: {
         latestReport: clone(latestBillingReconciliationReport(state)),
         guard: clone(latestBillingReconciliationReport(state)?.guard || {
@@ -294,6 +294,9 @@ export class ConsoleReadModelService extends OplDomainService {
   async operatorSummary({ accountId = null } = {}) {
     const state = await this.store.read();
     const workspaces = Object.values(state.workspaces).filter((workspace) => !accountId || workspace.ownerAccountId === accountId);
+    const computeResources = (state.computeResources || []).filter((resource) => !accountId || resource.ownerAccountId === accountId);
+    const storageVolumes = (state.storageVolumes || []).filter((resource) => !accountId || resource.ownerAccountId === accountId);
+    const storageAttachments = (state.storageAttachments || []).filter((resource) => !accountId || resource.ownerAccountId === accountId);
     const notifications = (state.notifications || []).filter((event) => operatorNotificationInScope(event, accountId));
     const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
     const accountIds = new Set([
@@ -302,13 +305,11 @@ export class ConsoleReadModelService extends OplDomainService {
     const accounts = [...accountIds]
       .filter((id) => !accountId || id === accountId)
       .map((id) => accountSnapshotForState(state, id));
-    const storageBackups = (state.storageBackups || []).filter((backup) => !accountId || backup.accountId === accountId);
     const latestReconciliation = latestBillingReconciliationReport(state);
     const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
     const attentionWorkspaces = workspaces.filter((workspace) =>
       workspace.state === "failed" ||
       workspace.state === "storage_hold_exhausted" ||
-      workspace.state === "stopped_storage_hold_exhausted" ||
       workspace.server?.routeCleanupStatus === "failed"
     );
 
@@ -324,10 +325,26 @@ export class ConsoleReadModelService extends OplDomainService {
       workspaces: {
         total: workspaces.length,
         running: workspaces.filter((workspace) => workspace.state === "running").length,
-        stopped: workspaces.filter((workspace) => workspace.state === "stopped_server_disk_retained").length,
-        computeDestroyedStorageRetained: workspaces.filter((workspace) => workspace.state === "server_destroyed_disk_retained").length,
         destroyed: workspaces.filter((workspace) => workspace.state === "destroyed").length,
         needsAttention: attentionWorkspaces.length
+      },
+      resources: {
+        compute: {
+          total: computeResources.length,
+          running: computeResources.filter((resource) => resource.status === "running").length,
+          destroyed: computeResources.filter((resource) => resource.status === "destroyed").length
+        },
+        storage: {
+          total: storageVolumes.length,
+          available: storageVolumes.filter((resource) => resource.status === "available").length,
+          attached: storageVolumes.filter((resource) => resource.status === "attached").length,
+          destroyed: storageVolumes.filter((resource) => resource.status === "destroyed").length
+        },
+        attachments: {
+          total: storageAttachments.length,
+          attached: storageAttachments.filter((resource) => resource.status === "attached").length,
+          detached: storageAttachments.filter((resource) => resource.status === "detached").length
+        }
       },
       notifications: {
         total: notifications.length,
@@ -354,11 +371,6 @@ export class ConsoleReadModelService extends OplDomainService {
           error: operation.error,
           updatedAt: operation.updatedAt
         }))
-      },
-      storageBackups: {
-        total: storageBackups.length,
-        available: storageBackups.filter((backup) => backup.status === "available").length,
-        failed: storageBackups.filter((backup) => String(backup.status).endsWith("_failed")).length
       },
       billingReconciliation: {
         reports: state.billingReconciliationReports?.length || 0,

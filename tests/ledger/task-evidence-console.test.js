@@ -1,44 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
-import { MemoryStore } from "../../packages/console/src/store.js";
-
-const TEST_PRICING = {
-  computeHourly: { basic: 1, pro: 4 },
-  storageGbMonth: 0.2,
-  markup: 0.2
-};
-
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: { id: `server-${workspaceId}`, status: "running", billingStatus: "active", spec: packagePlan.server },
-    docker: { id: `docker-${workspaceId}`, image: "test-image", status: "running" },
-    disk: { id: `disk-${workspaceId}`, status: "attached_retained", billingStatus: "active", sizeGb: packagePlan.diskGb, mountPath: "/data" },
-    url: `https://workspace.example.com/w/${workspaceId}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
-function createService() {
-  return createOplCloud({
-    store: new MemoryStore(),
-    runtimeProvider: {
-      name: "test-provider",
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
-      }
-    },
-    pricing: TEST_PRICING
-  });
-}
+import {
+  createCurrentTestService,
+  provisionWorkspace
+} from "../helpers/current-resource-chain.js";
 
 test("Console records and queries task evidence receipts without mixing them into billing ledger", async () => {
-  const service = createService();
-  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const service = createCurrentTestService();
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const { workspace } = await provisionWorkspace(service, {
     accountId: "pi-alpha",
+    userId: "usr-alpha",
     workspaceName: "Task Evidence Lab",
     packageId: "basic"
   });
@@ -73,11 +46,12 @@ test("Console records and queries task evidence receipts without mixing them int
 });
 
 test("Console task evidence receipt enforces workspace ownership", async () => {
-  const service = createService();
-  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  await service.manualTopUp({ accountId: "pi-beta", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const service = createCurrentTestService();
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  await service.manualTopUp({ accountId: "pi-beta", amount: 300, reason: "owner_credit" });
+  const { workspace } = await provisionWorkspace(service, {
     accountId: "pi-alpha",
+    userId: "usr-alpha",
     workspaceName: "Owned Lab",
     packageId: "basic"
   });

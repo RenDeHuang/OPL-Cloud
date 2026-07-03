@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rework OPL Console from a Workspace-as-resource model to a commercial TKE resource model with separate compute, storage, attachment, Workspace URL, billing, and public staging e2e verification.
+**Goal:** Implement the commercial TKE resource model with separate compute, storage, attachment, Workspace URL, billing, and public staging e2e verification.
 
-**Architecture:** Workspace becomes the user entry/work environment composed from provisioned resources. ComputeResource, StorageVolume, and StorageAttachment become first-class commercial objects owned by an account; Workspace references an attachment and exposes URL/token/runtime readiness. TKE is the primary runtime target, while local Docker remains a development adapter for the same object model.
+**Architecture:** Workspace becomes the user entry/work environment composed from provisioned resources. ComputeResource maps to Tencent TKE node pool creation or expansion, StorageVolume maps to PVC/CBS, and StorageAttachment schedules the one-person-lab-app runtime Deployment/Service onto the selected compute node pool with the selected storage mounted. Workspace references an attachment and exposes URL/token/runtime readiness. TKE is the primary runtime target, while local Docker remains a development adapter for the same object model.
 
-**Tech Stack:** Node.js, React, Ant Design Pro, TKE, Kubernetes Deployment/PVC/Service/Ingress, Postgres-compatible store, node:test.
+**Tech Stack:** Node.js, React, Ant Design Pro, Tencent TKE node pools, Kubernetes Deployment/PVC/Service/Ingress, Postgres-compatible store, node:test.
 
 ---
 
@@ -15,15 +15,15 @@
 - Modify `packages/contracts/opl-cloud-route-api-contract.json`: replace Workspace lifecycle routes with current compute/storage/attachment/workspace routes.
 - Modify `packages/contracts/opl-cloud-business-object-contract.json`: add `ComputeResource`, `StorageVolume`, `StorageAttachment`; narrow `Workspace` to URL/runtime entry.
 - Modify `packages/console/ui/routes/opl-routes.js`: add route ids and menus for compute, storage, attachments, and Workspace entry.
-- Modify `packages/console/ui/routes/opl-actions.js`: replace stop/restart action ids with create/destroy compute, create/destroy storage, attach/detach, create/open Workspace URL.
+- Modify `packages/console/ui/routes/opl-actions.js`: expose create/destroy compute, create/destroy storage, attach/detach, and create/open Workspace URL actions.
 - Create `packages/console/ui/api/resources-api.js`: UI API client for compute/storage/attachment APIs.
 - Modify `packages/console/api/routes/index.js` and create `packages/console/api/routes/resource-routes.js`: server route map for new resource APIs.
 - Create `packages/console/src/services/resource-provisioning-service.js`: account-scoped commercial resource service.
 - Modify `packages/console/src/services/workspace-lifecycle-service.js`: keep Workspace URL/token/runtime entry creation only.
-- Modify `packages/fabric/src/runtime-providers/tencent-tke.js`: split provider methods into compute/storage/attachment/workspace entry operations.
+- Modify `packages/fabric/src/runtime-providers/tencent-tke.js`: map compute to TKE node pool mutation; keep storage/attachment/workspace entry operations current-only.
 - Modify `packages/fabric/src/runtime-providers/local-docker.js`: keep local parity for tests and development.
 - Modify `packages/console/src/store.js`: persist `computeResources`, `storageVolumes`, `storageAttachments`.
-- Modify UI pages under `packages/console/ui/pages/`: replace stop/restart surface with Compute, Storage, Attachment, Workspace flows.
+- Modify UI pages under `packages/console/ui/pages/`: expose Compute, Storage, Attachment, and Workspace URL flows.
 - Modify `tools/production-verifier.js`: verify public staging e2e through the new chain.
 - Create `DEV_GUIDE.md`: developer/agent guide for local, TKE-from-local, staging, and production verification.
 
@@ -56,14 +56,7 @@ Current Lab Owner APIs should become:
 - `POST /api/workspaces/delete-token`
 - `POST /api/workspaces/runtime-status`
 
-Remove these from Lab Owner current route contract:
-
-- `POST /api/workspaces/stop-server`
-- `POST /api/workspaces/restart-server`
-- `POST /api/workspaces/destroy-server`
-- `POST /api/workspaces/destroy-disk`
-
-These may remain only as admin/operator cleanup or migration internals if they have a removal condition; they must not be the commercial Lab Owner resource model.
+Workspace APIs must remain URL/runtime entry APIs. Resource lifecycle belongs to compute, storage, and attachment APIs.
 
 ## Task 1: Contract Redesign
 
@@ -75,7 +68,7 @@ These may remain only as admin/operator cleanup or migration internals if they h
 
 - [ ] **Step 1: Write failing route contract assertions**
 
-Add assertions that the active route contract includes compute, storage, attachment, and Workspace entry routes, and excludes stop/restart commercial routes.
+Add assertions that the active route contract includes compute, storage, attachment, and Workspace entry routes, and that Workspace APIs remain URL/runtime entry APIs.
 
 Run:
 
@@ -220,8 +213,8 @@ git commit -m "feat: add account scoped compute and storage resources"
 Update provider tests to expect:
 
 - create storage -> PVC;
-- create compute -> Deployment/Service or prepared runtime compute;
-- attach storage -> Deployment volume mount to PVC;
+- create compute -> TKE node pool creation or expansion;
+- attach storage -> one-person-lab-app Deployment/Service scheduled onto that node pool with PVC mounts;
 - create Workspace entry -> Ingress path/URL token route;
 - runtime status verifies Deployment image, PVC bound, Service endpoints, and Ingress route.
 
@@ -235,7 +228,7 @@ Expected: FAIL because provider methods are currently Workspace-centric.
 
 - [ ] **Step 2: Implement TKE provider methods**
 
-Split current `createWorkspaceRuntime` into:
+Expose the current provider boundary as:
 
 ```js
 createStorageVolume(input)
@@ -248,7 +241,7 @@ detachStorage(input)
 runtimeStatus(input)
 ```
 
-For TKE, attachment means reconciling the Deployment pod template with the PVC mount. If Kubernetes must recreate pods to apply the mount, record that as runtime evidence; do not market it as a cost-saving stop/start.
+For TKE, attachment means reconciling the Deployment pod template with the PVC mount. If Kubernetes must replace pods to apply the mount, record that as runtime evidence; do not market provider reconciliation as a customer-facing lifecycle control.
 
 - [ ] **Step 3: Keep local Docker parity**
 
@@ -287,7 +280,7 @@ git commit -m "feat: split fabric resources for tke"
 
 - [ ] **Step 1: Write failing API route tests**
 
-Assert `apiRouteManifest` contains the new resource APIs and no longer exposes stop/restart as Lab Owner current routes.
+Assert `apiRouteManifest` contains the current resource APIs and keeps Workspace APIs scoped to URL/runtime entry.
 
 Run:
 
@@ -320,7 +313,7 @@ Replace Lab Owner flow with:
 4. Create Workspace URL from attachment.
 5. Open Workspace URL.
 
-Remove `停止计算` and `启动计算并挂载存储` from Lab Owner UI.
+Lab Owner UI only exposes resource purchase, storage attachment, Workspace URL creation, token operations, billing, and support.
 
 - [ ] **Step 4: Verify UI route and surface tests**
 
@@ -490,4 +483,4 @@ The public e2e is not complete unless the verifier opens a non-localhost Workspa
 
 ## Rationale
 
-The old stop/restart server model is not a reliable commercial abstraction for TKE. Customer-facing controls should map to resources customers buy and can reason about: compute, storage, attachment, Workspace URL, and ledger records. TKE implementation can recreate pods during attachment or runtime reconciliation, but that is provider behavior, not the product model.
+Customer-facing controls should map to resources customers buy and can reason about: compute node pools, storage volumes, attachments, Workspace URL entries, and ledger records. TKE implementation can recreate pods during attachment or runtime reconciliation, but that is provider behavior, not the product model.

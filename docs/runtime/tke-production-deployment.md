@@ -7,11 +7,12 @@ Tencent TKE is the production runtime provider for the current OPL Console / OPL
 The deployment owns:
 
 - OPL Console control-plane pod.
-- Workspace runtime handoff to TKE.
+- ComputeResource provisioning through Tencent TKE node pool creation or expansion.
 - TCR image references.
 - Kubernetes Service and Ingress routing.
-- Persistent workspace storage through PVC/CBS.
-- Storage backup and restore through VolumeSnapshot.
+- StorageVolume provisioning through PVC/CBS.
+- StorageAttachment handoff that schedules the one-person-lab-app runtime Deployment/Service onto the selected compute node pool and mounts the selected storage volume.
+- Workspace URL/token entries served by the Console gateway.
 - PostgreSQL control-plane persistence.
 
 ## Manifest Rules
@@ -35,6 +36,28 @@ Production deploy workflow must:
 - install secrets without printing secret values;
 - restart and wait for the control-plane rollout;
 - leave diagnostics read-only unless the deploy job is explicitly mutating.
+
+## Old Runtime Cleanup
+
+The cleanup workflow is only for old Workspace-as-runtime objects that predate the current resource model.
+
+It may remove:
+
+- `opl-ws-*` Deployments and their ReplicaSets/Pods.
+- Matching `opl-ws-*` Services.
+- Matching `opl-ws-*-env` Secrets.
+- Matching `opl-ws-*-data` PVCs.
+- Shared Ingress paths whose backend service name starts with `opl-ws-`.
+
+It must preserve:
+
+- `opl-cloud-control-plane`.
+- Shared `opl-cloud` Ingress object and TLS secrets.
+- `tcr-pull-secret`.
+- TCR image repositories and tags, including `one-person-lab-app`.
+- Current node-pool compute, storage volume, attachment, and Workspace URL objects.
+
+Mutating cleanup requires `dry_run=false` and `confirm=CLEAN_OLD_WORKSPACES`.
 
 ## Pricing Defaults
 

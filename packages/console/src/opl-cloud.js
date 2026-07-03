@@ -117,38 +117,6 @@ export class OplCloudService {
     return this.resourceProvisioning.detachStorage(...args);
   }
 
-  async createStorageBackup(...args) {
-    return this.workspaceLifecycle.createStorageBackup(...args);
-  }
-
-  async restoreWorkspaceFromBackup(...args) {
-    return this.workspaceLifecycle.restoreWorkspaceFromBackup(...args);
-  }
-
-  async pruneStorageBackups(...args) {
-    return this.workspaceLifecycle.pruneStorageBackups(...args);
-  }
-
-  async stopServer(...args) {
-    return this.workspaceLifecycle.stopServer(...args);
-  }
-
-  async restartServer(...args) {
-    return this.workspaceLifecycle.restartServer(...args);
-  }
-
-  async restartOperationType(...args) {
-    return this.workspaceLifecycle.restartOperationType(...args);
-  }
-
-  async destroyServer(...args) {
-    return this.workspaceLifecycle.destroyServer(...args);
-  }
-
-  async destroyDisk(...args) {
-    return this.workspaceLifecycle.destroyDisk(...args);
-  }
-
   async resetWorkspaceToken(...args) {
     return this.workspaceLifecycle.resetWorkspaceToken(...args);
   }
@@ -235,10 +203,6 @@ export class OplCloudService {
 
   async recordCreateWorkspaceFailure(...args) {
     return this.workspaceLifecycle.recordCreateWorkspaceFailure(...args);
-  }
-
-  async stopRuntimeAfterHoldExhausted(...args) {
-    return this.workspaceLifecycle.stopRuntimeAfterHoldExhausted(...args);
   }
 
   notify(...args) {

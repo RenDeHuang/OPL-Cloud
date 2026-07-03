@@ -32,7 +32,6 @@
       "OPL_WORKSPACE_IMAGE",
       "OPL_IMAGE_PULL_SECRET_NAME",
       "OPL_WORKSPACE_STORAGE_CLASS",
-      "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS",
       "OPL_CONSOLE_TLS_SECRET_NAME",
       "OPL_WORKSPACE_TLS_SECRET_NAME",
       "OPL_INGRESS_CLASS",
@@ -44,6 +43,9 @@
       "OPL_CODEX_REASONING_EFFORT",
       "OPL_CODEX_BASE_URL",
       "TENCENT_DEPLOY_CLUSTER_ID",
+      "TENCENT_TKE_REGION",
+      "OPL_TKE_NODEPOOL_AUTOSCALING_GROUP_PARA_JSON",
+      "OPL_TKE_NODEPOOL_LAUNCH_CONFIGURE_PARA_JSON",
       "TENCENT_TCR_REGISTRY",
       "TENCENT_TCR_NAMESPACE",
       "TENCENT_TCR_REGION",
@@ -58,6 +60,8 @@
       "OPL_CONSOLE_USERS_JSON",
       "OPL_OPERATOR_SUMMARY_TOKEN",
       "OPL_CODEX_API_KEY",
+      "TENCENT_MUTATION_SECRET_ID",
+      "TENCENT_MUTATION_SECRET_KEY",
       "TCR_USERNAME",
       "TCR_PASSWORD",
       "TENCENT_DEPLOY_KUBECONFIG_B64",
@@ -99,6 +103,8 @@
         "--from-file=DATABASE_URL=\"$secret_dir/database-url\"",
         "--from-file=OPL_CONSOLE_USERS_JSON=\"$secret_dir/auth-users-json\"",
         "--from-file=OPL_CODEX_API_KEY=\"$secret_dir/codex-api-key\"",
+        "--from-file=TENCENT_MUTATION_SECRET_ID=\"$secret_dir/tencent-mutation-secret-id\"",
+        "--from-file=TENCENT_MUTATION_SECRET_KEY=\"$secret_dir/tencent-mutation-secret-key\"",
         "--from-file=.dockerconfigjson=\"$docker_config\"",
         "--from-file=kubeconfig=\"$KUBECONFIG\""
       ],
@@ -178,6 +184,91 @@
       "kubectl .* delete "
     ]
   },
+  "cleanupWorkflow": {
+    "file": ".github/workflows/cleanup-tke-old-workspaces.yml",
+    "job": "cleanup",
+    "inputs": [
+      "dry_run",
+      "confirm"
+    ],
+    "requiredEnv": [
+      "OPL_K8S_NAMESPACE",
+      "OPL_WORKSPACE_DOMAIN",
+      "TENCENT_DEPLOY_KUBECONFIG_PATH",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "secretEnv": [
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "steps": [
+      "Prepare kubeconfig",
+      "Inventory old workspace resources",
+      "Confirm cleanup boundary",
+      "Remove old workspace ingress paths",
+      "Delete old workspace runtime resources",
+      "Verify cleanup"
+    ],
+    "orderedSteps": [
+      [
+        "Inventory old workspace resources",
+        "Confirm cleanup boundary"
+      ],
+      [
+        "Confirm cleanup boundary",
+        "Remove old workspace ingress paths"
+      ],
+      [
+        "Remove old workspace ingress paths",
+        "Delete old workspace runtime resources"
+      ],
+      [
+        "Delete old workspace runtime resources",
+        "Verify cleanup"
+      ]
+    ],
+    "requiredCommandsByStep": {
+      "Prepare kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Inventory old workspace resources": [
+        "app.kubernetes.io/name=opl-workspace",
+        "^opl-ws-"
+      ],
+      "Confirm cleanup boundary": [
+        "CLEAN_OLD_WORKSPACES",
+        "Dry-run mode"
+      ],
+      "Remove old workspace ingress paths": [
+        "backend?.service?.name",
+        "^opl-ws-",
+        "kubectl --kubeconfig \"$KUBECONFIG\" apply -f \"$next_ingress_file\""
+      ],
+      "Delete old workspace runtime resources": [
+        "app.kubernetes.io/name=opl-workspace",
+        "deployment \"$name\"",
+        "service \"$name\"",
+        "secret \"$name-env\"",
+        "pvc \"$name-data\"",
+        "--ignore-not-found=true"
+      ],
+      "Verify cleanup": [
+        "cleanup_failed",
+        "app.kubernetes.io/name=opl-workspace"
+      ]
+    },
+    "forbiddenRunPatterns": [
+      "kubectl .* delete\\s+namespace",
+      "kubectl .* delete\\s+ingress",
+      "kubectl .* delete\\s+secret\\s+.*tls",
+      "kubectl .* delete\\s+secret\\s+.*tcr",
+      "docker\\s+rmi",
+      "tccli\\s+tcr\\s+Delete"
+    ]
+  },
   "imageReleaseWorkflow": {
     "file": ".github/workflows/release-opl-cloud-image.yml",
     "job": "build-push",
@@ -212,6 +303,7 @@
       "npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
       "npm run build",
       "kubectl",
+      "tccli",
       "COPY packages ./packages",
       "EXPOSE 8787",
       "CMD [\"node\", \"packages/console/api/server.js\"]"

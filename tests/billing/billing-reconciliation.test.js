@@ -52,7 +52,7 @@ test("reports mismatches without treating credits or lifecycle entries as billab
     ledgerEntries: [
       { workspaceId: "ws-alpha", type: "compute_debit", amount: -10.5, currency: "CNY" },
       { workspaceId: "ws-alpha", type: "storage_debit", amount: -2.4, currency: "CNY" },
-      { workspaceId: "ws-alpha", type: "server_billing_stopped", amount: 0, currency: "CNY" },
+      { workspaceId: "ws-alpha", type: "resource_billing_closed", amount: 0, currency: "CNY" },
       { workspaceId: "account", type: "credit", amount: 100, currency: "CNY" }
     ],
     tencentBills: [

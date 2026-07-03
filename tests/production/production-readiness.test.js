@@ -41,15 +41,20 @@ const tkeProductionEnv = {
   ]),
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig",
   TENCENT_DEPLOY_CLUSTER_ID: "cls-123",
+  TENCENT_TKE_REGION: "na-siliconvalley",
+  TENCENT_MUTATION_SECRET_ID: "secret-id",
+  TENCENT_MUTATION_SECRET_KEY: "secret-key",
+  OPL_TKE_NODEPOOL_AUTOSCALING_GROUP_PARA_JSON: JSON.stringify({ MinSize: 0, MaxSize: 1, DesiredCapacity: 1, VpcId: "vpc-opl", SubnetIds: ["subnet-opl"] }),
+  OPL_TKE_NODEPOOL_LAUNCH_CONFIGURE_PARA_JSON: JSON.stringify({ InstanceType: "${INSTANCE_TYPE}", SystemDisk: { DiskType: "CLOUD_PREMIUM", DiskSize: "${SYSTEM_DISK_GB}" } }),
   TENCENT_TCR_REGISTRY: "registry.example.com",
   TENCENT_TCR_NAMESPACE: "opl",
   TENCENT_TCR_REGION: "ap-guangzhou"
 };
 
-test("productionReadiness passes only when the TKE production runtime, images, persistence, Tencent env, and kubectl are present", async () => {
+test("productionReadiness passes only when the TKE production runtime, images, persistence, Tencent env, kubectl, and tccli are present", async () => {
   const report = await productionReadiness({
     env: tkeProductionEnv,
-    commandExists: (command) => command === "kubectl"
+    commandExists: (command) => ["kubectl", "tccli"].includes(command)
   });
 
   assert.equal(report.ready, true);
@@ -81,7 +86,7 @@ test("productionReadiness reports only TKE-specific blockers", async () => {
   assert.equal(report.ready, false);
   assert.ok(report.missingEnv.includes("OPL_CLOUD_IMAGE"));
   assert.ok(report.missingEnv.includes("OPL_WORKSPACE_STORAGE_CLASS"));
-  assert.deepEqual(report.missingTools, ["kubectl"]);
+  assert.deepEqual(report.missingTools, ["kubectl", "tccli"]);
   assert.ok(report.failedChecks.includes("registry_images"));
   assert.ok(report.failedChecks.includes("provider_env"));
 });
@@ -90,7 +95,7 @@ test("productionReadiness fails closed without a production auth user seed", asy
   const { OPL_CONSOLE_USERS_JSON, ...envWithoutAuthSeed } = tkeProductionEnv;
   const report = await productionReadiness({
     env: envWithoutAuthSeed,
-    commandExists: (command) => command === "kubectl"
+    commandExists: (command) => ["kubectl", "tccli"].includes(command)
   });
 
   assert.equal(report.ready, false);
@@ -113,7 +118,7 @@ test("productionReadiness rejects weak auth credentials", async () => {
       OPL_ADMIN_ACCOUNT_ID: "acct-admin",
       OPL_ADMIN_PASSWORD: "placeholder"
     },
-    commandExists: (command) => command === "kubectl"
+    commandExists: (command) => ["kubectl", "tccli"].includes(command)
   });
 
   assert.equal(report.ready, false);
@@ -143,7 +148,7 @@ test("productionReadiness rejects the built-in admin bootstrap credential", asyn
         }
       ])
     },
-    commandExists: (command) => command === "kubectl"
+    commandExists: (command) => ["kubectl", "tccli"].includes(command)
   });
 
   assert.equal(report.ready, false);
@@ -176,7 +181,7 @@ test("productionReadiness requires the one-person-lab-app WebUI runtime contract
       OPL_WORKSPACE_DATA_DIR: "/tmp/data",
       OPL_WORKSPACE_PROJECTS_DIR: "/data/projects"
     },
-    commandExists: (command) => command === "kubectl"
+    commandExists: (command) => ["kubectl", "tccli"].includes(command)
   });
 
   assert.equal(report.ready, false);
@@ -192,7 +197,7 @@ test("productionReadiness default command probe checks required tools from PATH"
   const binDir = join(tmpdir(), `opl-cloud-tools-${Date.now()}`);
   await mkdir(binDir, { recursive: true });
   try {
-    for (const tool of ["kubectl"]) {
+    for (const tool of ["kubectl", "tccli"]) {
       const toolPath = join(binDir, tool);
       await writeFile(toolPath, "#!/bin/sh\nexit 0\n");
       await chmod(toolPath, 0o755);

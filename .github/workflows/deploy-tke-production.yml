@@ -30,7 +30,6 @@ jobs:
       OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
       OPL_IMAGE_PULL_SECRET_NAME: ${{ vars.OPL_IMAGE_PULL_SECRET_NAME || 'tcr-pull-secret' }}
       OPL_WORKSPACE_STORAGE_CLASS: ${{ vars.OPL_WORKSPACE_STORAGE_CLASS || 'cbs' }}
-      OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: ${{ vars.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS || '' }}
       OPL_CONSOLE_TLS_SECRET_NAME: ${{ vars.OPL_CONSOLE_TLS_SECRET_NAME || 'opl-cloud-console-medopl-cn-tls' }}
       OPL_WORKSPACE_TLS_SECRET_NAME: ${{ vars.OPL_WORKSPACE_TLS_SECRET_NAME || 'opl-cloud-workspace-medopl-cn-tls' }}
       OPL_TLS_SOURCE_NAMESPACE: ${{ vars.OPL_TLS_SOURCE_NAMESPACE || '' }}
@@ -47,6 +46,9 @@ jobs:
       OPL_CODEX_REASONING_EFFORT: ${{ vars.OPL_CODEX_REASONING_EFFORT || 'xhigh' }}
       OPL_CODEX_BASE_URL: ${{ vars.OPL_CODEX_BASE_URL || 'https://gflabtoken.cn/v1' }}
       TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
+      TENCENT_TKE_REGION: ${{ vars.TENCENT_TKE_REGION || vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
+      OPL_TKE_NODEPOOL_AUTOSCALING_GROUP_PARA_JSON: ${{ vars.OPL_TKE_NODEPOOL_AUTOSCALING_GROUP_PARA_JSON }}
+      OPL_TKE_NODEPOOL_LAUNCH_CONFIGURE_PARA_JSON: ${{ vars.OPL_TKE_NODEPOOL_LAUNCH_CONFIGURE_PARA_JSON }}
       TENCENT_TCR_REGISTRY: ${{ vars.TENCENT_TCR_REGISTRY || 'uswccr.ccs.tencentyun.com' }}
       TENCENT_TCR_NAMESPACE: ${{ vars.TENCENT_TCR_NAMESPACE || 'oplcloud' }}
       TENCENT_TCR_REGION: ${{ vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
@@ -58,6 +60,8 @@ jobs:
       OPL_CONSOLE_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
       OPL_OPERATOR_SUMMARY_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
       OPL_CODEX_API_KEY: ${{ secrets.OPL_CODEX_API_KEY }}
+      TENCENT_MUTATION_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
+      TENCENT_MUTATION_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
       TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
       TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
       OPL_TLS_CERT_ID: ${{ secrets.OPL_TLS_CERT_ID || vars.OPL_TLS_CERT_ID || '' }}
@@ -105,6 +109,11 @@ jobs:
             TCR_USERNAME
             TCR_PASSWORD
             TENCENT_DEPLOY_CLUSTER_ID
+            TENCENT_TKE_REGION
+            TENCENT_MUTATION_SECRET_ID
+            TENCENT_MUTATION_SECRET_KEY
+            OPL_TKE_NODEPOOL_AUTOSCALING_GROUP_PARA_JSON
+            OPL_TKE_NODEPOOL_LAUNCH_CONFIGURE_PARA_JSON
           )
           missing=()
           for key in "${required[@]}"; do
@@ -202,6 +211,13 @@ jobs:
           else
             echo "No OPL_CODEX_API_KEY was provided; Workspace chat providers will need per-workspace configuration."
           fi
+          printf '%s' "$TENCENT_MUTATION_SECRET_ID" > "$secret_dir/tencent-mutation-secret-id"
+          printf '%s' "$TENCENT_MUTATION_SECRET_KEY" > "$secret_dir/tencent-mutation-secret-key"
+          chmod 600 "$secret_dir/tencent-mutation-secret-id" "$secret_dir/tencent-mutation-secret-key"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-tencent-mutation \
+            --from-file=TENCENT_MUTATION_SECRET_ID="$secret_dir/tencent-mutation-secret-id" \
+            --from-file=TENCENT_MUTATION_SECRET_KEY="$secret_dir/tencent-mutation-secret-key" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic "$OPL_IMAGE_PULL_SECRET_NAME" \
             --type=kubernetes.io/dockerconfigjson \
             --from-file=.dockerconfigjson="$docker_config" \

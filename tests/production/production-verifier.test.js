@@ -29,12 +29,18 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     ownerAccountId: "pi-prod",
     packageId: "basic",
     provider: "tencent-tke",
-    providerResourceId: "deployment/opl-compute-prod001",
+    providerResourceId: "nodepool/np-compute-prod001",
+    nodePoolId: "np-compute-prod001",
     status: "running",
     billingStatus: "active",
     spec: "2c4g",
     image: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
-    runtime: { service: "service/opl-compute-prod001", serviceName: "opl-compute-prod001" }
+    runtime: {
+      service: "service/opl-compute-prod001",
+      serviceName: "opl-compute-prod001",
+      workloadName: "opl-compute-prod001",
+      nodeSelector: { "oplcloud.cn/compute-id": "compute-prod001" }
+    }
   };
   const storage = {
     id: "storage-prod001",
@@ -130,8 +136,8 @@ function chainResponses(chain) {
       ]
     },
     "POST /api/storage-attachments/detach": { ...chain.attachment, status: "detached" },
-    "POST /api/compute-resources/destroy": { ...chain.compute, status: "destroyed", billingStatus: "stopped" },
-    "POST /api/storage-volumes/destroy": { ...chain.storage, status: "destroyed", billingStatus: "stopped" }
+    "POST /api/compute-resources/destroy": { ...chain.compute, status: "destroyed", billingStatus: "closed" },
+    "POST /api/storage-volumes/destroy": { ...chain.storage, status: "destroyed", billingStatus: "closed" }
   };
 }
 

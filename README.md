@@ -48,7 +48,7 @@ One PI account can own multiple compute resources, storage volumes, attachments,
 
 Compute and persistent storage lifecycles are separate first-class resources.
 
-Lab Owner controls are: open compute, open storage, attach storage, create Workspace URL, reset/delete URL, detach storage, destroy compute, and destroy storage. The current TKE commercial model does not expose "stop compute to save cost" as an owner action, because TKE runtime reconciliation may still be billable.
+Lab Owner controls are: open compute, open storage, attach storage, create Workspace URL, reset/delete URL, detach storage, destroy compute, and destroy storage.
 
 ## Access Rule
 
@@ -237,7 +237,7 @@ npm run validate:production-manifest -- --manifest deploy/production-manifest.ex
 
 The manifest format requires sensitive values to use `secretRef`, not inline plaintext.
 
-Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, and Workspace storage class. ComputeResource maps to Deployment/Service, StorageVolume maps to PVC, StorageAttachment reconciles the Deployment volume mount, and Workspace maps to token Secret plus shared Ingress path.
+Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, Workspace storage class, Tencent mutation credentials, and node pool JSON templates. ComputeResource maps to a TKE node pool, StorageVolume maps to PVC/CBS, StorageAttachment creates the one-person-lab-app runtime Deployment/Service on that node pool and mounts the selected PVC, and Workspace maps to the URL token entry.
 
 ## Production Verification
 

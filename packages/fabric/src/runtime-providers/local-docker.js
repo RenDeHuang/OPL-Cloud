@@ -10,10 +10,6 @@ function compactId(value) {
     .slice(0, 48);
 }
 
-function workspaceSlug(workspaceName, workspaceId) {
-  return `${compactId(workspaceName)}-${workspaceId.slice(-6)}`;
-}
-
 function composeServiceName(workspaceId) {
   return `opl-${workspaceId.replace(/[^a-zA-Z0-9]/g, "-")}`;
 }
@@ -49,66 +45,6 @@ export class LocalDockerProvider {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.image = image;
     this.execute = execute;
-  }
-
-  async createWorkspaceRuntime({ workspaceId, workspaceName, packagePlan, token }) {
-    const workspaceDir = join(this.rootDir, workspaceId);
-    const diskPath = join(workspaceDir, "disk");
-    const dataPath = join(diskPath, "data");
-    const projectsPath = join(diskPath, "projects");
-    const slug = workspaceSlug(workspaceName, workspaceId);
-    const serviceName = composeServiceName(workspaceId);
-
-    await mkdir(dataPath, { recursive: true });
-    await mkdir(projectsPath, { recursive: true });
-    await writeFile(join(workspaceDir, ".env"), [
-      `OPL_WORKSPACE_ID=${workspaceId}`,
-      `OPL_WORKSPACE_NAME=${workspaceName}`,
-      `OPL_SHARE_TOKEN=${token}`,
-      `OPL_DATA_DIR=${diskPath}`,
-      `OPL_PACKAGE_ID=${packagePlan.id}`,
-      ""
-    ].join("\n"));
-    await writeFile(join(workspaceDir, "docker-compose.yml"), this.composeFile({
-      serviceName,
-      workspaceId,
-      workspaceName,
-      packagePlan,
-      token
-    }));
-
-    if (this.execute) {
-      await runCommand("docker", ["compose", "up", "-d"], workspaceDir);
-    }
-    const localUrl = this.execute ? await this.resolveLocalUrl(workspaceDir, serviceName) : null;
-
-    return {
-      provider: this.name,
-      server: {
-        id: `local-server-${workspaceId}`,
-        status: "running",
-        billingStatus: "active",
-        spec: packagePlan.server,
-        localPath: workspaceDir
-      },
-      docker: {
-        id: `local-docker-${workspaceId}`,
-        image: this.image,
-        status: "running",
-        composePath: join(workspaceDir, "docker-compose.yml"),
-        localUrl
-      },
-      disk: {
-        id: `local-disk-${workspaceId}`,
-        status: "attached_retained",
-        billingStatus: "active",
-        sizeGb: packagePlan.diskGb,
-        mountPath: "/data",
-        localPath: diskPath
-      },
-      url: this.workspaceUrl({ slug, token }),
-      slug
-    };
   }
 
   async createStorageVolume({ storageId, storage = {}, packagePlan }) {
@@ -206,63 +142,43 @@ export class LocalDockerProvider {
     };
   }
 
+  async detachStorage({ attachment }) {
+    if (this.execute && attachment.localPath) {
+      await runCommand("docker", ["compose", "down"], attachment.localPath);
+    }
+    return {
+      providerAttachmentId: attachment.providerAttachmentId,
+      status: "detached"
+    };
+  }
+
+  async destroyComputeResource({ compute }) {
+    if (this.execute && compute.localPath) {
+      await runCommand("docker", ["compose", "down"], compute.localPath);
+    }
+    if (compute.localPath) {
+      await rm(compute.localPath, { recursive: true, force: true });
+    }
+    return {
+      providerResourceId: compute.providerResourceId || `local-server-${compute.id}`,
+      status: "destroyed",
+      billingStatus: "closed"
+    };
+  }
+
+  async destroyStorageVolume({ storage }) {
+    if (storage.localPath) {
+      await rm(storage.localPath, { recursive: true, force: true });
+    }
+    return {
+      providerResourceId: storage.providerResourceId || `local-storage-${storage.id}`,
+      status: "destroyed",
+      billingStatus: "closed"
+    };
+  }
+
   workspaceUrl({ slug, token }) {
     return `${this.baseUrl}/workspaces/${slug}?token=${token}`;
-  }
-
-  async stopServer({ workspace }) {
-    if (this.execute) {
-      await runCommand("docker", ["compose", "stop"], workspace.server.localPath);
-    }
-    return {
-      ...workspace.server,
-      status: "stopped",
-      billingStatus: "stopped"
-    };
-  }
-
-  async restartServer({ workspace }) {
-    if (this.execute) {
-      await runCommand("docker", ["compose", "up", "-d"], workspace.server.localPath);
-    }
-    return {
-      ...workspace.server,
-      status: "running",
-      billingStatus: "active"
-    };
-  }
-
-  async recreateServer({ workspace }) {
-    if (this.execute) {
-      await runCommand("docker", ["compose", "up", "-d"], workspace.server.localPath);
-    }
-    return {
-      ...workspace.server,
-      status: "running",
-      billingStatus: "active"
-    };
-  }
-
-  async destroyServer({ workspace }) {
-    if (this.execute) {
-      await runCommand("docker", ["compose", "down"], workspace.server.localPath);
-    }
-    return {
-      ...workspace.server,
-      status: "destroyed",
-      billingStatus: "stopped"
-    };
-  }
-
-  async destroyDisk({ workspace }) {
-    if (workspace.disk.localPath) {
-      await rm(workspace.disk.localPath, { recursive: true, force: true });
-    }
-    return {
-      ...workspace.disk,
-      status: "destroyed",
-      billingStatus: "stopped"
-    };
   }
 
   async resolveLocalUrl(workspaceDir, serviceName) {
@@ -276,7 +192,7 @@ export class LocalDockerProvider {
       "services:",
       `  ${serviceName}:`,
       `    image: ${this.image}`,
-      "    restart: unless-stopped",
+      "    restart: always",
       "    environment:",
       `      OPL_WORKSPACE_ID: ${JSON.stringify(workspaceId)}`,
       `      OPL_WORKSPACE_NAME: ${JSON.stringify(workspaceName)}`,

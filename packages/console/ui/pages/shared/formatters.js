@@ -16,10 +16,8 @@ export function statusLabel(workspace) {
   if (!workspace) return "No Workspace";
   const labels = {
     running: "运行中",
-    stopped_server_disk_retained: "已停止",
-    server_destroyed_disk_retained: "计算销毁",
     storage_hold_exhausted: "存储冻结不足",
-    stopped_storage_hold_exhausted: "已停止",
+    compute_hold_exhausted: "计算冻结不足",
     destroyed: "已销毁",
     failed: "失败"
   };
@@ -31,13 +29,12 @@ export function valueLabel(value) {
     active: "有效",
     available: "可用",
     running: "运行中",
-    stopped: "已停止",
+    closed: "计费结束",
     destroyed: "已销毁",
     failed: "失败",
     retained: "保留",
     attached_retained: "挂载保留",
     detached_retained: "卸载保留",
-    restored_retained: "已恢复",
     hold_exhausted: "冻结不足",
     ready: "就绪",
     blocked: "阻塞"
@@ -48,7 +45,7 @@ export function valueLabel(value) {
 export function statusColor(value) {
   if (["running", "active", "available", "ready"].includes(value)) return "green";
   if (["failed", "destroyed", "hold_exhausted", "blocked"].includes(value)) return "red";
-  if (["stopped", "stopped_server_disk_retained", "server_destroyed_disk_retained"].includes(value)) return "orange";
+  if (["closed", "detached_retained"].includes(value)) return "orange";
   return "blue";
 }
 

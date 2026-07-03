@@ -94,7 +94,6 @@ export class BillingService extends OplDomainService {
 
   async settleBilling({ accountId, workspaceId, hours = 1, sourceEventId = "billing_tick" }) {
     const requestedBillHours = billableHours(hours);
-    let autoStopRequested = false;
 
     const settlement = await this.store.update((state) => {
       const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
@@ -116,7 +115,6 @@ export class BillingService extends OplDomainService {
         sourceEventId,
         billableHours: requestedBillHours
       });
-      autoStopRequested = entries.some((entry) => entry.type === "compute_auto_stopped");
       if (entries.length > 0) {
         state.audit.push(this.auditEvent({ accountId, workspaceId, type: "billing.settled", sourceEventId }));
       }
@@ -125,9 +123,6 @@ export class BillingService extends OplDomainService {
         account: accountSnapshotForState(state, accountId)
       };
     });
-    if (autoStopRequested) {
-      await this.stopRuntimeAfterHoldExhausted({ accountId, workspaceId, sourceEventId });
-    }
     return {
       entries: settlement.entries,
       account: settlement.account
@@ -325,7 +320,7 @@ export class BillingService extends OplDomainService {
   }
 
   existingSettlementEntries({ state, accountId, workspaceId, sourceEventId }) {
-    const settlementTypes = new Set(["compute_debit", "storage_debit", "compute_auto_stopped"]);
+    const settlementTypes = new Set(["compute_debit", "storage_debit", "compute_hold_exhausted"]);
     return state.billingLedger.filter((entry) =>
       entry.accountId === accountId &&
       entry.workspaceId === workspaceId &&
@@ -500,7 +495,7 @@ export class BillingService extends OplDomainService {
         });
       }
       if (charge.unpaid > 0 || charge.exhaustedHold) {
-        workspace.state = workspace.server.status === "running" ? "storage_hold_exhausted" : "stopped_storage_hold_exhausted";
+        workspace.state = "storage_hold_exhausted";
         workspace.disk.billingStatus = "hold_exhausted";
         workspace.updatedAt = now();
         this.notify({
@@ -517,23 +512,26 @@ export class BillingService extends OplDomainService {
 
     if (workspace.server.status === "running" && workspace.server.billingStatus === "active") {
       if (accountHold(account, "compute") <= 0) {
-        const autoStopEntry = this.ledgerEntry({ state,
+        workspace.state = "compute_hold_exhausted";
+        workspace.server.billingStatus = "hold_exhausted";
+        workspace.updatedAt = now();
+        const holdExhaustedEntry = this.ledgerEntry({ state,
           workspaceId,
           accountId,
-          type: "compute_auto_stopped",
+          type: "compute_hold_exhausted",
           amount: 0,
           sourceEventId,
           holdType: "compute",
-          metadata: { reason: "compute_hold_exhausted", requestedHours: billedHours }
+          metadata: { reason: "compute_hold_exhausted", requestedHours: billedHours, action: "manual_recharge_required" }
         });
-        entries.push(autoStopEntry);
-        state.billingLedger.push(autoStopEntry);
-        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "compute.auto_stop_requested", sourceEventId }));
+        entries.push(holdExhaustedEntry);
+        state.billingLedger.push(holdExhaustedEntry);
+        state.audit.push(this.auditEvent({ accountId, workspaceId, type: "compute.hold_exhausted", sourceEventId }));
         this.notify({
           state,
           accountId,
           workspaceId,
-          type: "workspace.compute_auto_stopped",
+          type: "workspace.compute_hold_exhausted",
           severity: "warning",
           message: "compute_hold_exhausted",
           sourceEventId

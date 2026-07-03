@@ -5,12 +5,10 @@ import { emptyState, PostgresStore } from "../../packages/console/src/store.js";
 
 function createFakePool() {
   const tables = {
-    accounts: new Map(),
     organizations: new Map(),
     users: new Map(),
     memberships: [],
     workspaces: new Map(),
-    storage_backups: [],
     billing_reconciliation_reports: [],
     support_tickets: [],
     evidence_ledger: [],
@@ -42,13 +40,11 @@ function createFakePool() {
       if (normalized.startsWith("CREATE TABLE IF NOT EXISTS") || normalized.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS") || normalized.startsWith("CREATE INDEX IF NOT EXISTS") || normalized.startsWith("DROP INDEX IF EXISTS")) {
         return { rows: [] };
       }
-      if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations")) {
-        tables.accounts.clear();
+      if (normalized.startsWith("TRUNCATE organizations, users, memberships, workspaces, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations")) {
         tables.organizations.clear();
         tables.users.clear();
         tables.memberships = [];
         tables.workspaces.clear();
-        tables.storage_backups = [];
         tables.billing_reconciliation_reports = [];
         tables.support_tickets = [];
         tables.evidence_ledger = [];
@@ -66,9 +62,6 @@ function createFakePool() {
         tables.request_usage_dedup = [];
         return { rows: [] };
       }
-      if (normalized.startsWith("SELECT id, state FROM accounts")) {
-        return { rows: [...tables.accounts.entries()].map(([id, state]) => ({ id, state })) };
-      }
       if (normalized.startsWith("SELECT id, state FROM organizations")) {
         return { rows: [...tables.organizations.entries()].map(([id, state]) => ({ id, state })) };
       }
@@ -80,9 +73,6 @@ function createFakePool() {
       }
       if (normalized.startsWith("SELECT id, state FROM workspaces")) {
         return { rows: [...tables.workspaces.entries()].map(([id, state]) => ({ id, state })) };
-      }
-      if (normalized.startsWith("SELECT state FROM storage_backups")) {
-        return { rows: tables.storage_backups.map((state) => ({ state })) };
       }
       if (normalized.startsWith("SELECT state FROM billing_reconciliation_reports")) {
         return { rows: tables.billing_reconciliation_reports.map((state) => ({ state })) };
@@ -129,10 +119,6 @@ function createFakePool() {
       if (normalized.startsWith("SELECT state FROM request_usage_dedup")) {
         return { rows: tables.request_usage_dedup.map((state) => ({ state })) };
       }
-      if (normalized.startsWith("INSERT INTO accounts")) {
-        tables.accounts.set(params[0], params[1]);
-        return { rows: [] };
-      }
       if (normalized.startsWith("INSERT INTO organizations")) {
         tables.organizations.set(params[0], params[1]);
         return { rows: [] };
@@ -147,10 +133,6 @@ function createFakePool() {
       }
       if (normalized.startsWith("INSERT INTO workspaces")) {
         tables.workspaces.set(params[0], params[2]);
-        return { rows: [] };
-      }
-      if (normalized.startsWith("INSERT INTO storage_backups")) {
-        tables.storage_backups.push(params[3]);
         return { rows: [] };
       }
       if (normalized.startsWith("INSERT INTO billing_reconciliation_reports")) {
@@ -254,16 +236,6 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
     },
     evidenceLedger: [
       { id: "receipt-1", workspaceId: "ws-alpha", accountId: "pi-alpha", type: "workspace.created" }
-    ],
-    storageBackups: [
-      {
-        id: "backup-1",
-        accountId: "pi-alpha",
-        workspaceId: "ws-alpha",
-        status: "available",
-        snapshotName: "backup-1",
-        createdAt: "2026-07-01T01:00:00.000Z"
-      }
     ],
     billingReconciliationReports: [
       {
@@ -454,13 +426,10 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   const persisted = await store.read();
 
   assert.deepEqual(persisted, state);
-  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS accounts")));
-  assert.equal(pool.statements.some((statement) => statement.sql.includes("INSERT INTO accounts")), false);
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS organizations")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS users")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS memberships")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS workspaces")));
-  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS storage_backups")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS billing_reconciliation_reports")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS support_tickets")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS evidence_ledger")));
@@ -522,9 +491,9 @@ test("PostgresStore billing ledger event index excludes repeatable credit and ho
   )?.sql || "";
   assert.match(indexStatement, /WHERE/);
   assert.match(indexStatement, /state->>'sourceEventId'/);
-  assert.match(indexStatement, /state->>'type'\) IN \('compute_debit', 'storage_debit', 'compute_auto_stopped', 'request_debit'\)/);
+  assert.match(indexStatement, /state->>'type'\) IN \('compute_debit', 'storage_debit', 'compute_hold_exhausted', 'request_debit'\)/);
   assert.doesNotMatch(indexStatement, /CREATE UNIQUE INDEX/);
   assert.doesNotMatch(indexStatement, /credit/);
-  assert.doesNotMatch(indexStatement, /compute_hold/);
+  assert.doesNotMatch(indexStatement, /'compute_hold'/);
   assert.doesNotMatch(indexStatement, /storage_hold/);
 });

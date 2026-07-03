@@ -80,7 +80,7 @@
   },
   "nonGoals": [
     "member_login_for_shared_urls",
-    "automatic_cloud_disk_delete_when_server_stops_or_is_destroyed",
+    "implicit_storage_volume_delete_without_explicit_confirmation",
     "local_development_requires_kubernetes",
     "external_payment_settlement",
     "live_tencent_price_lookup_before_each_workspace_open"

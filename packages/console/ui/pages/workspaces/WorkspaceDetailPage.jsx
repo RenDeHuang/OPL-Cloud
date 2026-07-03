@@ -1,20 +1,17 @@
 import React from "react";
 import { Button, Empty, Typography } from "antd";
-import { Cable, Database, HardDrive, Link as LinkIcon, RefreshCw, Server, Trash2 } from "lucide-react";
+import { Cable, HardDrive, Link as LinkIcon, RefreshCw, Server, Trash2 } from "lucide-react";
 import {
-  createStorageBackup,
   deleteWorkspaceToken,
   resetWorkspaceToken
 } from "../../api/workspaces-api.js";
-import { defaultLaunchConfig, isFeatureEnabled } from "../../config/launch-config.js";
 import { navigate, routeTo } from "../../consoleRoutes.js";
 import {
   ActionGroup,
   ConsoleSurface,
   InsightPanel,
   ResourceSplit,
-  StatusPill,
-  TimelineList
+  StatusPill
 } from "../shared/commercial-console.jsx";
 import { packageText, statusColor, statusLabel, valueLabel } from "../shared/formatters.js";
 
@@ -34,8 +31,6 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session, ru
       </ConsoleSurface>
     );
   }
-  const backups = (state.storageBackups || []).filter((backup) => backup.workspaceId === selected.id);
-  const storageBackupsEnabled = isFeatureEnabled("storageBackups", defaultLaunchConfig);
   const compute = (state.computeResources || []).find((item) => item.id === selected.computeId);
   const storage = (state.storageVolumes || []).find((item) => item.id === selected.storageId);
   const attachment = (state.storageAttachments || []).find((item) => item.id === selected.attachmentId);
@@ -87,24 +82,6 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session, ru
             ]}
           />
         </InsightPanel>
-
-        {storageBackupsEnabled && (
-          <InsightPanel
-            title="备份"
-            eyebrow="Storage"
-            actions={<Button icon={<Database size={15} />} onClick={() => runAction(() => createStorageBackup({ workspaceId: selected.id, reason: "console", retentionPolicy: { retainLast: 2 } }, session.csrfToken), "备份已创建")}>创建备份</Button>}
-          >
-            <TimelineList
-              emptyText="暂无备份"
-              items={backups.slice(-5).reverse().map((backup) => ({
-                title: backup.id,
-                description: valueLabel(backup.status),
-                meta: backup.createdAt,
-                tone: String(backup.status).includes("failed") ? "danger" : "good"
-              }))}
-            />
-          </InsightPanel>
-        )}
       </div>
     </ConsoleSurface>
   );

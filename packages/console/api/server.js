@@ -95,7 +95,7 @@ async function handleWorkspaceUrl(request, response, pathname, searchParams, app
   function statusText(value) {
     const labels = {
       running: "运行中",
-      stopped: "已停止",
+      closed: "已结束",
       destroyed: "已销毁",
       failed: "失败",
       active: "有效",

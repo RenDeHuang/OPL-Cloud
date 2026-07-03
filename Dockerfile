@@ -13,9 +13,10 @@ ENV NODE_ENV=production
 ENV PORT=8787
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && apt-get install -y --no-install-recommends ca-certificates curl python3-pip \
   && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.8/bin/linux/amd64/kubectl" \
   && chmod +x /usr/local/bin/kubectl \
+  && pip3 install --no-cache-dir --break-system-packages tccli \
   && apt-get purge -y --auto-remove curl \
   && rm -rf /var/lib/apt/lists/*
 

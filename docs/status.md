@@ -8,14 +8,16 @@ Supported:
 
 - Lab Owner login.
 - Admin login.
-- Basic and Pro CPU Workspace packages.
-- Workspace URL distribution.
-- Compute stop, restart, destroy, and recreate from retained storage.
-- Explicit storage destruction.
+- Basic and Pro CPU resource packages.
+- ComputeResource provisioning as Tencent TKE node pool creation or expansion.
+- StorageVolume provisioning as PVC/CBS-backed retained storage.
+- StorageAttachment that schedules the one-person-lab-app runtime onto the selected compute node pool and mounts the selected storage volume.
+- Workspace URL distribution over an attached runtime.
+- Explicit compute node pool destruction and storage volume destruction.
 - Seven-day compute and storage holds.
 - Resource usage, request usage, wallet transactions, manual top-up audit, billing ledger, and reconciliation records.
 - Server-backed support ticket list, creation, detail, and admin queue.
-- Local Docker development provider.
+- Local Docker development provider for the same resource chain.
 - Tencent TKE production handoff.
 - PostgreSQL persistence when `DATABASE_URL` is configured.
 

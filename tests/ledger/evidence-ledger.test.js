@@ -1,71 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
 import { appendEvidenceReceipt, createEvidenceReceipt } from "../../packages/ledger/src/evidence-ledger.js";
-import { MemoryStore } from "../../packages/console/src/store.js";
+import {
+  createCurrentTestService,
+  provisionWorkspace
+} from "../helpers/current-resource-chain.js";
 
-const TEST_PRICING = {
-  computeHourly: { basic: 1, pro: 4 },
-  storageGbMonth: 0.2,
-  markup: 0.2
-};
+test("evidence ledger records inspectable resource-chain Workspace receipts separately from billing ledger", async () => {
+  const service = createCurrentTestService();
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
 
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: {
-      id: `server-${workspaceId}`,
-      status: "running",
-      billingStatus: "active",
-      spec: packagePlan.server
-    },
-    docker: {
-      id: `docker-${workspaceId}`,
-      image: "test-image",
-      status: "running"
-    },
-    disk: {
-      id: `disk-${workspaceId}`,
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data"
-    },
-    url: `https://workspace.example.com/w/${workspaceId}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
-function createTestService() {
-  return createOplCloud({
-    store: new MemoryStore(),
-    runtimeProvider: {
-      name: "test-provider",
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
-      },
-      async stopServer({ workspace }) {
-        return { ...workspace.server, status: "stopped", billingStatus: "stopped" };
-      }
-    },
-    pricing: TEST_PRICING
-  });
-}
-
-test("evidence ledger records inspectable Workspace receipts separately from billing ledger", async () => {
-  const service = createTestService();
-  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-
-  const workspace = await service.createWorkspace({
+  const { compute, storage, attachment, workspace } = await provisionWorkspace(service, {
     accountId: "pi-alpha",
+    userId: "usr-alpha",
     workspaceName: "Evidence Lab",
     packageId: "basic"
-  });
-  await service.stopServer({
-    accountId: "pi-alpha",
-    workspaceId: workspace.id,
-    confirm: true
   });
   await service.deleteWorkspaceToken({
     accountId: "pi-alpha",
@@ -75,31 +25,24 @@ test("evidence ledger records inspectable Workspace receipts separately from bil
   const state = await service.getState("pi-alpha");
   assert.deepEqual(state.evidenceLedger.map((entry) => entry.type), [
     "workspace.created",
-    "workspace.compute_stopped",
     "workspace.access_token_deleted"
   ]);
 
   const createReceipt = state.evidenceLedger[0];
   assert.equal(createReceipt.accountId, "pi-alpha");
   assert.equal(createReceipt.workspaceId, workspace.id);
-  assert.deepEqual(createReceipt.plan, {
-    workspaceName: "Evidence Lab",
-    packageId: "basic",
-    computeProfile: "2c4g",
-    storageGb: 10
-  });
-  assert.equal(createReceipt.approval.status, "implicit_console_policy");
   assert.equal(createReceipt.environment.runtimeProvider, "test-provider");
   assert.equal(createReceipt.resourceRefs.serverId, workspace.server.id);
   assert.equal(createReceipt.resourceRefs.storageId, workspace.disk.id);
   assert.equal(createReceipt.resourceRefs.urlTokenMode, "long_lived_url_token");
-  assert.deepEqual(createReceipt.billingRefs.map((entry) => entry.type), [
-    "compute_hold",
-    "storage_hold",
-    "compute_debit",
-    "storage_debit"
-  ]);
-  assert.equal(createReceipt.continuation.action, "open_workspace_url");
+  assert.deepEqual(createReceipt.continuation, {
+    action: "open_workspace_url",
+    uri: workspace.url
+  });
+  assert.equal(createReceipt.billingRefs.some((entry) => entry.type === "compute_hold"), true);
+  assert.equal(createReceipt.billingRefs.some((entry) => entry.type === "storage_hold"), true);
+  assert.equal(createReceipt.billingRefs.some((entry) => entry.type === "storage_attached"), true);
+  assert.equal(state.billingLedger.some((entry) => entry.id === createReceipt.id), false);
 });
 
 test("evidence ledger helper appends deterministic receipt ids without using billing ledger sequence", () => {

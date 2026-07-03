@@ -128,16 +128,25 @@ test("active route contract models TKE resources before Workspace entry", async 
     assert.ok(activeApiRoutes.has(apiRoute), `${apiRoute} must be in current resource contract`);
   }
 
-  for (const retiredApi of [
-    "POST /api/billing/settle",
-    "POST /api/workspaces/stop-server",
-    "POST /api/workspaces/restart-server",
-    "POST /api/workspaces/destroy-server",
-    "POST /api/workspaces/destroy-disk"
-  ]) {
-    assert.equal(activeApiRoutes.has(retiredApi), false, `${retiredApi} must not be a Lab Owner commercial route`);
-    assert.equal(apiRouteManifest.includes(retiredApi), false, `${retiredApi} must not be exposed by the public Console API manifest`);
-  }
+  assert.deepEqual(
+    [...activeApiRoutes].filter((apiRoute) => apiRoute.startsWith("POST /api/workspaces")).sort(),
+    [
+      "POST /api/workspaces",
+      "POST /api/workspaces/delete-token",
+      "POST /api/workspaces/reset-token",
+      "POST /api/workspaces/runtime-status"
+    ],
+    "Workspace APIs must be URL/runtime entry APIs; resource lifecycle belongs to compute, storage, and attachment APIs"
+  );
+  assert.deepEqual(
+    apiRouteManifest.filter((apiRoute) => apiRoute.startsWith("POST /api/billing/")).sort(),
+    [
+      "POST /api/billing/reconciliation",
+      "POST /api/billing/request-usage",
+      "POST /api/billing/topups"
+    ],
+    "Billing APIs must expose current wallet, usage, and reconciliation operations only"
+  );
 });
 
 test("implemented routes name a page, API client, server route, and service boundary", async () => {

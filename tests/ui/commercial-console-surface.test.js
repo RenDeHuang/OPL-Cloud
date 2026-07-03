@@ -111,14 +111,18 @@ test("Workspace detail links to first-class resources and excludes retired compu
 
   assert.match(listSource, /资源/, "Workspace list must expose a resource-management entry");
   assert.match(listSource, /routeTo\("workspace.detail"/, "Workspace list resource entry must route to Workspace detail");
-  for (const label of ["停止计算", "启动计算并挂载存储", "销毁计算", "销毁存储"]) {
-    assert.doesNotMatch(detailSource, new RegExp(label), `Workspace detail must not expose retired control ${label}`);
+  const retiredLifecycleControls = [
+    /停\s*止\s*计\s*算/,
+    /启\s*动\s*计\s*算.*挂\s*载\s*存\s*储/,
+    /销\s*毁\s*计\s*算/,
+    /销\s*毁\s*存\s*储/
+  ];
+  for (const pattern of retiredLifecycleControls) {
+    assert.doesNotMatch(detailSource, pattern, "Workspace detail must not expose retired resource lifecycle controls");
   }
   assert.match(detailSource, /routeTo\("compute.detail"/, "detail must link to the attached ComputeResource");
   assert.match(detailSource, /routeTo\("storage.detail"/, "detail must link to the attached StorageVolume");
   assert.match(detailSource, /routeTo\("attachment.detail"/, "detail must link to the StorageAttachment");
-  assert.match(detailSource, /isFeatureEnabled\("storageBackups"/, "storage backup UI must be feature-gated");
-  assert.match(detailSource, /storageBackupsEnabled &&/, "storage backup controls must not be visible in the default commercial slice");
 });
 
 test("active UI and docs describe resource provisioning rather than retired Workspace lifecycle", async () => {
@@ -134,7 +138,6 @@ test("active UI and docs describe resource provisioning rather than retired Work
   ]) {
     const text = await source(file);
     for (const retiredPhrase of [
-      "can open or restart Workspace",
       "server running hours",
       "disk retained until destroy",
       "disk keeps billing",
@@ -147,7 +150,7 @@ test("active UI and docs describe resource provisioning rather than retired Work
       "Recreate compute from retained storage",
       "Stopping or destroying compute",
       "Before opening or resuming a Workspace",
-      "If compute hold is exhausted, compute stops"
+      "If compute hold is exhausted, compute becomes unavailable"
     ]) {
       assert.equal(text.includes(retiredPhrase), false, `${file} must not retain retired phrase: ${retiredPhrase}`);
     }

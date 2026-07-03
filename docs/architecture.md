@@ -27,7 +27,7 @@ Console may call Fabric only through package boundary exports or published servi
 
 Console may call Ledger only through package boundary exports or published service APIs.
 
-Fabric details such as TKE, Docker, Ingress, PVC, VolumeSnapshot, and runtime operation evidence are admin/operator surfaces. Lab Owner UI should expose product status and allowed actions, not raw infrastructure evidence.
+Fabric details such as TKE node pools, Docker, Ingress, PVC, and runtime operation evidence are admin/operator surfaces. Lab Owner UI should expose product status and allowed actions, not raw infrastructure evidence.
 
 Ledger details such as dedup rows, request fingerprints, and raw event payloads are admin/operator surfaces. Lab Owner UI should expose wallet balance, holds, recent charges, usage, top-ups, and human-readable receipts.
 

@@ -124,17 +124,6 @@
       "reason": "subroute_rendered_by_parent_page"
     },
     {
-      "path": "/console/workspaces/:id/backups",
-      "label": "Workspace Backups",
-      "area": "console",
-      "ownerRepo": "opl-console",
-      "previousStatus": "folded_into_parent",
-      "previousContractLifecycle": "folded_parent",
-      "routeKind": "business_object",
-      "objectKind": "Workspace",
-      "reason": "subroute_rendered_by_parent_page"
-    },
-    {
       "path": "/console/workspaces/:id/receipts",
       "label": "Workspace Receipts",
       "area": "console",

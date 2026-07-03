@@ -187,10 +187,11 @@ function assertComputeShape(checks, compute) {
   addCheck(checks, "compute_created", Boolean(
     compute?.id &&
     compute?.provider === "tencent-tke" &&
-    compute?.providerResourceId?.startsWith("deployment/") &&
+    compute?.providerResourceId?.startsWith("nodepool/") &&
+    compute?.nodePoolId &&
     compute?.status === "running" &&
     compute?.billingStatus === "active" &&
-    compute?.image
+    compute?.runtime?.nodeSelector?.["oplcloud.cn/compute-id"] === compute.id
   ), { computeId: compute?.id });
 }
 
@@ -318,7 +319,7 @@ async function cleanupVerificationResources({ fetchImpl, origin, accountId, comp
       if (checks) {
         addCheck(checks, "verification_compute_destroyed", Boolean(
           destroyed?.status === "destroyed" &&
-          destroyed?.billingStatus === "stopped"
+          destroyed?.billingStatus === "closed"
         ));
       }
     } catch (error) {
@@ -339,7 +340,7 @@ async function cleanupVerificationResources({ fetchImpl, origin, accountId, comp
       if (checks) {
         addCheck(checks, "verification_storage_destroyed", Boolean(
           destroyed?.status === "destroyed" &&
-          destroyed?.billingStatus === "stopped"
+          destroyed?.billingStatus === "closed"
         ));
       }
     } catch (error) {

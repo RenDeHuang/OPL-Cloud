@@ -94,10 +94,26 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
   const { origin, close } = await listen(createRequestHandler({ appService }));
   try {
     await appService.manualTopUp({ accountId: "pi-route", amount: 250, reason: "route_test_credit" });
+    const compute = await appService.createComputeResource({
+      accountId: "pi-route",
+      packageId: "basic",
+      name: "Route Lab compute"
+    });
+    const storage = await appService.createStorageVolume({
+      accountId: "pi-route",
+      packageId: "basic",
+      name: "Route Lab storage"
+    });
+    const attachment = await appService.attachStorage({
+      accountId: "pi-route",
+      computeId: compute.id,
+      storageId: storage.id,
+      mountPath: "/data"
+    });
     const workspace = await appService.createWorkspace({
       accountId: "pi-route",
       workspaceName: "Route Lab",
-      packageId: "basic"
+      attachmentId: attachment.id
     });
 
     const invalidResponse = await fetch(`${origin}/workspaces/${workspace.slug}?token=wrong`);

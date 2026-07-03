@@ -6,9 +6,9 @@ Tests in this repository are not automatically permanent.
 
 Long-term contract tests protect:
 
-- Workspace lifecycle and URL access.
-- Compute/storage separation.
-- Storage backup and restore.
+- Compute/storage/attachment provisioning and Workspace URL access.
+- ComputeResource mapping to TKE node pools.
+- StorageVolume mapping to PVC/CBS.
 - User auth, role, disabled status, and tenant ownership.
 - User wallet, holds, resource usage, request usage, idempotent debits, wallet transactions, manual top-up audit, billing ledger, and reconciliation.
 - PostgreSQL persistence for commercial data objects.

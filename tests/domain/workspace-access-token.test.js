@@ -1,62 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
-import { MemoryStore } from "../../packages/console/src/store.js";
-
-const TEST_PRICING = {
-  computeHourly: { basic: 1, pro: 4 },
-  storageGbMonth: 0.2,
-  markup: 0.2
-};
-
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: {
-      id: `server-${workspaceId}`,
-      status: "running",
-      billingStatus: "active",
-      spec: packagePlan.server
-    },
-    docker: {
-      id: `docker-${workspaceId}`,
-      image: "test-image",
-      status: "running"
-    },
-    disk: {
-      id: `disk-${workspaceId}`,
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data"
-    },
-    url: `https://workspace.example.com/w/${workspaceName}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
-function createTestService() {
-  return createOplCloud({
-    store: new MemoryStore(),
-    runtimeProvider: {
-      name: "test-provider",
-      workspaceUrl({ slug, token }) {
-        return `https://workspace.example.com/w/${slug}?token=${token}`;
-      },
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
-      }
-    },
-    pricing: TEST_PRICING
-  });
-}
+import {
+  createCurrentTestService,
+  provisionWorkspace
+} from "../helpers/current-resource-chain.js";
 
 test("Workspace access uses a long-lived URL token that can be deleted and reset after leakage", async () => {
-  const service = createTestService();
-  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const service = createCurrentTestService();
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const { workspace } = await provisionWorkspace(service, {
     accountId: "pi-alpha",
+    userId: "usr-alpha",
     workspaceName: "Token Lab",
     packageId: "basic"
   });
