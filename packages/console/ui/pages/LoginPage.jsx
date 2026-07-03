@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { ArrowLeft, LogIn, ShieldCheck } from "lucide-react";
+import { ArrowLeft, LogIn, ShieldCheck, UserRound } from "lucide-react";
 import { login } from "../api/auth-api.js";
+import { runtimeConfig } from "../config/runtime-config.js";
 
 function errorLabel(value) {
   const labels = {
@@ -13,6 +14,7 @@ function errorLabel(value) {
 }
 
 export default function LoginPage({ route, onLogin }) {
+  const config = runtimeConfig();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -80,6 +82,24 @@ export default function LoginPage({ route, onLogin }) {
             <LogIn size={16} /> {submitting ? "登录中..." : "登录"}
           </button>
         </form>
+        {config.demoAccounts.length > 0 && (
+          <div className="demoLoginPanel" aria-label="Demo accounts">
+            {config.demoAccounts.map((account) => (
+              <button
+                key={account.email}
+                type="button"
+                onClick={() => {
+                  setEmail(account.email);
+                  setPassword(account.password);
+                  setError("");
+                }}
+              >
+                <UserRound size={15} />
+                <span>{account.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="securityNote">
           <ShieldCheck size={16} />
           <span>Secure cookie + CSRF</span>

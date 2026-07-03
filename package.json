@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "demo:api": "node tools/start-uiux-demo-api.js",
+    "demo:ui": "node tools/start-uiux-demo-ui.js",
     "start": "node packages/console/api/server.js",
     "test": "node --test \"tests/**/*.test.js\"",
     "build": "vite build",

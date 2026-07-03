@@ -308,6 +308,32 @@ button.primary {
   font-size: 12px;
 }
 
+.demoLoginPanel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.demoLoginPanel button {
+  min-height: 38px;
+  border: 1px solid #d6deea;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #1f2937;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.demoLoginPanel button:hover {
+  border-color: #9fb2cc;
+  background: #eef4fb;
+}
+
 .error {
   border: 1px solid #f4b8b8;
   border-radius: 7px;
