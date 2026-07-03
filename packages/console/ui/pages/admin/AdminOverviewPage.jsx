@@ -1,68 +1,114 @@
 import React from "react";
-import { PageContainer, ProCard, ProTable, StatisticCard } from "@ant-design/pro-components";
-import { Alert, Button, Drawer, Form, Input, InputNumber, Tag, Tooltip } from "antd";
+import { Alert, Button, Drawer, Form, Input, InputNumber, Tooltip, Typography } from "antd";
 import { Plus } from "lucide-react";
 import { manualTopUp } from "../../api/billing-api.js";
-import { CatalogCard, ReadinessCard, TopupList, WalletList } from "../shared/page-widgets.jsx";
+import {
+  ActionGroup,
+  ConsoleSurface,
+  InsightPanel,
+  MetricStrip,
+  ObjectTable,
+  ResourceSplit,
+  StatusPill,
+  TimelineList
+} from "../shared/commercial-console.jsx";
 import { money } from "../shared/formatters.js";
 
 export function AdminOverviewPage({ state, adminOps }) {
+  const failed = adminOps.operator?.runtimeOperations?.failed ?? 0;
   return (
-    <PageContainer title="管理总览">
-      <StatisticCard.Group>
-        <StatisticCard statistic={{ title: "账号", value: adminOps.operator?.accounts?.total ?? 1 }} />
-        <StatisticCard statistic={{ title: "Workspace", value: adminOps.operator?.workspaces?.total ?? state.workspaces.length }} />
-        <StatisticCard statistic={{ title: "失败操作", value: adminOps.operator?.runtimeOperations?.failed ?? 0 }} />
-      </StatisticCard.Group>
-    </PageContainer>
+    <ConsoleSurface title="Admin Overview" eyebrow="Operations" subtitle="Accounts, Workspaces, runtime evidence">
+      <MetricStrip
+        items={[
+          { label: "账号", value: adminOps.operator?.accounts?.total ?? 1, caption: "managed billing accounts", tone: "info" },
+          { label: "Workspace", value: adminOps.operator?.workspaces?.total ?? state.workspaces.length, caption: `${adminOps.operator?.workspaces?.running ?? 0} running`, tone: "good" },
+          { label: "失败操作", value: failed, caption: "runtime operation failures", tone: failed ? "danger" : "good" },
+          { label: "冻结总额", value: money(adminOps.operator?.accounts?.frozen), caption: "all accounts", tone: "warn" },
+          { label: "告警", value: adminOps.operator?.notifications?.total ?? 0, caption: "operator visible", tone: adminOps.operator?.notifications?.error ? "danger" : "neutral" }
+        ]}
+      />
+      <div className="consoleGrid equal">
+        <InsightPanel title="运行态" eyebrow="Runtime">
+          <ResourceSplit
+            items={[
+              { label: "Ready", value: adminOps.runtime?.ready ? "Ready" : "Blocked", meta: "runtime readiness", status: adminOps.runtime?.ready ? "pass" : "check", tone: adminOps.runtime?.ready ? "good" : "warn" },
+              { label: "Launch", value: adminOps.launch?.ready ? "Ready" : "Blocked", meta: "production launch gates", status: adminOps.launch?.ready ? "pass" : "check", tone: adminOps.launch?.ready ? "good" : "warn" },
+              { label: "失败操作", value: failed, meta: "runtime operation queue", status: failed ? "needs triage" : "clear", tone: failed ? "danger" : "good" },
+              { label: "存储备份", value: adminOps.operator?.storageBackups?.total ?? 0, meta: "backup evidence", status: "tracked", tone: "info" }
+            ]}
+          />
+        </InsightPanel>
+        <InsightPanel title="最近告警" eyebrow="Signals">
+          <TimelineList
+            emptyText="暂无运营告警"
+            items={(adminOps.operator?.notifications?.recent || []).map((item) => ({
+              title: item.type,
+              description: item.workspaceId || item.accountId,
+              meta: item.severity,
+              tone: item.severity === "error" ? "danger" : "warn"
+            }))}
+          />
+        </InsightPanel>
+      </div>
+    </ConsoleSurface>
   );
 }
 
 export function AdminUsersPage({ state, wallet, topUpOpen, setTopUpOpen, topUpForm, session, runAction }) {
   return (
-    <PageContainer title="用户管理" extra={<Tooltip title="当前商业版先通过环境种子或后台数据接入用户，新建用户页在 backlog。"><Button icon={<Plus size={15} />} disabled>新建用户</Button></Tooltip>}>
-      <ProTable
-        rowKey="id"
-        search={false}
-        options={false}
-        pagination={false}
-        dataSource={[{
-          id: session.user.id,
-          email: session.user.email,
-          role: session.user.role,
-          accountId: state.account.id,
-          balance: wallet.balance,
-          frozen: wallet.frozen,
-          status: "active"
-        }]}
-        columns={[
-          { title: "用户", dataIndex: "email" },
-          { title: "角色", dataIndex: "role", render: (value) => <Tag>{value}</Tag> },
-          { title: "账号", dataIndex: "accountId" },
-          { title: "余额", dataIndex: "balance", render: (value) => money(value) },
-          { title: "状态", dataIndex: "status", render: (value) => <Tag color="green">{value}</Tag> },
-          {
-            title: "操作",
-            valueType: "option",
-            render: (_, row) => [
-              <Tooltip key="wallet" title="独立用户钱包详情页在 backlog，当前从本表直接充值。"><Button size="small" disabled>钱包</Button></Tooltip>,
-              <Button key="topup" size="small" type="primary" onClick={() => {
-                topUpForm.setFieldsValue({ accountId: row.accountId, amount: 200, reason: "commercial top-up" });
-                setTopUpOpen(true);
-              }}>充值</Button>
-            ]
-          }
-        ]}
-      />
+    <ConsoleSurface
+      title="Users"
+      eyebrow="Admin"
+      subtitle="Current commercial user and wallet operations"
+      extra={<Tooltip title="当前商业版先通过环境种子或后台数据接入用户，新建用户页在 backlog。"><Button icon={<Plus size={15} />} disabled>新建用户</Button></Tooltip>}
+    >
+      <InsightPanel title="用户钱包" eyebrow="Current">
+        <ObjectTable
+          rowKey="id"
+          data={[{
+            id: session.user.id,
+            email: session.user.email,
+            role: session.user.role,
+            accountId: state.account.id,
+            balance: wallet.balance,
+            frozen: wallet.frozen,
+            status: "active"
+          }]}
+          columns={[
+            { title: "用户", dataIndex: "email" },
+            { title: "角色", dataIndex: "role", render: (value) => <StatusPill label={value} tone={value === "admin" ? "info" : "good"} /> },
+            { title: "账号", dataIndex: "accountId", render: (value) => <Typography.Text className="inlineCode">{value}</Typography.Text> },
+            { title: "余额", dataIndex: "balance", render: (value) => money(value) },
+            { title: "冻结", dataIndex: "frozen", render: (value) => money(value) },
+            { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value} tone="good" /> },
+            {
+              title: "操作",
+              valueType: "option",
+              render: (_, row) => (
+                <ActionGroup actions={[
+                  <Tooltip key="wallet" title="独立用户钱包详情页在 backlog，当前从本表直接充值。"><Button disabled>钱包</Button></Tooltip>,
+                  { label: "充值", type: "primary", onClick: () => {
+                    topUpForm.setFieldsValue({ accountId: row.accountId, amount: 200, reason: "commercial top-up" });
+                    setTopUpOpen(true);
+                  } }
+                ]} />
+              )
+            }
+          ]}
+        />
+      </InsightPanel>
       <TopUpDrawer open={topUpOpen} setOpen={setTopUpOpen} form={topUpForm} session={session} runAction={runAction} />
-    </PageContainer>
+    </ConsoleSurface>
   );
 }
 
 function TopUpDrawer({ open, setOpen, form, session, runAction }) {
   return (
     <Drawer title="用户钱包充值" open={open} onClose={() => setOpen(false)} width={420}>
-      <Form form={form} layout="vertical" onFinish={(values) => runAction(() => manualTopUp(values, session.csrfToken), "充值已记录").then(() => setOpen(false))}>
+      <Form form={form} layout="vertical" onFinish={async (values) => {
+        const toppedUp = await runAction(() => manualTopUp(values, session.csrfToken), "充值已记录");
+        if (toppedUp) setOpen(false);
+      }}>
         <Form.Item name="accountId" label="账号" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="amount" label="金额" rules={[{ required: true }]}><InputNumber min={1} className="fullWidth" /></Form.Item>
         <Form.Item name="reason" label="原因"><Input /></Form.Item>
@@ -74,75 +120,124 @@ function TopUpDrawer({ open, setOpen, form, session, runAction }) {
 
 export function AdminBillingPage({ state }) {
   return (
-    <PageContainer title="账务运营">
-      <ProCard gutter={16} wrap>
-        <ProCard title="手工充值记录"><TopupList events={state.manualTopups || []} /></ProCard>
-        <ProCard title="钱包流水"><WalletList events={state.walletTransactions || []} /></ProCard>
-      </ProCard>
-    </PageContainer>
+    <ConsoleSurface title="Billing Ops" eyebrow="Admin" subtitle="Manual top-ups and wallet transaction evidence">
+      <div className="consoleGrid equal">
+        <InsightPanel title="手工充值记录" eyebrow="Top-ups">
+          <TimelineList
+            emptyText="暂无充值记录"
+            items={(state.manualTopups || []).slice(-8).reverse().map((event) => ({
+              title: event.targetAccountId,
+              description: event.reason || event.id,
+              meta: money(event.amount),
+              tone: "good"
+            }))}
+          />
+        </InsightPanel>
+        <InsightPanel title="钱包流水" eyebrow="Transactions">
+          <TimelineList
+            emptyText="暂无钱包流水"
+            items={(state.walletTransactions || []).slice(-8).reverse().map((event) => ({
+              title: event.type,
+              description: event.accountId,
+              meta: money(event.amount),
+              tone: Number(event.amount || 0) < 0 ? "warn" : "good"
+            }))}
+          />
+        </InsightPanel>
+      </div>
+    </ConsoleSurface>
   );
 }
 
 export function AdminFabricPage() {
   return (
-    <PageContainer title="OPL Fabric">
-      <ProCard gutter={16} wrap>
-        <CatalogCard title="计算" items={["Standard CPU", "GPU reserved", "SSH/HPC adapter"]} />
-        <CatalogCard title="存储" items={["Workspace volume", "Private bucket", "Institution storage"]} />
-        <CatalogCard title="审批" items={["Connector", "Environment", "Agent package"]} />
-      </ProCard>
-    </PageContainer>
+    <ConsoleSurface title="OPL Fabric" eyebrow="Admin" subtitle="Runtime resource boundary">
+      <ResourceSplit
+        items={[
+          { label: "计算", value: "Standard CPU", meta: "GPU remains backlog until verified", status: "available", tone: "good" },
+          { label: "存储", value: "StorageVolume", meta: "account-scoped volume resource", status: "available", tone: "good" },
+          { label: "环境", value: "one-person-lab-app", meta: "current WebUI runtime", status: "current", tone: "info" }
+        ]}
+      />
+    </ConsoleSurface>
   );
 }
 
 export function AdminLedgerPage({ state }) {
   return (
-    <PageContainer title="OPL Ledger">
-      <ProTable
-        rowKey="id"
-        search={false}
-        options={false}
-        pagination={{ pageSize: 8 }}
-        dataSource={state.billingLedger || []}
-        columns={[
-          { title: "事件", dataIndex: "type" },
-          { title: "账号", dataIndex: "accountId", ellipsis: true },
-          { title: "Workspace", dataIndex: "workspaceId", ellipsis: true },
-          { title: "金额", dataIndex: "amount", render: (value) => money(value) }
-        ]}
-      />
-    </PageContainer>
+    <ConsoleSurface title="Ledger" eyebrow="Admin" subtitle="Billing ledger evidence">
+      <InsightPanel title="账务事件" eyebrow="Evidence">
+        <ObjectTable
+          rowKey="id"
+          pagination={{ pageSize: 8 }}
+          data={state.billingLedger || []}
+          emptyText="暂无账务事件"
+          columns={[
+            { title: "事件", dataIndex: "type" },
+            { title: "账号", dataIndex: "accountId", ellipsis: true },
+            { title: "Workspace", dataIndex: "workspaceId", ellipsis: true },
+            { title: "金额", dataIndex: "amount", render: (value) => money(value) }
+          ]}
+        />
+      </InsightPanel>
+    </ConsoleSurface>
   );
 }
 
 export function AdminRuntimePage({ adminOps }) {
+  const blockers = [
+    ...(adminOps.runtime?.missingEnv || []),
+    ...(adminOps.runtime?.missingTools || []),
+    ...(adminOps.runtime?.failedChecks || []),
+    ...(adminOps.launch?.missingEnv || []),
+    ...(adminOps.launch?.missingTools || []),
+    ...(adminOps.launch?.failedChecks || [])
+  ];
   return (
-    <PageContainer title="运行时">
+    <ConsoleSurface title="Runtime" eyebrow="Admin" subtitle="Readiness gates and launch blockers">
       {adminOps.error && <Alert type="error" showIcon message={adminOps.error} />}
-      <ProCard gutter={16} wrap>
-        <ReadinessCard title="Fabric readiness" readiness={adminOps.runtime} />
-        <ReadinessCard title="Launch gates" readiness={adminOps.launch} />
-      </ProCard>
-    </PageContainer>
+      <div className="consoleGrid equal">
+        <InsightPanel title="Readiness" eyebrow="Runtime">
+          <ResourceSplit
+            items={[
+              { label: "Fabric", value: adminOps.runtime?.ready ? "Ready" : "Blocked", meta: "runtime provider", status: adminOps.runtime?.ready ? "pass" : "check", tone: adminOps.runtime?.ready ? "good" : "warn" },
+              { label: "Launch", value: adminOps.launch?.ready ? "Ready" : "Blocked", meta: "production gates", status: adminOps.launch?.ready ? "pass" : "check", tone: adminOps.launch?.ready ? "good" : "warn" },
+              { label: "Env", value: (adminOps.launch?.missingEnv || []).length, meta: "missing environment inputs", status: "env", tone: (adminOps.launch?.missingEnv || []).length ? "warn" : "good" },
+              { label: "Tools", value: (adminOps.launch?.missingTools || []).length, meta: "host tool checks", status: "tools", tone: (adminOps.launch?.missingTools || []).length ? "warn" : "good" }
+            ]}
+          />
+        </InsightPanel>
+        <InsightPanel title="Blockers" eyebrow="Checks">
+          <TimelineList
+            emptyText="No blockers"
+            items={blockers.map((item) => ({
+              title: item,
+              description: "readiness check",
+              tone: "warn"
+            }))}
+          />
+        </InsightPanel>
+      </div>
+    </ConsoleSurface>
   );
 }
 
 export function AdminSupportPage({ tickets }) {
   return (
-    <PageContainer title="工单管理">
-      <ProTable
-        rowKey="id"
-        search={false}
-        options={false}
-        pagination={false}
-        dataSource={tickets.tickets}
-        columns={[
-          { title: "标题", dataIndex: "title" },
-          { title: "分类", dataIndex: "category" },
-          { title: "状态", dataIndex: "status" },
-          { title: "创建时间", dataIndex: "createdAt" }
-        ]}
-      />
-    </PageContainer>
+    <ConsoleSurface title="Support Ops" eyebrow="Admin" subtitle="All visible support tickets">
+      <InsightPanel title="工单队列" eyebrow="Support">
+        <ObjectTable
+          rowKey="id"
+          data={tickets.tickets}
+          emptyText="暂无工单"
+          columns={[
+            { title: "标题", dataIndex: "title" },
+            { title: "分类", dataIndex: "category" },
+            { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value} tone={value === "closed" ? "neutral" : "good"} /> },
+            { title: "创建时间", dataIndex: "createdAt" }
+          ]}
+        />
+      </InsightPanel>
+    </ConsoleSurface>
   );
 }

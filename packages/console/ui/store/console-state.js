@@ -41,8 +41,10 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
       await refresh();
       await refreshAdminOps();
       message.success(success);
+      return true;
     } catch (err) {
       message.error(err.message);
+      return false;
     }
   }
 

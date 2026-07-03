@@ -52,40 +52,79 @@ export const consoleActions = Object.freeze([
     requires: ["workspace.url.active"]
   },
   {
-    id: "workspace.stopCompute",
-    label: "Stop Compute",
-    type: "api",
+    id: "compute.create",
+    label: "Create Compute",
+    type: "route",
     role: "lab_owner",
-    objectKind: "WorkspaceCompute",
-    apiClient: "packages/console/ui/api/workspaces-api.js",
-    apiName: "stopWorkspaceServer"
+    objectKind: "ComputeResource",
+    routeId: "compute.create"
   },
   {
-    id: "workspace.restartCompute",
-    label: "Restart Compute",
-    type: "api",
+    id: "compute.detail",
+    label: "Open Compute Detail",
+    type: "route",
     role: "lab_owner",
-    objectKind: "WorkspaceCompute",
-    apiClient: "packages/console/ui/api/workspaces-api.js",
-    apiName: "restartWorkspaceServer"
+    objectKind: "ComputeResource",
+    routeId: "compute.detail"
   },
   {
-    id: "workspace.destroyCompute",
+    id: "compute.destroy",
     label: "Destroy Compute",
     type: "api",
     role: "lab_owner",
-    objectKind: "WorkspaceCompute",
-    apiClient: "packages/console/ui/api/workspaces-api.js",
-    apiName: "destroyWorkspaceServer"
+    objectKind: "ComputeResource",
+    apiClient: "packages/console/ui/api/resources-api.js",
+    apiName: "destroyComputeResource"
   },
   {
-    id: "workspace.destroyStorage",
+    id: "storage.create",
+    label: "Create Storage",
+    type: "route",
+    role: "lab_owner",
+    objectKind: "StorageVolume",
+    routeId: "storage.create"
+  },
+  {
+    id: "storage.detail",
+    label: "Open Storage Detail",
+    type: "route",
+    role: "lab_owner",
+    objectKind: "StorageVolume",
+    routeId: "storage.detail"
+  },
+  {
+    id: "storage.destroy",
     label: "Destroy Storage",
     type: "api",
     role: "lab_owner",
-    objectKind: "WorkspaceStorage",
-    apiClient: "packages/console/ui/api/workspaces-api.js",
-    apiName: "destroyWorkspaceDisk"
+    objectKind: "StorageVolume",
+    apiClient: "packages/console/ui/api/resources-api.js",
+    apiName: "destroyStorageVolume"
+  },
+  {
+    id: "attachment.create",
+    label: "Attach Storage",
+    type: "route",
+    role: "lab_owner",
+    objectKind: "StorageAttachment",
+    routeId: "attachment.create"
+  },
+  {
+    id: "attachment.detail",
+    label: "Open Attachment Detail",
+    type: "route",
+    role: "lab_owner",
+    objectKind: "StorageAttachment",
+    routeId: "attachment.detail"
+  },
+  {
+    id: "attachment.detach",
+    label: "Detach Storage",
+    type: "api",
+    role: "lab_owner",
+    objectKind: "StorageAttachment",
+    apiClient: "packages/console/ui/api/resources-api.js",
+    apiName: "detachStorage"
   },
   {
     id: "billing.wallet",

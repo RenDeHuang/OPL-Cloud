@@ -1,62 +1,67 @@
 import React from "react";
-import { ArrowRight, CheckCircle2, Cloud, Database, ShieldCheck, WalletCards } from "lucide-react";
+import { ArrowRight, Database, Headphones, KeyRound, Server, ShieldCheck, WalletCards } from "lucide-react";
 
 export default function HomePage({ session }) {
+  const target = session ? "/console/overview" : "/login";
   return (
     <div className="publicShell">
       <header className="publicNav">
         <a className="wordmark" href="/">
           <span>OPL</span>
-          <strong>OPL Cloud</strong>
+          <strong>OPL Console</strong>
         </a>
         <nav className="publicLinks">
-          <a href="/pricing">套餐</a>
-          <a href="/docs">文档</a>
-          <a href="/status">状态</a>
-          <a className="navButton" href={session ? "/console/overview" : "/login"}>{session ? "打开 Console" : "登录"}</a>
+          <a href="/console/workspaces">Workspace</a>
+          <a href="/console/billing">Billing</a>
+          <a href="/console/support">Support</a>
+          <a className="navButton" href={target}>{session ? "打开 Console" : "登录"}</a>
         </nav>
       </header>
 
       <main>
-        <section className="homeHero">
-          <div className="heroCopy">
-            <p className="eyebrow">OPL Cloud</p>
-            <h1>OPL Cloud</h1>
-            <p>创建 OPL Workspace，分发 URL，按资源用量计费。</p>
-            <div className="heroActions">
-              <a className="primaryLink" href={session ? "/console/overview" : "/login"}>打开 OPL Console <ArrowRight size={16} /></a>
-              <a className="secondaryLink" href="/pricing">查看套餐</a>
-            </div>
+        <section className="publicConsole">
+          <div className="publicConsoleCopy">
+            <p className="eyebrow">OPL Console</p>
+            <h1>OPL Console</h1>
+            <p>开通 Workspace，分发访问 URL，按计算、存储和 Gateway 请求扣费。</p>
+            <a className="primaryLink" href={target}>进入控制台 <ArrowRight size={16} /></a>
           </div>
-          <div className="heroPreview" aria-label="OPL Console 预览">
-            <div className="previewTop">
-              <span />
-              <strong>Workspace delivery</strong>
+
+          <div className="publicConsolePanel" aria-label="OPL Console product surface">
+            <div className="publicPanelTop">
+              <strong>Business chain</strong>
+              <span>Live Console</span>
             </div>
-            <div className="chainPreview">
-              <PreviewStep icon={<WalletCards />} title="钱包" text="余额与冻结" />
-              <PreviewStep icon={<Cloud />} title="OPL Fabric" text="计算与存储" />
-              <PreviewStep icon={<ShieldCheck />} title="Workspace URL" text="复制与分发" />
-              <PreviewStep icon={<Database />} title="OPL Ledger" text="账单与回执" />
+            <div className="publicMetrics">
+              <PublicMetric icon={<WalletCards />} label="Wallet" value="Balance + holds" />
+              <PublicMetric icon={<Server />} label="Workspace" value="Compute + storage" />
+              <PublicMetric icon={<KeyRound />} label="URL" value="Scoped access" />
+              <PublicMetric icon={<Database />} label="Ledger" value="Usage evidence" />
+            </div>
+            <div className="publicFlow">
+              <span>Top up</span>
+              <span>Create</span>
+              <span>Share URL</span>
+              <span>Meter</span>
             </div>
           </div>
         </section>
 
         <section className="homeBand">
           <article>
-            <CheckCircle2 />
-            <h2>Console</h2>
-            <p>工作区、账号、账单。</p>
+            <ShieldCheck />
+            <h2>Lab Owner</h2>
+            <p>余额、Workspace、URL、工单。</p>
           </article>
           <article>
-            <CheckCircle2 />
-            <h2>Fabric</h2>
-            <p>计算、存储、环境。</p>
+            <WalletCards />
+            <h2>Billing</h2>
+            <p>充值、冻结、小时扣费。</p>
           </article>
           <article>
-            <CheckCircle2 />
-            <h2>Ledger</h2>
-            <p>用量、审计、回执。</p>
+            <Headphones />
+            <h2>Admin</h2>
+            <p>用户、充值、运行证据。</p>
           </article>
         </section>
       </main>
@@ -64,13 +69,13 @@ export default function HomePage({ session }) {
   );
 }
 
-function PreviewStep({ icon, title, text }) {
+function PublicMetric({ icon, label, value }) {
   return (
-    <article className="previewStep">
+    <article className="publicMetric">
       {icon}
       <div>
-        <strong>{title}</strong>
-        <span>{text}</span>
+        <strong>{label}</strong>
+        <span>{value}</span>
       </div>
     </article>
   );

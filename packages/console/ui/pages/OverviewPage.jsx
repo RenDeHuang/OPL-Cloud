@@ -1,34 +1,106 @@
 import React from "react";
-import { PageContainer, ProCard, StatisticCard } from "@ant-design/pro-components";
-import { Button, Space } from "antd";
-import { Headphones, Plus, WalletCards } from "lucide-react";
+import { Button, Typography } from "antd";
+import { AlertTriangle, Headphones, Link as LinkIcon, Plus, Server, WalletCards } from "lucide-react";
 import { navigate, routeTo } from "../consoleRoutes.js";
-import { AlertList } from "./shared/page-widgets.jsx";
-import { money } from "./shared/formatters.js";
+import {
+  ActionGroup,
+  ConsoleSurface,
+  InsightPanel,
+  MetricStrip,
+  ObjectTable,
+  ResourceSplit,
+  StatusPill,
+  TimelineList
+} from "./shared/commercial-console.jsx";
+import { available, money, statusColor, statusLabel } from "./shared/formatters.js";
 
 export function OverviewPage({ state, wallet, tickets }) {
   const needsAttention = state.notifications?.length || 0;
+  const computeRunning = (state.computeResources || []).filter((compute) => compute.status === "running").length;
+  const activeTickets = tickets.tickets.filter((ticket) => ticket.status !== "closed").length;
+  const usable = available(wallet);
+  const freezeRatio = Number(wallet.balance || 0) > 0
+    ? Math.min(100, Math.max(0, (Number(wallet.frozen || 0) / Number(wallet.balance || 1)) * 100))
+    : 0;
+  const latestWorkspaces = state.workspaces.slice(-5).reverse();
+  const recentSignals = [
+    ...(state.notifications || []).slice(-5).reverse().map((event) => ({
+      title: event.type || "alert",
+      description: event.workspaceId || event.accountId,
+      meta: event.severity || "signal",
+      tone: event.severity === "error" ? "danger" : "warn"
+    })),
+    ...tickets.tickets.slice(-3).reverse().map((ticket) => ({
+      title: ticket.title,
+      description: ticket.category,
+      meta: ticket.status,
+      tone: "info"
+    }))
+  ].slice(0, 6);
+
   return (
-    <PageContainer title="总览" subTitle="Workspace delivery, wallet, tickets">
-      <StatisticCard.Group>
-        <StatisticCard statistic={{ title: "余额", value: money(wallet.balance) }} />
-        <StatisticCard statistic={{ title: "冻结", value: money(wallet.frozen) }} />
-        <StatisticCard statistic={{ title: "Workspace", value: state.workspaces.length }} />
-        <StatisticCard statistic={{ title: "工单", value: tickets.tickets.length }} />
-        <StatisticCard statistic={{ title: "告警", value: needsAttention }} />
-      </StatisticCard.Group>
-      <ProCard className="sectionCard" gutter={16} split="vertical">
-        <ProCard title="下一步" colSpan="35%">
-          <Space direction="vertical" size={12}>
-            <Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建 Workspace</Button>
-            <Button icon={<Headphones size={15} />} onClick={() => navigate(routeTo("support.create"))}>提交工单</Button>
-            <Button icon={<WalletCards size={15} />} onClick={() => navigate(routeTo("billing.wallet"))}>查看钱包</Button>
-          </Space>
-        </ProCard>
-        <ProCard title="最近告警">
-          <AlertList events={state.notifications} />
-        </ProCard>
-      </ProCard>
-    </PageContainer>
+    <ConsoleSurface
+      title="Overview"
+      eyebrow="OPL Console"
+      subtitle="Wallet, Workspace delivery, Gateway usage, Support"
+      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建 Workspace</Button>}
+    >
+      <MetricStrip
+        items={[
+          { label: "可用余额", value: money(usable), caption: `${money(wallet.frozen)} frozen`, icon: <WalletCards size={16} />, tone: usable > 0 ? "good" : "warn" },
+          { label: "Workspace", value: state.workspaces.length, caption: `${computeRunning} compute running`, icon: <Server size={16} />, tone: computeRunning ? "good" : "neutral" },
+          { label: "Gateway 请求", value: state.requestUsageLogs?.length || 0, caption: "gflabtoken.cn", icon: <LinkIcon size={16} />, tone: "info" },
+          { label: "工单", value: activeTickets, caption: `${tickets.tickets.length} total`, icon: <Headphones size={16} />, tone: activeTickets ? "warn" : "neutral" },
+          { label: "告警", value: needsAttention, caption: "owner visible", icon: <AlertTriangle size={16} />, tone: needsAttention ? "danger" : "good" }
+        ]}
+      />
+
+      <div className="consoleGrid">
+        <InsightPanel
+          title="业务链"
+          eyebrow="Launch loop"
+          actions={<ActionGroup actions={[
+            { label: "Workspace", type: "primary", icon: <Plus size={15} />, onClick: () => navigate(routeTo("workspace.create")) },
+            { label: "钱包", icon: <WalletCards size={15} />, onClick: () => navigate(routeTo("billing.wallet")) },
+            { label: "工单", icon: <Headphones size={15} />, onClick: () => navigate(routeTo("support.create")) }
+          ]} />}
+        >
+          <ResourceSplit
+            items={[
+              { label: "充值与冻结", value: `${money(wallet.balance)} / ${money(wallet.frozen)}`, meta: "Balance / frozen hold", status: `${Math.round(freezeRatio)}% frozen`, tone: freezeRatio > 70 ? "warn" : "info" },
+              { label: "计算交付", value: `${computeRunning}/${state.computeResources?.length || 0}`, meta: "Running compute resources", status: computeRunning ? "active" : "idle", tone: computeRunning ? "good" : "neutral" },
+              { label: "URL 分发", value: `${state.workspaces.filter((workspace) => workspace.access?.tokenStatus === "active").length}`, meta: "Active Workspace URLs", status: "scoped", tone: "info" },
+              { label: "支持闭环", value: activeTickets, meta: "Open support tickets", status: activeTickets ? "open" : "clear", tone: activeTickets ? "warn" : "good" }
+            ]}
+          />
+        </InsightPanel>
+
+        <InsightPanel title="最近信号" eyebrow="Attention">
+          <TimelineList items={recentSignals} emptyText="当前没有告警或待处理工单" />
+        </InsightPanel>
+      </div>
+
+      <InsightPanel title="最近 Workspace" eyebrow="Delivery">
+        <ObjectTable
+          rowKey="id"
+          data={latestWorkspaces}
+          emptyText="暂无 Workspace"
+          columns={[
+            {
+              title: "名称",
+              dataIndex: "name",
+              render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("workspace.detail", { id: row.id }))}>{row.name}</Button>
+            },
+            {
+              title: "状态",
+              dataIndex: "state",
+              render: (_, row) => <StatusPill label={statusLabel(row)} tone={statusColor(row.state) === "green" ? "good" : statusColor(row.state) === "red" ? "danger" : "warn"} />
+            },
+            { title: "URL", dataIndex: "url", render: (value) => <Typography.Text ellipsis className="inlineCode">{value}</Typography.Text> },
+            { title: "挂载", render: (_, row) => row.attachmentId || "-" }
+          ]}
+        />
+      </InsightPanel>
+    </ConsoleSurface>
   );
 }

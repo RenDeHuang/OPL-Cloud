@@ -4,6 +4,8 @@ const DEFAULT_PACKAGE_ID = "basic";
 const DEFAULT_CREDIT_AMOUNT = 1000;
 const DEFAULT_WORKSPACE_URL_ATTEMPTS = 12;
 const DEFAULT_RETRY_DELAY_MS = 5000;
+const DEFAULT_MOUNT_PATH = "/data";
+const DEFAULT_REQUEST_USAGE_AMOUNT = 0.42;
 
 function defaultRunId() {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
@@ -14,6 +16,47 @@ function defaultRunId() {
 function normalizeOrigin(origin) {
   if (!origin) throw new Error("origin_required");
   return origin.replace(/\/$/, "");
+}
+
+function isPrivateIpv4(hostname) {
+  const parts = String(hostname || "").split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [first, second] = parts;
+  return (
+    first === 10 ||
+    first === 127 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    (first === 169 && second === 254) ||
+    first === 0
+  );
+}
+
+function isNonPublicHostname(hostname) {
+  const normalized = String(hostname || "").toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80") ||
+    isPrivateIpv4(normalized)
+  );
+}
+
+function assertPublicHttpsUrl(url, errorName) {
+  let parsed = null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(errorName);
+  }
+  if (parsed.protocol !== "https:" || isNonPublicHostname(parsed.hostname)) {
+    throw new Error(errorName);
+  }
+  return parsed;
 }
 
 function endpoint(origin, path) {
@@ -140,46 +183,49 @@ function assertReady({ checks, name, payload }) {
   addCheck(checks, name, true);
 }
 
-function providerResourceShape(workspace) {
-  if (workspace?.provider === "tencent-tke") {
-    let url = null;
-    try {
-      url = workspace?.url ? new URL(workspace.url) : null;
-    } catch {
-      url = null;
-    }
-    return Boolean(
-      workspace?.server?.id?.startsWith("deployment/") &&
-      workspace?.docker?.id === workspace.server.id &&
-      workspace?.docker?.service?.startsWith("service/") &&
-      workspace?.docker?.image &&
-      workspace?.disk?.id?.startsWith("pvc/") &&
-      workspace?.disk?.mountPath === "/data" &&
-      workspace?.disk?.storageClass &&
-      url?.pathname === `/w/${workspace.id}` &&
-      url?.searchParams.get("token") === workspace?.access?.token
-    );
-  }
-  return false;
+function assertComputeShape(checks, compute) {
+  addCheck(checks, "compute_created", Boolean(
+    compute?.id &&
+    compute?.provider === "tencent-tke" &&
+    compute?.providerResourceId?.startsWith("deployment/") &&
+    compute?.status === "running" &&
+    compute?.billingStatus === "active" &&
+    compute?.image
+  ), { computeId: compute?.id });
 }
 
-function assertWorkspaceShape(checks, workspace) {
+function assertStorageShape(checks, storage) {
+  addCheck(checks, "storage_created", Boolean(
+    storage?.id &&
+    storage?.provider === "tencent-tke" &&
+    storage?.providerResourceId?.startsWith("pvc/") &&
+    storage?.status === "available" &&
+    storage?.billingStatus === "active" &&
+    Number(storage?.sizeGb || 0) > 0
+  ), { storageId: storage?.id });
+}
+
+function assertAttachmentShape(checks, attachment, { compute, storage }) {
+  addCheck(checks, "storage_attached", Boolean(
+    attachment?.id &&
+    attachment?.provider === "tencent-tke" &&
+    attachment?.computeId === compute?.id &&
+    attachment?.storageId === storage?.id &&
+    attachment?.mountPath === DEFAULT_MOUNT_PATH &&
+    attachment?.status === "attached"
+  ), { attachmentId: attachment?.id });
+}
+
+function assertWorkspaceShape(checks, workspace, { compute, storage, attachment }) {
   addCheck(checks, "workspace_created", Boolean(
     workspace?.id &&
-    providerResourceShape(workspace) &&
-    workspace?.server?.status === "running" &&
-    workspace?.docker?.status === "running" &&
-    workspace?.disk?.status === "attached_retained" &&
+    workspace?.provider === "tencent-tke" &&
+    workspace?.computeId === compute?.id &&
+    workspace?.storageId === storage?.id &&
+    workspace?.attachmentId === attachment?.id &&
+    workspace?.url &&
     workspace?.access?.tokenStatus === "active"
   ), { workspaceId: workspace?.id });
-}
-
-function assertBillingSettlement(checks, settlement) {
-  const entryTypes = new Set((settlement.entries || []).map((entry) => entry.type));
-  addCheck(checks, "billing_settlement", Boolean(
-    (entryTypes.has("compute_debit") || entryTypes.has("server_debit")) &&
-    entryTypes.has("storage_debit")
-  ));
 }
 
 function assertRuntimeStatus(checks, runtimeStatus) {
@@ -194,50 +240,111 @@ function assertRuntimeStatus(checks, runtimeStatus) {
   });
 }
 
-async function cleanupVerificationWorkspace({ fetchImpl, origin, accountId, workspaceId, workspaceDiskId, checks = null, auth = null }) {
+function assertRequestUsage(checks, usage, workspace) {
+  addCheck(checks, "request_usage_recorded", Boolean(
+    usage?.id &&
+    usage?.accountId === workspace?.ownerAccountId &&
+    usage?.workspaceId === workspace?.id &&
+    usage?.requestId
+  ), { usageId: usage?.id });
+}
+
+function assertLedgerAndUsage(checks, state, { accountId, compute, storage, attachment, workspace, requestUsage }) {
+  const ledger = state?.billingLedger || [];
+  const resourceUsage = state?.resourceUsageLogs || [];
+  const requestUsageLogs = state?.requestUsageLogs || [];
+
+  const hasComputeLedger = ledger.some((entry) => entry.accountId === accountId && entry.computeId === compute?.id);
+  const hasStorageLedger = ledger.some((entry) => entry.accountId === accountId && entry.storageId === storage?.id);
+  const hasAttachmentLedger = ledger.some((entry) => entry.accountId === accountId && entry.attachmentId === attachment?.id);
+  const hasRequestLedger = ledger.some((entry) =>
+    entry.accountId === accountId &&
+    entry.workspaceId === workspace?.id &&
+    entry.type === "request_debit"
+  );
+  const hasComputeUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.computeId === compute?.id);
+  const hasStorageUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.storageId === storage?.id);
+  const hasAttachmentUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.attachmentId === attachment?.id);
+  const hasRequestUsage = requestUsageLogs.some((entry) =>
+    entry.accountId === accountId &&
+    entry.workspaceId === workspace?.id &&
+    (entry.id === requestUsage?.id || entry.requestId === requestUsage?.requestId)
+  );
+
+  addCheck(checks, "ledger_and_usage_verified", Boolean(
+    state?.wallet?.accountId === accountId &&
+    hasComputeLedger &&
+    hasStorageLedger &&
+    hasAttachmentLedger &&
+    hasRequestLedger &&
+    hasComputeUsage &&
+    hasStorageUsage &&
+    hasAttachmentUsage &&
+    hasRequestUsage
+  ));
+}
+
+async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeId, storageId, attachmentId, checks = null, auth = null }) {
   const cleanupErrors = [];
 
-  try {
-    const cleanupServerDestroyed = await requestJson({
-      fetchImpl,
-      origin,
-      path: "/api/workspaces/destroy-server",
-      method: "POST",
-      auth,
-      body: { accountId, workspaceId, confirm: true }
-    });
-    if (checks) {
-      addCheck(checks, "verification_server_destroyed", Boolean(
-        cleanupServerDestroyed.server?.status === "destroyed" &&
-        cleanupServerDestroyed.server?.billingStatus === "stopped" &&
-        cleanupServerDestroyed.disk?.id === workspaceDiskId &&
-        cleanupServerDestroyed.disk?.billingStatus === "active"
-      ));
+  if (attachmentId) {
+    try {
+      const detached = await requestJson({
+        fetchImpl,
+        origin,
+        path: "/api/storage-attachments/detach",
+        method: "POST",
+        auth,
+        body: { accountId, attachmentId, confirm: true }
+      });
+      if (checks) {
+        addCheck(checks, "verification_storage_detached", Boolean(detached?.status === "detached"));
+      }
+    } catch (error) {
+      cleanupErrors.push(`detach_storage:${error.message}`);
     }
-  } catch (error) {
-    cleanupErrors.push(`destroy_server:${error.message}`);
   }
 
-  try {
-    const cleanupDiskDestroyed = await requestJson({
-      fetchImpl,
-      origin,
-      path: "/api/workspaces/destroy-disk",
-      method: "POST",
-      auth,
-      body: { accountId, workspaceId, confirmDataLoss: true }
-    });
-    if (checks) {
-      addCheck(checks, "verification_disk_destroyed", Boolean(
-        cleanupDiskDestroyed.state === "destroyed" &&
-        cleanupDiskDestroyed.server?.status === "destroyed" &&
-        cleanupDiskDestroyed.server?.billingStatus === "stopped" &&
-        cleanupDiskDestroyed.disk?.status === "destroyed" &&
-        cleanupDiskDestroyed.disk?.billingStatus === "stopped"
-      ));
+  if (computeId) {
+    try {
+      const destroyed = await requestJson({
+        fetchImpl,
+        origin,
+        path: "/api/compute-resources/destroy",
+        method: "POST",
+        auth,
+        body: { accountId, computeId, confirm: true }
+      });
+      if (checks) {
+        addCheck(checks, "verification_compute_destroyed", Boolean(
+          destroyed?.status === "destroyed" &&
+          destroyed?.billingStatus === "stopped"
+        ));
+      }
+    } catch (error) {
+      cleanupErrors.push(`destroy_compute:${error.message}`);
     }
-  } catch (error) {
-    cleanupErrors.push(`destroy_disk:${error.message}`);
+  }
+
+  if (storageId) {
+    try {
+      const destroyed = await requestJson({
+        fetchImpl,
+        origin,
+        path: "/api/storage-volumes/destroy",
+        method: "POST",
+        auth,
+        body: { accountId, storageId, confirmDataLoss: true }
+      });
+      if (checks) {
+        addCheck(checks, "verification_storage_destroyed", Boolean(
+          destroyed?.status === "destroyed" &&
+          destroyed?.billingStatus === "stopped"
+        ));
+      }
+    } catch (error) {
+      cleanupErrors.push(`destroy_storage:${error.message}`);
+    }
   }
 
   return cleanupErrors;
@@ -258,9 +365,16 @@ export async function verifyProductionChain({
   if (typeof fetchImpl !== "function") throw new Error("fetch_required");
   const checks = [];
   const normalizedOrigin = normalizeOrigin(origin);
+  assertPublicHttpsUrl(normalizedOrigin, "public_origin_required");
   const effectiveWorkspaceName = workspaceName || `${DEFAULT_WORKSPACE_NAME} ${runId}`;
   const creditSourceEventId = `production_verification_credit:${runId}`;
-  const settlementSourceEventId = `production_verification_tick:${runId}`;
+  const requestUsageSourceEventId = `production_verification_request_usage:${runId}`;
+  const requestId = `production-verification-request:${runId}`;
+  const computeName = `${effectiveWorkspaceName} compute ${runId}`;
+  const storageName = `${effectiveWorkspaceName} storage ${runId}`;
+  let compute = null;
+  let storage = null;
+  let attachment = null;
   let workspace = null;
   let auth = null;
 
@@ -282,29 +396,63 @@ export async function verifyProductionChain({
       body: { accountId, amount: creditAmount, reason: creditSourceEventId }
     });
 
+    compute = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/compute-resources",
+      method: "POST",
+      auth,
+      body: { accountId, packageId, name: computeName }
+    });
+    assertComputeShape(checks, compute);
+
+    storage = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/storage-volumes",
+      method: "POST",
+      auth,
+      body: { accountId, packageId, name: storageName }
+    });
+    assertStorageShape(checks, storage);
+
+    attachment = await requestJson({
+      fetchImpl,
+      origin: normalizedOrigin,
+      path: "/api/storage-attachments",
+      method: "POST",
+      auth,
+      body: {
+        accountId,
+        computeId: compute.id,
+        storageId: storage.id,
+        mountPath: DEFAULT_MOUNT_PATH
+      }
+    });
+    assertAttachmentShape(checks, attachment, { compute, storage });
+
     workspace = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
       path: "/api/workspaces",
       method: "POST",
       auth,
-      body: { accountId, workspaceName: effectiveWorkspaceName, packageId }
+      body: { accountId, workspaceName: effectiveWorkspaceName, attachmentId: attachment.id }
     });
-    assertWorkspaceShape(checks, workspace);
+    assertWorkspaceShape(checks, workspace, { compute, storage, attachment });
 
-    if (workspace.provider === "tencent-tke") {
-      const runtimeStatus = await requestRuntimeStatus({
-        fetchImpl,
-        origin: normalizedOrigin,
-        accountId,
-        workspaceId: workspace.id,
-        attempts: workspaceUrlAttempts,
-        retryDelayMs,
-        auth
-      });
-      assertRuntimeStatus(checks, runtimeStatus);
-    }
+    const runtimeStatus = await requestRuntimeStatus({
+      fetchImpl,
+      origin: normalizedOrigin,
+      accountId,
+      workspaceId: workspace.id,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs,
+      auth
+    });
+    assertRuntimeStatus(checks, runtimeStatus);
 
+    assertPublicHttpsUrl(workspace.url, "public_workspace_url_required");
     const workspaceUrlResult = await requestWorkspaceUrl({
       fetchImpl,
       url: workspace.url,
@@ -313,97 +461,41 @@ export async function verifyProductionChain({
     });
     addCheck(checks, "workspace_url", true, { url: workspace.url, attempts: workspaceUrlResult.attempts });
 
-    const stopped = await requestJson({
+    const requestUsage = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
-      path: "/api/workspaces/stop-server",
+      path: "/api/billing/request-usage",
       method: "POST",
       auth,
-      body: { accountId, workspaceId: workspace.id, confirm: true }
+      body: {
+        accountId,
+        workspaceId: workspace.id,
+        requestId,
+        provider: "sub2api",
+        model: "production-verification",
+        inputTokens: 1,
+        outputTokens: 1,
+        amount: DEFAULT_REQUEST_USAGE_AMOUNT,
+        sourceEventId: requestUsageSourceEventId
+      }
     });
-    addCheck(checks, "server_stopped_storage_retained", Boolean(
-      stopped.server?.status === "stopped" &&
-      stopped.server?.billingStatus === "stopped" &&
-      stopped.disk?.status === "attached_retained" &&
-      stopped.disk?.billingStatus === "active"
-    ));
+    assertRequestUsage(checks, requestUsage, workspace);
 
-    const restarted = await requestJson({
+    const state = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
-      path: "/api/workspaces/restart-server",
-      method: "POST",
-      auth,
-      body: { accountId, workspaceId: workspace.id }
+      path: "/api/state",
+      auth
     });
-    addCheck(checks, "server_restarted", Boolean(
-      restarted.state === "running" &&
-      restarted.server?.status === "running" &&
-      restarted.disk?.id === workspace.disk.id &&
-      restarted.url === workspace.url &&
-      restarted.access?.token === workspace.access.token
-    ));
+    assertLedgerAndUsage(checks, state, { accountId, compute, storage, attachment, workspace, requestUsage });
 
-    const serverDestroyed = await requestJson({
-      fetchImpl,
-      origin: normalizedOrigin,
-      path: "/api/workspaces/destroy-server",
-      method: "POST",
-      auth,
-      body: { accountId, workspaceId: workspace.id, confirm: true }
-    });
-    addCheck(checks, "server_destroyed_storage_retained", Boolean(
-      serverDestroyed.state === "server_destroyed_disk_retained" &&
-      serverDestroyed.server?.status === "destroyed" &&
-      serverDestroyed.disk?.id === workspace.disk.id &&
-      serverDestroyed.disk?.status === "detached_retained" &&
-      serverDestroyed.disk?.billingStatus === "active"
-    ));
-
-    const recreated = await requestJson({
-      fetchImpl,
-      origin: normalizedOrigin,
-      path: "/api/workspaces/restart-server",
-      method: "POST",
-      auth,
-      body: { accountId, workspaceId: workspace.id }
-    });
-    addCheck(checks, "server_recreated_from_retained_disk", Boolean(
-      recreated.state === "running" &&
-      recreated.server?.status === "running" &&
-      recreated.disk?.id === workspace.disk.id &&
-      recreated.disk?.status === "attached_retained" &&
-      recreated.url === workspace.url &&
-      recreated.access?.token === workspace.access.token
-    ));
-
-    const recreatedUrlResult = await requestWorkspaceUrl({
-      fetchImpl,
-      url: workspace.url,
-      attempts: workspaceUrlAttempts,
-      retryDelayMs
-    });
-    addCheck(checks, "workspace_url_after_recreate", true, {
-      url: workspace.url,
-      attempts: recreatedUrlResult.attempts
-    });
-
-    const settlement = await requestJson({
-      fetchImpl,
-      origin: normalizedOrigin,
-      path: "/api/billing/settle",
-      method: "POST",
-      auth,
-      body: { accountId, workspaceId: workspace.id, hours: 1, sourceEventId: settlementSourceEventId }
-    });
-    assertBillingSettlement(checks, settlement);
-
-    const cleanupErrors = await cleanupVerificationWorkspace({
+    const cleanupErrors = await cleanupVerificationResources({
       fetchImpl,
       origin: normalizedOrigin,
       accountId,
-      workspaceId: workspace.id,
-      workspaceDiskId: workspace.disk.id,
+      computeId: compute.id,
+      storageId: storage.id,
+      attachmentId: attachment.id,
       checks,
       auth
     });
@@ -423,13 +515,14 @@ export async function verifyProductionChain({
       checks
     };
   } catch (error) {
-    if (!workspace?.id) throw error;
-    const cleanupErrors = await cleanupVerificationWorkspace({
+    if (!compute?.id && !storage?.id && !attachment?.id) throw error;
+    const cleanupErrors = await cleanupVerificationResources({
       fetchImpl,
       origin: normalizedOrigin,
       accountId,
-      workspaceId: workspace.id,
-      workspaceDiskId: workspace.disk?.id,
+      computeId: compute?.id,
+      storageId: storage?.id,
+      attachmentId: attachment?.id,
       auth
     });
     if (cleanupErrors.length > 0) error.cleanupErrors = cleanupErrors;

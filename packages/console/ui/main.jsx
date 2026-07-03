@@ -85,10 +85,10 @@ function App() {
     return <HomePage route={route} session={session} />;
   }, [route, session]);
 
-  if (!authChecked) return <div className="loading">Loading OPL Cloud...</div>;
+  if (!authChecked) return <div className="loading">Loading OPL Console...</div>;
 
   return (
-    <Suspense fallback={<div className="loading">Loading OPL Cloud...</div>}>
+    <Suspense fallback={<div className="loading">Loading OPL Console...</div>}>
       {page}
     </Suspense>
   );

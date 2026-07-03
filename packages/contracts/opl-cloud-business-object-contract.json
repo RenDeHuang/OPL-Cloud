@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, Workspace provisioning, URL sharing, hourly settlement, support, and admin operations.",
+  "currentSlice": "Business-chain closure for wallet, account-scoped compute and storage provisioning, Workspace URL sharing, request usage billing, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -88,26 +88,47 @@
       "evidenceRequired": true
     },
     {
-      "kind": "WorkspaceCompute",
+      "kind": "ComputeResource",
       "ownerRepo": "opl-console",
       "routeKind": "business_object",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
+        "list",
         "detail",
         "read",
-        "action"
+        "write",
+        "action",
+        "evidence"
       ],
       "evidenceRequired": true
     },
     {
-      "kind": "WorkspaceStorage",
+      "kind": "StorageVolume",
       "ownerRepo": "opl-console",
       "routeKind": "business_object",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
+        "list",
         "detail",
         "read",
-        "action"
+        "write",
+        "action",
+        "evidence"
+      ],
+      "evidenceRequired": true
+    },
+    {
+      "kind": "StorageAttachment",
+      "ownerRepo": "opl-console",
+      "routeKind": "business_object",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "detail",
+        "read",
+        "write",
+        "action",
+        "evidence"
       ],
       "evidenceRequired": true
     },

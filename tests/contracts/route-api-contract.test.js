@@ -89,6 +89,57 @@ test("active route contract excludes future, reserved, and prune route shells", 
   }
 });
 
+test("active route contract models TKE resources before Workspace entry", async () => {
+  const contract = await readJson(contractPath);
+  const routes = expectedRoutesFromContract(contract);
+  const byId = new Map(routes.map((route) => [route.id, route]));
+  const activeApiRoutes = new Set(routes.flatMap((route) => route.apiRoutes || []));
+
+  for (const [id, objectKind, path] of [
+    ["compute.list", "ComputeResource", "/console/compute"],
+    ["compute.create", "ComputeResource", "/console/compute/new"],
+    ["compute.detail", "ComputeResource", "/console/compute/:id"],
+    ["storage.list", "StorageVolume", "/console/storage"],
+    ["storage.create", "StorageVolume", "/console/storage/new"],
+    ["storage.detail", "StorageVolume", "/console/storage/:id"],
+    ["attachment.list", "StorageAttachment", "/console/attachments"],
+    ["attachment.create", "StorageAttachment", "/console/attachments/new"],
+    ["attachment.detail", "StorageAttachment", "/console/attachments/:id"],
+    ["workspace.list", "Workspace", "/console/workspaces"],
+    ["workspace.create", "Workspace", "/console/workspaces/new"],
+    ["workspace.detail", "Workspace", "/console/workspaces/:id"]
+  ]) {
+    const route = byId.get(id);
+    assert.ok(route, `missing current route ${id}`);
+    assert.equal(route.path, path);
+    assert.equal(route.objectKind, objectKind);
+    assert.equal(route.status, "implemented");
+    assert.equal(route.contractLifecycle, "current");
+  }
+
+  for (const apiRoute of [
+    "POST /api/compute-resources",
+    "POST /api/compute-resources/destroy",
+    "POST /api/storage-volumes",
+    "POST /api/storage-volumes/destroy",
+    "POST /api/storage-attachments",
+    "POST /api/storage-attachments/detach"
+  ]) {
+    assert.ok(activeApiRoutes.has(apiRoute), `${apiRoute} must be in current resource contract`);
+  }
+
+  for (const retiredApi of [
+    "POST /api/billing/settle",
+    "POST /api/workspaces/stop-server",
+    "POST /api/workspaces/restart-server",
+    "POST /api/workspaces/destroy-server",
+    "POST /api/workspaces/destroy-disk"
+  ]) {
+    assert.equal(activeApiRoutes.has(retiredApi), false, `${retiredApi} must not be a Lab Owner commercial route`);
+    assert.equal(apiRouteManifest.includes(retiredApi), false, `${retiredApi} must not be exposed by the public Console API manifest`);
+  }
+});
+
 test("implemented routes name a page, API client, server route, and service boundary", async () => {
   const contract = await readJson(contractPath);
   const routes = expectedRoutesFromContract(contract).filter((route) => route.status === "implemented");

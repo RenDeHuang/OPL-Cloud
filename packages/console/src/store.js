@@ -19,6 +19,9 @@ export function emptyState() {
     audit: [],
     notifications: [],
     runtimeOperations: [],
+    computeResources: [],
+    storageVolumes: [],
+    storageAttachments: [],
     resourceUsageLogs: [],
     requestUsageLogs: [],
     walletTransactions: [],
@@ -135,6 +138,9 @@ export class PostgresStore {
       audit,
       notifications,
       runtimeOperations,
+      computeResources,
+      storageVolumes,
+      storageAttachments,
       resourceUsageLogs,
       requestUsageLogs,
       walletTransactions,
@@ -154,6 +160,9 @@ export class PostgresStore {
       client.query("SELECT state FROM audit_events ORDER BY created_at, id"),
       client.query("SELECT state FROM notifications ORDER BY created_at, id"),
       client.query("SELECT state FROM runtime_operations ORDER BY created_at, id"),
+      client.query("SELECT state FROM compute_resources ORDER BY created_at, id"),
+      client.query("SELECT state FROM storage_volumes ORDER BY created_at, id"),
+      client.query("SELECT state FROM storage_attachments ORDER BY created_at, id"),
       client.query("SELECT state FROM resource_usage_logs ORDER BY created_at, id"),
       client.query("SELECT state FROM request_usage_logs ORDER BY created_at, id"),
       client.query("SELECT state FROM wallet_transactions ORDER BY created_at, id"),
@@ -174,6 +183,9 @@ export class PostgresStore {
     state.audit = audit.rows.map((row) => row.state);
     state.notifications = notifications.rows.map((row) => row.state);
     state.runtimeOperations = runtimeOperations.rows.map((row) => row.state);
+    state.computeResources = computeResources.rows.map((row) => row.state);
+    state.storageVolumes = storageVolumes.rows.map((row) => row.state);
+    state.storageAttachments = storageAttachments.rows.map((row) => row.state);
     state.resourceUsageLogs = resourceUsageLogs.rows.map((row) => row.state);
     state.requestUsageLogs = requestUsageLogs.rows.map((row) => row.state);
     state.walletTransactions = walletTransactions.rows.map((row) => row.state);
@@ -184,7 +196,7 @@ export class PostgresStore {
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
-    await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
+    await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, compute_resources, storage_volumes, storage_attachments, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
 
     for (const organization of Object.values(nextState.organizations || {})) {
       await client.query(
@@ -290,6 +302,35 @@ export class PostgresStore {
         operation,
         operation.createdAt || new Date().toISOString(),
         operation.updatedAt || operation.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const compute of nextState.computeResources || []) {
+      await client.query("INSERT INTO compute_resources (id, account_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", [
+        compute.id,
+        compute.ownerAccountId,
+        compute,
+        compute.createdAt || new Date().toISOString(),
+        compute.updatedAt || compute.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const storage of nextState.storageVolumes || []) {
+      await client.query("INSERT INTO storage_volumes (id, account_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", [
+        storage.id,
+        storage.ownerAccountId,
+        storage,
+        storage.createdAt || new Date().toISOString(),
+        storage.updatedAt || storage.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const attachment of nextState.storageAttachments || []) {
+      await client.query("INSERT INTO storage_attachments (id, account_id, compute_id, storage_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+        attachment.id,
+        attachment.ownerAccountId,
+        attachment.computeId,
+        attachment.storageId,
+        attachment,
+        attachment.createdAt || new Date().toISOString(),
+        attachment.updatedAt || attachment.createdAt || new Date().toISOString()
       ]);
     }
     for (const usage of nextState.resourceUsageLogs || []) {
@@ -488,6 +529,35 @@ export class PostgresStore {
         id text PRIMARY KEY,
         workspace_id text NOT NULL,
         operation_type text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS compute_resources (
+        id text PRIMARY KEY,
+        account_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS storage_volumes (
+        id text PRIMARY KEY,
+        account_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS storage_attachments (
+        id text PRIMARY KEY,
+        account_id text NOT NULL,
+        compute_id text NOT NULL,
+        storage_id text NOT NULL,
         state jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()

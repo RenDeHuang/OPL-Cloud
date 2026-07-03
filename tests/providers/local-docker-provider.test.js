@@ -18,6 +18,67 @@ async function exists(path) {
   }
 }
 
+test("local Docker provider exposes split compute, storage, attachment, and Workspace entry operations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-cloud-local-resource-"));
+  try {
+    const provider = new LocalDockerProvider({
+      rootDir: root,
+      baseUrl: "http://127.0.0.1:8787",
+      execute: false
+    });
+    const packagePlan = { id: "basic", server: "2c4g", diskGb: 10 };
+
+    const storage = await provider.createStorageVolume({
+      storageId: "storage-local001",
+      storage: { id: "storage-local001", name: "Grant data" },
+      packagePlan
+    });
+    const compute = await provider.createComputeResource({
+      computeId: "compute-local001",
+      compute: { id: "compute-local001", name: "CPU node" },
+      packagePlan
+    });
+    const attachment = await provider.attachStorage({
+      attachment: {
+        id: "attach-local001",
+        computeId: "compute-local001",
+        storageId: "storage-local001",
+        mountPath: "/data"
+      },
+      compute: { id: "compute-local001", name: "CPU node", ...compute },
+      storage: { id: "storage-local001", name: "Grant data", ...storage }
+    });
+    const entry = await provider.createWorkspaceEntry({
+      workspaceId: "ws-local001",
+      workspaceName: "Grant Lab",
+      slug: "grant-lab-local001",
+      token: "share_local_secret",
+      attachment: { id: "attach-local001", mountPath: "/data", ...attachment },
+      compute: { id: "compute-local001", name: "CPU node", ...compute },
+      storage: { id: "storage-local001", name: "Grant data", ...storage },
+      packagePlan
+    });
+
+    const compose = parse(await readFile(compute.composePath, "utf8"));
+    const composeService = Object.values(compose.services)[0];
+
+    assert.equal(storage.status, "available");
+    assert.equal(await exists(join(storage.localPath, "data")), true);
+    assert.equal(await exists(join(storage.localPath, "projects")), true);
+    assert.equal(compute.status, "running");
+    assert.equal(attachment.status, "attached");
+    assert.equal(entry.url, "http://127.0.0.1:8787/workspaces/grant-lab-local001?token=share_local_secret");
+    assert.equal(composeService.environment.OPL_WORKSPACE_ID, "ws-local001");
+    assert.equal(composeService.environment.OPL_SHARE_TOKEN, "share_local_secret");
+    assert.deepEqual(composeService.volumes, [
+      `${join(storage.localPath, "data")}:/data`,
+      `${join(storage.localPath, "projects")}:/projects`
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("local Docker provider creates real compose, disk, URL, and preserves disk after server destroy", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-cloud-local-docker-"));
   try {

@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, Workspace provisioning, URL sharing, hourly settlement, support, and admin operations.",
+  "currentSlice": "Business-chain closure for wallet, account-scoped compute resources, storage volumes, storage attachments, Workspace URL entry, request usage, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -45,161 +45,163 @@
   ],
   "publicRoutes": [
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "public.home",
       "path": "/",
       "label": "Public Home",
       "area": "public",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
       "requiresAuth": false,
-      "requiresAdmin": false,
       "routeKind": "static_content",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/HomePage.jsx",
       "serviceBoundary": "StaticPublicContent",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false
     },
     {
+      "status": "folded_into_parent",
+      "contractLifecycle": "folded_parent",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "public.pricing",
       "path": "/pricing",
       "label": "Pricing",
       "area": "public",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
-      "requiresAuth": false,
-      "requiresAdmin": false,
       "routeKind": "static_content",
-      "contractLifecycle": "folded_parent",
       "pageModule": "packages/console/ui/pages/HomePage.jsx",
       "serviceBoundary": "StaticPublicContent",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": false
     },
     {
+      "status": "folded_into_parent",
+      "contractLifecycle": "folded_parent",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "public.docs",
       "path": "/docs",
       "label": "Docs",
       "area": "public",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
-      "requiresAuth": false,
-      "requiresAdmin": false,
       "routeKind": "static_content",
-      "contractLifecycle": "folded_parent",
       "pageModule": "packages/console/ui/pages/HomePage.jsx",
       "serviceBoundary": "StaticPublicContent",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": false
     },
     {
+      "status": "folded_into_parent",
+      "contractLifecycle": "folded_parent",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "public.status",
       "path": "/status",
       "label": "Service Status",
       "area": "public",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
-      "requiresAuth": false,
-      "requiresAdmin": false,
       "routeKind": "static_content",
-      "contractLifecycle": "folded_parent",
       "pageModule": "packages/console/ui/pages/HomePage.jsx",
       "serviceBoundary": "StaticPublicContent",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": false
     }
   ],
   "authRoutes": [
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "authenticate",
+        "session"
+      ],
       "id": "auth.login",
       "path": "/login",
       "label": "Login",
       "area": "auth",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
       "requiresAuth": false,
-      "requiresAdmin": false,
       "routeKind": "auth_flow",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/LoginPage.jsx",
       "apiClient": "packages/console/ui/api/auth-api.js",
       "apiRoutes": [
         "POST /api/auth/login"
       ],
       "serviceBoundary": "AuthController",
-      "capabilities": [
-        "read",
-        "authenticate",
-        "session"
-      ]
+      "requiresAdmin": false
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "session"
+      ],
       "id": "auth.logout",
       "path": "/logout",
       "label": "Logout",
       "area": "auth",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "routeKind": "auth_flow",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/LoginPage.jsx",
       "apiClient": "packages/console/ui/api/auth-api.js",
       "apiRoutes": [
         "POST /api/auth/logout"
       ],
       "serviceBoundary": "AuthController",
-      "capabilities": [
-        "read",
-        "session"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     }
   ],
   "consoleRoutes": [
     {
+      "status": "folded_into_parent",
+      "contractLifecycle": "folded_parent",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "console.root",
       "path": "/console",
       "label": "Console",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
-      "requiresAuth": true,
-      "requiresAdmin": false,
-      "hiddenInMenu": true,
       "redirectRouteId": "console.overview",
+      "hiddenInMenu": true,
       "routeKind": "read_model",
-      "contractLifecycle": "folded_parent",
       "serviceBoundary": "ConsoleRouter",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "summary"
+      ],
       "id": "console.overview",
       "path": "/console/overview",
       "label": "Overview",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "routeKind": "read_model",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/OverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
       "apiRoutes": [
@@ -207,26 +209,285 @@
         "GET /api/support/tickets"
       ],
       "serviceBoundary": "ConsoleReadModelService",
-      "capabilities": [
-        "read",
-        "summary"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "action",
+        "evidence"
+      ],
+      "id": "compute.list",
+      "path": "/console/compute",
+      "label": "Compute",
+      "area": "console",
+      "role": "lab_owner",
+      "menu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "ComputeResource",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "write",
+        "action",
+        "evidence"
+      ],
+      "id": "compute.create",
+      "path": "/console/compute/new",
+      "label": "Create Compute",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "ComputeResource",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/compute-resources"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "detail",
+        "read",
+        "action",
+        "evidence"
+      ],
+      "id": "compute.detail",
+      "path": "/console/compute/:id",
+      "label": "Compute Detail",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "ComputeResource",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/compute-resources/destroy"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "action",
+        "evidence"
+      ],
+      "id": "storage.list",
+      "path": "/console/storage",
+      "label": "Storage",
+      "area": "console",
+      "role": "lab_owner",
+      "menu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "StorageVolume",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "write",
+        "action",
+        "evidence"
+      ],
+      "id": "storage.create",
+      "path": "/console/storage/new",
+      "label": "Create Storage",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "StorageVolume",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/storage-volumes"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "detail",
+        "read",
+        "action",
+        "evidence"
+      ],
+      "id": "storage.detail",
+      "path": "/console/storage/:id",
+      "label": "Storage Detail",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "StorageVolume",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/storage-volumes/destroy"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "action",
+        "evidence"
+      ],
+      "id": "attachment.list",
+      "path": "/console/attachments",
+      "label": "Attachments",
+      "area": "console",
+      "role": "lab_owner",
+      "menu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "StorageAttachment",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "write",
+        "action",
+        "evidence"
+      ],
+      "id": "attachment.create",
+      "path": "/console/attachments/new",
+      "label": "Attach Storage",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "StorageAttachment",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/storage-attachments"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "detail",
+        "read",
+        "action",
+        "evidence"
+      ],
+      "id": "attachment.detail",
+      "path": "/console/attachments/:id",
+      "label": "Attachment Detail",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "StorageAttachment",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/storage-attachments/detach"
+      ],
+      "serviceBoundary": "ResourceProvisioningService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "action"
+      ],
       "id": "workspace.list",
       "path": "/console/workspaces",
       "label": "Workspaces",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "featureFlag": "workspaces",
       "routeKind": "business_object",
       "objectKind": "Workspace",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
       "apiClient": "packages/console/ui/api/workspaces-api.js",
       "apiRoutes": [
@@ -234,163 +495,160 @@
         "POST /api/workspaces/reset-token",
         "POST /api/workspaces/delete-token"
       ],
-      "serviceBoundary": "WorkspaceLifecycleService",
-      "capabilities": [
-        "list",
-        "read",
-        "action"
-      ]
+      "serviceBoundary": "WorkspaceEntryService",
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "write"
+      ],
       "id": "workspace.create",
       "path": "/console/workspaces/new",
       "label": "Create Workspace",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "featureFlag": "workspaces",
       "routeKind": "business_object",
       "objectKind": "Workspace",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx",
       "apiClient": "packages/console/ui/api/workspaces-api.js",
       "apiRoutes": [
         "GET /api/state",
         "POST /api/workspaces"
       ],
-      "serviceBoundary": "WorkspaceLifecycleService",
-      "capabilities": [
-        "read",
-        "write"
-      ]
+      "serviceBoundary": "WorkspaceEntryService",
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
-      "id": "workspace.detail",
-      "path": "/console/workspaces/:id",
-      "label": "Workspace Detail",
-      "area": "console",
-      "role": "lab_owner",
-      "ownerRepo": "opl-console",
       "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
-      "hiddenInMenu": true,
-      "featureFlag": "workspaces",
-      "routeKind": "business_object",
-      "objectKind": "Workspace",
       "contractLifecycle": "current",
-      "pageModule": "packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx",
-      "apiClient": "packages/console/ui/api/workspaces-api.js",
-      "apiRoutes": [
-        "GET /api/state",
-        "POST /api/workspaces/stop-server",
-        "POST /api/workspaces/restart-server",
-        "POST /api/workspaces/destroy-server",
-        "POST /api/workspaces/destroy-disk",
-        "POST /api/workspaces/runtime-status"
-      ],
-      "serviceBoundary": "WorkspaceLifecycleService",
+      "ownerRepo": "opl-console",
       "capabilities": [
         "detail",
         "read",
         "action",
         "evidence"
-      ]
+      ],
+      "id": "workspace.detail",
+      "path": "/console/workspaces/:id",
+      "label": "Workspace Detail",
+      "area": "console",
+      "role": "lab_owner",
+      "hiddenInMenu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "business_object",
+      "objectKind": "Workspace",
+      "pageModule": "packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx",
+      "apiClient": "packages/console/ui/api/workspaces-api.js",
+      "apiRoutes": [
+        "GET /api/state",
+        "POST /api/workspaces/reset-token",
+        "POST /api/workspaces/delete-token",
+        "POST /api/workspaces/runtime-status"
+      ],
+      "serviceBoundary": "WorkspaceEntryService",
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "external",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "external_link"
+      ],
       "id": "gateway.external",
       "path": "/console/gateway",
       "label": "Gateway",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "external",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "featureFlag": "gatewayExternalLink",
       "routeKind": "external_integration",
       "objectKind": "GatewayIntegration",
-      "contractLifecycle": "current",
+      "externalUrl": "https://gflabtoken.cn/",
       "pageModule": "packages/console/ui/pages/gateway/GatewayPage.jsx",
       "serviceBoundary": "OPLGatewayExternalIntegration",
-      "capabilities": [
-        "read",
-        "external_link"
-      ],
-      "externalUrl": "https://gflabtoken.cn/"
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "list",
+        "detail"
+      ],
       "id": "billing.overview",
       "path": "/console/billing",
       "label": "Billing",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "featureFlag": "billing",
       "routeKind": "read_model",
       "objectKind": "Wallet",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/billing/BillingPage.jsx",
       "apiClient": "packages/console/ui/api/billing-api.js",
       "apiRoutes": [
         "GET /api/state"
       ],
       "serviceBoundary": "WalletService",
-      "capabilities": [
-        "read",
-        "list",
-        "detail"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "folded_into_parent",
+      "contractLifecycle": "folded_parent",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "detail"
+      ],
       "id": "billing.wallet",
       "path": "/console/billing/wallet",
       "label": "Wallet and Holds",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "featureFlag": "billing",
       "routeKind": "read_model",
       "objectKind": "Wallet",
-      "contractLifecycle": "folded_parent",
       "pageModule": "packages/console/ui/pages/billing/BillingPage.jsx",
       "apiClient": "packages/console/ui/api/billing-api.js",
       "apiRoutes": [
         "GET /api/state"
       ],
       "serviceBoundary": "WalletService",
+      "requiresAdmin": false,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
       "capabilities": [
         "read",
         "detail"
-      ]
-    },
-    {
+      ],
       "id": "account.overview",
       "path": "/console/account",
       "label": "Account & Lab",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "routeKind": "read_model",
       "objectKind": "User",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/account/AccountPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
       "apiRoutes": [
@@ -398,53 +656,54 @@
         "GET /api/auth/me"
       ],
       "serviceBoundary": "ManagementModel",
-      "capabilities": [
-        "read",
-        "detail"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "audit"
+      ],
       "id": "support.list",
       "path": "/console/support",
       "label": "Support",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "featureFlag": "support",
       "routeKind": "business_object",
       "objectKind": "SupportTicket",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/support/SupportPage.jsx",
       "apiClient": "packages/console/ui/api/support-api.js",
       "apiRoutes": [
         "GET /api/support/tickets"
       ],
       "serviceBoundary": "SupportTicketService",
-      "capabilities": [
-        "list",
-        "read",
-        "audit"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "write",
+        "audit"
+      ],
       "id": "support.create",
       "path": "/console/support/new",
       "label": "New Ticket",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "featureFlag": "support",
       "routeKind": "business_object",
       "objectKind": "SupportTicket",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/support/SupportPage.jsx",
       "apiClient": "packages/console/ui/api/support-api.js",
       "apiRoutes": [
@@ -452,54 +711,53 @@
         "POST /api/support/tickets"
       ],
       "serviceBoundary": "SupportTicketService",
-      "capabilities": [
-        "read",
-        "write",
-        "audit"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "detail",
+        "read",
+        "audit"
+      ],
       "id": "support.detail",
       "path": "/console/support/:id",
       "label": "Ticket Detail",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "featureFlag": "support",
       "routeKind": "business_object",
       "objectKind": "SupportTicket",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/support/SupportPage.jsx",
       "apiClient": "packages/console/ui/api/support-api.js",
       "apiRoutes": [
         "GET /api/support/tickets"
       ],
       "serviceBoundary": "SupportTicketService",
-      "capabilities": [
-        "detail",
-        "read",
-        "audit"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "list"
+      ],
       "id": "alerts.list",
       "path": "/console/alerts",
       "label": "Alerts",
       "area": "console",
       "role": "lab_owner",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": false,
       "menu": true,
       "featureFlag": "alerts",
       "routeKind": "read_model",
       "objectKind": "RuntimeReadiness",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/catalog/FabricPages.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
       "apiRoutes": [
@@ -507,45 +765,45 @@
         "GET /api/support/tickets"
       ],
       "serviceBoundary": "ConsoleReadModelService",
-      "capabilities": [
-        "read",
-        "list"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": true
     }
   ],
   "adminRoutes": [
     {
+      "status": "folded_into_parent",
+      "contractLifecycle": "folded_parent",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "admin.root",
       "path": "/admin",
       "label": "Admin",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
-      "requiresAuth": true,
-      "requiresAdmin": true,
-      "hiddenInMenu": true,
       "redirectRouteId": "admin.overview",
+      "hiddenInMenu": true,
       "routeKind": "read_model",
-      "contractLifecycle": "folded_parent",
       "serviceBoundary": "ConsoleRouter",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": true,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "summary"
+      ],
       "id": "admin.overview",
       "path": "/admin/overview",
       "label": "Admin Overview",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": true,
       "adminMenu": true,
       "routeKind": "read_model",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
       "apiRoutes": [
@@ -553,25 +811,27 @@
         "GET /api/operator/summary"
       ],
       "serviceBoundary": "ConsoleReadModelService",
-      "capabilities": [
-        "read",
-        "summary"
-      ]
+      "requiresAdmin": true,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "action",
+        "audit"
+      ],
       "id": "admin.users",
       "path": "/admin/users",
       "label": "Users",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": true,
       "adminMenu": true,
       "routeKind": "read_model",
       "objectKind": "User",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
       "apiRoutes": [
@@ -579,28 +839,28 @@
         "POST /api/billing/topups"
       ],
       "serviceBoundary": "ManagementModel",
-      "capabilities": [
-        "list",
-        "read",
-        "action",
-        "audit"
-      ]
+      "requiresAdmin": true,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "list",
+        "action",
+        "audit"
+      ],
       "id": "admin.billing",
       "path": "/admin/billing",
       "label": "Billing Ops",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": true,
       "adminMenu": true,
       "featureFlag": "manualTopup",
       "routeKind": "read_model",
       "objectKind": "Wallet",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/billing-api.js",
       "apiRoutes": [
@@ -608,28 +868,28 @@
         "POST /api/billing/topups"
       ],
       "serviceBoundary": "WalletService",
+      "requiresAdmin": true,
+      "requiresAuth": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-ledger",
       "capabilities": [
         "read",
         "list",
-        "action",
+        "evidence",
         "audit"
-      ]
-    },
-    {
+      ],
       "id": "admin.ledger",
       "path": "/admin/ledger",
       "label": "Ledger",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-ledger",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": true,
       "adminMenu": true,
       "featureFlag": "ledgerAdmin",
       "routeKind": "read_model",
       "objectKind": "Usage",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/ledger-api.js",
       "apiRoutes": [
@@ -637,28 +897,27 @@
         "GET /api/ledger/task-receipts"
       ],
       "serviceBoundary": "LedgerEvidenceService",
-      "capabilities": [
-        "read",
-        "list",
-        "evidence",
-        "audit"
-      ]
+      "requiresAdmin": true,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read",
+        "detail",
+        "audit"
+      ],
       "id": "admin.runtime",
       "path": "/admin/runtime",
       "label": "Runtime",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": true,
       "adminMenu": true,
       "featureFlag": "runtimeAdmin",
       "routeKind": "read_model",
       "objectKind": "RuntimeReadiness",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/console-read-api.js",
       "apiRoutes": [
@@ -667,97 +926,94 @@
         "GET /api/operator/summary"
       ],
       "serviceBoundary": "RuntimeOperationService",
-      "capabilities": [
-        "read",
-        "detail",
-        "audit"
-      ]
+      "requiresAdmin": true,
+      "requiresAuth": true
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "list",
+        "read",
+        "audit"
+      ],
       "id": "admin.support",
       "path": "/admin/support",
       "label": "Support Ops",
       "area": "admin",
       "role": "admin",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": true,
-      "requiresAdmin": true,
       "adminMenu": true,
       "featureFlag": "support",
       "routeKind": "business_object",
       "objectKind": "SupportTicket",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
       "apiClient": "packages/console/ui/api/support-api.js",
       "apiRoutes": [
         "GET /api/support/tickets"
       ],
       "serviceBoundary": "SupportTicketService",
-      "capabilities": [
-        "list",
-        "read",
-        "audit"
-      ]
+      "requiresAdmin": true,
+      "requiresAuth": true
     }
   ],
   "errorRoutes": [
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "error.forbidden",
       "path": "/403",
       "label": "Forbidden",
       "area": "error",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": false,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "routeKind": "static_content",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/shared/page-widgets.jsx",
       "serviceBoundary": "ConsoleRouter",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": false
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "error.notFound",
       "path": "/404",
       "label": "Not Found",
       "area": "error",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": false,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "routeKind": "static_content",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/shared/page-widgets.jsx",
       "serviceBoundary": "ConsoleRouter",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": false
     },
     {
+      "status": "implemented",
+      "contractLifecycle": "current",
+      "ownerRepo": "opl-console",
+      "capabilities": [
+        "read"
+      ],
       "id": "error.server",
       "path": "/500",
       "label": "Error",
       "area": "error",
       "role": "public",
-      "ownerRepo": "opl-console",
-      "status": "implemented",
-      "requiresAuth": false,
-      "requiresAdmin": false,
       "hiddenInMenu": true,
       "routeKind": "static_content",
-      "contractLifecycle": "current",
       "pageModule": "packages/console/ui/pages/shared/page-widgets.jsx",
       "serviceBoundary": "ConsoleRouter",
-      "capabilities": [
-        "read"
-      ]
+      "requiresAdmin": false,
+      "requiresAuth": false
     }
   ]
 }

@@ -45,6 +45,15 @@ test("workspace and support click targets are route/action registry backed", () 
   const actionsById = new Map(consoleActions.map((action) => [action.id, action]));
 
   for (const id of [
+    "compute.create",
+    "compute.detail",
+    "compute.destroy",
+    "storage.create",
+    "storage.detail",
+    "storage.destroy",
+    "attachment.create",
+    "attachment.detail",
+    "attachment.detach",
     "workspace.create",
     "workspace.detail",
     "workspace.openUrl",
@@ -68,6 +77,7 @@ test("page modules do not call raw server APIs directly", async () => {
     "packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
     "packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx",
     "packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx",
+    "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
     "packages/console/ui/pages/billing/BillingPage.jsx",
     "packages/console/ui/pages/gateway/GatewayPage.jsx",
     "packages/console/ui/pages/account/AccountPage.jsx",

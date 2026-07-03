@@ -111,6 +111,101 @@ export class LocalDockerProvider {
     };
   }
 
+  async createStorageVolume({ storageId, storage = {}, packagePlan }) {
+    const storageDir = join(this.rootDir, storageId);
+    const diskPath = join(storageDir, "disk");
+    await mkdir(join(diskPath, "data"), { recursive: true });
+    await mkdir(join(diskPath, "projects"), { recursive: true });
+    return {
+      providerResourceId: `local-storage-${storageId}`,
+      status: "available",
+      billingStatus: "active",
+      sizeGb: storage.sizeGb || packagePlan.diskGb,
+      localPath: diskPath
+    };
+  }
+
+  async createComputeResource({ computeId, compute = {}, packagePlan }) {
+    const computeDir = join(this.rootDir, computeId);
+    await mkdir(computeDir, { recursive: true });
+    return {
+      providerResourceId: `local-server-${computeId}`,
+      status: "running",
+      billingStatus: "active",
+      spec: packagePlan.server,
+      image: this.image,
+      localPath: computeDir,
+      composePath: join(computeDir, "docker-compose.yml"),
+      runtime: {
+        dockerId: `local-docker-${computeId}`,
+        serviceName: composeServiceName(computeId),
+        localPath: computeDir,
+        name: compute.name || computeId
+      }
+    };
+  }
+
+  async attachStorage({ attachment, compute, storage }) {
+    const computeDir = compute.localPath || compute.runtime?.localPath || join(this.rootDir, compute.id);
+    const storagePath = storage.localPath || join(this.rootDir, storage.id, "disk");
+    await mkdir(computeDir, { recursive: true });
+    await mkdir(join(storagePath, "data"), { recursive: true });
+    await mkdir(join(storagePath, "projects"), { recursive: true });
+    const composePath = join(computeDir, "docker-compose.yml");
+    await writeFile(composePath, this.composeFile({
+      serviceName: compute.runtime?.serviceName || composeServiceName(compute.id),
+      workspaceId: compute.id,
+      workspaceName: compute.name || compute.id,
+      packagePlan: { id: compute.packageId || "basic" },
+      token: "",
+      hostDataPath: join(storagePath, "data"),
+      hostProjectsPath: join(storagePath, "projects")
+    }));
+    return {
+      providerAttachmentId: `local-attachment-${attachment.id}`,
+      status: "attached",
+      composePath,
+      localPath: computeDir
+    };
+  }
+
+  async createWorkspaceEntry({ workspaceId, workspaceName, slug, token, attachment, compute, storage, packagePlan }) {
+    const computeDir = compute.localPath || compute.runtime?.localPath || attachment.localPath || join(this.rootDir, compute.id);
+    const storagePath = storage.localPath || join(this.rootDir, storage.id, "disk");
+    const serviceName = compute.runtime?.serviceName || composeServiceName(compute.id || workspaceId);
+    await mkdir(computeDir, { recursive: true });
+    await mkdir(join(storagePath, "data"), { recursive: true });
+    await mkdir(join(storagePath, "projects"), { recursive: true });
+    await writeFile(join(computeDir, ".env"), [
+      `OPL_WORKSPACE_ID=${workspaceId}`,
+      `OPL_WORKSPACE_NAME=${workspaceName}`,
+      `OPL_SHARE_TOKEN=${token}`,
+      `OPL_DATA_DIR=${storagePath}`,
+      `OPL_PACKAGE_ID=${packagePlan.id}`,
+      ""
+    ].join("\n"));
+    const composePath = join(computeDir, "docker-compose.yml");
+    await writeFile(composePath, this.composeFile({
+      serviceName,
+      workspaceId,
+      workspaceName,
+      packagePlan,
+      token,
+      hostDataPath: join(storagePath, "data"),
+      hostProjectsPath: join(storagePath, "projects")
+    }));
+    if (this.execute) {
+      await runCommand("docker", ["compose", "up", "-d"], computeDir);
+    }
+    return {
+      provider: this.name,
+      slug,
+      url: this.workspaceUrl({ slug, token }),
+      status: "ready",
+      composePath
+    };
+  }
+
   workspaceUrl({ slug, token }) {
     return `${this.baseUrl}/workspaces/${slug}?token=${token}`;
   }
@@ -176,7 +271,7 @@ export class LocalDockerProvider {
     return `http://${normalized}`;
   }
 
-  composeFile({ serviceName, workspaceId, workspaceName, packagePlan, token }) {
+  composeFile({ serviceName, workspaceId, workspaceName, packagePlan, token, hostDataPath = "./disk/data", hostProjectsPath = "./disk/projects" }) {
     return [
       "services:",
       `  ${serviceName}:`,
@@ -198,8 +293,8 @@ export class LocalDockerProvider {
       "    ports:",
       "      - \"127.0.0.1::3000\"",
       "    volumes:",
-      "      - ./disk/data:/data",
-      "      - ./disk/projects:/projects",
+      `      - ${hostDataPath}:/data`,
+      `      - ${hostProjectsPath}:/projects`,
       ""
     ].join("\n");
   }

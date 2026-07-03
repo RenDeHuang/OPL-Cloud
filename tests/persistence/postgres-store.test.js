@@ -18,6 +18,9 @@ function createFakePool() {
     audit_events: [],
     notifications: [],
     runtime_operations: [],
+    compute_resources: [],
+    storage_volumes: [],
+    storage_attachments: [],
     resource_usage_logs: [],
     request_usage_logs: [],
     wallet_transactions: [],
@@ -39,7 +42,7 @@ function createFakePool() {
       if (normalized.startsWith("CREATE TABLE IF NOT EXISTS") || normalized.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
         return { rows: [] };
       }
-      if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, resource_usage_logs, request_usage_logs")) {
+      if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations")) {
         tables.accounts.clear();
         tables.organizations.clear();
         tables.users.clear();
@@ -53,6 +56,9 @@ function createFakePool() {
         tables.audit_events = [];
         tables.notifications = [];
         tables.runtime_operations = [];
+        tables.compute_resources = [];
+        tables.storage_volumes = [];
+        tables.storage_attachments = [];
         tables.resource_usage_logs = [];
         tables.request_usage_logs = [];
         tables.wallet_transactions = [];
@@ -98,6 +104,15 @@ function createFakePool() {
       }
       if (normalized.startsWith("SELECT state FROM runtime_operations")) {
         return { rows: tables.runtime_operations.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM compute_resources")) {
+        return { rows: tables.compute_resources.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM storage_volumes")) {
+        return { rows: tables.storage_volumes.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM storage_attachments")) {
+        return { rows: tables.storage_attachments.map((state) => ({ state })) };
       }
       if (normalized.startsWith("SELECT state FROM resource_usage_logs")) {
         return { rows: tables.resource_usage_logs.map((state) => ({ state })) };
@@ -164,6 +179,18 @@ function createFakePool() {
       }
       if (normalized.startsWith("INSERT INTO runtime_operations")) {
         tables.runtime_operations.push(params[3]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO compute_resources")) {
+        tables.compute_resources.push(params[2]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO storage_volumes")) {
+        tables.storage_volumes.push(params[2]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO storage_attachments")) {
+        tables.storage_attachments.push(params[4]);
         return { rows: [] };
       }
       if (normalized.startsWith("INSERT INTO resource_usage_logs")) {
@@ -290,12 +317,59 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         attempts: 1
       }
     ],
+    computeResources: [
+      {
+        id: "compute-1",
+        ownerAccountId: "pi-alpha",
+        ownerUserId: "usr-ada",
+        packageId: "basic",
+        provider: "tencent-tke",
+        providerResourceId: "deployment-1",
+        status: "running",
+        billingStatus: "active",
+        spec: "2c4g",
+        createdAt: "2026-07-01T02:40:00.000Z",
+        updatedAt: "2026-07-01T02:40:00.000Z"
+      }
+    ],
+    storageVolumes: [
+      {
+        id: "storage-1",
+        ownerAccountId: "pi-alpha",
+        ownerUserId: "usr-ada",
+        packageId: "basic",
+        provider: "tencent-tke",
+        providerResourceId: "pvc-1",
+        status: "attached",
+        billingStatus: "active",
+        sizeGb: 20,
+        createdAt: "2026-07-01T02:41:00.000Z",
+        updatedAt: "2026-07-01T02:42:00.000Z"
+      }
+    ],
+    storageAttachments: [
+      {
+        id: "attach-1",
+        ownerAccountId: "pi-alpha",
+        computeId: "compute-1",
+        storageId: "storage-1",
+        mountPath: "/data",
+        provider: "tencent-tke",
+        providerAttachmentId: "volume-mount-1",
+        status: "attached",
+        createdAt: "2026-07-01T02:42:00.000Z",
+        updatedAt: "2026-07-01T02:42:00.000Z"
+      }
+    ],
     resourceUsageLogs: [
       {
         id: "usage-resource-1",
         userId: "usr-ada",
         accountId: "pi-alpha",
         workspaceId: "ws-alpha",
+        computeId: "compute-1",
+        storageId: "storage-1",
+        attachmentId: "attach-1",
         resourceType: "compute",
         quantity: 1,
         unit: "hour",
@@ -394,6 +468,9 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS audit_events")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS notifications")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS runtime_operations")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS compute_resources")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS storage_volumes")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS storage_attachments")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_logs")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_logs")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS wallet_transactions")));

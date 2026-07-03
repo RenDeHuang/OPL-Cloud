@@ -42,6 +42,111 @@ test("Tencent TKE provider reports readiness gaps before Kubernetes execution", 
   });
 });
 
+test("Tencent TKE provider exposes split compute, storage, attachment, and Workspace entry operations", async () => {
+  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-resource-state-"));
+  const calls = [];
+  const runner = async ({ command, args }) => {
+    calls.push({ command, args });
+    if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
+      return JSON.stringify(sharedIngressFixture());
+    }
+    return "";
+  };
+  const provider = new TencentTkeProvider({
+    env: requiredEnv,
+    runner,
+    commandExists: () => true,
+    stateRootDir
+  });
+  const packagePlan = { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, gpu: 0, server: "2c4g", diskGb: 10 };
+
+  try {
+    const storage = await provider.createStorageVolume({
+      storageId: "storage-tke001",
+      accountId: "pi-alpha",
+      storage: { id: "storage-tke001", ownerAccountId: "pi-alpha", sizeGb: 10 },
+      packagePlan
+    });
+    const compute = await provider.createComputeResource({
+      computeId: "compute-tke001",
+      accountId: "pi-alpha",
+      compute: { id: "compute-tke001", ownerAccountId: "pi-alpha", name: "CPU node" },
+      packagePlan
+    });
+    const attachment = await provider.attachStorage({
+      attachment: {
+        id: "attach-tke001",
+        ownerAccountId: "pi-alpha",
+        computeId: "compute-tke001",
+        storageId: "storage-tke001",
+        mountPath: "/data"
+      },
+      compute: { id: "compute-tke001", ownerAccountId: "pi-alpha", name: "CPU node", ...compute },
+      storage: { id: "storage-tke001", ownerAccountId: "pi-alpha", sizeGb: 10, ...storage }
+    });
+    const entry = await provider.createWorkspaceEntry({
+      workspaceId: "ws-tke-resource",
+      ownerAccountId: "pi-alpha",
+      workspaceName: "Grant Lab",
+      slug: "grant-lab-resource",
+      token: "share_resource_secret",
+      attachment: { id: "attach-tke001", mountPath: "/data", ...attachment },
+      compute: { id: "compute-tke001", ownerAccountId: "pi-alpha", name: "CPU node", ...compute },
+      storage: { id: "storage-tke001", ownerAccountId: "pi-alpha", sizeGb: 10, ...storage },
+      packagePlan
+    });
+
+    const storageManifestPath = join(stateRootDir, "storage-tke001", "storage.pvc.k8s.json");
+    const computeManifestPath = join(stateRootDir, "compute-tke001", "compute.k8s.json");
+    const attachmentManifestPath = join(stateRootDir, "attach-tke001", "attachment.k8s.json");
+    const entrySecretPath = join(stateRootDir, "ws-tke-resource", "workspace-entry-secret.k8s.json");
+    const routePath = join(stateRootDir, "ws-tke-resource", "shared-ingress-route.k8s.json");
+    assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${storageManifestPath}`,
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${computeManifestPath}`,
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${attachmentManifestPath}`,
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${entrySecretPath}`,
+      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
+      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${routePath}`
+    ]);
+    assert.equal(storage.providerResourceId, "pvc/opl-storage-tke001-data");
+    assert.equal(compute.providerResourceId, "deployment/opl-compute-tke001");
+    assert.equal(attachment.providerAttachmentId, "deployment/opl-compute-tke001:pvc/opl-storage-tke001-data:/data");
+    assert.equal(entry.url, "https://workspace.medopl.cn/w/ws-tke-resource?token=share_resource_secret");
+
+    const storageManifest = JSON.parse(await readFile(storageManifestPath, "utf8"));
+    const computeManifest = JSON.parse(await readFile(computeManifestPath, "utf8"));
+    const attachmentManifest = JSON.parse(await readFile(attachmentManifestPath, "utf8"));
+    const entrySecret = JSON.parse(await readFile(entrySecretPath, "utf8"));
+    const routeManifest = JSON.parse(await readFile(routePath, "utf8"));
+    const computeDeployment = computeManifest.items.find((item) => item.kind === "Deployment");
+    const attachmentDeployment = attachmentManifest.items.find((item) => item.kind === "Deployment");
+    const attachmentContainer = attachmentDeployment.spec.template.spec.containers[0];
+    const workspaceRule = routeManifest.spec.rules.find((rule) => rule.host === "workspace.medopl.cn");
+
+    assert.equal(storageManifest.kind, "PersistentVolumeClaim");
+    assert.equal(storageManifest.metadata.name, "opl-storage-tke001-data");
+    assert.equal(storageManifest.spec.resources.requests.storage, "10Gi");
+    assert.equal(computeDeployment.metadata.name, "opl-compute-tke001");
+    assert.equal(computeDeployment.spec.template.spec.volumes, undefined);
+    assert.equal(attachmentDeployment.metadata.name, "opl-compute-tke001");
+    assert.equal(entrySecret.kind, "Secret");
+    assert.equal(entrySecret.metadata.name, "opl-compute-tke001-env");
+    assert.equal(Buffer.from(entrySecret.data.OPL_SHARE_TOKEN, "base64").toString("utf8"), "share_resource_secret");
+    assert.equal(attachmentDeployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, "opl-storage-tke001-data");
+    assert.deepEqual(attachmentContainer.volumeMounts.map((mount) => `${mount.mountPath}:${mount.subPath}`), [
+      "/data:data",
+      "/projects:projects"
+    ]);
+    assert.deepEqual(workspaceRule.http.paths.map((path) => `${path.path}->${path.backend.service.name}:${path.backend.service.port.number}`), [
+      "/w/ws-tke-resource->opl-compute-tke001:3000",
+      "/->opl-cloud-control-plane:8787"
+    ]);
+  } finally {
+    await rm(stateRootDir, { recursive: true, force: true });
+  }
+});
+
 test("Tencent TKE provider applies runtime resources and registers the Workspace path on the shared Ingress", async () => {
   const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
   const calls = [];

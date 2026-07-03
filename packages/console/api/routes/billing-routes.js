@@ -10,7 +10,6 @@ export function buildBillingRoutes({ appService, body, requireAdmin, session, sc
         }
         : body);
     },
-    "POST /api/billing/settle": () => appService.settleBilling(scopedWorkspaceInput(body)),
     "POST /api/billing/request-usage": () => appService.recordRequestUsage(scopedWorkspaceInput(body)),
     "POST /api/billing/reconciliation": () => {
       requireAdmin();

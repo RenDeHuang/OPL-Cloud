@@ -32,6 +32,15 @@ test("commercial Console route contract covers current public, auth, owner, and 
     ["public.status", "folded_into_parent"],
     ["auth.login", "implemented"],
     ["console.overview", "implemented"],
+    ["compute.list", "implemented"],
+    ["compute.create", "implemented"],
+    ["compute.detail", "implemented"],
+    ["storage.list", "implemented"],
+    ["storage.create", "implemented"],
+    ["storage.detail", "implemented"],
+    ["attachment.list", "implemented"],
+    ["attachment.create", "implemented"],
+    ["attachment.detail", "implemented"],
     ["workspace.list", "implemented"],
     ["workspace.create", "implemented"],
     ["workspace.detail", "implemented"],
@@ -60,6 +69,9 @@ test("commercial Console route contract covers current public, auth, owner, and 
 test("Lab Owner menu is commercial and excludes operator surfaces", () => {
   assert.deepEqual(ownerMenuRoutes.map((route) => route.label), [
     "Overview",
+    "Compute",
+    "Storage",
+    "Attachments",
     "Workspaces",
     "Gateway",
     "Billing",
@@ -118,5 +130,21 @@ test("route table and routeTo do not expose reserved routes in visible owner or 
   }
 
   assert.equal(routeTo("workspace.detail", { id: "ws_demo" }), "/console/workspaces/ws_demo");
+  assert.equal(routeTo("compute.detail", { id: "compute_demo" }), "/console/compute/compute_demo");
+  assert.equal(routeTo("storage.detail", { id: "storage_demo" }), "/console/storage/storage_demo");
+  assert.equal(routeTo("attachment.detail", { id: "attachment_demo" }), "/console/attachments/attachment_demo");
   assert.equal(routeTo("support.detail", { id: "ticket_demo" }), "/console/support/ticket_demo");
+});
+
+test("current auth UI does not link to reserved account flows", async () => {
+  const source = await readFile(new URL("../../packages/console/ui/pages/LoginPage.jsx", import.meta.url), "utf8");
+
+  for (const path of [
+    "/register",
+    "/invite/accept",
+    "/forgot-password",
+    "/reset-password"
+  ]) {
+    assert.equal(source.includes(`href="${path}"`), false, `${path} must not be linked from current auth UI`);
+  }
 });

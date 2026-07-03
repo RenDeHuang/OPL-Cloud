@@ -30,9 +30,7 @@ a {
 .publicShell,
 .loginShell {
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(245, 247, 251, 0.92), rgba(255, 255, 255, 0.96)),
-    url("data:image/svg+xml,%3Csvg width='1200' height='680' viewBox='0 0 1200 680' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23d7dee8' stroke-width='1'%3E%3Cpath d='M0 120h1200M0 260h1200M0 400h1200M0 540h1200M160 0v680M360 0v680M560 0v680M760 0v680M960 0v680'/%3E%3C/g%3E%3C/svg%3E");
+  background: #f5f7fb;
 }
 
 .publicNav {
@@ -70,11 +68,12 @@ a {
   width: 30px;
   height: 30px;
   border-radius: 7px;
+  flex: 0 0 30px;
+  line-height: 1;
+  overflow: hidden;
 }
 
-.publicLinks,
-.heroActions,
-.authLinks {
+.publicLinks {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -112,18 +111,18 @@ button.primary {
   color: #2e3a4d;
 }
 
-.homeHero {
+.publicConsole {
   display: grid;
   grid-template-columns: minmax(0, 0.88fr) minmax(360px, 1.12fr);
-  gap: 42px;
+  gap: 34px;
   max-width: 1180px;
-  min-height: calc(100vh - 220px);
+  min-height: calc(100vh - 250px);
   margin: 0 auto;
-  padding: 70px 28px 48px;
+  padding: 58px 28px 42px;
   align-items: center;
 }
 
-.heroCopy h1 {
+.publicConsoleCopy h1 {
   margin: 8px 0 12px;
   color: #101828;
   font-size: clamp(42px, 6vw, 76px);
@@ -131,7 +130,7 @@ button.primary {
   letter-spacing: 0;
 }
 
-.heroCopy p {
+.publicConsoleCopy p {
   max-width: 520px;
   margin: 0 0 24px;
   color: #4e5b6d;
@@ -148,36 +147,39 @@ button.primary {
   text-transform: uppercase;
 }
 
-.heroPreview {
+.publicConsolePanel {
   border: 1px solid #dbe2ed;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 24px 68px rgba(16, 24, 40, 0.12);
+  background: #fff;
+  box-shadow: 0 22px 60px rgba(16, 24, 40, 0.1);
 }
 
-.previewTop {
+.publicPanelTop {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 16px;
   border-bottom: 1px solid #e4e8f0;
   padding: 14px 16px;
 }
 
-.previewTop span {
-  width: 10px;
-  height: 10px;
+.publicPanelTop span {
   border-radius: 999px;
-  background: #18a058;
+  background: #e9f8ef;
+  color: #147a3e;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
-.chainPreview {
+.publicMetrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   padding: 16px;
 }
 
-.previewStep,
+.publicMetric,
 .homeBand article {
   min-height: 118px;
   border: 1px solid #e2e7f0;
@@ -186,27 +188,46 @@ button.primary {
   padding: 16px;
 }
 
-.previewStep {
+.publicMetric {
   display: flex;
   gap: 12px;
 }
 
-.previewStep svg,
+.publicMetric svg,
 .homeBand svg {
   color: #1456d9;
 }
 
-.previewStep strong,
+.publicMetric strong,
 .homeBand h2 {
   display: block;
   margin: 0 0 4px;
   color: #111827;
 }
 
-.previewStep span,
+.publicMetric span,
 .homeBand p {
   color: #64748b;
   font-size: 13px;
+}
+
+.publicFlow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  border-top: 1px solid #e4e8f0;
+  padding: 14px 16px 16px;
+}
+
+.publicFlow span {
+  border: 1px solid #e2e7f0;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 9px 10px;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .homeBand {
@@ -313,6 +334,294 @@ button.primary {
   margin-top: 16px;
 }
 
+.surfaceTitle {
+  display: grid;
+  gap: 3px;
+}
+
+.surfaceTitle span {
+  color: #1456d9;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.surfaceTitle strong {
+  color: #111827;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.consoleSurface {
+  display: grid;
+  gap: 16px;
+}
+
+.consoleSurface.compact {
+  max-width: 980px;
+}
+
+.metricStrip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.metricTile,
+.insightPanel,
+.resourceSplit article {
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.metricTile {
+  min-height: 112px;
+  padding: 14px;
+}
+
+.metricTopline,
+.resourceLabel,
+.insightPanel header,
+.timelineList .ant-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metricTopline span:first-child,
+.resourceLabel span:first-child,
+.insightPanel header span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.metricIcon {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  background: #eef4ff;
+  color: #1456d9;
+}
+
+.metricTile strong {
+  display: block;
+  margin-top: 14px;
+  color: #101828;
+  font-size: 27px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.metricTile small,
+.resourceSplit small {
+  display: block;
+  margin-top: 7px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.metricTile.good {
+  border-color: #b8e5c8;
+}
+
+.metricTile.warn {
+  border-color: #ffd79d;
+}
+
+.metricTile.danger {
+  border-color: #ffb4ad;
+}
+
+.metricTile.info {
+  border-color: #b9cef8;
+}
+
+.consoleGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.85fr);
+  gap: 14px;
+}
+
+.consoleGrid.equal {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.consoleGrid.three {
+  grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr) minmax(260px, 0.9fr);
+}
+
+.insightPanel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.insightPanel header {
+  min-height: 58px;
+  border-bottom: 1px solid #e5eaf2;
+  padding: 14px 16px;
+}
+
+.insightPanel h2 {
+  margin: 2px 0 0;
+  color: #111827;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.panelActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.panelBody {
+  padding: 16px;
+}
+
+.resourceSplit {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.resourceSplit article {
+  min-height: 112px;
+  padding: 14px;
+}
+
+.resourceSplit strong {
+  display: block;
+  margin-top: 16px;
+  color: #111827;
+  font-size: 20px;
+  line-height: 1.15;
+  word-break: break-word;
+}
+
+.statusPill {
+  margin-inline-end: 0;
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+.actionGroup {
+  width: 100%;
+}
+
+.timelineList .ant-list-item {
+  justify-content: flex-start;
+  border-block-end: 1px solid #eef1f6 !important;
+  padding: 10px 0 !important;
+}
+
+.timelineDot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #98a2b3;
+}
+
+.timelineDot.good {
+  background: #16a34a;
+}
+
+.timelineDot.warn {
+  background: #d97706;
+}
+
+.timelineDot.danger {
+  background: #dc2626;
+}
+
+.timelineDot.info {
+  background: #1456d9;
+}
+
+.timelineContent {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.timelineContent strong,
+.timelineContent span,
+.timelineMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.objectTable .ant-table-wrapper,
+.objectTable .ant-table {
+  border-radius: 8px;
+}
+
+.inlineCode {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #d8e0ec;
+  border-radius: 7px;
+  background: #f8fafc;
+  padding: 6px 8px;
+  color: #344054;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.walletBar {
+  overflow: hidden;
+  height: 10px;
+  border-radius: 999px;
+  background: #edf1f7;
+}
+
+.walletBar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #1456d9;
+}
+
+.stackList {
+  display: grid;
+  gap: 8px;
+}
+
+.stackRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #edf1f7;
+  padding: 9px 0;
+}
+
+.stackRow:last-child {
+  border-bottom: 0;
+}
+
+.stackRow strong {
+  color: #111827;
+}
+
+.stackRow span,
+.stackRow small {
+  color: #667085;
+}
+
 .ant-pro-page-container-children-container {
   padding-block-start: 16px !important;
 }
@@ -336,25 +645,56 @@ button.primary {
 @media (max-width: 860px) {
   .publicNav,
   .publicLinks,
-  .homeHero,
-  .homeBand,
-  .heroActions {
+  .publicConsole,
+  .homeBand {
     align-items: stretch;
   }
 
   .publicNav,
-  .publicLinks,
-  .heroActions {
+  .publicLinks {
     flex-direction: column;
   }
 
-  .homeHero,
+  .publicConsole,
   .homeBand,
-  .chainPreview {
+  .publicMetrics,
+  .publicFlow {
     grid-template-columns: 1fr;
   }
 
-  .homeHero {
+  .publicConsole {
     padding-top: 34px;
+  }
+
+  .metricStrip,
+  .consoleGrid,
+  .consoleGrid.equal,
+  .consoleGrid.three,
+  .resourceSplit {
+    grid-template-columns: 1fr;
+  }
+
+  .shellEmail,
+  .ant-pro-global-header-header-actions-avatar {
+    display: none !important;
+  }
+
+  .ant-pro-page-container .ant-page-header-heading-sub-title {
+    display: none;
+  }
+
+  .surfaceTitle strong {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .objectTable {
+    overflow-x: auto;
+  }
+
+  .panelActions {
+    justify-content: flex-start;
   }
 }

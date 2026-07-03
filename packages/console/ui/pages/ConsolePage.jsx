@@ -19,6 +19,17 @@ import { BillingPage } from "./billing/BillingPage.jsx";
 import { AlertsPage, ApprovalsPage, ReceiptsPage, ResourcesPage } from "./catalog/FabricPages.jsx";
 import { GatewayPage } from "./gateway/GatewayPage.jsx";
 import { OverviewPage } from "./OverviewPage.jsx";
+import {
+  ComputeResourceDetailPage,
+  ComputeResourcesPage,
+  CreateComputeResourcePage,
+  CreateStorageAttachmentPage,
+  CreateStorageVolumePage,
+  StorageAttachmentDetailPage,
+  StorageAttachmentsPage,
+  StorageVolumeDetailPage,
+  StorageVolumesPage
+} from "./resources/ResourceProvisioningPages.jsx";
 import { buildMenu } from "./shared/console-menu.jsx";
 import { ForbiddenPage } from "./shared/page-widgets.jsx";
 import { NewSupportTicketPage, SupportPage, SupportTicketPage } from "./support/SupportPage.jsx";
@@ -52,7 +63,7 @@ export default function ConsolePage({ route, session, onLogout }) {
 
   return (
     <ProLayout
-      title="OPL Cloud"
+      title="OPL Console"
       logo={<div className="proLogo">OPL</div>}
       location={{ pathname: path }}
       layout="mix"
@@ -69,7 +80,7 @@ export default function ConsolePage({ route, session, onLogout }) {
         <Button key="logout" icon={<LogOut size={15} />} onClick={logout}>退出</Button>
       ]}
       avatarProps={{
-        title: session.user.email,
+        title: <span className="shellEmail">{session.user.email}</span>,
         size: "small",
         icon: <UserRound size={16} />
       }}
@@ -89,6 +100,15 @@ function renderRoute(ctx) {
   if (path.startsWith("/admin/runtime")) return <AdminRuntimePage {...ctx} />;
   if (path.startsWith("/admin/support")) return <AdminSupportPage {...ctx} />;
   if (path.startsWith("/admin")) return <AdminOverviewPage {...ctx} />;
+  if (path.startsWith("/console/compute/new")) return <CreateComputeResourcePage {...ctx} />;
+  if (path.startsWith("/console/compute/")) return <ComputeResourceDetailPage {...ctx} />;
+  if (path.startsWith("/console/compute")) return <ComputeResourcesPage {...ctx} />;
+  if (path.startsWith("/console/storage/new")) return <CreateStorageVolumePage {...ctx} />;
+  if (path.startsWith("/console/storage/")) return <StorageVolumeDetailPage {...ctx} />;
+  if (path.startsWith("/console/storage")) return <StorageVolumesPage {...ctx} />;
+  if (path.startsWith("/console/attachments/new")) return <CreateStorageAttachmentPage {...ctx} />;
+  if (path.startsWith("/console/attachments/")) return <StorageAttachmentDetailPage {...ctx} />;
+  if (path.startsWith("/console/attachments")) return <StorageAttachmentsPage {...ctx} />;
   if (path.startsWith("/console/workspaces/new")) return <CreateWorkspacePage {...ctx} />;
   if (path.startsWith("/console/workspaces/") || path.startsWith("/admin/workspaces/")) return <WorkspaceDetailPage {...ctx} />;
   if (path.startsWith("/console/workspaces")) return <WorkspacesPage {...ctx} />;

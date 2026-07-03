@@ -14,6 +14,7 @@ import {
 import { BillingService } from "./services/billing-service.js";
 import { ConsoleReadModelService } from "./services/console-read-model-service.js";
 import { LedgerEvidenceService } from "./services/ledger-evidence-service.js";
+import { ResourceProvisioningService } from "./services/resource-provisioning-service.js";
 import { RuntimeOperationService } from "./services/runtime-operation-service.js";
 import { WorkspaceLifecycleService } from "./services/workspace-lifecycle-service.js";
 
@@ -34,6 +35,7 @@ export class OplCloudService {
     this.runtimeOperations = new RuntimeOperationService(this);
     this.ledgerEvidence = new LedgerEvidenceService(this);
     this.billing = new BillingService(this);
+    this.resourceProvisioning = new ResourceProvisioningService(this);
     this.workspaceLifecycle = new WorkspaceLifecycleService(this);
     this.consoleReadModel = new ConsoleReadModelService(this);
   }
@@ -89,6 +91,30 @@ export class OplCloudService {
 
   async createWorkspace(...args) {
     return this.workspaceLifecycle.createWorkspace(...args);
+  }
+
+  async createComputeResource(...args) {
+    return this.resourceProvisioning.createComputeResource(...args);
+  }
+
+  async destroyComputeResource(...args) {
+    return this.resourceProvisioning.destroyComputeResource(...args);
+  }
+
+  async createStorageVolume(...args) {
+    return this.resourceProvisioning.createStorageVolume(...args);
+  }
+
+  async destroyStorageVolume(...args) {
+    return this.resourceProvisioning.destroyStorageVolume(...args);
+  }
+
+  async attachStorage(...args) {
+    return this.resourceProvisioning.attachStorage(...args);
+  }
+
+  async detachStorage(...args) {
+    return this.resourceProvisioning.detachStorage(...args);
   }
 
   async createStorageBackup(...args) {

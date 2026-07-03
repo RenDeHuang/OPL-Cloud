@@ -34,6 +34,27 @@ test("business object contract defines the current commercial object boundary", 
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
 });
 
+test("business object contract uses account scoped TKE resources as current product truth", async () => {
+  const contract = await readJson(businessObjectContractPath);
+  const kinds = new Map(contract.objectKinds.map((object) => [object.kind, object]));
+
+  for (const [kind, requiredCapabilities] of [
+    ["ComputeResource", ["list", "detail", "read", "write", "action", "evidence"]],
+    ["StorageVolume", ["list", "detail", "read", "write", "action", "evidence"]],
+    ["StorageAttachment", ["list", "detail", "read", "write", "action", "evidence"]],
+    ["Workspace", ["list", "detail", "read", "write", "action", "evidence"]]
+  ]) {
+    const object = kinds.get(kind);
+    assert.ok(object, `missing object kind ${kind}`);
+    for (const capability of requiredCapabilities) {
+      assert.ok(object.requiredCapabilitiesForImplemented.includes(capability), `${kind} must require ${capability}`);
+    }
+  }
+
+  assert.equal(kinds.has("WorkspaceCompute"), false, "WorkspaceCompute must be retired from current object truth");
+  assert.equal(kinds.has("WorkspaceStorage"), false, "WorkspaceStorage must be retired from current object truth");
+});
+
 test("route object kinds map to committed object specs and owner repos", async () => {
   const businessContract = await readJson(businessObjectContractPath);
   const routeContract = await readJson(routeContractPath);

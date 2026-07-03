@@ -2,6 +2,7 @@ import { buildAdminRoutes } from "./admin-routes.js";
 import { buildAuthRoutes } from "./auth-routes.js";
 import { buildBillingRoutes } from "./billing-routes.js";
 import { buildLedgerRoutes } from "./ledger-routes.js";
+import { buildResourceRoutes } from "./resource-routes.js";
 import { buildRuntimeRoutes } from "./runtime-routes.js";
 import { buildSupportRoutes } from "./support-routes.js";
 import { buildWorkspaceRoutes } from "./workspace-routes.js";
@@ -19,17 +20,18 @@ export const apiRouteManifest = [
   "POST /api/organizations",
   "POST /api/users",
   "POST /api/organizations/members",
+  "POST /api/compute-resources",
+  "POST /api/compute-resources/destroy",
+  "POST /api/storage-volumes",
+  "POST /api/storage-volumes/destroy",
+  "POST /api/storage-attachments",
+  "POST /api/storage-attachments/detach",
   "POST /api/workspaces",
-  "POST /api/workspaces/stop-server",
-  "POST /api/workspaces/restart-server",
-  "POST /api/workspaces/destroy-server",
-  "POST /api/workspaces/destroy-disk",
   "POST /api/workspaces/storage-backups",
   "POST /api/workspaces/restore-storage-backup",
   "POST /api/workspaces/prune-storage-backups",
   "POST /api/workspaces/reset-token",
   "POST /api/workspaces/delete-token",
-  "POST /api/billing/settle",
   "POST /api/billing/request-usage",
   "POST /api/billing/reconciliation",
   "GET /api/ledger/task-receipts",
@@ -47,6 +49,7 @@ export function buildApiRoutes(deps) {
     ...buildAuthRoutes(deps),
     ...buildAdminRoutes(deps),
     ...buildBillingRoutes(deps),
+    ...buildResourceRoutes(deps),
     ...buildWorkspaceRoutes(deps),
     ...buildLedgerRoutes(deps),
     ...buildRuntimeRoutes(deps),

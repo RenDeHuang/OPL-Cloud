@@ -1,69 +1,111 @@
 import React from "react";
-import { PageContainer, ProCard } from "@ant-design/pro-components";
-import { Button, Descriptions, Empty, List, Space, Tag, Typography } from "antd";
-import { Database, HardDrive, Link as LinkIcon, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
+import { Button, Empty, Typography } from "antd";
+import { Cable, Database, HardDrive, Link as LinkIcon, RefreshCw, Server, Trash2 } from "lucide-react";
 import {
   createStorageBackup,
   deleteWorkspaceToken,
-  destroyWorkspaceDisk,
-  destroyWorkspaceServer,
-  resetWorkspaceToken,
-  restartWorkspaceServer,
-  stopWorkspaceServer
+  resetWorkspaceToken
 } from "../../api/workspaces-api.js";
-import { navigate } from "../../consoleRoutes.js";
+import { defaultLaunchConfig, isFeatureEnabled } from "../../config/launch-config.js";
+import { navigate, routeTo } from "../../consoleRoutes.js";
+import {
+  ActionGroup,
+  ConsoleSurface,
+  InsightPanel,
+  ResourceSplit,
+  StatusPill,
+  TimelineList
+} from "../shared/commercial-console.jsx";
 import { packageText, statusColor, statusLabel, valueLabel } from "../shared/formatters.js";
 
+function toneForStatus(value) {
+  const color = statusColor(value);
+  if (color === "green") return "good";
+  if (color === "red") return "danger";
+  if (color === "orange") return "warn";
+  return "info";
+}
+
 export function WorkspaceDetailPage({ selected, selectedPlan, state, session, runAction }) {
-  if (!selected) return <PageContainer title="Workspace"><Empty description="暂无 Workspace" /></PageContainer>;
+  if (!selected) {
+    return (
+      <ConsoleSurface title="Workspace" eyebrow="Delivery">
+        <Empty description="暂无 Workspace" />
+      </ConsoleSurface>
+    );
+  }
   const backups = (state.storageBackups || []).filter((backup) => backup.workspaceId === selected.id);
+  const storageBackupsEnabled = isFeatureEnabled("storageBackups", defaultLaunchConfig);
+  const compute = (state.computeResources || []).find((item) => item.id === selected.computeId);
+  const storage = (state.storageVolumes || []).find((item) => item.id === selected.storageId);
+  const attachment = (state.storageAttachments || []).find((item) => item.id === selected.attachmentId);
   return (
-    <PageContainer
+    <ConsoleSurface
       title={selected.name}
-      subTitle="Workspace URL, compute, storage"
-      extra={<Button onClick={() => navigate("/console/workspaces")}>返回列表</Button>}
+      eyebrow="Workspace detail"
+      subtitle="URL entry linked to compute, storage, and attachment"
+      extra={<Button onClick={() => navigate(routeTo("workspace.list"))}>返回列表</Button>}
     >
-      <ProCard gutter={16} wrap>
-        <ProCard title="Workspace URL" colSpan={{ xs: 24, xl: 12 }}>
-          <Space direction="vertical" size={16} className="fullWidth">
-            <Typography.Text copyable={selected.access?.tokenStatus === "active"} ellipsis>{selected.url}</Typography.Text>
-            <Space wrap>
-              <Button icon={<LinkIcon size={15} />} disabled={selected.access?.tokenStatus !== "active"} onClick={() => window.open(selected.url, "_blank", "noopener,noreferrer")}>打开</Button>
-              <Button icon={<RefreshCw size={15} />} disabled={selected.access?.tokenStatus !== "active"} onClick={() => runAction(() => resetWorkspaceToken({ workspaceId: selected.id }, session.csrfToken), "URL 已重置")}>重置</Button>
-              <Button danger icon={<Trash2 size={15} />} disabled={selected.access?.tokenStatus !== "active"} onClick={() => runAction(() => deleteWorkspaceToken({ workspaceId: selected.id }, session.csrfToken), "URL 已停用")}>停用</Button>
-            </Space>
-          </Space>
-        </ProCard>
-        <ProCard title="计算与存储" colSpan={{ xs: 24, xl: 12 }}>
-          <Descriptions column={1} size="small">
-            <Descriptions.Item label="状态"><Tag color={statusColor(selected.state)}>{statusLabel(selected)}</Tag></Descriptions.Item>
-            <Descriptions.Item label="套餐">{selectedPlan?.name} · {packageText(selectedPlan)}</Descriptions.Item>
-            <Descriptions.Item label="计算">{selected.server?.spec} · {valueLabel(selected.server?.status)}</Descriptions.Item>
-            <Descriptions.Item label="存储">{selected.disk?.sizeGb}GB · {valueLabel(selected.disk?.status)}</Descriptions.Item>
-          </Descriptions>
-        </ProCard>
-      </ProCard>
-      <ProCard className="sectionCard" gutter={16} wrap>
-        <ProCard title="生命周期" colSpan={{ xs: 24, xl: 12 }}>
-          <Space wrap>
-            <Button icon={<Square size={15} />} onClick={() => runAction(() => stopWorkspaceServer({ workspaceId: selected.id, confirm: true }, session.csrfToken), "计算已停止")}>停止计算</Button>
-            <Button icon={<RotateCw size={15} />} onClick={() => runAction(() => restartWorkspaceServer({ workspaceId: selected.id }, session.csrfToken), "计算已启动")}>启动计算</Button>
-            <Button danger icon={<Trash2 size={15} />} onClick={() => runAction(() => destroyWorkspaceServer({ workspaceId: selected.id, confirm: true }, session.csrfToken), "计算已销毁")}>销毁计算</Button>
-            <Button danger icon={<HardDrive size={15} />} onClick={() => runAction(() => destroyWorkspaceDisk({ workspaceId: selected.id, confirmDataLoss: true }, session.csrfToken), "存储已销毁")}>销毁存储</Button>
-          </Space>
-        </ProCard>
-        <ProCard title="备份" colSpan={{ xs: 24, xl: 12 }}>
-          <Space direction="vertical" className="fullWidth">
-            <Button icon={<Database size={15} />} onClick={() => runAction(() => createStorageBackup({ workspaceId: selected.id, reason: "console", retentionPolicy: { retainLast: 2 } }, session.csrfToken), "备份已创建")}>创建备份</Button>
-            <List
-              size="small"
-              dataSource={backups.slice(-4).reverse()}
-              locale={{ emptyText: "暂无备份" }}
-              renderItem={(backup) => <List.Item><Tag>{valueLabel(backup.status)}</Tag><Typography.Text ellipsis>{backup.id}</Typography.Text></List.Item>}
+      <div className="consoleGrid equal">
+        <InsightPanel
+          title="Workspace URL"
+          eyebrow="Access"
+          actions={<StatusPill label={valueLabel(selected.access?.tokenStatus)} tone={selected.access?.tokenStatus === "active" ? "good" : "warn"} />}
+        >
+          <div className="stackList">
+            <Typography.Text copyable={selected.access?.tokenStatus === "active"} className="inlineCode">{selected.url}</Typography.Text>
+            <ActionGroup
+              actions={[
+                { label: "打开", icon: <LinkIcon size={15} />, disabled: selected.access?.tokenStatus !== "active", onClick: () => window.open(selected.url, "_blank", "noopener,noreferrer") },
+                { label: "重置", icon: <RefreshCw size={15} />, disabled: selected.access?.tokenStatus !== "active", onClick: () => runAction(() => resetWorkspaceToken({ workspaceId: selected.id }, session.csrfToken), "URL 已重置") },
+                { label: "停用", danger: true, icon: <Trash2 size={15} />, disabled: selected.access?.tokenStatus !== "active", onClick: () => runAction(() => deleteWorkspaceToken({ workspaceId: selected.id }, session.csrfToken), "URL 已停用") }
+              ]}
             />
-          </Space>
-        </ProCard>
-      </ProCard>
-    </PageContainer>
+          </div>
+        </InsightPanel>
+
+        <InsightPanel title="计算与存储" eyebrow="Resources">
+          <ResourceSplit
+            items={[
+              { label: "状态", value: statusLabel(selected), meta: selected.state, status: "Workspace", tone: toneForStatus(selected.state) },
+              { label: "套餐", value: selectedPlan?.name || "-", meta: packageText(selectedPlan), status: "plan", tone: "info" },
+              { label: "计算", value: compute?.name || selected.computeId || "-", meta: valueLabel(compute?.status || selected.server?.status), status: "ComputeResource", tone: toneForStatus(compute?.status || selected.server?.status) },
+              { label: "存储", value: storage?.name || selected.storageId || "-", meta: `${selected.disk?.sizeGb || storage?.sizeGb || 0}GB`, status: "StorageVolume", tone: toneForStatus(storage?.status || selected.disk?.status) },
+              { label: "挂载关系", value: attachment?.id || selected.attachmentId || "-", meta: attachment?.mountPath || selected.disk?.mountPath || "/data", status: "StorageAttachment", tone: toneForStatus(attachment?.status) }
+            ]}
+          />
+        </InsightPanel>
+      </div>
+
+      <div className="consoleGrid equal">
+        <InsightPanel title="资源对象" eyebrow="Compute, storage, attachment">
+          <ActionGroup
+            actions={[
+              { label: "查看计算资源", icon: <Server size={15} />, disabled: !selected.computeId, onClick: () => navigate(routeTo("compute.detail", { id: selected.computeId })) },
+              { label: "查看存储资源", icon: <HardDrive size={15} />, disabled: !selected.storageId, onClick: () => navigate(routeTo("storage.detail", { id: selected.storageId })) },
+              { label: "查看挂载关系", icon: <Cable size={15} />, disabled: !selected.attachmentId, onClick: () => navigate(routeTo("attachment.detail", { id: selected.attachmentId })) }
+            ]}
+          />
+        </InsightPanel>
+
+        {storageBackupsEnabled && (
+          <InsightPanel
+            title="备份"
+            eyebrow="Storage"
+            actions={<Button icon={<Database size={15} />} onClick={() => runAction(() => createStorageBackup({ workspaceId: selected.id, reason: "console", retentionPolicy: { retainLast: 2 } }, session.csrfToken), "备份已创建")}>创建备份</Button>}
+          >
+            <TimelineList
+              emptyText="暂无备份"
+              items={backups.slice(-5).reverse().map((backup) => ({
+                title: backup.id,
+                description: valueLabel(backup.status),
+                meta: backup.createdAt,
+                tone: String(backup.status).includes("failed") ? "danger" : "good"
+              }))}
+            />
+          </InsightPanel>
+        )}
+      </div>
+    </ConsoleSurface>
   );
 }
