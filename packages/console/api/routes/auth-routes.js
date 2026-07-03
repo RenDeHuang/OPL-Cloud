@@ -4,11 +4,19 @@ function routeNotFound() {
   return error;
 }
 
-export function buildAuthRoutes({ auth, request, response, readJson }) {
+export function buildAuthRoutes({ auth, request, response, readJson, operatorSummaryToken }) {
   return {
     "POST /api/auth/login": async () => {
       if (!auth) throw routeNotFound();
       return auth.login(await readJson(request), { request, response });
+    },
+    "POST /api/auth/operator-login": async () => {
+      if (!auth) throw routeNotFound();
+      return auth.operatorLogin(await readJson(request), {
+        request,
+        response,
+        expectedToken: operatorSummaryToken
+      });
     },
     "POST /api/auth/logout": async () => {
       if (!auth) throw routeNotFound();

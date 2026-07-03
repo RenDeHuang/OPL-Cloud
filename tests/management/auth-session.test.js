@@ -276,6 +276,66 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
   }
 });
 
+test("operator token can create an admin session for production verifier actions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-operator-"));
+  const calls = [];
+  const appService = {
+    async manualTopUp(input) {
+      calls.push(["manualTopUp", input]);
+      return { id: input.accountId, balance: input.amount, frozen: 0 };
+    }
+  };
+  const auth = createAuthController({
+    env: { OPL_OPERATOR_SUMMARY_TOKEN: "operator-secret" },
+    usersPath: join(root, "users.json"),
+    seedUsers: [
+      {
+        id: "usr-admin",
+        email: "admin@example.com",
+        password: "secret-admin",
+        name: "Admin",
+        role: "admin",
+        accountId: "admin"
+      }
+    ]
+  });
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    auth,
+    operatorSummaryToken: "operator-secret"
+  }));
+  try {
+    const operatorLogin = await postJson(origin, "/api/auth/operator-login", {
+      operatorToken: "operator-secret"
+    });
+    assert.equal(operatorLogin.response.status, 200);
+    assert.equal(operatorLogin.payload.user.role, "admin");
+    assert.ok(operatorLogin.payload.csrfToken);
+
+    const operatorTopUp = await postJson(origin, "/api/billing/topups", {
+      accountId: "pi-production-verifier",
+      amount: 1000,
+      reason: "production_verification_credit"
+    }, {
+      cookie: cookieFrom(operatorLogin.response),
+      "x-opl-csrf-token": operatorLogin.payload.csrfToken
+    });
+    assert.equal(operatorTopUp.response.status, 200);
+    assert.deepEqual(calls, [
+      ["manualTopUp", {
+        accountId: "pi-production-verifier",
+        amount: 1000,
+        reason: "production_verification_credit",
+        operatorUserId: "usr-admin",
+        operatorAccountId: "admin"
+      }]
+    ]);
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("auth users seed into the control-plane store and survive controller recreation", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-store-auth-"));
   const store = new MemoryStore();

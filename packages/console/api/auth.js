@@ -270,6 +270,24 @@ export function createAuthController({
       return { user: publicUser(user), csrfToken };
     },
 
+    async operatorLogin({ operatorToken }, { request, response, expectedToken }) {
+      if (!expectedToken) throw authError(403, "operator_token_not_configured");
+      if (!operatorToken || operatorToken !== expectedToken) throw authError(403, "operator_token_invalid");
+      const users = await loadUsers();
+      const admin = users.find((item) => item.role === "admin" && item.status !== "disabled");
+      if (!admin) throw authError(403, "operator_admin_user_required");
+      const sessionId = randomToken();
+      const csrfToken = randomToken(24);
+      sessions.set(sessionId, {
+        userId: admin.id,
+        csrfToken,
+        createdAt: new Date().toISOString(),
+        expiresAt: Date.now() + sessionTtlMs
+      });
+      setSessionCookie(response, request, sessionId, Math.floor(sessionTtlMs / 1000));
+      return { user: publicUser(admin), csrfToken };
+    },
+
     async logout(request, response) {
       const sessionId = parseCookies(request.headers.cookie || "")[sessionCookieName];
       if (sessionId) sessions.delete(sessionId);
@@ -279,7 +297,8 @@ export function createAuthController({
 
     async requireSession(request, { requireCsrf = false } = {}) {
       const current = await sessionFromRequest(request);
-      if (requireCsrf && request.headers["x-opl-csrf"] !== current.session.csrfToken) {
+      const csrfHeader = request.headers["x-opl-csrf"] || request.headers["x-opl-csrf-token"];
+      if (requireCsrf && csrfHeader !== current.session.csrfToken) {
         throw authError(403, "csrf_token_invalid");
       }
       return {

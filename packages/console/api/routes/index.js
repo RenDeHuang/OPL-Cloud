@@ -9,6 +9,7 @@ import { buildWorkspaceRoutes } from "./workspace-routes.js";
 export const apiRouteManifest = [
   "GET /api/healthz",
   "POST /api/auth/login",
+  "POST /api/auth/operator-login",
   "POST /api/auth/logout",
   "GET /api/auth/me",
   "GET /api/state",
