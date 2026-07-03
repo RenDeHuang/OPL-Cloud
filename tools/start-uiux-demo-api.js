@@ -10,7 +10,9 @@ import { uiuxDemoAccounts, uiuxDemoAuthSeedJson, uiuxDemoPublicUrl } from "./uiu
 const root = fileURLToPath(new URL("..", import.meta.url));
 const port = String(process.env.PORT || "8791");
 const dataPath = process.env.OPL_CLOUD_DATA_PATH || join(root, ".runtime", "uiux-demo-state.json");
-const resetState = process.env.OPL_UIUX_DEMO_RESET !== "0";
+const runtimeProvider = process.env.OPL_RUNTIME_PROVIDER || "local-docker";
+const resetState = process.env.OPL_UIUX_DEMO_RESET === "1" ||
+  (process.env.OPL_UIUX_DEMO_RESET !== "0" && runtimeProvider !== "tencent-tke");
 const owner = uiuxDemoAccounts.find((account) => account.role === "pi");
 const admin = uiuxDemoAccounts.find((account) => account.role === "admin");
 
@@ -43,11 +45,21 @@ async function seedAuthUser(account) {
   );
 }
 
+async function assertRuntimeReadyForProvisioning() {
+  if (runtimeProvider !== "tencent-tke") return;
+  const runtimeReadiness = await service.runtimeReadiness();
+  if (runtimeReadiness.ready) return;
+  const missingEnv = (runtimeReadiness.missingEnv || []).join(",");
+  const missingTools = (runtimeReadiness.missingTools || []).join(",");
+  throw new Error(`tencent_tke_demo_runtime_not_ready:missingEnv=${missingEnv || "none"};missingTools=${missingTools || "none"}`);
+}
+
 async function seedBusinessChain() {
   for (const account of uiuxDemoAccounts) await seedAuthUser(account);
 
   const state = await appStore.read();
   if (Object.keys(state.workspaces || {}).length > 0) return;
+  await assertRuntimeReadyForProvisioning();
 
   await service.manualTopUp({
     accountId: owner.accountId,
@@ -57,11 +69,30 @@ async function seedBusinessChain() {
     operatorAccountId: admin.accountId
   });
 
+  const compute = await service.createComputeResource({
+    accountId: owner.accountId,
+    userId: owner.id,
+    name: "OPL Demo Compute",
+    packageId: "basic"
+  });
+  const storage = await service.createStorageVolume({
+    accountId: owner.accountId,
+    userId: owner.id,
+    name: "OPL Demo Storage",
+    packageId: "basic",
+    sizeGb: 10
+  });
+  const attachment = await service.attachStorage({
+    accountId: owner.accountId,
+    computeId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
   const workspace = await service.createWorkspace({
     accountId: owner.accountId,
     userId: owner.id,
     workspaceName: "OPL Demo Workspace",
-    packageId: "basic"
+    attachmentId: attachment.id
   });
 
   await service.recordRequestUsage({

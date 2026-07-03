@@ -51,3 +51,26 @@ test("UIUX demo Workspace URLs default to a network-reachable API origin", () =>
   assert.equal(uiuxDemoPublicUrl({ env: { OPL_PUBLIC_URL: "https://workspace.example.com" }, port: "8791" }), "https://workspace.example.com");
   assert.equal(uiuxDemoPublicUrl({ env: {}, port: "8791", networkInterfaces: {} }), "http://127.0.0.1:8791");
 });
+
+test("UIUX demo API seeds the current compute storage attachment business chain", async () => {
+  const demoApiSource = await source("tools/start-uiux-demo-api.js");
+
+  for (const call of [
+    "createComputeResource",
+    "createStorageVolume",
+    "attachStorage",
+    "createWorkspace"
+  ]) {
+    assert.match(demoApiSource, new RegExp(`service\\.${call}\\(`), `demo API must seed via ${call}`);
+  }
+  assert.match(demoApiSource, /attachmentId: attachment\.id/, "Workspace seed must use an attachmentId");
+  assert.doesNotMatch(demoApiSource, /createWorkspace\(\{[\s\S]*packageId: "basic"[\s\S]*\}\)/, "demo seed must not create Workspace directly from packageId");
+});
+
+test("UIUX demo API does not reset real TKE state unless explicitly requested", async () => {
+  const demoApiSource = await source("tools/start-uiux-demo-api.js");
+
+  assert.match(demoApiSource, /OPL_RUNTIME_PROVIDER/, "demo API must branch on runtime provider");
+  assert.match(demoApiSource, /OPL_UIUX_DEMO_RESET === "1"/, "real runtime reset must require explicit opt-in");
+  assert.match(demoApiSource, /runtimeReadiness/, "demo API must preflight runtime readiness before real TKE provisioning");
+});

@@ -38,7 +38,7 @@ export function AccountPage({ state, wallet, session }) {
           <TimelineList
             items={[
               { title: "Workspace URL 可分发", description: "每个 Workspace 使用独立 URL token", meta: "access", tone: "good" },
-              { title: "计算和存储分开管理", description: "停止计算不销毁磁盘，销毁存储才停止存储计费", meta: "lifecycle", tone: "info" },
+              { title: "计算和存储分开管理", description: "先开通资源，再挂载存储并创建 Workspace URL", meta: "lifecycle", tone: "info" },
               { title: "7 天资源预冻结", description: "开通前冻结计算和存储预算", meta: "billing", tone: "warn" },
               { title: "账单按小时解释", description: "Wallet、Usage、Ledger 保持同一账户口径", meta: "ledger", tone: "info" }
             ]}

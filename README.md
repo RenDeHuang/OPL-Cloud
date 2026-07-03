@@ -23,14 +23,11 @@ Use only these OPL Cloud names in product copy, UI, and design documents.
 
 ```text
 PI signs in to OPL Console
--> creates an OPL Workspace
--> chooses one of the default compute/storage packages
--> confirms hourly billing and 7-day compute plus storage pre-freeze
--> OPL Cloud creates one runtime compute unit
--> OPL Cloud creates one persistent workspace storage volume
--> OPL Cloud deploys one one-person-lab-app Docker container
--> OPL Cloud mounts persistent storage into the Docker runtime
--> OPL Cloud creates a stable workspace URL with a permanent token
+-> opens a ComputeResource
+-> opens a StorageVolume
+-> attaches the storage volume to the compute resource
+-> creates an OPL Workspace URL entry from the attachment
+-> OPL Cloud deploys/routes one-person-lab-app WebUI runtime
 -> OPL Console shows the URL
 -> PI copies and shares the URL
 -> members open the URL and enter the OPL Workspace without login
@@ -39,20 +36,19 @@ PI signs in to OPL Console
 ## Core Resource Mapping
 
 ```text
-1 OPL Workspace
-= 1 runtime compute unit
-= 1 one-person-lab-app Docker container
-= 1 persistent workspace storage volume
-= 1 URL
+1 ComputeResource = account-owned runtime compute
+1 StorageVolume = account-owned retained storage
+1 StorageAttachment = one storage volume mounted to one compute resource
+1 OPL Workspace = URL token and one-person-lab-app WebUI entry for an attachment
 ```
 
-One PI account can own multiple OPL Workspaces.
+One PI account can own multiple compute resources, storage volumes, attachments, and Workspace URL entries.
 
 ## Critical Lifecycle Rule
 
-Compute and persistent storage lifecycles are separate.
+Compute and persistent storage lifecycles are separate first-class resources.
 
-Stopping or destroying compute must not destroy persistent storage. Storage is destroyed only after an explicit user confirmation. Storage billing continues until storage destruction completes.
+Lab Owner controls are: open compute, open storage, attach storage, create Workspace URL, reset/delete URL, detach storage, destroy compute, and destroy storage. The current TKE commercial model does not expose "stop compute to save cost" as an owner action, because TKE runtime reconciliation may still be billable.
 
 ## Access Rule
 
@@ -77,7 +73,7 @@ GPU Workspaces are outside the current production package list. They require a v
 
 Billing is hourly. The user-facing price is Tencent Cloud resource cost plus a 20% platform markup.
 
-Compute and storage must not operate unpaid. OPL Cloud freezes enough balance for 7 days of compute and persistent storage before opening or resuming a Workspace. Opening a Workspace charges the first hour immediately from available balance. Later settlements round up to full hours and charge available balance first, then the relevant frozen hold. If available balance is exhausted, OPL Cloud records a notification. If compute hold is exhausted, OPL Cloud stops compute and notifies the operator. Storage hold exhaustion freezes the Workspace state until the user adds balance or explicitly destroys storage.
+Compute and storage must not operate unpaid. OPL Cloud freezes enough balance for 7 days of compute before opening compute, and enough balance for 7 days of storage before opening storage. Ledger and usage records carry `computeId`, `storageId`, `attachmentId`, and `workspaceId` where applicable. If available balance or holds are exhausted, OPL Console records account and runtime notifications; owner-facing controls remain resource based.
 
 ## Product Design
 
@@ -90,10 +86,11 @@ For the current launch boundary, use [docs/status.md](./docs/status.md). The cur
 The current app implements the local business-chain loop with the Local Docker provider:
 
 - OPL Console UI
-- Basic and Pro CPU Workspace creation
+- Basic and Pro CPU compute creation
+- retained storage creation
+- storage attachment to compute
+- Workspace URL entry creation from an attachment
 - permanent workspace URL token
-- compute stop/restart/destroy controls
-- disk destroy with explicit confirmation
 - 7-day compute and storage prepaid holds
 - Local Docker Compose workspace artifacts under `.runtime/workspaces`
 - real OPL Workspace app image default: `ghcr.io/gaofeng21cn/one-person-lab-app:latest`
@@ -220,6 +217,8 @@ Then open `http://127.0.0.1:5178`. The demo API resets only `.runtime/uiux-demo-
 - Lab Owner: `owner@opl.local` / `OplOwnerPass2026!`
 - Admin: `admin@opl.local` / `OplAdminPass2026!`
 
+For local Console provisioning real TKE resources, use `OPL_RUNTIME_PROVIDER=tencent-tke` with the required TKE env vars. In TKE mode the demo API does not reset state unless `OPL_UIUX_DEMO_RESET=1` is explicit. See [DEV_GUIDE.md](./DEV_GUIDE.md).
+
 ## Production Deployment Contract
 
 Production deployment uses Tencent TKE only. Inject this repo's environment variables from your secret manager:
@@ -238,7 +237,7 @@ npm run validate:production-manifest -- --manifest deploy/production-manifest.ex
 
 The manifest format requires sensitive values to use `secretRef`, not inline plaintext.
 
-Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, and Workspace storage class. Each Workspace maps to a Deployment, Service, Ingress path, token Secret, and retained PVC. Compute lifecycle actions intentionally retain the PVC; storage deletion is a separate explicit action.
+Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, and Workspace storage class. ComputeResource maps to Deployment/Service, StorageVolume maps to PVC, StorageAttachment reconciles the Deployment volume mount, and Workspace maps to token Secret plus shared Ingress path.
 
 ## Production Verification
 
@@ -257,17 +256,16 @@ Only when both are ready does it create a real verification Workspace and exerci
 
 ```text
 credit account
-create Workspace
+create compute
+create storage
+attach storage
+create Workspace URL
 verify TKE runtime status for Deployment/PVC/Service/Ingress/Endpoints
 open Workspace URL
-stop runtime compute while retaining workspace storage
-restart runtime compute
-destroy runtime compute while retaining workspace storage
-recreate runtime compute from retained workspace storage
-open the same Workspace URL again after recreation
 settle internal ledger billing
-destroy verification runtime compute
-destroy verification workspace storage
+detach storage
+destroy verification compute
+destroy verification storage
 ```
 
 This command creates billable Tencent Cloud runtime resources and lifecycle events, then attempts to clean up the verification compute and storage on both success and post-creation failure paths. By default, the Workspace name and verification ledger source events include a unique run id so repeated verification runs create fresh cloud resources and remain traceable in billing records. Use a dedicated verification account. Successful runs write structured JSON to stdout; failed runs write structured JSON to stderr, including `cleanupErrors` when cleanup does not fully complete. If the verifier reports cleanup errors, inspect OPL Console and Tencent Cloud and explicitly destroy any remaining verification resources. The command writes no smoke report or generated artifact into the repository.
