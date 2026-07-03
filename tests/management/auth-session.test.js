@@ -187,6 +187,44 @@ test("health check stays unauthenticated for Kubernetes probes", async () => {
   }
 });
 
+test("readiness checks stay unauthenticated for Kubernetes probes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-readiness-"));
+  const appService = {
+    async runtimeReadiness() {
+      return { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] };
+    },
+    async productionReadiness() {
+      return { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] };
+    }
+  };
+  const auth = createAuthController({
+    usersPath: join(root, "users.json"),
+    seedUsers: [
+      {
+        id: "usr-pi",
+        email: "pi@example.com",
+        password: "secret-pi",
+        name: "Lab Owner",
+        role: "pi",
+        accountId: "pi-alpha"
+      }
+    ]
+  });
+  const { origin, close } = await listen(createRequestHandler({ appService, auth }));
+  try {
+    const runtime = await fetch(`${origin}/api/runtime/readiness`);
+    assert.equal(runtime.status, 200);
+    assert.deepEqual(await runtime.json(), { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] });
+
+    const production = await fetch(`${origin}/api/production/readiness`);
+    assert.equal(production.status, 200);
+    assert.deepEqual(await production.json(), { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] });
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("PI sessions are account scoped and cannot top up balances", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-auth-scope-"));
   const calls = [];

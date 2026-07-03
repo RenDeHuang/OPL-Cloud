@@ -56,6 +56,11 @@ export const service = createOplCloud({
 });
 
 const defaultAuth = createAuthController({ env: process.env, store: appStore });
+const publicApiRoutes = new Set([
+  "GET /api/healthz",
+  "GET /api/runtime/readiness",
+  "GET /api/production/readiness"
+]);
 
 function sendJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
@@ -182,7 +187,7 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       scopedWorkspaceInput: (body) => scopedWorkspaceInput(auth, null, body),
       requireAdmin: () => requireAdmin(auth, null)
     });
-    if (routeKey === "GET /api/healthz" || pathname.startsWith("/api/auth/")) {
+    if (publicApiRoutes.has(routeKey) || pathname.startsWith("/api/auth/")) {
       const handler = publicRoutes[routeKey];
       if (!handler) return sendJson(response, 404, { ok: false, error: "route_not_found" });
       return sendJson(response, 200, await handler());
