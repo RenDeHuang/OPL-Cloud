@@ -6,7 +6,7 @@ import {
   managementSnapshot
 } from "../management-model.js";
 import { fabricCatalogReadiness } from "../../../fabric/src/index.js";
-import { clone, money, now } from "./core-utils.js";
+import { clone, makeId, money, now } from "./core-utils.js";
 import {
   accountSnapshotForState,
   ensureAccount,
@@ -18,7 +18,65 @@ import { billingPolicy } from "./pricing-service.js";
 import { latestBillingReconciliationReport, operatorNotificationInScope } from "./workspace-service.js";
 import { OplDomainService } from "./opl-domain-service.js";
 
+function defaultAccountIdForState(state) {
+  return Object.values(state.users || {}).find((user) => user.accountId)?.accountId
+    || Object.values(state.workspaces || {}).find((workspace) => workspace.ownerAccountId)?.ownerAccountId
+    || "local-account";
+}
+
 export class ConsoleReadModelService extends OplDomainService {
+  async supportTickets({ accountId = null } = {}) {
+    const state = await this.store.read();
+    return (state.supportTickets || [])
+      .filter((ticket) => !accountId || ticket.accountId === accountId)
+      .slice()
+      .reverse()
+      .map(clone);
+  }
+
+  async createSupportTicket(input) {
+    return this.store.update((state) => {
+      state.supportTickets ??= [];
+      if (!input.accountId) throw new Error("support_ticket_account_required");
+      if (!input.title) throw new Error("support_ticket_title_required");
+      if (input.workspaceId) {
+        const workspace = state.workspaces?.[input.workspaceId];
+        if (!workspace || workspace.ownerAccountId !== input.accountId) {
+          throw new Error("support_ticket_workspace_not_in_account");
+        }
+      }
+      const timestamp = now();
+      const id = makeId("ticket", input.accountId, input.title, timestamp, state.supportTickets.length);
+      const ticket = {
+        id,
+        accountId: input.accountId,
+        userId: input.userId || "",
+        workspaceId: input.workspaceId || "",
+        title: input.title,
+        category: input.category || "Workspace",
+        priority: input.priority || "normal",
+        status: "open",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        messages: [
+          {
+            author: input.author || input.userId || "Lab Owner",
+            text: input.description || "Created from OPL Console",
+            createdAt: timestamp
+          }
+        ]
+      };
+      state.supportTickets.push(ticket);
+      state.audit.push(this.auditEvent({
+        accountId: ticket.accountId,
+        workspaceId: ticket.workspaceId,
+        type: "support.ticket_created",
+        sourceEventId: ticket.id
+      }));
+      return clone(ticket);
+    });
+  }
+
   async createOrganization(input) {
     return this.store.update((state) => {
       const organization = createOrganizationRecord(state, input);
@@ -72,11 +130,12 @@ export class ConsoleReadModelService extends OplDomainService {
     });
   }
 
-  async getState(accountId = "pi-alpha") {
+  async getState(accountId = null) {
     const state = await this.store.read();
-    const user = Object.values(state.users || {}).find((item) => item.accountId === accountId) || {
-      id: userIdForAccount(state, accountId),
-      accountId,
+    const resolvedAccountId = accountId || defaultAccountIdForState(state);
+    const user = Object.values(state.users || {}).find((item) => item.accountId === resolvedAccountId) || {
+      id: userIdForAccount(state, resolvedAccountId),
+      accountId: resolvedAccountId,
       role: "pi",
       status: "active",
       balance: 0,
@@ -84,7 +143,7 @@ export class ConsoleReadModelService extends OplDomainService {
       holds: {},
       totalRecharged: 0
     };
-    const wallet = walletSnapshot(user, accountId);
+    const wallet = walletSnapshot(user, resolvedAccountId);
     return {
       product: {
         name: "OPL Cloud",
@@ -93,17 +152,17 @@ export class ConsoleReadModelService extends OplDomainService {
       },
       billingPolicy: billingPolicy(this.pricing),
       packages: this.packages(),
-      account: accountSnapshotForState(state, accountId),
+      account: accountSnapshotForState(state, resolvedAccountId),
       user: publicWalletUser(user),
       wallet,
-      workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === accountId).map(clone),
-      billingLedger: state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone),
-      resourceUsageLogs: (state.resourceUsageLogs || []).filter((entry) => entry.accountId === accountId).map(clone),
-      requestUsageLogs: (state.requestUsageLogs || []).filter((entry) => entry.accountId === accountId).map(clone),
-      walletTransactions: (state.walletTransactions || []).filter((entry) => entry.accountId === accountId).map(clone),
-      manualTopups: (state.manualTopups || []).filter((entry) => entry.targetAccountId === accountId).map(clone),
-      requestUsageDedup: (state.requestUsageDedup || []).filter((entry) => entry.accountId === accountId).map(clone),
-      storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === accountId).map(clone),
+      workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === resolvedAccountId).map(clone),
+      billingLedger: state.billingLedger.filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      resourceUsageLogs: (state.resourceUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      requestUsageLogs: (state.requestUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      walletTransactions: (state.walletTransactions || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      manualTopups: (state.manualTopups || []).filter((entry) => entry.targetAccountId === resolvedAccountId).map(clone),
+      requestUsageDedup: (state.requestUsageDedup || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       billingReconciliation: {
         latestReport: clone(latestBillingReconciliationReport(state)),
         guard: clone(latestBillingReconciliationReport(state)?.guard || {
@@ -112,10 +171,10 @@ export class ConsoleReadModelService extends OplDomainService {
           reason: "billing_reconciliation_not_required"
         })
       },
-      evidenceLedger: (state.evidenceLedger || []).filter((entry) => entry.accountId === accountId).map(clone),
-      audit: state.audit.filter((entry) => entry.accountId === accountId).map(clone),
-      notifications: (state.notifications || []).filter((entry) => entry.accountId === accountId).map(clone),
-      runtimeOperations: state.runtimeOperations.filter((entry) => entry.accountId === accountId).map(clone)
+      evidenceLedger: (state.evidenceLedger || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      audit: state.audit.filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      notifications: (state.notifications || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
+      runtimeOperations: state.runtimeOperations.filter((entry) => entry.accountId === resolvedAccountId).map(clone)
     };
   }
 

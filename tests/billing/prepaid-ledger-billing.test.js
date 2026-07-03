@@ -47,7 +47,7 @@ function createTestService(runtimeProvider) {
   });
 }
 
-test("packages expose only production-ready CPU choices with 20 percent Tencent markup price snapshots", async () => {
+test("packages expose only production-ready CPU choices from the pricing catalog", async () => {
   const service = createTestService({
     name: "packages-only"
   });

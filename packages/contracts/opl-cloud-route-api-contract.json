@@ -11,11 +11,11 @@
   "productTruth": "one-person-lab-cloud",
   "frameworkTruth": "one-person-lab",
   "currentSlice": "OPL Console / OPL Workspace control-plane",
-  "futureRepos": ["opl-console", "opl-fabric", "opl-ledger"],
+  "repositoryBoundaries": ["opl-console", "opl-fabric", "opl-ledger"],
   "statuses": ["implemented", "folded_into_parent", "reserved"],
   "routeKinds": ["static_content", "auth_flow", "read_model", "business_object", "policy_or_approval_object"],
   "contractLifecycles": ["long_term", "long_term_gap", "folded_parent", "dynamic_prune"],
-  "boundaryRules": ["Console may call Fabric only through package boundary exports or future service APIs.", "Console may call Ledger only through package boundary exports or future service APIs.", "Implemented route means page + domain API client + server route + service boundary are all named.", "Folded routes may share a parent page until a domain API exists; they must not claim implemented status.", "Reserved routes are product route space, not implemented business capability.", "Do not add compatibility routes for retired APIs; move active callers to the current route and delete the old route.", "Static content may remain API-free; dynamic control-plane objects must not claim implemented status without read/write/action evidence.", "Long-term gaps stay in the route table only when they name an owner repo, lifecycle, and missing capability boundary.", "Dynamic prune routes are tracked only so they can be removed from active product claims."],
+  "boundaryRules": ["Console may call Fabric only through package boundary exports or published service APIs.", "Console may call Ledger only through package boundary exports or published service APIs.", "Implemented route means page + domain API client + server route + service boundary are all named.", "Folded routes may share a parent page until a domain API exists; they must not claim implemented status.", "Reserved routes are product route space, not implemented business capability.", "Do not add compatibility routes for retired APIs; move active callers to the current route and delete the old route.", "Static content may remain API-free; dynamic control-plane objects must not claim implemented status without read/write/action evidence.", "Long-term gaps stay in the route table only when they name an owner repo, lifecycle, and missing capability boundary.", "Dynamic prune routes are tracked only so they can be removed from active product claims."],
   "publicRoutes": [
     {
       "path": "/",
@@ -72,7 +72,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "static_content",
       "contractLifecycle": "long_term_gap",
       "capabilities": []
@@ -84,7 +84,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "static_content",
       "contractLifecycle": "long_term_gap",
       "capabilities": []
@@ -149,7 +149,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "auth_flow",
       "contractLifecycle": "long_term_gap",
       "capabilities": []
@@ -161,7 +161,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "auth_flow",
       "contractLifecycle": "long_term_gap",
       "capabilities": []
@@ -173,7 +173,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "auth_flow",
       "contractLifecycle": "long_term_gap",
       "capabilities": []
@@ -197,7 +197,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "auth_flow",
       "contractLifecycle": "long_term_gap",
       "capabilities": []
@@ -354,7 +354,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -366,7 +366,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -378,7 +378,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -405,7 +405,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -417,7 +417,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -429,7 +429,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -441,7 +441,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -468,7 +468,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -480,7 +480,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -492,7 +492,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -504,7 +504,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -514,11 +514,14 @@
       "label": "Support",
       "area": "console",
       "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
+      "status": "implemented",
       "requiresAuth": true,
-      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "pageModule": "packages/console/ui/pages/support/SupportPage.jsx",
+      "apiClient": "packages/console/ui/api/support-api.js",
+      "apiRoutes": ["GET /api/support/tickets"],
+      "serviceBoundary": "ConsoleReadModelService.supportTickets",
       "routeKind": "business_object",
-      "contractLifecycle": "long_term_gap",
+      "contractLifecycle": "long_term",
       "capabilities": ["list", "read"],
       "objectKind": "SupportTicket"
     },
@@ -527,12 +530,15 @@
       "label": "New Ticket",
       "area": "console",
       "ownerRepo": "opl-console",
-      "status": "reserved",
+      "status": "implemented",
       "requiresAuth": true,
-      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "pageModule": "packages/console/ui/pages/support/SupportPage.jsx",
+      "apiClient": "packages/console/ui/api/support-api.js",
+      "apiRoutes": ["POST /api/support/tickets"],
+      "serviceBoundary": "ConsoleReadModelService.createSupportTicket",
       "routeKind": "business_object",
-      "contractLifecycle": "long_term_gap",
-      "capabilities": ["write"],
+      "contractLifecycle": "long_term",
+      "capabilities": ["write", "read"],
       "objectKind": "SupportTicket"
     },
     {
@@ -540,12 +546,15 @@
       "label": "Ticket Detail",
       "area": "console",
       "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
+      "status": "implemented",
       "requiresAuth": true,
-      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "pageModule": "packages/console/ui/pages/support/SupportPage.jsx",
+      "apiClient": "packages/console/ui/api/support-api.js",
+      "apiRoutes": ["GET /api/support/tickets"],
+      "serviceBoundary": "ConsoleReadModelService.supportTickets",
       "routeKind": "business_object",
-      "contractLifecycle": "long_term_gap",
-      "capabilities": ["detail", "read", "action"],
+      "contractLifecycle": "long_term",
+      "capabilities": ["detail", "read"],
       "objectKind": "SupportTicket"
     },
     {
@@ -701,7 +710,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -792,7 +801,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -805,7 +814,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -818,7 +827,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -831,7 +840,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -857,7 +866,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -886,7 +895,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -899,7 +908,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -912,7 +921,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -925,7 +934,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -1062,7 +1071,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -1105,7 +1114,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -1157,13 +1166,16 @@
       "label": "Support Ops",
       "area": "admin",
       "ownerRepo": "opl-console",
-      "status": "folded_into_parent",
+      "status": "implemented",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "pageModule": "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
+      "apiClient": "packages/console/ui/api/support-api.js",
+      "apiRoutes": ["GET /api/support/tickets"],
+      "serviceBoundary": "ConsoleReadModelService.supportTickets",
       "routeKind": "business_object",
-      "contractLifecycle": "long_term_gap",
-      "capabilities": ["list", "read", "action", "audit"],
+      "contractLifecycle": "long_term",
+      "capabilities": ["list", "read", "audit"],
       "objectKind": "SupportTicket"
     },
     {
@@ -1174,10 +1186,10 @@
       "status": "folded_into_parent",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "support_ticket_requires_server_api_and_audit_before_implemented_status",
+      "reason": "subroute_rendered_by_parent_page",
       "routeKind": "business_object",
-      "contractLifecycle": "long_term_gap",
-      "capabilities": ["detail", "read", "action", "audit"],
+      "contractLifecycle": "folded_parent",
+      "capabilities": ["detail", "read", "audit"],
       "objectKind": "SupportTicket"
     },
     {
@@ -1214,7 +1226,7 @@
       "status": "reserved",
       "requiresAuth": true,
       "requiresAdmin": true,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "read_model",
       "contractLifecycle": "long_term_gap",
       "capabilities": ["read"]
@@ -1228,7 +1240,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "static_content",
       "contractLifecycle": "long_term",
       "capabilities": ["read"]
@@ -1240,7 +1252,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "static_content",
       "contractLifecycle": "long_term",
       "capabilities": ["read"]
@@ -1252,7 +1264,7 @@
       "ownerRepo": "opl-console",
       "status": "reserved",
       "requiresAuth": false,
-      "reason": "reserved_route_not_api_backed_yet",
+      "reason": "reserved_contract_not_implemented",
       "routeKind": "static_content",
       "contractLifecycle": "long_term",
       "capabilities": ["read"]

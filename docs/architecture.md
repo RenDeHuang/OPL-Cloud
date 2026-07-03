@@ -14,7 +14,7 @@ OPL Cloud has five product layers:
 
 This repository deploys one OPL Console control-plane process.
 
-The `packages` layout is a boundary map for future extraction:
+The `packages` layout is the current ownership boundary map:
 
 - `packages/console`: API, UI, auth, management model, store, readiness, manifests, and Console services.
 - `packages/fabric`: runtime providers and resource catalog.
@@ -23,9 +23,9 @@ The `packages` layout is a boundary map for future extraction:
 
 ## Boundaries
 
-Console may call Fabric only through package boundary exports or future service APIs.
+Console may call Fabric only through package boundary exports or published service APIs.
 
-Console may call Ledger only through package boundary exports or future service APIs.
+Console may call Ledger only through package boundary exports or published service APIs.
 
 Fabric details such as TKE, Docker, Ingress, PVC, VolumeSnapshot, and runtime operation evidence are admin/operator surfaces. Lab Owner UI should expose product status and allowed actions, not raw infrastructure evidence.
 

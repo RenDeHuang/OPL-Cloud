@@ -54,7 +54,7 @@ export class OplCloudService {
         computeHourly: pricedComputeHourly({ packagePlan: plan, pricing: this.pricing }),
         storageGbMonth: pricedStorageGbMonth(this.pricing),
         markup: pricingMarkup(this.pricing),
-        source: "tencent_price_catalog_snapshot"
+        source: "tencent_price_catalog"
       }
     }));
   }
@@ -77,6 +77,14 @@ export class OplCloudService {
 
   async managementState(...args) {
     return this.consoleReadModel.managementState(...args);
+  }
+
+  async supportTickets(...args) {
+    return this.consoleReadModel.supportTickets(...args);
+  }
+
+  async createSupportTicket(...args) {
+    return this.consoleReadModel.createSupportTicket(...args);
   }
 
   async createWorkspace(...args) {

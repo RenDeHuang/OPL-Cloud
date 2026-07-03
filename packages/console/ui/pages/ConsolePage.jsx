@@ -29,7 +29,7 @@ import { WorkspacesPage } from "./workspaces/WorkspacesPage.jsx";
 export default function ConsolePage({ route, session, onLogout }) {
   const isAdmin = session.user.role === "admin";
   const path = window.location.pathname;
-  const consoleState = useConsoleState({ isAdmin, path });
+  const consoleState = useConsoleState({ isAdmin, path, csrfToken: session.csrfToken });
 
   async function logout() {
     try {

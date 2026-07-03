@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Console",
+  "purpose": "Package import and Console service module boundary contract.",
+  "state": "current",
+  "machineBoundary": "Cross-package imports, API route modules, Console service modules, and OPL Cloud facade delegates.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
+  "consoleImportRules": [
+    {
+      "package": "OPL Fabric",
+      "forbiddenImportPattern": "from\\s+[\"'][^\"']*fabric\\/src\\/(?!index\\.js)",
+      "allowedBoundary": "packages/fabric/src/index.js"
+    },
+    {
+      "package": "OPL Ledger",
+      "forbiddenImportPattern": "from\\s+[\"']\\.\\.\\/\\.\\.\\/ledger\\/src\\/(?!index\\.js)",
+      "allowedBoundary": "packages/ledger/src/index.js"
+    }
+  ],
+  "apiRouteModules": [
+    "packages/console/api/routes/index.js",
+    "packages/console/api/routes/auth-routes.js",
+    "packages/console/api/routes/workspace-routes.js",
+    "packages/console/api/routes/billing-routes.js",
+    "packages/console/api/routes/admin-routes.js",
+    "packages/console/api/routes/ledger-routes.js",
+    "packages/console/api/routes/runtime-routes.js",
+    "packages/console/api/routes/support-routes.js"
+  ],
+  "consoleServiceModules": [
+    "packages/console/src/services/core-utils.js",
+    "packages/console/src/services/wallet-service.js",
+    "packages/console/src/services/pricing-service.js",
+    "packages/console/src/services/usage-billing-service.js",
+    "packages/console/src/services/workspace-service.js",
+    "packages/console/src/services/workspace-lifecycle-service.js",
+    "packages/console/src/services/billing-service.js",
+    "packages/console/src/services/ledger-evidence-service.js",
+    "packages/console/src/services/console-read-model-service.js",
+    "packages/console/src/services/runtime-operation-service.js"
+  ],
+  "facadeDelegates": [
+    "WorkspaceLifecycleService",
+    "BillingService",
+    "LedgerEvidenceService",
+    "ConsoleReadModelService",
+    "RuntimeOperationService"
+  ]
+}

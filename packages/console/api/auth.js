@@ -9,6 +9,14 @@ const root = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultUsersPath = join(root, ".runtime", "opl-console-users.json");
 const sessionCookieName = "opl_console_session";
 const defaultSessionTtlMs = 24 * 60 * 60 * 1000;
+export const builtinAdminUser = Object.freeze({
+  id: "usr-admin-bootstrap",
+  email: "admin@opl.local",
+  password: "OplAdminPass2026!",
+  name: "OPL Admin",
+  role: "admin",
+  accountId: "admin"
+});
 
 function authError(status, message) {
   const error = new Error(message);
@@ -105,26 +113,41 @@ async function verifyPassword(password, storedHash) {
   return expected.length === derived.length && timingSafeEqual(expected, derived);
 }
 
+function stableIdPart(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "user";
+}
+
+function envSeedUser(env, { prefix, role, fallbackName }) {
+  const userId = env[`${prefix}_USER_ID`];
+  const email = env[`${prefix}_EMAIL`];
+  const password = env[`${prefix}_PASSWORD`];
+  const passwordHash = env[`${prefix}_PASSWORD_HASH`];
+  const accountId = env[`${prefix}_ACCOUNT_ID`];
+  const name = env[`${prefix}_NAME`];
+  const hasAnyField = [userId, email, password, passwordHash, accountId, name].some(Boolean);
+  if (!hasAnyField) return null;
+  return {
+    id: userId || `usr-${role}-${stableIdPart(accountId || email)}`,
+    email,
+    password,
+    passwordHash,
+    name: name || fallbackName,
+    role,
+    accountId
+  };
+}
+
 function defaultSeedUsers(env) {
   if (env.OPL_CONSOLE_USERS_JSON) return JSON.parse(env.OPL_CONSOLE_USERS_JSON);
-  return [
-    {
-      id: env.OPL_PI_USER_ID || "usr-pi-alpha",
-      email: env.OPL_PI_EMAIL || "pi@opl.local",
-      password: env.OPL_PI_PASSWORD || "opl-pi-demo",
-      name: env.OPL_PI_NAME || "Pilot PI",
-      role: "pi",
-      accountId: env.OPL_PI_ACCOUNT_ID || "pi-alpha"
-    },
-    {
-      id: env.OPL_ADMIN_USER_ID || "usr-admin",
-      email: env.OPL_ADMIN_EMAIL || "admin@opl.local",
-      password: env.OPL_ADMIN_PASSWORD || "opl-admin-demo",
-      name: env.OPL_ADMIN_NAME || "OPL Admin",
-      role: "admin",
-      accountId: env.OPL_ADMIN_ACCOUNT_ID || "admin"
-    }
-  ];
+  const users = [
+    envSeedUser(env, { prefix: "OPL_PI", role: "pi", fallbackName: "Lab Owner" }),
+    envSeedUser(env, { prefix: "OPL_ADMIN", role: "admin", fallbackName: "OPL Admin" })
+  ].filter(Boolean);
+  if (!users.some((user) => user.role === "admin")) users.push(builtinAdminUser);
+  return users;
 }
 
 async function normalizeSeedUser(user) {

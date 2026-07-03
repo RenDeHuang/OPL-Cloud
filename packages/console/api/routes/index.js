@@ -3,6 +3,7 @@ import { buildAuthRoutes } from "./auth-routes.js";
 import { buildBillingRoutes } from "./billing-routes.js";
 import { buildLedgerRoutes } from "./ledger-routes.js";
 import { buildRuntimeRoutes } from "./runtime-routes.js";
+import { buildSupportRoutes } from "./support-routes.js";
 import { buildWorkspaceRoutes } from "./workspace-routes.js";
 
 export const apiRouteManifest = [
@@ -34,7 +35,9 @@ export const apiRouteManifest = [
   "POST /api/ledger/task-receipts",
   "GET /api/runtime/readiness",
   "GET /api/production/readiness",
-  "POST /api/workspaces/runtime-status"
+  "POST /api/workspaces/runtime-status",
+  "GET /api/support/tickets",
+  "POST /api/support/tickets"
 ];
 
 export function buildApiRoutes(deps) {
@@ -45,6 +48,7 @@ export function buildApiRoutes(deps) {
     ...buildBillingRoutes(deps),
     ...buildWorkspaceRoutes(deps),
     ...buildLedgerRoutes(deps),
-    ...buildRuntimeRoutes(deps)
+    ...buildRuntimeRoutes(deps),
+    ...buildSupportRoutes(deps)
   };
 }

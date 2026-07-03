@@ -131,3 +131,51 @@ test("organization Workspace creation fails closed unless the user is an active 
     /organization_membership_required/
   );
 });
+
+test("support tickets are account-scoped durable Console objects", async () => {
+  const service = createTestService();
+  await service.store.update((state) => {
+    state.workspaces["ws-alpha"] = {
+      id: "ws-alpha",
+      ownerAccountId: "pi-alpha",
+      name: "Workspace URL Lab"
+    };
+    state.workspaces["ws-beta"] = {
+      id: "ws-beta",
+      ownerAccountId: "pi-beta",
+      name: "Other Lab"
+    };
+  });
+
+  const ticket = await service.createSupportTicket({
+    accountId: "pi-alpha",
+    userId: "usr-pi-alpha",
+    title: "Workspace URL",
+    category: "Workspace",
+    priority: "high",
+    workspaceId: "ws-alpha",
+    description: "Workspace URL returns 403.",
+    author: "pi@example.com"
+  });
+
+  assert.equal(ticket.accountId, "pi-alpha");
+  assert.equal(ticket.status, "open");
+  assert.equal(ticket.messages[0].author, "pi@example.com");
+
+  assert.deepEqual((await service.supportTickets({ accountId: "pi-alpha" })).map((item) => item.id), [ticket.id]);
+  assert.deepEqual(await service.supportTickets({ accountId: "pi-beta" }), []);
+
+  const state = await service.store.read();
+  assert.equal(state.supportTickets[0].id, ticket.id);
+  assert.equal(state.audit.at(-1).type, "support.ticket_created");
+
+  await assert.rejects(
+    service.createSupportTicket({
+      accountId: "pi-alpha",
+      userId: "usr-pi-alpha",
+      title: "Wrong Workspace",
+      workspaceId: "ws-beta"
+    }),
+    /support_ticket_workspace_not_in_account/
+  );
+});

@@ -2,10 +2,16 @@
   "schemaVersion": 1,
   "owner": "OPL Console",
   "purpose": "Machine-readable requirements for dynamic control-plane route objects.",
+  "state": "current",
+  "machineBoundary": "Dynamic business object kinds, route ownership, required implemented capabilities, and evidence requirements.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
   "productTruth": "one-person-lab-cloud",
   "frameworkTruth": "one-person-lab",
   "currentSlice": "OPL Console / OPL Workspace control-plane",
-  "futureRepos": [
+  "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
     "opl-ledger"
@@ -45,13 +51,12 @@
       "kind": "SupportTicket",
       "ownerRepo": "opl-console",
       "routeKind": "business_object",
-      "lifecycle": "long_term_gap",
+      "lifecycle": "long_term",
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",
         "read",
         "write",
-        "action",
         "audit"
       ],
       "evidenceRequired": true

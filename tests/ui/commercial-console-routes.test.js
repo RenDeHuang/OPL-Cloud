@@ -38,13 +38,16 @@ test("commercial Console route contract covers current public, auth, owner, and 
     ["/console/gateway", "implemented"],
     ["/console/billing", "implemented"],
     ["/console/account", "implemented"],
-    ["/console/support", "folded_into_parent"],
+    ["/console/support", "implemented"],
+    ["/console/support/new", "implemented"],
+    ["/console/support/:id", "implemented"],
     ["/console/alerts", "implemented"],
     ["/admin/overview", "implemented"],
     ["/admin/users", "implemented"],
     ["/admin/billing", "implemented"],
     ["/admin/ledger", "implemented"],
-    ["/admin/runtime", "implemented"]
+    ["/admin/runtime", "implemented"],
+    ["/admin/support", "implemented"]
   ]) {
     assert.equal(byPath.get(path)?.status, status, `${path} must have current commercial route status ${status}`);
   }

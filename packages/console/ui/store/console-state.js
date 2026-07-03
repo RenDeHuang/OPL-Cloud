@@ -8,13 +8,13 @@ import {
 } from "../api/console-read-api.js";
 import { useTickets } from "../pages/support/useTickets.js";
 
-export function useConsoleState({ isAdmin, path }) {
+export function useConsoleState({ isAdmin, path, csrfToken }) {
   const [state, setState] = useState(null);
   const [adminOps, setAdminOps] = useState({ operator: null, runtime: null, launch: null, error: "" });
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [topUpForm] = Form.useForm();
   const [createPackageId, setCreatePackageId] = useState("basic");
-  const tickets = useTickets();
+  const tickets = useTickets({ csrfToken, all: isAdmin && path.startsWith("/admin/support") });
 
   async function refresh() {
     const next = await getConsoleState();

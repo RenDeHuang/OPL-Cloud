@@ -101,15 +101,47 @@ test("productionReadiness fails closed without a production auth user seed", asy
   );
 });
 
-test("productionReadiness rejects built-in demo auth credentials", async () => {
+test("productionReadiness rejects weak auth credentials", async () => {
   const report = await productionReadiness({
     env: {
       ...tkeProductionEnv,
       OPL_CONSOLE_USERS_JSON: "",
-      OPL_PI_EMAIL: "pi@opl.local",
-      OPL_PI_PASSWORD: "opl-pi-demo",
-      OPL_ADMIN_EMAIL: "admin@opl.local",
-      OPL_ADMIN_PASSWORD: "opl-admin-demo"
+      OPL_PI_EMAIL: "owner@example.com",
+      OPL_PI_ACCOUNT_ID: "acct-owner",
+      OPL_PI_PASSWORD: "password",
+      OPL_ADMIN_EMAIL: "admin@example.com",
+      OPL_ADMIN_ACCOUNT_ID: "acct-admin",
+      OPL_ADMIN_PASSWORD: "placeholder"
+    },
+    commandExists: (command) => command === "kubectl"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.failedChecks.includes("auth_seed"));
+});
+
+test("productionReadiness rejects the built-in admin bootstrap credential", async () => {
+  const report = await productionReadiness({
+    env: {
+      ...tkeProductionEnv,
+      OPL_CONSOLE_USERS_JSON: JSON.stringify([
+        {
+          id: "usr-pi-production",
+          email: "pi@medopl.cn",
+          password: "ProdPiPass2026!",
+          name: "Production PI",
+          role: "pi",
+          accountId: "pi-production"
+        },
+        {
+          id: "usr-admin-bootstrap",
+          email: "admin@opl.local",
+          password: "OplAdminPass2026!",
+          name: "OPL Admin",
+          role: "admin",
+          accountId: "admin"
+        }
+      ])
     },
     commandExists: (command) => command === "kubectl"
   });

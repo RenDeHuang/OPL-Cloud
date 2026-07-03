@@ -31,8 +31,8 @@ Examples:
 Avoid long-term tests that assert:
 
 - prose wording;
-- UI copy by raw source string search;
-- arbitrary line counts;
+- UI copy by reading component files instead of exercising rendered behavior or route contracts;
+- file length thresholds;
 - exact workflow text when a structured contract can express the rule;
 - old compatibility routes after active callers move.
 

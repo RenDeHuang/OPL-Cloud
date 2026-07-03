@@ -1,39 +1,60 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parse } from "yaml";
 
-test("OPL Cloud control-plane image build includes app build output and kubectl", async () => {
-  const dockerfile = await readFile("Dockerfile", "utf8");
-  const dockerignore = await readFile(".dockerignore", "utf8");
+const deploymentContractPath = new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url);
 
-  assert.match(dockerfile, /FROM node:22/);
-  assert.match(dockerfile, /npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000/);
-  assert.match(dockerfile, /npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000/);
-  assert.match(dockerfile, /npm run build/);
-  assert.match(dockerfile, /kubectl/);
-  assert.match(dockerfile, /COPY packages \.\/packages/);
-  assert.match(dockerfile, /EXPOSE 8787/);
-  assert.match(dockerfile, /node", "packages\/console\/api\/server\.js"/);
-  assert.match(dockerignore, /^\.env/m);
-  assert.match(dockerignore, /^\.runtime/m);
-  assert.match(dockerignore, /^node_modules/m);
+async function deploymentContract() {
+  return JSON.parse(await readFile(deploymentContractPath, "utf8"));
+}
+
+async function workflow(path) {
+  return parse(await readFile(path, "utf8"));
+}
+
+test("OPL Cloud control-plane image build matches the deployment contract", async () => {
+  const contract = (await deploymentContract()).controlPlaneImage;
+  const dockerfile = await readFile(contract.file, "utf8");
+  const dockerignore = (await readFile(".dockerignore", "utf8"))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  assert.ok(dockerfile.includes(`FROM ${contract.baseImage} AS build`));
+  assert.ok(dockerfile.includes(`FROM ${contract.baseImage} AS runtime`));
+  for (const instruction of contract.requiredInstructions) {
+    assert.ok(dockerfile.includes(instruction), `Dockerfile missing ${instruction}`);
+  }
+  for (const ignored of contract.dockerignore) {
+    assert.ok(dockerignore.includes(ignored), `.dockerignore missing ${ignored}`);
+  }
 });
 
-test("OPL Cloud image release workflow pushes the control plane image to the oplcloud TCR namespace", async () => {
-  const workflow = await readFile(".github/workflows/release-opl-cloud-image.yml", "utf8");
+test("OPL Cloud image release workflow matches the deployment contract", async () => {
+  const contract = await deploymentContract();
+  const spec = contract.imageReleaseWorkflow;
+  const currentWorkflow = await workflow(spec.file);
+  const currentJob = currentWorkflow.jobs[spec.job];
+  assert.ok(currentJob, `workflow missing job ${spec.job}`);
+  assert.deepEqual([currentJob["runs-on"]].flat(), spec.runner);
+  assert.equal(currentJob.environment, contract.environment);
 
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /publish_cloud_image:/);
-  assert.match(workflow, /mirror_workspace_image:/);
-  assert.match(workflow, /workspace_source_image:/);
-  assert.match(workflow, /runs-on: ubuntu-latest/);
-  assert.match(workflow, /uswccr\.ccs\.tencentyun\.com\/oplcloud\/opl-cloud/);
-  assert.match(workflow, /uswccr\.ccs\.tencentyun\.com\/oplcloud\/one-person-lab-app/);
-  assert.match(workflow, /docker login uswccr\.ccs\.tencentyun\.com --username "\$TCR_ID" --password-stdin/);
-  assert.match(workflow, /if \[ "\$\{\{ inputs\.publish_cloud_image \}\}" = "true" \]; then/);
-  assert.match(workflow, /docker buildx build --push -f Dockerfile -t "\$OPL_CLOUD_IMAGE_REF" "\$OPL_CLOUD_IMAGE_CONTEXT"/);
-  assert.match(workflow, /if \[ "\$\{\{ inputs\.mirror_workspace_image \}\}" = "true" \]; then/);
-  assert.match(workflow, /docker buildx imagetools create -t "\$OPL_WORKSPACE_IMAGE_REF" "\$WORKSPACE_SOURCE_IMAGE"/);
-  assert.match(workflow, /TCR_ID: \$\{\{ secrets\.TCR_USERNAME \}\}/);
-  assert.match(workflow, /TCR_SECRET: \$\{\{ secrets\.TCR_PASSWORD \}\}/);
+  const inputs = Object.keys(currentWorkflow.on.workflow_dispatch.inputs || {});
+  for (const input of spec.inputs) {
+    assert.ok(inputs.includes(input), `${spec.file} missing input ${input}`);
+  }
+  for (const [key, value] of Object.entries(spec.env)) {
+    assert.equal(currentJob.env[key], value);
+  }
+
+  const steps = new Map((currentJob.steps || []).map((step) => [step.name, step]));
+  for (const [stepName, tokens] of Object.entries(spec.requiredCommandsByStep)) {
+    const step = steps.get(stepName);
+    assert.ok(step, `${spec.file} missing step ${stepName}`);
+    const text = `${step.run || ""}\n${JSON.stringify({ ...step, run: undefined })}`;
+    for (const token of tokens) {
+      assert.ok(text.includes(token), `${stepName} missing ${token}`);
+    }
+  }
 });

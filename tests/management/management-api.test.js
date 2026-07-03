@@ -233,6 +233,51 @@ test("request usage API routes gateway usage into billing service", async () => 
   }
 });
 
+test("support ticket API persists Lab Owner tickets through the Console service", async () => {
+  const calls = [];
+  const appService = {
+    async supportTickets(input) {
+      calls.push(["supportTickets", input]);
+      return [{ id: "ticket-1", accountId: input.accountId, title: "Workspace access" }];
+    },
+    async createSupportTicket(input) {
+      calls.push(["createSupportTicket", input]);
+      return { id: "ticket-2", status: "open", ...input };
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const listResponse = await fetch(`${origin}/api/support/tickets?accountId=pi-alpha`);
+    const list = await listResponse.json();
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(list.tickets.map((ticket) => ticket.id), ["ticket-1"]);
+
+    const created = await postJson(origin, "/api/support/tickets", {
+      accountId: "pi-alpha",
+      title: "Workspace access",
+      category: "Workspace",
+      priority: "normal",
+      description: "Workspace URL returns 403."
+    });
+    assert.equal(created.response.status, 200);
+    assert.equal(created.payload.id, "ticket-2");
+    assert.deepEqual(calls, [
+      ["supportTickets", { accountId: "pi-alpha" }],
+      ["createSupportTicket", {
+        accountId: "pi-alpha",
+        title: "Workspace access",
+        category: "Workspace",
+        priority: "normal",
+        description: "Workspace URL returns 403.",
+        userId: "",
+        author: ""
+      }]
+    ]);
+  } finally {
+    await close();
+  }
+});
+
 test("task evidence API records and queries Ledger task receipts", async () => {
   const calls = [];
   const appService = {

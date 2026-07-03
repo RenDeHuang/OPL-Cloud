@@ -154,7 +154,7 @@ function errorStatus(error) {
 }
 
 function scopedAccountId(auth, session, requestedAccountId) {
-  return auth ? auth.accountIdFor(session.user, requestedAccountId) : requestedAccountId || "pi-alpha";
+  return auth ? auth.accountIdFor(session.user, requestedAccountId) : requestedAccountId || null;
 }
 
 function scopedWorkspaceInput(auth, session, body) {

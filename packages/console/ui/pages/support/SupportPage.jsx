@@ -9,6 +9,7 @@ export function SupportPage({ tickets }) {
     <PageContainer title="工单" extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate("/console/support/new")}>提交工单</Button>}>
       <ProTable
         rowKey="id"
+        loading={tickets.loading}
         search={false}
         options={false}
         pagination={false}
@@ -30,8 +31,8 @@ export function NewSupportTicketPage({ state, tickets }) {
   return (
     <PageContainer title="提交工单" subTitle="Account, billing, Workspace">
       <ProCard>
-        <Form form={form} layout="vertical" onFinish={(values) => {
-          const ticket = tickets.createTicket(values);
+        <Form form={form} layout="vertical" onFinish={async (values) => {
+          const ticket = await tickets.createTicket(values);
           message.success("工单已提交");
           navigate(`/console/support/${ticket.id}`);
         }}>

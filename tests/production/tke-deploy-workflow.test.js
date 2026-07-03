@@ -1,13 +1,79 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { parse } from "yaml";
 
 import { renderTkeManifest } from "../../tools/render-tke-manifest.js";
 
+const deploymentContractPath = new URL("../../packages/contracts/opl-cloud-deployment-contract.json", import.meta.url);
 const pricingContractPath = new URL("../../packages/contracts/opl-cloud-pricing-contract.json", import.meta.url);
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function readWorkflow(path) {
+  return parse(await readFile(path, "utf8"));
+}
+
+function job(workflow, name) {
+  const current = workflow.jobs?.[name];
+  assert.ok(current, `workflow missing job ${name}`);
+  return current;
+}
+
+function stepsByName(currentJob) {
+  return new Map((currentJob.steps || []).map((step) => [step.name, step]));
+}
+
+function serializedStep(step) {
+  return `${step.run || ""}\n${JSON.stringify({ ...step, run: undefined })}`;
+}
+
+function serializedRuns(currentJob) {
+  return (currentJob.steps || []).map((step) => step.run || "").join("\n");
+}
+
+function assertWorkflowContract(workflow, spec, rootContract) {
+  const currentJob = job(workflow, spec.job);
+  assert.deepEqual([currentJob["runs-on"]].flat(), spec.runner || rootContract.runner);
+  assert.equal(currentJob.environment, rootContract.environment);
+
+  const workflowInputs = Object.keys(workflow.on?.workflow_dispatch?.inputs || {});
+  for (const input of spec.inputs || []) {
+    assert.ok(workflowInputs.includes(input), `${spec.file} missing input ${input}`);
+  }
+
+  const stepMap = stepsByName(currentJob);
+  assert.deepEqual([...stepMap.keys()], spec.steps);
+  for (const [first, second] of spec.orderedSteps || []) {
+    assert.ok(spec.steps.indexOf(first) < spec.steps.indexOf(second), `${first} must run before ${second}`);
+  }
+
+  for (const key of spec.requiredEnv || []) {
+    assert.ok(Object.hasOwn(currentJob.env || {}, key), `${spec.file} missing env ${key}`);
+  }
+  for (const key of spec.secretEnv || []) {
+    assert.ok(String(currentJob.env[key] || "").includes("secrets."), `${key} must come from GitHub secrets`);
+  }
+
+  for (const [stepName, tokens] of Object.entries(spec.requiredCommandsByStep || {})) {
+    const step = stepMap.get(stepName);
+    assert.ok(step, `${spec.file} missing step ${stepName}`);
+    const text = serializedStep(step);
+    for (const token of tokens) {
+      assert.ok(text.includes(token), `${spec.file} ${stepName} missing ${token}`);
+    }
+  }
+
+  const workflowText = JSON.stringify(workflow);
+  const runText = serializedRuns(currentJob);
+  for (const token of spec.forbiddenRunTokens || []) {
+    assert.equal(workflowText.includes(token), false, `${spec.file} must not contain ${token}`);
+  }
+  for (const pattern of spec.forbiddenRunPatterns || []) {
+    assert.doesNotMatch(runText, new RegExp(pattern), `${spec.file} must not match ${pattern}`);
+  }
 }
 
 async function pricingContractValues() {
@@ -23,87 +89,22 @@ async function pricingContractValues() {
   };
 }
 
-test("TKE production deploy workflow runs only on the VPC self-hosted runner", async () => {
-  const workflow = await readFile(".github/workflows/deploy-tke-production.yml", "utf8");
-
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /environment: production/);
-  assert.match(workflow, /runs-on: \[self-hosted, tencent-cloud, opl-cloud, tke-vpc\]/);
-  assert.match(workflow, /uses: actions\/setup-node@v4/);
-  assert.match(workflow, /node-version: "22"/);
-  assert.match(workflow, /OPL_CLOUD_IMAGE: \$\{\{ inputs\.cloud_image \}\}/);
-  assert.match(workflow, /OPL_WORKSPACE_IMAGE: \$\{\{ inputs\.workspace_image \}\}/);
-  assert.match(workflow, /OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: \$\{\{ vars\.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS \|\| '' \}\}/);
-  assert.match(workflow, /OPL_TLS_CERT_ID: \$\{\{ secrets\.OPL_TLS_CERT_ID \|\| vars\.OPL_TLS_CERT_ID \|\| '' \}\}/);
-  assert.match(workflow, /OPL_CONSOLE_TLS_SECRET_NAME: \$\{\{ vars\.OPL_CONSOLE_TLS_SECRET_NAME \|\| 'opl-cloud-console-medopl-cn-tls' \}\}/);
-  assert.match(workflow, /OPL_WORKSPACE_TLS_SECRET_NAME: \$\{\{ vars\.OPL_WORKSPACE_TLS_SECRET_NAME \|\| 'opl-cloud-workspace-medopl-cn-tls' \}\}/);
-  assert.match(workflow, /OPL_CONSOLE_TLS_CERT_ID: \$\{\{ secrets\.OPL_CONSOLE_TLS_CERT_ID \|\| vars\.OPL_CONSOLE_TLS_CERT_ID \|\| '' \}\}/);
-  assert.match(workflow, /OPL_WORKSPACE_TLS_CERT_ID: \$\{\{ secrets\.OPL_WORKSPACE_TLS_CERT_ID \|\| vars\.OPL_WORKSPACE_TLS_CERT_ID \|\| '' \}\}/);
-  assert.match(workflow, /OPL_TLS_SOURCE_NAMESPACE: \$\{\{ vars\.OPL_TLS_SOURCE_NAMESPACE \|\| '' \}\}/);
-  assert.match(workflow, /OPL_TLS_SOURCE_SECRET_NAME: \$\{\{ vars\.OPL_TLS_SOURCE_SECRET_NAME \|\| '' \}\}/);
-  assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_B64: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG_B64 \}\}/);
-  assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG: \$\{\{ secrets\.TENCENT_DEPLOY_KUBECONFIG \}\}/);
-  assert.match(workflow, /OPL_CONSOLE_USERS_JSON: \$\{\{ secrets\.OPL_CONSOLE_USERS_JSON \}\}/);
-  assert.match(workflow, /OPL_OPERATOR_SUMMARY_TOKEN: \$\{\{ secrets\.OPL_OPERATOR_SUMMARY_TOKEN \}\}/);
-  assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
-  assert.match(workflow, /tools\/render-tke-manifest\.js/);
-  assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG"/);
-  assert.match(workflow, /--skip-shared-ingress/);
-  assert.match(workflow, /get ingress opl-cloud/);
-  assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG" apply -f "\$OPL_DEPLOY_SECRET_DIR\/opl-cloud\.ingress-bootstrap\.json"/);
-  assert.match(workflow, /rollout restart deployment\/opl-cloud-control-plane/);
-  assert.match(workflow, /rollout status deployment\/opl-cloud-control-plane/);
-  assert.match(workflow, /get ingress opl-cloud/);
-  assert.ok(
-    workflow.indexOf("rollout restart deployment/opl-cloud-control-plane") <
-      workflow.indexOf("rollout status deployment/opl-cloud-control-plane")
-  );
-
-  const localKubeconfigCheck = workflow.indexOf('if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then');
-  const base64KubeconfigCheck = workflow.indexOf('if [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then');
-  assert.ok(localKubeconfigCheck > -1);
-  assert.ok(base64KubeconfigCheck > -1);
-  assert.ok(localKubeconfigCheck < base64KubeconfigCheck);
-});
-
-test("TKE production deploy workflow installs secrets without command-line secret values", async () => {
-  const workflow = await readFile(".github/workflows/deploy-tke-production.yml", "utf8");
-
-  assert.doesNotMatch(workflow, /--from-literal=DATABASE_URL/);
-  assert.doesNotMatch(workflow, /--from-literal=OPL_CONSOLE_USERS_JSON/);
-  assert.doesNotMatch(workflow, /--from-literal=OPL_OPERATOR_SUMMARY_TOKEN/);
-  assert.doesNotMatch(workflow, /--docker-password/);
-  assert.match(workflow, /--from-file=DATABASE_URL="\$secret_dir\/database-url"/);
-  assert.match(workflow, /--from-file=OPL_CONSOLE_USERS_JSON="\$secret_dir\/auth-users-json"/);
-  assert.match(workflow, /--from-file=OPL_OPERATOR_SUMMARY_TOKEN="\$secret_dir\/operator-summary-token"/);
-  assert.match(workflow, /--from-file=\.dockerconfigjson="\$docker_config"/);
-  assert.match(workflow, /--from-file=kubeconfig="\$KUBECONFIG"/);
-  assert.match(workflow, /install_qcloud_cert_secret\(\)/);
-  assert.match(workflow, /printf '%s' "\$cert_id" > "\$cert_file"/);
-  assert.match(workflow, /install_qcloud_cert_secret "\$OPL_CONSOLE_TLS_SECRET_NAME" "\$OPL_CONSOLE_TLS_CERT_ID"/);
-  assert.match(workflow, /install_qcloud_cert_secret "\$OPL_WORKSPACE_TLS_SECRET_NAME" "\$OPL_WORKSPACE_TLS_CERT_ID"/);
-  assert.match(workflow, /create secret generic "\$secret_name"/);
-  assert.match(workflow, /--from-file=qcloud_cert_id="\$cert_file"/);
-  assert.match(workflow, /verify_qcloud_cert_secret "\$OPL_CONSOLE_TLS_SECRET_NAME"/);
-  assert.match(workflow, /verify_qcloud_cert_secret "\$OPL_WORKSPACE_TLS_SECRET_NAME"/);
-  assert.match(workflow, /jsonpath='\{\.data\.qcloud_cert_id\}'/);
-  assert.match(workflow, /Missing TKE TLS certificate input/);
-
-  const tlsInputCheck = workflow.indexOf("Check TLS certificate inputs");
-  const secretInstall = workflow.indexOf("Install Kubernetes secrets");
-  assert.notEqual(tlsInputCheck, -1);
-  assert.notEqual(secretInstall, -1);
-  assert.ok(tlsInputCheck < secretInstall, "TLS certificate inputs must be checked before mutating Kubernetes secrets");
+test("TKE production deploy workflow matches the deployment contract", async () => {
+  const contract = await readJson(deploymentContractPath);
+  const workflow = await readWorkflow(contract.deployWorkflow.file);
+  assertWorkflowContract(workflow, contract.deployWorkflow, contract);
 });
 
 test("TKE production deploy workflow defaults to the versioned pricing contract", async () => {
-  const workflow = await readFile(".github/workflows/deploy-tke-production.yml", "utf8");
+  const deploymentContract = await readJson(deploymentContractPath);
+  const workflow = await readWorkflow(deploymentContract.deployWorkflow.file);
+  const currentJob = job(workflow, deploymentContract.deployWorkflow.job);
   const { env } = await pricingContractValues();
 
   for (const [key, value] of Object.entries(env)) {
-    assert.match(workflow, new RegExp(`${key}: \\\\$\\{\\{ vars\\\\.${key} \\\\|\\\\| '${value.replace(".", "\\\\.")}' \\\\}\\}`));
+    assert.ok(String(currentJob.env[key]).includes(`'${value}'`), `${key} default should match pricing contract`);
   }
-  assert.doesNotMatch(workflow, /OPL_GPU_COMPUTE_HOURLY_CNY/);
+  assert.equal(Object.hasOwn(currentJob.env, "OPL_GPU_COMPUTE_HOURLY_CNY"), false);
 });
 
 test("TKE manifest renderer replaces deploy-time values without rendering secrets", async () => {
@@ -205,35 +206,8 @@ test("TKE manifest renderer can skip the shared Ingress during deploy so Workspa
   assert.equal(rendered.items.some((item) => item.kind === "Ingress" && item.metadata.name === "opl-cloud"), false);
 });
 
-test("TKE production diagnostics workflow is read-only and runs on the VPC runner", async () => {
-  const workflow = await readFile(".github/workflows/diagnose-tke-production.yml", "utf8");
-
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /environment: production/);
-  assert.match(workflow, /runs-on: \[self-hosted, tencent-cloud, opl-cloud, tke-vpc\]/);
-  assert.match(workflow, /TENCENT_DEPLOY_KUBECONFIG_PATH: \$\{\{ vars\.TENCENT_DEPLOY_KUBECONFIG_PATH \|\| '\/home\/actions\/\.secrets\/medopl\/v22\/kubeconfig-package-d-deploy' \}\}/);
-  assert.match(workflow, /kubectl --kubeconfig "\$KUBECONFIG" -n "\$OPL_K8S_NAMESPACE" get deploy,rs,pod,svc,ingress -o wide/);
-  assert.match(workflow, /Show cluster node capacity/);
-  assert.match(workflow, /get nodes -o wide/);
-  assert.match(workflow, /allocatable/);
-  assert.match(workflow, /Show namespace resource requests/);
-  assert.match(workflow, /Describe pending workspace pods/);
-  assert.match(workflow, /STATUS:Pending/);
-  assert.match(workflow, /describe deployment opl-cloud-control-plane/);
-  assert.match(workflow, /describe ingress opl-cloud/);
-  assert.match(workflow, /get endpoints opl-cloud-control-plane -o wide/);
-  assert.match(workflow, /get secrets -A/);
-  assert.match(workflow, /qcloud_cert_id/);
-  assert.match(workflow, /HAS_QCLOUD_CERT_ID/);
-  assert.match(workflow, /get events --sort-by=\.lastTimestamp/);
-  assert.match(workflow, /logs deploy\/opl-cloud-control-plane --all-containers=true --tail=200/);
-  assert.match(workflow, /port-forward service\/opl-cloud-control-plane 18787:8787/);
-  assert.match(workflow, /http:\/\/127\.0\.0\.1:18787\/api\/state/);
-  assert.match(workflow, /http:\/\/127\.0\.0\.1:18787\/api\/production\/readiness/);
-  assert.match(workflow, /Check external HTTP and HTTPS entrypoints/);
-  assert.match(workflow, /https:\/\/cloud\.medopl\.cn\/api\/state/);
-  assert.match(workflow, /https:\/\/workspace\.medopl\.cn\//);
-  assert.doesNotMatch(workflow, /kubectl .* apply /);
-  assert.doesNotMatch(workflow, /kubectl .* create /);
-  assert.doesNotMatch(workflow, /kubectl .* delete /);
+test("TKE production diagnostics workflow is read-only and matches the deployment contract", async () => {
+  const contract = await readJson(deploymentContractPath);
+  const workflow = await readWorkflow(contract.diagnosticsWorkflow.file);
+  assertWorkflowContract(workflow, contract.diagnosticsWorkflow, contract);
 });

@@ -58,6 +58,27 @@
         "frozen_hold"
       ],
       "compatibilityAliasAllowed": false
+    },
+    "supportTicket": {
+      "requiredFields": [
+        "id",
+        "accountId",
+        "title",
+        "category",
+        "priority",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "messages"
+      ],
+      "visibility": [
+        "Lab Owner sees tickets scoped to their account.",
+        "Admin sees all support tickets."
+      ],
+      "workspaceReferencePolicy": [
+        "A ticket may omit workspaceId.",
+        "A ticket with workspaceId must reference a Workspace owned by the ticket accountId."
+      ]
     }
   },
   "workspaceOwnership": {
@@ -69,6 +90,8 @@
     "createUser": "POST /api/users",
     "addOrganizationMember": "POST /api/organizations/members",
     "managementState": "GET /api/management/state?organizationId=<id>",
-    "manualTopUp": "POST /api/billing/topups"
+    "manualTopUp": "POST /api/billing/topups",
+    "supportTickets": "GET /api/support/tickets",
+    "createSupportTicket": "POST /api/support/tickets"
   }
 }

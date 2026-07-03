@@ -25,7 +25,7 @@ test("business object contract defines the long-term dynamic control-plane bound
   assert.equal(contract.schemaVersion, 1);
   assert.equal(contract.owner, "OPL Console");
   assert.equal(contract.purpose, "Machine-readable requirements for dynamic control-plane route objects.");
-  assert.deepEqual(contract.futureRepos, ["opl-console", "opl-fabric", "opl-ledger"]);
+  assert.deepEqual(contract.repositoryBoundaries, ["opl-console", "opl-fabric", "opl-ledger"]);
   assert.deepEqual(contract.routeKinds, ["business_object", "policy_or_approval_object"]);
   assert.ok(contract.principles.includes("Static content may remain API-free; dynamic control-plane objects need read/write/action evidence before implemented status."));
   assert.ok(contract.repoBoundaryRules.includes("Console owns UI, auth, route contracts, and read-model orchestration."));

@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { parse } from "yaml";
 
 import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
 import { LocalDockerProvider } from "../../packages/fabric/src/runtime-providers/local-docker.js";
@@ -61,17 +62,25 @@ test("local Docker provider creates real compose, disk, URL, and preserves disk 
     assert.equal(await exists(projectsPath), true);
     assert.equal(await exists(envPath), true);
 
-    const compose = await readFile(composePath, "utf8");
-    assert.match(compose, /ghcr\.io\/gaofeng21cn\/one-person-lab-app:latest/);
-    assert.match(compose, /AIONUI_DATA_DIR: \/data/);
-    assert.match(compose, /OPL_PROJECTS_DIR: \/projects/);
-    assert.match(compose, /- \.\/disk\/data:\/data/);
-    assert.match(compose, /- \.\/disk\/projects:\/projects/);
-    assert.match(compose, /OPL_WORKSPACE_ID/);
-    assert.match(compose, /OPL_WEBUI_AUTH_MODE: none/);
-    assert.match(compose, /HOME: \/data/);
-    assert.match(compose, /OPL_WORKSPACE_ROOT: \/projects/);
-    assert.match(compose, /CODEX_HOME: \/data\/codex/);
+    const compose = parse(await readFile(composePath, "utf8"));
+    const composeService = Object.values(compose.services)[0];
+    assert.equal(composeService.image, "ghcr.io/gaofeng21cn/one-person-lab-app:latest");
+    assert.deepEqual(composeService.environment, {
+      OPL_WORKSPACE_ID: workspace.id,
+      OPL_WORKSPACE_NAME: "Real Docker Lab",
+      OPL_SHARE_TOKEN: workspace.access.token,
+      OPL_PACKAGE_ID: "basic",
+      DATA_DIR: "/data",
+      AIONUI_DATA_DIR: "/data",
+      OPL_PROJECTS_DIR: "/projects",
+      ALLOW_REMOTE: "true",
+      OPL_WEBUI_AUTH_MODE: "none",
+      HOME: "/data",
+      OPL_WORKSPACE_ROOT: "/projects",
+      CODEX_HOME: "/data/codex"
+    });
+    assert.deepEqual(composeService.ports, ["127.0.0.1::3000"]);
+    assert.deepEqual(composeService.volumes, ["./disk/data:/data", "./disk/projects:/projects"]);
 
     const destroyed = await service.destroyServer({
       accountId: "pi-alpha",

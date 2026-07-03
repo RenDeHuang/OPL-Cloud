@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "owner": "OPL Fabric",
+  "purpose": "Deployment workflow, production image, TKE handoff, and diagnostics contract.",
+  "state": "current",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, image release, and read-only diagnostics.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
+  "runner": [
+    "self-hosted",
+    "tencent-cloud",
+    "opl-cloud",
+    "tke-vpc"
+  ],
+  "environment": "production",
+  "deployWorkflow": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "deploy",
+    "inputs": [
+      "cloud_image",
+      "workspace_image"
+    ],
+    "requiredEnv": [
+      "OPL_RUNTIME_PROVIDER",
+      "OPL_K8S_NAMESPACE",
+      "OPL_PUBLIC_URL",
+      "OPL_CONSOLE_DOMAIN",
+      "OPL_WORKSPACE_DOMAIN",
+      "OPL_CLOUD_IMAGE",
+      "OPL_WORKSPACE_IMAGE",
+      "OPL_IMAGE_PULL_SECRET_NAME",
+      "OPL_WORKSPACE_STORAGE_CLASS",
+      "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS",
+      "OPL_CONSOLE_TLS_SECRET_NAME",
+      "OPL_WORKSPACE_TLS_SECRET_NAME",
+      "OPL_INGRESS_CLASS",
+      "OPL_BILLING_MARKUP",
+      "OPL_BASIC_COMPUTE_HOURLY_CNY",
+      "OPL_PRO_COMPUTE_HOURLY_CNY",
+      "OPL_STORAGE_GB_MONTH_CNY",
+      "TENCENT_DEPLOY_CLUSTER_ID",
+      "TENCENT_TCR_REGISTRY",
+      "TENCENT_TCR_NAMESPACE",
+      "TENCENT_TCR_REGION",
+      "TENCENT_DEPLOY_KUBECONFIG_REF",
+      "DATABASE_URL",
+      "OPL_CONSOLE_USERS_JSON",
+      "TCR_USERNAME",
+      "TCR_PASSWORD"
+    ],
+    "secretEnv": [
+      "DATABASE_URL",
+      "OPL_CONSOLE_USERS_JSON",
+      "OPL_OPERATOR_SUMMARY_TOKEN",
+      "TCR_USERNAME",
+      "TCR_PASSWORD",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "steps": [
+      "Checkout",
+      "Set up Node",
+      "Prepare kubeconfig",
+      "Check deployment inputs",
+      "Verify TKE access",
+      "Check TLS certificate inputs",
+      "Install Kubernetes secrets",
+      "Install and verify TLS secret",
+      "Render and apply manifest",
+      "Show ingress target"
+    ],
+    "orderedSteps": [
+      [
+        "Check TLS certificate inputs",
+        "Install Kubernetes secrets"
+      ],
+      [
+        "Render and apply manifest",
+        "Show ingress target"
+      ]
+    ],
+    "requiredCommandsByStep": {
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
+      "Prepare kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Install Kubernetes secrets": [
+        "--from-file=DATABASE_URL=\"$secret_dir/database-url\"",
+        "--from-file=OPL_CONSOLE_USERS_JSON=\"$secret_dir/auth-users-json\"",
+        "--from-file=.dockerconfigjson=\"$docker_config\"",
+        "--from-file=kubeconfig=\"$KUBECONFIG\""
+      ],
+      "Install and verify TLS secret": [
+        "install_qcloud_cert_secret",
+        "verify_qcloud_cert_secret",
+        "qcloud_cert_id"
+      ],
+      "Render and apply manifest": [
+        "node tools/render-tke-manifest.js --manifest deploy/tke/opl-cloud.k8s.json --out \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.ingress-bootstrap.json\"",
+        "node tools/render-tke-manifest.js --manifest deploy/tke/opl-cloud.k8s.json --skip-shared-ingress --out \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json\"",
+        "kubectl --kubeconfig \"$KUBECONFIG\" apply -f \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json\"",
+        "rollout restart deployment/opl-cloud-control-plane",
+        "rollout status deployment/opl-cloud-control-plane"
+      ]
+    },
+    "forbiddenRunTokens": [
+      "--from-literal=DATABASE_URL",
+      "--from-literal=OPL_CONSOLE_USERS_JSON",
+      "--from-literal=OPL_OPERATOR_SUMMARY_TOKEN",
+      "--docker-password",
+      "OPL_GPU_COMPUTE_HOURLY_CNY"
+    ]
+  },
+  "diagnosticsWorkflow": {
+    "file": ".github/workflows/diagnose-tke-production.yml",
+    "job": "diagnose",
+    "steps": [
+      "Prepare kubeconfig",
+      "Show workload status",
+      "Show cluster node capacity",
+      "Show namespace resource requests",
+      "Describe pending workspace pods",
+      "Describe control plane deployment",
+      "Describe ingress and service endpoints",
+      "Show TLS secret inventory",
+      "Show ingress TLS usage",
+      "Check external HTTP and HTTPS entrypoints",
+      "Describe control plane pods",
+      "Show recent namespace events",
+      "Show control plane logs",
+      "Check control plane API through port-forward"
+    ],
+    "requiredCommandsByStep": {
+      "Show workload status": [
+        "get deploy,rs,pod,svc,ingress -o wide"
+      ],
+      "Describe pending workspace pods": [
+        "status.phase=Pending",
+        "describe \"$pod\""
+      ],
+      "Show TLS secret inventory": [
+        "qcloud_cert_id",
+        "HAS_QCLOUD_CERT_ID"
+      ],
+      "Check control plane API through port-forward": [
+        "port-forward service/opl-cloud-control-plane 18787:8787",
+        "http://127.0.0.1:18787/api/state",
+        "http://127.0.0.1:18787/api/production/readiness"
+      ]
+    },
+    "forbiddenRunTokens": [
+    ],
+    "forbiddenRunPatterns": [
+      "kubectl .* apply ",
+      "kubectl .* create ",
+      "kubectl .* delete "
+    ]
+  },
+  "imageReleaseWorkflow": {
+    "file": ".github/workflows/release-opl-cloud-image.yml",
+    "job": "build-push",
+    "runner": [
+      "ubuntu-latest"
+    ],
+    "inputs": [
+      "ref",
+      "image_tag",
+      "publish_cloud_image",
+      "mirror_workspace_image",
+      "workspace_source_image",
+      "workspace_image_tag"
+    ],
+    "env": {
+      "OPL_CLOUD_IMAGE_REPOSITORY": "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud",
+      "OPL_WORKSPACE_IMAGE_REPOSITORY": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
+    },
+    "requiredCommandsByStep": {
+      "Build and push images": [
+        "docker login uswccr.ccs.tencentyun.com --username \"$TCR_ID\" --password-stdin",
+        "docker buildx build --push -f Dockerfile -t \"$OPL_CLOUD_IMAGE_REF\" \"$OPL_CLOUD_IMAGE_CONTEXT\"",
+        "docker buildx imagetools create -t \"$OPL_WORKSPACE_IMAGE_REF\" \"$WORKSPACE_SOURCE_IMAGE\""
+      ]
+    }
+  },
+  "controlPlaneImage": {
+    "file": "Dockerfile",
+    "baseImage": "node:22-bookworm-slim",
+    "requiredInstructions": [
+      "npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
+      "npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
+      "npm run build",
+      "kubectl",
+      "COPY packages ./packages",
+      "EXPOSE 8787",
+      "CMD [\"node\", \"packages/console/api/server.js\"]"
+    ],
+    "dockerignore": [
+      "node_modules",
+      "dist",
+      ".runtime",
+      ".git",
+      ".env",
+      ".env.*"
+    ]
+  }
+}

@@ -33,6 +33,74 @@ function cookieFrom(response) {
   return response.headers.get("set-cookie")?.split(";")[0] || "";
 }
 
+test("auth controller bootstraps only the fixed admin when no explicit seed exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-admin-bootstrap-"));
+  try {
+    const auth = createAuthController({
+      env: {},
+      usersPath: join(root, "users.json")
+    });
+
+    assert.deepEqual((await auth.listUsers()).map((user) => `${user.role}:${user.email}:${user.accountId}`), [
+      "admin:admin@opl.local:admin"
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("built-in admin can login but does not create a demo Lab Owner", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-admin-bootstrap-login-"));
+  const appService = {
+    async getState(accountId) {
+      return { account: { id: accountId }, workspaces: [], packages: [], billingLedger: [], audit: [], notifications: [] };
+    }
+  };
+  const auth = createAuthController({
+    env: {},
+    usersPath: join(root, "users.json")
+  });
+  const { origin, close } = await listen(createRequestHandler({ appService, auth }));
+  try {
+    const login = await postJson(origin, "/api/auth/login", {
+      email: "admin@opl.local",
+      password: "OplAdminPass2026!"
+    });
+
+    assert.equal(login.response.status, 200);
+    assert.equal(login.payload.user.role, "admin");
+    assert.equal(login.payload.user.accountId, "admin");
+    assert.deepEqual((await auth.listUsers()).map((user) => user.role), ["admin"]);
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("auth controller can seed explicit environment users without built-in defaults", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-env-seed-"));
+  try {
+    const auth = createAuthController({
+      env: {
+        OPL_PI_EMAIL: "owner@example.com",
+        OPL_PI_PASSWORD: "OwnerSecret2026!",
+        OPL_PI_ACCOUNT_ID: "acct-owner",
+        OPL_ADMIN_EMAIL: "admin@example.com",
+        OPL_ADMIN_PASSWORD: "AdminSecret2026!",
+        OPL_ADMIN_ACCOUNT_ID: "acct-admin"
+      },
+      usersPath: join(root, "users.json")
+    });
+
+    assert.deepEqual((await auth.listUsers()).map((user) => `${user.role}:${user.email}:${user.accountId}`), [
+      "pi:owner@example.com:acct-owner",
+      "admin:admin@example.com:acct-admin"
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("commercial Console login creates a session and logout invalidates it", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-auth-"));
   const appService = {
@@ -47,7 +115,7 @@ test("commercial Console login creates a session and logout invalidates it", asy
         id: "usr-pi",
         email: "pi@example.com",
         password: "secret-pi",
-        name: "Pilot PI",
+        name: "Lab Owner",
         role: "pi",
         accountId: "pi-alpha"
       }
@@ -101,7 +169,7 @@ test("health check stays unauthenticated for Kubernetes probes", async () => {
         id: "usr-pi",
         email: "pi@example.com",
         password: "secret-pi",
-        name: "Pilot PI",
+        name: "Lab Owner",
         role: "pi",
         accountId: "pi-alpha"
       }
@@ -139,7 +207,7 @@ test("PI sessions are account scoped and cannot top up balances", async () => {
         id: "usr-pi",
         email: "pi@example.com",
         password: "secret-pi",
-        name: "Pilot PI",
+        name: "Lab Owner",
         role: "pi",
         accountId: "pi-alpha"
       },
@@ -218,12 +286,12 @@ test("auth users seed into the control-plane store and survive controller recrea
   };
   const seedUsers = [
     {
-      id: "usr-pi-demo",
-      email: "pi-demo@example.com",
-      password: "secret-demo",
-      name: "Demo PI",
+      id: "usr-pi-seed",
+      email: "seed-owner@example.com",
+      password: "secret-seed",
+      name: "Seeded Lab Owner",
       role: "pi",
-      accountId: "pi-demo"
+      accountId: "pi-seed"
     }
   ];
   const usersPath = join(root, "users.json");
@@ -233,37 +301,37 @@ test("auth users seed into the control-plane store and survive controller recrea
     const firstServer = await listen(createRequestHandler({ appService, auth: firstAuth }));
     try {
       const login = await postJson(firstServer.origin, "/api/auth/login", {
-        email: "pi-demo@example.com",
-        password: "secret-demo"
+        email: "seed-owner@example.com",
+        password: "secret-seed"
       });
       assert.equal(login.response.status, 200);
-      assert.equal(login.payload.user.accountId, "pi-demo");
+      assert.equal(login.payload.user.accountId, "pi-seed");
     } finally {
       await firstServer.close();
     }
 
     const persisted = await store.read();
-    assert.equal(persisted.users["usr-pi-demo"].email, "pi-demo@example.com");
-    assert.equal(persisted.users["usr-pi-demo"].accountId, "pi-demo");
-    assert.equal(persisted.users["usr-pi-demo"].role, "pi");
-    assert.equal(persisted.users["usr-pi-demo"].status, "active");
-    assert.match(persisted.users["usr-pi-demo"].passwordHash, /^scrypt:/);
-    assert.equal(persisted.users["usr-pi-demo"].password, undefined);
-    assert.equal(persisted.users["usr-pi-demo"].balance, 0);
-    assert.equal(persisted.users["usr-pi-demo"].frozen, 0);
-    assert.deepEqual(persisted.users["usr-pi-demo"].holds, {});
-    assert.equal(persisted.users["usr-pi-demo"].totalRecharged, 0);
+    assert.equal(persisted.users["usr-pi-seed"].email, "seed-owner@example.com");
+    assert.equal(persisted.users["usr-pi-seed"].accountId, "pi-seed");
+    assert.equal(persisted.users["usr-pi-seed"].role, "pi");
+    assert.equal(persisted.users["usr-pi-seed"].status, "active");
+    assert.match(persisted.users["usr-pi-seed"].passwordHash, /^scrypt:/);
+    assert.equal(persisted.users["usr-pi-seed"].password, undefined);
+    assert.equal(persisted.users["usr-pi-seed"].balance, 0);
+    assert.equal(persisted.users["usr-pi-seed"].frozen, 0);
+    assert.deepEqual(persisted.users["usr-pi-seed"].holds, {});
+    assert.equal(persisted.users["usr-pi-seed"].totalRecharged, 0);
     assert.deepEqual(persisted.accounts, {});
 
     const recreatedAuth = createAuthController({ store, usersPath, seedUsers: [] });
     const recreatedServer = await listen(createRequestHandler({ appService, auth: recreatedAuth }));
     try {
       const login = await postJson(recreatedServer.origin, "/api/auth/login", {
-        email: "pi-demo@example.com",
-        password: "secret-demo"
+        email: "seed-owner@example.com",
+        password: "secret-seed"
       });
       assert.equal(login.response.status, 200);
-      assert.equal(login.payload.user.id, "usr-pi-demo");
+      assert.equal(login.payload.user.id, "usr-pi-seed");
     } finally {
       await recreatedServer.close();
     }

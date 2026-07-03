@@ -14,6 +14,7 @@ Supported:
 - Explicit storage destruction.
 - Seven-day compute and storage holds.
 - Resource usage, request usage, wallet transactions, manual top-up audit, billing ledger, and reconciliation records.
+- Server-backed support ticket list, creation, detail, and admin queue.
 - Local Docker development provider.
 - Tencent TKE production handoff.
 - PostgreSQL persistence when `DATABASE_URL` is configured.
@@ -28,13 +29,20 @@ Not yet public GA:
 - domain evidence judging and artifact registry;
 - connector/environment/agent marketplaces.
 
-## Current Gaps
+## Product Gaps
 
-- Retire compatibility-only account APIs and wallet mirror semantics.
-- Convert implementation-shape tests into contract-driven tests or delete them.
-- Move current price defaults into a versioned pricing contract.
-- Keep production evidence in history or external ledgers, not active docs.
-- Keep route contract limited to implemented or committed current routes.
+- External payment settlement.
+- GPU Workspace package.
+- Full OPL Gateway key and quota product surface.
+- Standalone OPL Fabric and OPL Ledger services.
+- Connector, environment, and agent marketplaces beyond approved catalog shells.
+
+## Repository Hygiene Rules
+
+- Active docs describe current truth only.
+- Machine contracts live in `packages/contracts/**`.
+- Tests should read contracts or runtime outputs where possible.
+- Temporary cleanup guards need an owner and removal condition.
 
 ## Required Verification
 

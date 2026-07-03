@@ -1,33 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createSupportTicket, getSupportTickets } from "../../api/support-api.js";
 
-export function useTickets() {
-  const [tickets, setTickets] = useState(() => {
+export function useTickets({ csrfToken = "", all = false } = {}) {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  async function refresh() {
+    setLoading(true);
     try {
-      return JSON.parse(localStorage.getItem("opl-support-tickets") || "[]");
-    } catch {
-      return [];
+      const payload = await getSupportTickets({ all });
+      setTickets(payload.tickets || []);
+    } finally {
+      setLoading(false);
     }
-  });
-
-  function save(next) {
-    setTickets(next);
-    localStorage.setItem("opl-support-tickets", JSON.stringify(next));
   }
 
-  function createTicket(input) {
-    const ticket = {
-      id: `ticket-${Date.now()}`,
-      title: input.title,
-      category: input.category,
-      priority: input.priority,
-      workspaceId: input.workspaceId || "",
-      status: "open",
-      createdAt: new Date().toISOString(),
-      messages: [{ author: "Lab Owner", text: input.description || "Created from OPL Console" }]
-    };
-    save([ticket, ...tickets]);
+  async function createTicket(input) {
+    const ticket = await createSupportTicket(input, csrfToken);
+    setTickets((current) => [ticket, ...current]);
     return ticket;
   }
 
-  return { tickets, createTicket };
+  useEffect(() => {
+    refresh();
+  }, [all]);
+
+  return { tickets, loading, createTicket, refresh };
 }

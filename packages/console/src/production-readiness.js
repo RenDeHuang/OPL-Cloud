@@ -33,6 +33,10 @@ const PROVIDER_CONFIG = {
   }
 };
 
+const BLOCKED_AUTH_PASSWORDS = new Set([
+  "OplAdminPass2026!"
+]);
+
 function check(id, ok, message) {
   return { id, ok, message };
 }
@@ -74,10 +78,14 @@ function seedUsersFromJson(value) {
   }
 }
 
-function hasNonDefaultSecret(user) {
+function hasProductionSecret(user) {
   if (user.passwordHash) return true;
   const password = String(user.password || "");
-  return Boolean(password && password !== "opl-pi-demo" && password !== "opl-admin-demo");
+  return Boolean(
+    password.length >= 12 &&
+    !BLOCKED_AUTH_PASSWORDS.has(password) &&
+    !/(password|changeme|change-me|example|placeholder)/i.test(password)
+  );
 }
 
 function hasSeedUser(users, role) {
@@ -86,7 +94,7 @@ function hasSeedUser(users, role) {
     user.email &&
     user.accountId &&
     user.status !== "disabled" &&
-    hasNonDefaultSecret(user)
+    hasProductionSecret(user)
   );
 }
 
@@ -97,11 +105,11 @@ function hasProductionAuthSeed(env) {
     env.OPL_PI_EMAIL &&
     env.OPL_PI_ACCOUNT_ID &&
     env.OPL_PI_PASSWORD &&
-    env.OPL_PI_PASSWORD !== "opl-pi-demo" &&
+    hasProductionSecret({ password: env.OPL_PI_PASSWORD }) &&
     env.OPL_ADMIN_EMAIL &&
     env.OPL_ADMIN_ACCOUNT_ID &&
     env.OPL_ADMIN_PASSWORD &&
-    env.OPL_ADMIN_PASSWORD !== "opl-admin-demo"
+    hasProductionSecret({ password: env.OPL_ADMIN_PASSWORD })
   );
 }
 

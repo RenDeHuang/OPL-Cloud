@@ -6,7 +6,7 @@ This repository is the OPL Cloud implementation workspace for the OPL Console an
 
 Implementation scope is fixed in [docs/project.md](./docs/project.md): [`one-person-lab`](https://github.com/gaofeng21cn/one-person-lab) provides the development framework concepts and lifecycle rules, [`one-person-lab-cloud`](https://github.com/gaofeng21cn/one-person-lab-cloud) provides the Cloud product definition, and this repository implements the OPL Console / OPL Workspace control-plane slice.
 
-The implementation is staged for future extraction under [packages](./packages): `console`, `fabric`, `ledger`, and `contracts`.
+The implementation boundary map lives under [packages](./packages): `console`, `fabric`, `ledger`, and `contracts`.
 
 ## Product Names
 
@@ -138,6 +138,8 @@ PORT=8787 npm start
 ```
 
 When `DATABASE_URL` is set, OPL Console stores login users, account balances, Workspaces, billing ledger entries, audit events, and runtime operation scaffolding in PostgreSQL tables. `OPL_CONSOLE_USERS_JSON` is only the bootstrap seed for the first PI/admin login users; after those users are written to the control-plane store, account status, roles, ownership, balances, Workspaces, billing, and audit records persist with the database across Console rollouts.
+
+If no auth seed exists, local/bootstrap startup creates only the built-in admin `admin@opl.local / OplAdminPass2026!`. It does not create a Lab Owner account, and production readiness rejects that default credential; TKE deployments must provide real PI/Admin users through secrets.
 
 OPL Ledger is the v1 billing truth. External metering systems are not required for production billing.
 

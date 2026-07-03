@@ -21,11 +21,10 @@ Human docs explain the system. They do not replace contracts or tests.
 - [product/console-workspace-v1.md](./product/console-workspace-v1.md): OPL Console commercial workspace product.
 - [runtime/production-runbook.md](./runtime/production-runbook.md): production operations.
 - [runtime/tke-production-deployment.md](./runtime/tke-production-deployment.md): Tencent TKE deployment contract.
-- [active/contract-and-test-lifecycle-audit.md](./active/contract-and-test-lifecycle-audit.md): current cleanup audit.
 
 ## History
 
-Stage plans, dated design freezes, run evidence, closeout notes, and completed implementation ledgers belong under `docs/history/**`.
+Dated plans, design freezes, run evidence, closeout notes, and completed implementation ledgers belong under `docs/history/**`.
 
 Active docs must not become process ledgers.
 

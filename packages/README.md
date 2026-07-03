@@ -1,10 +1,10 @@
 # OPL Cloud Implementation Packages
 
-This directory is a migration staging layout. It keeps the current repository deployable while making the future split into separate implementation repositories explicit.
+This directory is the current implementation boundary map. The repository deploys one OPL Console control-plane service while keeping Console, Fabric, Ledger, and contract responsibilities explicit.
 
 ## Packages
 
-| Package | Current role | Future extraction target |
+| Package | Current role | Ownership target |
 | --- | --- | --- |
 | `console` | OPL Console API, control-plane service, minimal commercial management model, PostgreSQL store, production readiness, production manifest validation, and Console UI | `opl-console` |
 | `fabric` | Resource catalog, runtime provider factory, and Local Docker / Tencent TKE adapters | `opl-fabric` or `opl-fabric-adapters` |
@@ -21,9 +21,9 @@ packages/console/api/server.js
 
 The service may call Fabric and Ledger package code directly for now. New work should keep imports pointed at package boundaries instead of recreating cross-cutting code inside `console`.
 
-## Extraction Rule
+## Ownership Rule
 
-When a package becomes independently deployable, move it out with its tests and keep this repository depending on an API or contract:
+When a package becomes independently deployable, keep this repository depending on an API or contract:
 
 - Console should depend on Workspace/Fabric/Ledger contracts.
 - Fabric should own resource catalog, runtime execution, and cloud adapter details.

@@ -22,7 +22,7 @@ Disallowed long-term state:
 
 - `accounts` wallet mirror semantics;
 - legacy user import as an auth source after store users exist;
-- `/api/accounts/credit` compatibility route;
+- retired account-credit endpoint aliases;
 - contracts that preserve legacy aliases as current product truth.
 
 ## 2026-07-03: User Wallet Is Commercial Billing Truth
@@ -36,3 +36,9 @@ Workspace and ledger records may keep `accountId` as billing-account identity, b
 Decision: Lab Owner UI is a commercial workspace distribution and billing explanation surface.
 
 Raw Fabric, Runtime, Production Readiness, request fingerprint, dedup, and raw Ledger evidence belong to Admin/operator views.
+
+## 2026-07-03: Deployment Tests Follow Machine Contracts
+
+Decision: workflow, image, deployment, and route tests should read machine contracts or exported manifests instead of hard-coding long source snippets in tests.
+
+This keeps tests permanent while avoiding phase-only guards that break on harmless implementation edits.
