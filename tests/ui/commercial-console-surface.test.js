@@ -73,22 +73,34 @@ test("create Workspace flow is a single commercial submit action", async () => {
 
   assert.doesNotMatch(createSource, /StepsForm/, "create flow must not hide provisioning behind a multi-step wizard");
   assert.match(createSource, /htmlType="submit"/, "create flow must expose one clear submit button");
+  assert.match(createSource, /attachmentId/, "Workspace entry creation must require an attached compute/storage pair");
   assert.match(createSource, /const created = await runAction/, "create flow must inspect action success before navigating");
   assert.match(createSource, /if \(created\) navigate/, "create flow must not navigate away after failed provisioning");
   assert.match(stateSource, /return true/, "runAction must report successful actions");
   assert.match(stateSource, /return false/, "runAction must report failed actions");
 });
 
-test("Workspace resource lifecycle is visible from list and detail", async () => {
+test("resource provisioning pages call resource APIs instead of disabled placeholders", async () => {
+  const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+
+  for (const apiName of ["createComputeResource", "createStorageVolume", "attachStorage"]) {
+    assert.match(resourceSource, new RegExp(`${apiName}\\(`), `resource UI must call ${apiName}`);
+  }
+  assert.doesNotMatch(resourceSource, /disabled: true/, "resource creation actions must not remain disabled placeholders");
+});
+
+test("Workspace detail links to first-class resources and excludes retired compute lifecycle controls", async () => {
   const listSource = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");
   const detailSource = await source("packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx");
 
   assert.match(listSource, /资源/, "Workspace list must expose a resource-management entry");
   assert.match(listSource, /routeTo\("workspace.detail"/, "Workspace list resource entry must route to Workspace detail");
   for (const label of ["停止计算", "启动计算并挂载存储", "销毁计算", "销毁存储"]) {
-    assert.match(detailSource, new RegExp(label), `Workspace detail must expose ${label}`);
+    assert.doesNotMatch(detailSource, new RegExp(label), `Workspace detail must not expose retired control ${label}`);
   }
-  assert.match(detailSource, /保留存储只挂载到当前 Workspace 的计算资源/, "detail must explain the storage attach model");
+  assert.match(detailSource, /routeTo\("compute.detail"/, "detail must link to the attached ComputeResource");
+  assert.match(detailSource, /routeTo\("storage.detail"/, "detail must link to the attached StorageVolume");
+  assert.match(detailSource, /routeTo\("attachment.detail"/, "detail must link to the StorageAttachment");
   assert.match(detailSource, /isFeatureEnabled\("storageBackups"/, "storage backup UI must be feature-gated");
   assert.match(detailSource, /storageBackupsEnabled &&/, "storage backup controls must not be visible in the default commercial slice");
 });

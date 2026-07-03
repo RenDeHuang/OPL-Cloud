@@ -135,6 +135,7 @@ test("active route contract models TKE resources before Workspace entry", async 
     "POST /api/workspaces/destroy-disk"
   ]) {
     assert.equal(activeApiRoutes.has(retiredApi), false, `${retiredApi} must not be a Lab Owner commercial route`);
+    assert.equal(apiRouteManifest.includes(retiredApi), false, `${retiredApi} must not be exposed by the public Console API manifest`);
   }
 });
 

@@ -4,22 +4,6 @@ export function createWorkspace(input, csrfToken) {
   return postJson("/api/workspaces", input, csrfToken);
 }
 
-export function stopWorkspaceServer(input, csrfToken) {
-  return postJson("/api/workspaces/stop-server", input, csrfToken);
-}
-
-export function restartWorkspaceServer(input, csrfToken) {
-  return postJson("/api/workspaces/restart-server", input, csrfToken);
-}
-
-export function destroyWorkspaceServer(input, csrfToken) {
-  return postJson("/api/workspaces/destroy-server", input, csrfToken);
-}
-
-export function destroyWorkspaceDisk(input, csrfToken) {
-  return postJson("/api/workspaces/destroy-disk", input, csrfToken);
-}
-
 export function createStorageBackup(input, csrfToken) {
   return postJson("/api/workspaces/storage-backups", input, csrfToken);
 }

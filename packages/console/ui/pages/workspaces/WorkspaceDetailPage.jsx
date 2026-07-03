@@ -1,14 +1,10 @@
 import React from "react";
 import { Button, Empty, Typography } from "antd";
-import { Database, HardDrive, Link as LinkIcon, RefreshCw, RotateCw, Square, Trash2 } from "lucide-react";
+import { Cable, Database, HardDrive, Link as LinkIcon, RefreshCw, Server, Trash2 } from "lucide-react";
 import {
   createStorageBackup,
   deleteWorkspaceToken,
-  destroyWorkspaceDisk,
-  destroyWorkspaceServer,
-  resetWorkspaceToken,
-  restartWorkspaceServer,
-  stopWorkspaceServer
+  resetWorkspaceToken
 } from "../../api/workspaces-api.js";
 import { defaultLaunchConfig, isFeatureEnabled } from "../../config/launch-config.js";
 import { navigate, routeTo } from "../../consoleRoutes.js";
@@ -40,11 +36,14 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session, ru
   }
   const backups = (state.storageBackups || []).filter((backup) => backup.workspaceId === selected.id);
   const storageBackupsEnabled = isFeatureEnabled("storageBackups", defaultLaunchConfig);
+  const compute = (state.computeResources || []).find((item) => item.id === selected.computeId);
+  const storage = (state.storageVolumes || []).find((item) => item.id === selected.storageId);
+  const attachment = (state.storageAttachments || []).find((item) => item.id === selected.attachmentId);
   return (
     <ConsoleSurface
       title={selected.name}
       eyebrow="Workspace detail"
-      subtitle="URL, compute lifecycle, retained storage"
+      subtitle="URL entry linked to compute, storage, and attachment"
       extra={<Button onClick={() => navigate(routeTo("workspace.list"))}>返回列表</Button>}
     >
       <div className="consoleGrid equal">
@@ -70,22 +69,21 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session, ru
             items={[
               { label: "状态", value: statusLabel(selected), meta: selected.state, status: "Workspace", tone: toneForStatus(selected.state) },
               { label: "套餐", value: selectedPlan?.name || "-", meta: packageText(selectedPlan), status: "plan", tone: "info" },
-              { label: "计算", value: selected.server?.spec || "-", meta: valueLabel(selected.server?.status), status: "hourly", tone: toneForStatus(selected.server?.status) },
-              { label: "存储", value: `${selected.disk?.sizeGb || 0}GB`, meta: valueLabel(selected.disk?.status), status: "retained", tone: toneForStatus(selected.disk?.status) },
-              { label: "挂载关系", value: "当前 Workspace", meta: "保留存储只挂载到当前 Workspace 的计算资源", status: "1:1", tone: "info" }
+              { label: "计算", value: compute?.name || selected.computeId || "-", meta: valueLabel(compute?.status || selected.server?.status), status: "ComputeResource", tone: toneForStatus(compute?.status || selected.server?.status) },
+              { label: "存储", value: storage?.name || selected.storageId || "-", meta: `${selected.disk?.sizeGb || storage?.sizeGb || 0}GB`, status: "StorageVolume", tone: toneForStatus(storage?.status || selected.disk?.status) },
+              { label: "挂载关系", value: attachment?.id || selected.attachmentId || "-", meta: attachment?.mountPath || selected.disk?.mountPath || "/data", status: "StorageAttachment", tone: toneForStatus(attachment?.status) }
             ]}
           />
         </InsightPanel>
       </div>
 
       <div className="consoleGrid equal">
-        <InsightPanel title="生命周期操作" eyebrow="Compute and storage">
+        <InsightPanel title="资源对象" eyebrow="Compute, storage, attachment">
           <ActionGroup
             actions={[
-              { label: "停止计算", icon: <Square size={15} />, onClick: () => runAction(() => stopWorkspaceServer({ workspaceId: selected.id, confirm: true }, session.csrfToken), "计算已停止") },
-              { label: "启动计算并挂载存储", icon: <RotateCw size={15} />, onClick: () => runAction(() => restartWorkspaceServer({ workspaceId: selected.id }, session.csrfToken), "计算已启动并挂载存储") },
-              { label: "销毁计算", danger: true, icon: <Trash2 size={15} />, onClick: () => runAction(() => destroyWorkspaceServer({ workspaceId: selected.id, confirm: true }, session.csrfToken), "计算已销毁") },
-              { label: "销毁存储", danger: true, icon: <HardDrive size={15} />, onClick: () => runAction(() => destroyWorkspaceDisk({ workspaceId: selected.id, confirmDataLoss: true }, session.csrfToken), "存储已销毁") }
+              { label: "查看计算资源", icon: <Server size={15} />, disabled: !selected.computeId, onClick: () => navigate(routeTo("compute.detail", { id: selected.computeId })) },
+              { label: "查看存储资源", icon: <HardDrive size={15} />, disabled: !selected.storageId, onClick: () => navigate(routeTo("storage.detail", { id: selected.storageId })) },
+              { label: "查看挂载关系", icon: <Cable size={15} />, disabled: !selected.attachmentId, onClick: () => navigate(routeTo("attachment.detail", { id: selected.attachmentId })) }
             ]}
           />
         </InsightPanel>

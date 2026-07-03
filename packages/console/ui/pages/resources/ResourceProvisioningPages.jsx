@@ -1,6 +1,14 @@
 import React from "react";
-import { Button, Empty } from "antd";
-import { Cable, Database, Plus, Server } from "lucide-react";
+import { Alert, Button, Empty, Form, Input, InputNumber, Select } from "antd";
+import { Cable, Database, Plus, Server, Trash2 } from "lucide-react";
+import {
+  attachStorage,
+  createComputeResource,
+  createStorageVolume,
+  destroyComputeResource,
+  destroyStorageVolume,
+  detachStorage
+} from "../../api/resources-api.js";
 import { navigate, routeTo } from "../../consoleRoutes.js";
 import { ActionGroup, ConsoleSurface, InsightPanel, MetricStrip, ObjectTable, ResourceSplit, StatusPill } from "../shared/commercial-console.jsx";
 
@@ -48,26 +56,53 @@ export function ComputeResourcesPage({ state }) {
   );
 }
 
-export function CreateComputeResourcePage({ state }) {
+export function CreateComputeResourcePage({ state, session, runAction }) {
+  const availablePackages = (state.packages || []).filter((plan) => plan.available);
+  const initialPackageId = availablePackages[0]?.id || "basic";
   return (
     <ConsoleSurface title="Create Compute" eyebrow="Provision" subtitle="Choose a verified TKE compute package" compact>
       <InsightPanel title="开通计算" eyebrow="ComputeResource">
-        <ResourceSplit
-          items={(state.packages || []).filter((plan) => plan.available).map((plan) => ({
-            label: plan.name,
-            value: plan.server,
-            meta: `${plan.cpu} CPU / ${plan.memoryGb}GB`,
-            status: "verified",
-            tone: "good"
-          }))}
-        />
-        <ActionGroup actions={[{ label: "选择套餐后开通", type: "primary", icon: <Server size={15} />, disabled: true }]} />
+        <Form
+          layout="vertical"
+          initialValues={{ name: "Analysis compute", packageId: initialPackageId }}
+          onFinish={async (values) => {
+            const created = await runAction(
+              () => createComputeResource(values, session.csrfToken),
+              "计算资源已开通"
+            );
+            if (created) navigate(routeTo("compute.list"));
+          }}
+        >
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入计算资源名称" }]}>
+            <Input placeholder="Analysis compute" />
+          </Form.Item>
+          <Form.Item name="packageId" label="规格" rules={[{ required: true, message: "请选择规格" }]}>
+            <Select
+              options={availablePackages.map((plan) => ({
+                label: `${plan.name} · ${plan.server} · ${plan.cpu} CPU / ${plan.memoryGb}GB`,
+                value: plan.id
+              }))}
+            />
+          </Form.Item>
+          <ResourceSplit
+            items={availablePackages.map((plan) => ({
+              label: plan.name,
+              value: plan.server,
+              meta: `${plan.cpu} CPU / ${plan.memoryGb}GB`,
+              status: "verified",
+              tone: "good"
+            }))}
+          />
+          <Button className="formSubmit" type="primary" htmlType="submit" icon={<Server size={15} />} disabled={!availablePackages.length}>
+            开通计算
+          </Button>
+        </Form>
       </InsightPanel>
     </ConsoleSurface>
   );
 }
 
-export function ComputeResourceDetailPage({ state, path }) {
+export function ComputeResourceDetailPage({ state, path, session, runAction }) {
   const resource = selectedResource(path, state.computeResources || []);
   if (!resource) return <ConsoleSurface title="Compute" eyebrow="ComputeResource"><Empty description="未找到计算资源" /></ConsoleSurface>;
   return (
@@ -78,6 +113,20 @@ export function ComputeResourceDetailPage({ state, path }) {
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "规格", value: resource.spec || "-", meta: resource.packageId },
             { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" }
+          ]}
+        />
+        <ActionGroup
+          actions={[
+            {
+              label: "销毁 ComputeResource",
+              danger: true,
+              icon: <Trash2 size={15} />,
+              disabled: resource.status === "destroyed",
+              onClick: () => runAction(
+                () => destroyComputeResource({ computeId: resource.id, confirm: true }, session.csrfToken),
+                "计算资源已销毁"
+              )
+            }
           ]}
         />
       </InsightPanel>
@@ -110,18 +159,48 @@ export function StorageVolumesPage({ state }) {
   );
 }
 
-export function CreateStorageVolumePage() {
+export function CreateStorageVolumePage({ state, session, runAction }) {
+  const availablePackages = (state.packages || []).filter((plan) => plan.available);
+  const initialPackageId = availablePackages[0]?.id || "basic";
   return (
     <ConsoleSurface title="Create Storage" eyebrow="Provision" subtitle="Create a retained TKE storage volume" compact>
       <InsightPanel title="开通存储" eyebrow="StorageVolume">
-        <ResourceSplit items={[{ label: "默认容量", value: "10GB", meta: "retained persistent storage", status: "billable", tone: "info" }]} />
-        <ActionGroup actions={[{ label: "确认开通存储", type: "primary", icon: <Database size={15} />, disabled: true }]} />
+        <Form
+          layout="vertical"
+          initialValues={{ name: "Lab storage", packageId: initialPackageId, sizeGb: availablePackages[0]?.diskGb || 10 }}
+          onFinish={async (values) => {
+            const created = await runAction(
+              () => createStorageVolume(values, session.csrfToken),
+              "存储资源已开通"
+            );
+            if (created) navigate(routeTo("storage.list"));
+          }}
+        >
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入存储名称" }]}>
+            <Input placeholder="Lab storage" />
+          </Form.Item>
+          <Form.Item name="packageId" label="计费规格" rules={[{ required: true, message: "请选择计费规格" }]}>
+            <Select
+              options={availablePackages.map((plan) => ({
+                label: `${plan.name} · 默认 ${plan.diskGb}GB`,
+                value: plan.id
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="sizeGb" label="容量 GB" rules={[{ required: true, message: "请输入容量" }]}>
+            <InputNumber min={1} max={4096} style={{ width: "100%" }} />
+          </Form.Item>
+          <ResourceSplit items={[{ label: "挂载路径", value: "/data", meta: "one-person-lab-app persistent state", status: "ready", tone: "info" }]} />
+          <Button className="formSubmit" type="primary" htmlType="submit" icon={<Database size={15} />} disabled={!availablePackages.length}>
+            开通存储
+          </Button>
+        </Form>
       </InsightPanel>
     </ConsoleSurface>
   );
 }
 
-export function StorageVolumeDetailPage({ state, path }) {
+export function StorageVolumeDetailPage({ state, path, session, runAction }) {
   const resource = selectedResource(path, state.storageVolumes || []);
   if (!resource) return <ConsoleSurface title="Storage" eyebrow="StorageVolume"><Empty description="未找到存储资源" /></ConsoleSurface>;
   return (
@@ -132,6 +211,20 @@ export function StorageVolumeDetailPage({ state, path }) {
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: resource.storageClassId },
             { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" }
+          ]}
+        />
+        <ActionGroup
+          actions={[
+            {
+              label: "销毁 StorageVolume",
+              danger: true,
+              icon: <Trash2 size={15} />,
+              disabled: resource.status === "destroyed" || resource.status === "attached",
+              onClick: () => runAction(
+                () => destroyStorageVolume({ storageId: resource.id, confirmDataLoss: true }, session.csrfToken),
+                "存储资源已销毁"
+              )
+            }
           ]}
         />
       </InsightPanel>
@@ -165,7 +258,7 @@ export function StorageAttachmentsPage({ state }) {
   );
 }
 
-export function StorageAttachmentDetailPage({ state, path }) {
+export function StorageAttachmentDetailPage({ state, path, session, runAction }) {
   const attachment = selectedResource(path, state.storageAttachments || []);
   if (!attachment) return <ConsoleSurface title="Attachment" eyebrow="StorageAttachment"><Empty description="未找到挂载关系" /></ConsoleSurface>;
   return (
@@ -178,17 +271,62 @@ export function StorageAttachmentDetailPage({ state, path }) {
             { label: "存储", value: attachment.storageId || "-", meta: attachment.mountPath || "/data" }
           ]}
         />
+        <ActionGroup
+          actions={[
+            {
+              label: "解除挂载",
+              danger: true,
+              icon: <Trash2 size={15} />,
+              disabled: attachment.status !== "attached",
+              onClick: () => runAction(
+                () => detachStorage({ attachmentId: attachment.id, confirm: true }, session.csrfToken),
+                "挂载已解除"
+              )
+            }
+          ]}
+        />
       </InsightPanel>
     </ConsoleSurface>
   );
 }
 
-export function CreateStorageAttachmentPage() {
+export function CreateStorageAttachmentPage({ state, session, runAction }) {
+  const computeResources = (state.computeResources || []).filter((item) => item.status !== "destroyed");
+  const storageVolumes = (state.storageVolumes || []).filter((item) => !["destroyed", "attached"].includes(item.status));
+  const canAttach = computeResources.length > 0 && storageVolumes.length > 0;
   return (
     <ConsoleSurface title="Attach Storage" eyebrow="Mount" subtitle="Select one compute resource and one storage volume" compact>
       <InsightPanel title="挂载存储" eyebrow="StorageAttachment">
-        <ResourceSplit items={[{ label: "挂载路径", value: "/data", meta: "one-person-lab-app persistent state", status: "required", tone: "info" }]} />
-        <ActionGroup actions={[{ label: "确认挂载", type: "primary", icon: <Cable size={15} />, disabled: true }]} />
+        {!canAttach && <Alert type="warning" showIcon message="需要至少一个计算资源和一个未挂载存储卷。" />}
+        <Form
+          layout="vertical"
+          initialValues={{
+            computeId: computeResources[0]?.id,
+            storageId: storageVolumes[0]?.id,
+            mountPath: "/data"
+          }}
+          onFinish={async (values) => {
+            const created = await runAction(
+              () => attachStorage(values, session.csrfToken),
+              "存储已挂载"
+            );
+            if (created) navigate(routeTo("attachment.list"));
+          }}
+        >
+          <Form.Item name="computeId" label="计算资源" rules={[{ required: true, message: "请选择计算资源" }]}>
+            <Select options={computeResources.map((item) => ({ label: item.name || item.id, value: item.id }))} />
+          </Form.Item>
+          <Form.Item name="storageId" label="存储资源" rules={[{ required: true, message: "请选择存储资源" }]}>
+            <Select options={storageVolumes.map((item) => ({ label: `${item.name || item.id} · ${item.sizeGb}GB`, value: item.id }))} />
+          </Form.Item>
+          <Form.Item name="mountPath" label="挂载路径" rules={[{ required: true, message: "请输入挂载路径" }]}>
+            <Input />
+          </Form.Item>
+          <ResourceSplit items={[{ label: "WebUI 数据目录", value: "/data", meta: "one-person-lab-app persistent state", status: "required", tone: "info" }]} />
+          <Button className="formSubmit" type="primary" htmlType="submit" icon={<Cable size={15} />} disabled={!canAttach}>
+            挂载存储
+          </Button>
+        </Form>
       </InsightPanel>
     </ConsoleSurface>
   );
