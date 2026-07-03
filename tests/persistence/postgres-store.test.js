@@ -39,7 +39,7 @@ function createFakePool() {
       if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK") {
         return { rows: [] };
       }
-      if (normalized.startsWith("CREATE TABLE IF NOT EXISTS") || normalized.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS")) {
+      if (normalized.startsWith("CREATE TABLE IF NOT EXISTS") || normalized.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS") || normalized.startsWith("DROP INDEX IF EXISTS")) {
         return { rows: [] };
       }
       if (normalized.startsWith("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations")) {
@@ -508,4 +508,21 @@ test("PostgresStore update reads, mutates, and writes state transactionally", as
       .filter((sql) => sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK"),
     ["BEGIN", "COMMIT"]
   );
+});
+
+test("PostgresStore billing ledger dedup index excludes repeatable credit and hold entries", async () => {
+  const pool = createFakePool();
+  const store = new PostgresStore({ pool });
+
+  await store.read();
+
+  const indexStatement = pool.statements.find((statement) =>
+    statement.sql.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS billing_ledger_dedup_idx")
+  )?.sql || "";
+  assert.match(indexStatement, /WHERE/);
+  assert.match(indexStatement, /state->>'sourceEventId'/);
+  assert.match(indexStatement, /state->>'type'\) IN \('compute_debit', 'storage_debit', 'compute_auto_stopped', 'request_debit'\)/);
+  assert.doesNotMatch(indexStatement, /credit/);
+  assert.doesNotMatch(indexStatement, /compute_hold/);
+  assert.doesNotMatch(indexStatement, /storage_hold/);
 });

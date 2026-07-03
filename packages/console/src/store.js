@@ -622,7 +622,21 @@ export class PostgresStore {
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx ON request_usage_logs (workspace_id, request_id)");
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx ON request_usage_dedup (workspace_id, source_event_id)");
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_workspace_resource_source_idx ON resource_usage_logs (workspace_id, resource_type, ((state->>'sourceEventId')))");
-    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS billing_ledger_dedup_idx ON billing_ledger (account_id, workspace_id, ((state->>'type')), ((state->>'sourceEventId')), (COALESCE(state->'metadata'->>'fundingSource', '')))");
+    await client.query("DROP INDEX IF EXISTS billing_ledger_dedup_idx");
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS billing_ledger_dedup_idx
+      ON billing_ledger (
+        account_id,
+        workspace_id,
+        ((state->>'type')),
+        ((state->>'sourceEventId')),
+        (COALESCE(state->'metadata'->>'fundingSource', ''))
+      )
+      WHERE
+        state->>'sourceEventId' IS NOT NULL
+        AND state->>'sourceEventId' <> ''
+        AND (state->>'type') IN ('compute_debit', 'storage_debit', 'compute_auto_stopped', 'request_debit')
+    `);
     this.initialized = true;
   }
 }
