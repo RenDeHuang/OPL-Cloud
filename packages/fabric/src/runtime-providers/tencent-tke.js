@@ -136,6 +136,96 @@ export class TencentTkeProvider {
     });
   }
 
+  async createStorageVolume({ storageId, accountId = "unknown", storage = {}, packagePlan }) {
+    this.requireExecutionBoundary();
+    await this.requireTools(REQUIRED_TOOLS);
+    const name = k8sName(storageId);
+    const manifestPath = await this.writeStorageVolumeManifest({
+      storageId,
+      accountId,
+      name,
+      storage,
+      packagePlan
+    });
+    await this.runKubectl(["apply", "-f", manifestPath]);
+    return {
+      providerResourceId: `pvc/${name}-data`,
+      status: "available",
+      billingStatus: "active",
+      sizeGb: storage.sizeGb || packagePlan.diskGb,
+      storageClass: this.env.OPL_WORKSPACE_STORAGE_CLASS
+    };
+  }
+
+  async createComputeResource({ computeId, accountId = "unknown", compute = {}, packagePlan }) {
+    this.requireExecutionBoundary();
+    await this.requireTools(REQUIRED_TOOLS);
+    const name = k8sName(computeId);
+    const manifestPath = await this.writeComputeResourceManifest({
+      computeId,
+      accountId,
+      compute,
+      name,
+      packagePlan
+    });
+    await this.runKubectl(["apply", "-f", manifestPath]);
+    return {
+      providerResourceId: `deployment/${name}`,
+      status: "running",
+      billingStatus: "active",
+      spec: packagePlan.server,
+      image: this.env.OPL_WORKSPACE_IMAGE,
+      runtime: {
+        service: `service/${name}`,
+        serviceName: name,
+        dockerId: `deployment/${name}`
+      }
+    };
+  }
+
+  async attachStorage({ attachment, compute, storage }) {
+    this.requireExecutionBoundary();
+    await this.requireTools(REQUIRED_TOOLS);
+    const computeName = resourceName(compute.providerResourceId || compute.server?.id || `deployment/${k8sName(attachment.computeId)}`);
+    const storageClaimName = resourceName(storage.providerResourceId || storage.id || `pvc/${k8sName(attachment.storageId)}-data`);
+    const manifestPath = await this.writeAttachmentManifest({
+      attachment,
+      compute,
+      storage,
+      computeName,
+      storageClaimName
+    });
+    await this.runKubectl(["apply", "-f", manifestPath]);
+    return {
+      providerAttachmentId: `deployment/${computeName}:pvc/${storageClaimName}:${attachment.mountPath || "/data"}`,
+      status: "attached",
+      computeStatus: "running",
+      storageStatus: "attached"
+    };
+  }
+
+  async createWorkspaceEntry({ workspaceId, ownerAccountId = "unknown", workspaceName, token, compute, packagePlan }) {
+    this.requireExecutionBoundary();
+    await this.requireTools(REQUIRED_TOOLS);
+    const computeName = resourceName(compute.providerResourceId || compute.server?.id || `deployment/${k8sName(compute.id || workspaceId)}`);
+    const secretPath = await this.writeWorkspaceEntrySecretManifest({
+      workspaceId,
+      workspaceName,
+      ownerAccountId,
+      computeName,
+      packagePlan,
+      token
+    });
+    await this.runKubectl(["apply", "-f", secretPath]);
+    await this.addWorkspaceRoute({ workspaceId, serviceName: computeName });
+    return {
+      provider: this.name,
+      slug: workspaceSlug(workspaceName, workspaceId),
+      url: this.workspaceUrl({ workspaceId, token }),
+      status: "ready"
+    };
+  }
+
   runtimeFixture({ name, workspaceId, packagePlan, token, slug, restoreFromBackup = null }) {
     return {
       id: workspaceId,
@@ -489,6 +579,38 @@ export class TencentTkeProvider {
     return manifestPath;
   }
 
+  async writeStorageVolumeManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.storageId));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, "storage.pvc.k8s.json");
+    await writeFile(manifestPath, `${JSON.stringify(this.storageVolumeManifest(input), null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
+  async writeComputeResourceManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.computeId));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, "compute.k8s.json");
+    await writeFile(manifestPath, `${JSON.stringify(this.computeResourceManifest(input), null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
+  async writeAttachmentManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.attachment.id));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, "attachment.k8s.json");
+    await writeFile(manifestPath, `${JSON.stringify(this.attachmentManifest(input), null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
+  async writeWorkspaceEntrySecretManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.workspaceId));
+    await mkdir(stateDir, { recursive: true });
+    const manifestPath = join(stateDir, "workspace-entry-secret.k8s.json");
+    await writeFile(manifestPath, `${JSON.stringify(this.workspaceEntrySecretManifest(input), null, 2)}\n`, { mode: 0o600 });
+    return manifestPath;
+  }
+
   async writeStorageBackupManifest(input) {
     const stateDir = join(this.stateRootDir, compactId(input.workspace.id));
     await mkdir(stateDir, { recursive: true });
@@ -676,6 +798,161 @@ export class TencentTkeProvider {
           }
         }
       ]
+    };
+  }
+
+  storageVolumeManifest({ name, storageId, accountId, storage, packagePlan }) {
+    return {
+      apiVersion: "v1",
+      kind: "PersistentVolumeClaim",
+      metadata: {
+        name: `${name}-data`,
+        labels: {
+          "app.kubernetes.io/name": "opl-storage-volume",
+          "app.kubernetes.io/instance": name,
+          "oplcloud.cn/storage-id": storageId,
+          "oplcloud.cn/account-id": accountId
+        }
+      },
+      spec: this.workspacePvcSpec({
+        packagePlan: {
+          ...packagePlan,
+          diskGb: storage.sizeGb || packagePlan.diskGb
+        }
+      })
+    };
+  }
+
+  computeResourceManifest({ name, computeId, accountId, compute, packagePlan, storageClaimName = null }) {
+    const labels = {
+      "app.kubernetes.io/name": "opl-compute-resource",
+      "app.kubernetes.io/instance": name,
+      "oplcloud.cn/compute-id": computeId,
+      "oplcloud.cn/account-id": accountId
+    };
+    const selector = { matchLabels: labels };
+    const nodeSelectorKey = this.env.OPL_WORKSPACE_NODE_SELECTOR_KEY;
+    const nodeSelectorValue = this.env.OPL_WORKSPACE_NODE_SELECTOR_VALUE;
+    const volumeMounts = storageClaimName
+      ? [
+        { name: "workspace-data", mountPath: "/data", subPath: "data" },
+        { name: "workspace-data", mountPath: "/projects", subPath: "projects" }
+      ]
+      : undefined;
+    const volumes = storageClaimName
+      ? [{ name: "workspace-data", persistentVolumeClaim: { claimName: storageClaimName } }]
+      : undefined;
+    return {
+      apiVersion: "v1",
+      kind: "List",
+      items: [
+        this.workspaceEntrySecretManifest({
+          computeName: name,
+          workspaceId: compute.workspaceId || computeId,
+          workspaceName: compute.name || computeId,
+          ownerAccountId: accountId,
+          packagePlan,
+          token: compute.token || ""
+        }),
+        {
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          metadata: { name, labels },
+          spec: {
+            replicas: 1,
+            selector,
+            template: {
+              metadata: { labels },
+              spec: {
+                automountServiceAccountToken: false,
+                imagePullSecrets: [{ name: this.env.OPL_IMAGE_PULL_SECRET_NAME }],
+                nodeSelector: nodeSelectorKey && nodeSelectorValue ? { [nodeSelectorKey]: nodeSelectorValue } : undefined,
+                containers: [
+                  {
+                    name: "workspace",
+                    image: this.env.OPL_WORKSPACE_IMAGE,
+                    imagePullPolicy: "IfNotPresent",
+                    ports: [{ name: "http", containerPort: Number(this.env.OPL_WORKSPACE_WEBUI_PORT || 3000) }],
+                    envFrom: [{ secretRef: { name: `${name}-env` } }],
+                    env: [
+                      { name: "OPL_COMPUTE_ID", value: computeId },
+                      { name: "OPL_OWNER_ACCOUNT_ID", value: accountId },
+                      { name: "OPL_PACKAGE_ID", value: packagePlan.id },
+                      { name: "OPL_ACCELERATOR", value: packagePlan.accelerator || "cpu" },
+                      { name: "DATA_DIR", value: "/data" },
+                      { name: "AIONUI_DATA_DIR", value: "/data" },
+                      { name: "OPL_PROJECTS_DIR", value: "/projects" },
+                      { name: "ALLOW_REMOTE", value: "true" },
+                      { name: "OPL_WEBUI_AUTH_MODE", value: "none" },
+                      { name: "HOME", value: "/data" },
+                      { name: "OPL_WORKSPACE_ROOT", value: "/projects" },
+                      { name: "CODEX_HOME", value: "/data/codex" }
+                    ],
+                    volumeMounts,
+                    resources: workspaceContainerResources(packagePlan),
+                    readinessProbe: {
+                      httpGet: { path: "/", port: 3000 },
+                      initialDelaySeconds: 10,
+                      periodSeconds: 10
+                    }
+                  }
+                ],
+                volumes
+              }
+            }
+          }
+        },
+        {
+          apiVersion: "v1",
+          kind: "Service",
+          metadata: { name, labels },
+          spec: {
+            type: "ClusterIP",
+            selector: labels,
+            ports: [{ name: "http", port: 3000, targetPort: "http" }]
+          }
+        }
+      ]
+    };
+  }
+
+  attachmentManifest({ attachment, compute, storage, computeName, storageClaimName }) {
+    return this.computeResourceManifest({
+      name: computeName,
+      computeId: compute.id || attachment.computeId,
+      accountId: compute.ownerAccountId || attachment.ownerAccountId || "unknown",
+      compute,
+      packagePlan: {
+        id: compute.packageId || storage.packageId || "basic",
+        server: compute.spec,
+        cpu: compute.cpu,
+        memoryGb: compute.memoryGb,
+        accelerator: compute.accelerator || "cpu"
+      },
+      storageClaimName
+    });
+  }
+
+  workspaceEntrySecretManifest({ computeName, workspaceId, workspaceName, ownerAccountId, packagePlan, token }) {
+    return {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: {
+        name: `${computeName}-env`,
+        labels: {
+          "app.kubernetes.io/name": "opl-workspace-entry",
+          "app.kubernetes.io/instance": computeName,
+          "oplcloud.cn/workspace-id": workspaceId
+        }
+      },
+      type: "Opaque",
+      data: {
+        OPL_SHARE_TOKEN: b64(token),
+        OPL_WORKSPACE_ID: b64(workspaceId),
+        OPL_WORKSPACE_NAME: b64(workspaceName || ""),
+        OPL_OWNER_ACCOUNT_ID: b64(ownerAccountId || ""),
+        OPL_PACKAGE_ID: b64(packagePlan?.id || "")
+      }
     };
   }
 

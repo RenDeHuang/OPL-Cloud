@@ -154,7 +154,10 @@ export class WorkspaceLifecycleService extends OplDomainService {
         docker: {
           id: compute.runtime?.dockerId || `runtime-${workspaceId}`,
           image: compute.image || "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
-          status: "running"
+          status: "running",
+          service: compute.runtime?.service || (compute.runtime?.serviceName ? `service/${compute.runtime.serviceName}` : undefined),
+          composePath: compute.composePath || attachment.composePath,
+          localPath: compute.localPath
         },
         disk: {
           id: storage.providerResourceId || storage.id,

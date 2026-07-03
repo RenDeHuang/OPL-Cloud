@@ -125,7 +125,10 @@ export class ResourceProvisioningService extends OplDomainService {
           billingStatus: providerCompute.billingStatus || compute.billingStatus,
           spec: providerCompute.spec || compute.spec,
           image: providerCompute.image || compute.image,
+          localPath: providerCompute.localPath || compute.localPath,
+          composePath: providerCompute.composePath || compute.composePath,
           runtime: providerCompute.runtime ? clone(providerCompute.runtime) : compute.runtime,
+          providerData: clone(providerCompute),
           updatedAt: now()
         });
         return clone(compute);
@@ -261,6 +264,9 @@ export class ResourceProvisioningService extends OplDomainService {
           providerResourceId: providerStorage.providerResourceId || providerStorage.id || storage.providerResourceId,
           status: providerStorage.status || "available",
           billingStatus: providerStorage.billingStatus || storage.billingStatus,
+          localPath: providerStorage.localPath || storage.localPath,
+          storageClass: providerStorage.storageClass || storage.storageClass,
+          providerData: clone(providerStorage),
           updatedAt: now()
         });
         return clone(storage);
@@ -379,11 +385,15 @@ export class ResourceProvisioningService extends OplDomainService {
         Object.assign(attachment, {
           providerAttachmentId: providerAttachment.providerAttachmentId || providerAttachment.id || attachment.providerAttachmentId,
           status: providerAttachment.status || "attached",
+          localPath: providerAttachment.localPath || attachment.localPath,
+          composePath: providerAttachment.composePath || attachment.composePath,
+          providerData: clone(providerAttachment),
           updatedAt: now()
         });
         compute.attachedStorageIds = [...new Set([...(compute.attachedStorageIds || []), storageId])];
         storage.attachmentIds = [...new Set([...(storage.attachmentIds || []), attachmentId])];
-        storage.status = "attached";
+        if (providerAttachment.computeStatus) compute.status = providerAttachment.computeStatus;
+        storage.status = providerAttachment.storageStatus || "attached";
         compute.updatedAt = now();
         storage.updatedAt = now();
         return clone(attachment);
