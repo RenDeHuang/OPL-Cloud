@@ -3,14 +3,13 @@
 ## Workspace Resource Mapping
 
 ```text
-1 OPL Workspace
-= 1 runtime compute unit
-= 1 one-person-lab-app runtime container
-= 1 persistent workspace storage volume
-= 1 URL
+1 ComputeResource = account-owned one-person-lab-app runtime compute
+1 StorageVolume = account-owned persistent storage
+1 StorageAttachment = one storage volume mounted to one compute resource
+1 OPL Workspace = URL token and WebUI entry for one attachment
 ```
 
-One Lab Owner can own multiple OPL Workspaces.
+One Lab Owner can own multiple compute resources, storage volumes, attachments, and OPL Workspace URL entries.
 
 ## Access
 
@@ -28,7 +27,7 @@ Workspace summaries, readiness reports, and public API responses must not leak t
 
 Compute and persistent storage have separate lifecycles.
 
-Stopping or destroying compute must not destroy persistent storage.
+Destroying compute must not destroy persistent storage.
 
 Storage destruction requires explicit confirmation and is the only action that stops storage billing.
 
@@ -36,11 +35,11 @@ Storage destruction requires explicit confirmation and is the only action that s
 
 Billing is hourly.
 
-Before opening or resuming a Workspace, OPL Cloud freezes enough balance for 7 days of compute and persistent storage.
+Before opening compute, OPL Cloud freezes enough balance for 7 days of compute. Before opening storage, it freezes enough balance for 7 days of storage.
 
 Debits charge available balance first, then the relevant frozen hold.
 
-If compute hold is exhausted, compute stops.
+If compute or storage holds are exhausted, OPL Console records account and runtime notifications and blocks new resource actions until top-up or admin recovery.
 
 If storage hold is exhausted, storage is preserved and the Workspace is frozen until top-up or explicit storage destruction.
 

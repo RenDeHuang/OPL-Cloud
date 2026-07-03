@@ -25,21 +25,21 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
   const planById = Object.fromEntries((state.packages || []).map((plan) => [plan.id, plan]));
   const running = state.workspaces.filter((workspace) => workspace.state === "running").length;
   const activeUrls = state.workspaces.filter((workspace) => workspace.access?.tokenStatus === "active").length;
-  const retainedDisks = state.workspaces.filter((workspace) => String(workspace.disk?.status || "").includes("retained")).length;
+  const attachedEntries = state.workspaces.filter((workspace) => workspace.attachmentId).length;
 
   return (
     <ConsoleSurface
       title="Workspaces"
       eyebrow="Delivery"
-      subtitle="Compute, storage, URL token, billing hold"
+      subtitle="Compute resource, storage volume, URL token, billing hold"
       extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建 Workspace</Button>}
     >
       <MetricStrip
         items={[
           { label: "总数", value: state.workspaces.length, caption: "owned by this lab", tone: state.workspaces.length ? "info" : "neutral" },
-          { label: "运行中", value: running, caption: "compute billing active", tone: running ? "good" : "neutral" },
+          { label: "运行中", value: running, caption: "Workspace URL entries", tone: running ? "good" : "neutral" },
           { label: "URL 可用", value: activeUrls, caption: "shareable links", tone: activeUrls ? "good" : "warn" },
-          { label: "存储保留", value: retainedDisks, caption: "disk keeps billing", tone: retainedDisks ? "info" : "neutral" },
+          { label: "已挂载", value: attachedEntries, caption: "attachment-backed entries", tone: attachedEntries ? "info" : "neutral" },
           { label: "可用余额", value: money(available(wallet)), caption: "after frozen hold", tone: available(wallet) > 0 ? "good" : "warn" }
         ]}
       />
@@ -61,8 +61,8 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
               render: (_, row) => <StatusPill label={statusLabel(row)} tone={statusTone(row.state)} />
             },
             { title: "套餐", dataIndex: "packageId", render: (value) => packageText(planById[value]) },
-            { title: "计算", render: (_, row) => row.server?.status || "-" },
-            { title: "存储", render: (_, row) => row.disk?.status || "-" },
+            { title: "计算资源", render: (_, row) => <Typography.Text ellipsis>{row.computeId || row.server?.id || "-"}</Typography.Text> },
+            { title: "存储卷", render: (_, row) => <Typography.Text ellipsis>{row.storageId || row.disk?.id || "-"}</Typography.Text> },
             {
               title: "Workspace URL",
               dataIndex: "url",

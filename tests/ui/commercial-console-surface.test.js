@@ -104,3 +104,36 @@ test("Workspace detail links to first-class resources and excludes retired compu
   assert.match(detailSource, /isFeatureEnabled\("storageBackups"/, "storage backup UI must be feature-gated");
   assert.match(detailSource, /storageBackupsEnabled &&/, "storage backup controls must not be visible in the default commercial slice");
 });
+
+test("active UI and docs describe resource provisioning rather than retired Workspace lifecycle", async () => {
+  for (const file of [
+    "README.md",
+    "docs/invariants.md",
+    "docs/runtime/production-runbook.md",
+    "packages/console/ui/pages/HomePage.jsx",
+    "packages/console/ui/pages/OverviewPage.jsx",
+    "packages/console/ui/pages/billing/BillingPage.jsx",
+    "packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
+    "packages/console/ui/pages/admin/AdminOverviewPage.jsx"
+  ]) {
+    const text = await source(file);
+    for (const retiredPhrase of [
+      "can open or restart Workspace",
+      "server running hours",
+      "disk retained until destroy",
+      "disk keeps billing",
+      "retained disk lifecycle",
+      "Compute + disk",
+      "Settle",
+      "settle internal ledger billing",
+      "exercises compute lifecycle",
+      "checks retained storage behavior",
+      "Recreate compute from retained storage",
+      "Stopping or destroying compute",
+      "Before opening or resuming a Workspace",
+      "If compute hold is exhausted, compute stops"
+    ]) {
+      assert.equal(text.includes(retiredPhrase), false, `${file} must not retain retired phrase: ${retiredPhrase}`);
+    }
+  }
+});

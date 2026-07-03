@@ -16,7 +16,7 @@ import { available, money, statusColor, statusLabel } from "./shared/formatters.
 
 export function OverviewPage({ state, wallet, tickets }) {
   const needsAttention = state.notifications?.length || 0;
-  const running = state.workspaces.filter((workspace) => workspace.state === "running").length;
+  const computeRunning = (state.computeResources || []).filter((compute) => compute.status === "running").length;
   const activeTickets = tickets.tickets.filter((ticket) => ticket.status !== "closed").length;
   const usable = available(wallet);
   const freezeRatio = Number(wallet.balance || 0) > 0
@@ -48,7 +48,7 @@ export function OverviewPage({ state, wallet, tickets }) {
       <MetricStrip
         items={[
           { label: "可用余额", value: money(usable), caption: `${money(wallet.frozen)} frozen`, icon: <WalletCards size={16} />, tone: usable > 0 ? "good" : "warn" },
-          { label: "Workspace", value: state.workspaces.length, caption: `${running} running`, icon: <Server size={16} />, tone: running ? "good" : "neutral" },
+          { label: "Workspace", value: state.workspaces.length, caption: `${computeRunning} compute running`, icon: <Server size={16} />, tone: computeRunning ? "good" : "neutral" },
           { label: "Gateway 请求", value: state.requestUsageLogs?.length || 0, caption: "gflabtoken.cn", icon: <LinkIcon size={16} />, tone: "info" },
           { label: "工单", value: activeTickets, caption: `${tickets.tickets.length} total`, icon: <Headphones size={16} />, tone: activeTickets ? "warn" : "neutral" },
           { label: "告警", value: needsAttention, caption: "owner visible", icon: <AlertTriangle size={16} />, tone: needsAttention ? "danger" : "good" }
@@ -68,7 +68,7 @@ export function OverviewPage({ state, wallet, tickets }) {
           <ResourceSplit
             items={[
               { label: "充值与冻结", value: `${money(wallet.balance)} / ${money(wallet.frozen)}`, meta: "Balance / frozen hold", status: `${Math.round(freezeRatio)}% frozen`, tone: freezeRatio > 70 ? "warn" : "info" },
-              { label: "计算交付", value: `${running}/${state.workspaces.length}`, meta: "Running / total Workspace", status: running ? "active" : "idle", tone: running ? "good" : "neutral" },
+              { label: "计算交付", value: `${computeRunning}/${state.computeResources?.length || 0}`, meta: "Running compute resources", status: computeRunning ? "active" : "idle", tone: computeRunning ? "good" : "neutral" },
               { label: "URL 分发", value: `${state.workspaces.filter((workspace) => workspace.access?.tokenStatus === "active").length}`, meta: "Active Workspace URLs", status: "scoped", tone: "info" },
               { label: "支持闭环", value: activeTickets, meta: "Open support tickets", status: activeTickets ? "open" : "clear", tone: activeTickets ? "warn" : "good" }
             ]}
@@ -97,7 +97,7 @@ export function OverviewPage({ state, wallet, tickets }) {
               render: (_, row) => <StatusPill label={statusLabel(row)} tone={statusColor(row.state) === "green" ? "good" : statusColor(row.state) === "red" ? "danger" : "warn"} />
             },
             { title: "URL", dataIndex: "url", render: (value) => <Typography.Text ellipsis className="inlineCode">{value}</Typography.Text> },
-            { title: "存储", render: (_, row) => row.disk?.status || "-" }
+            { title: "挂载", render: (_, row) => row.attachmentId || "-" }
           ]}
         />
       </InsightPanel>

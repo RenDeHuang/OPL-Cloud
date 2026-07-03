@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, Workspace provisioning, URL sharing, hourly settlement, support, and admin operations.",
+  "currentSlice": "Business-chain closure for wallet, account-scoped compute and storage provisioning, Workspace URL sharing, request usage billing, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",

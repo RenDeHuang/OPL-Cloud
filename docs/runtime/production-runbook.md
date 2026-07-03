@@ -49,7 +49,7 @@ The following actions require explicit human approval:
 
 Use the production verifier only from an approved operator environment.
 
-The verifier creates a real Workspace, opens the URL, exercises compute lifecycle, checks retained storage behavior, settles one billing interval, and attempts cleanup.
+The verifier creates real compute, storage, and attachment resources, creates a Workspace URL entry, opens the public URL, records one Gateway request usage event, verifies wallet/ledger/usage state, and attempts cleanup.
 
 Verification output belongs in runtime evidence or `docs/history/**`, not active docs.
 
@@ -61,7 +61,7 @@ For Workspace action failures:
 2. Check audit events.
 3. Check billing ledger and wallet transactions.
 4. Check Fabric provider evidence.
-5. Recreate compute from retained storage when storage is still available.
+5. Detach storage before destroying compute or storage resources.
 6. Destroy storage only after explicit owner/admin confirmation.
 
 For billing failures:

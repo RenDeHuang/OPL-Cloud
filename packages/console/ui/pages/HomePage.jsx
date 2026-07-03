@@ -34,7 +34,7 @@ export default function HomePage({ session }) {
             </div>
             <div className="publicMetrics">
               <PublicMetric icon={<WalletCards />} label="Wallet" value="Balance + holds" />
-              <PublicMetric icon={<Server />} label="Workspace" value="Compute + disk" />
+              <PublicMetric icon={<Server />} label="Workspace" value="Compute + storage" />
               <PublicMetric icon={<KeyRound />} label="URL" value="Scoped access" />
               <PublicMetric icon={<Database />} label="Ledger" value="Usage evidence" />
             </div>
@@ -42,7 +42,7 @@ export default function HomePage({ session }) {
               <span>Top up</span>
               <span>Create</span>
               <span>Share URL</span>
-              <span>Settle</span>
+              <span>Meter</span>
             </div>
           </div>
         </section>

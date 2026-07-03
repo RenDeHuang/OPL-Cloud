@@ -129,6 +129,7 @@ test("active route contract models TKE resources before Workspace entry", async 
   }
 
   for (const retiredApi of [
+    "POST /api/billing/settle",
     "POST /api/workspaces/stop-server",
     "POST /api/workspaces/restart-server",
     "POST /api/workspaces/destroy-server",

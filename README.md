@@ -97,7 +97,7 @@ The current app implements the local business-chain loop with the Local Docker p
 - bind-mounted Workspace disk paths mapped to `/data` and `/projects`
 - Workspace URL route with token validation
 - optional real local Docker execution with `OPL_LOCAL_DOCKER_EXECUTE=1`
-- hourly billing settlement endpoint
+- request usage billing endpoint
 - billing ledger
 - audit receipts
 
@@ -173,7 +173,7 @@ npm run reconcile:tencent -- --ledger ledger.json --tencent tencent-bills.json
 Tencent bill rows should be normalized as:
 
 ```json
-{ "workspaceId": "ws-alpha", "resourceType": "server", "amount": 10, "currency": "CNY" }
+{ "workspaceId": "ws-alpha", "resourceType": "compute", "amount": 10, "currency": "CNY" }
 ```
 
 For raw Tencent billing export rows, include the Workspace identity as a `workspace_id` tag and run:
@@ -262,7 +262,7 @@ attach storage
 create Workspace URL
 verify TKE runtime status for Deployment/PVC/Service/Ingress/Endpoints
 open Workspace URL
-settle internal ledger billing
+record Gateway request usage
 detach storage
 destroy verification compute
 destroy verification storage

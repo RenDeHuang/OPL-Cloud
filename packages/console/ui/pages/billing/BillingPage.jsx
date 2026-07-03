@@ -32,7 +32,7 @@ export function BillingPage({ state, wallet }) {
     <ConsoleSurface title="Billing" eyebrow="Wallet" subtitle="Prepaid balance, holds, resource usage">
       <MetricStrip
         items={[
-          { label: "可用", value: money(usable), caption: "can open or restart Workspace", tone: usable > 0 ? "good" : "warn" },
+          { label: "可用", value: money(usable), caption: "can open compute or storage", tone: usable > 0 ? "good" : "warn" },
           { label: "冻结", value: money(wallet.frozen), caption: `${frozenPercent}% of balance`, tone: frozenPercent > 70 ? "warn" : "info" },
           { label: "余额", value: money(wallet.balance), caption: "available plus frozen", tone: "neutral" },
           { label: "累计充值", value: money(wallet.totalRecharged), caption: "manual top-up ledger", tone: "good" },
@@ -53,8 +53,8 @@ export function BillingPage({ state, wallet }) {
         <InsightPanel title="资源用量" eyebrow="Usage">
           <ResourceSplit
             items={[
-              { label: "Compute", value: `${usageQuantity(resourceUsage, "compute").toFixed(1)} h`, meta: "server running hours", status: "hourly", tone: "info" },
-              { label: "Storage", value: `${usageQuantity(resourceUsage, "storage").toFixed(1)} GB-h`, meta: "disk retained until destroy", status: "retained", tone: "good" },
+              { label: "Compute", value: `${usageQuantity(resourceUsage, "compute").toFixed(1)} h`, meta: "compute resource usage", status: "hourly", tone: "info" },
+              { label: "Storage", value: `${usageQuantity(resourceUsage, "storage").toFixed(1)} GB-h`, meta: "storage volume usage", status: "retained", tone: "good" },
               { label: "Gateway", value: requestUsage.length, meta: "request usage logs", status: "metered", tone: "info" },
               { label: "充值记录", value: state.manualTopups?.length || 0, meta: "admin top-up evidence", status: "audited", tone: "good" }
             ]}
