@@ -185,6 +185,45 @@ test("opening compute and storage freezes seven days of prepaid hold before crea
     { type: "storage_attached", amount: 0, holdType: undefined, sourceEventId: `storage_attachment:${workspace.attachmentId}:created` },
     { type: "workspace_entry_created", amount: 0, holdType: undefined, sourceEventId: `workspace_entry:${workspace.id}:created` }
   ]);
+  assert.deepEqual(state.walletTransactions.map((transaction) => ({
+    type: transaction.type,
+    amount: transaction.amount,
+    balanceBefore: transaction.balanceBefore,
+    balanceAfter: transaction.balanceAfter,
+    frozenBefore: transaction.frozenBefore,
+    frozenAfter: transaction.frozenAfter,
+    resourceId: transaction.metadata?.computeAllocationId || transaction.metadata?.storageId || ""
+  })), [
+    {
+      type: "credit",
+      amount: 250,
+      balanceBefore: 0,
+      balanceAfter: 250,
+      frozenBefore: 0,
+      frozenAfter: 0,
+      resourceId: ""
+    },
+    {
+      type: "storage_hold",
+      amount: 0,
+      balanceBefore: 250,
+      balanceAfter: 250,
+      frozenBefore: 0,
+      frozenAfter: 0.56,
+      resourceId: workspace.storageId
+    },
+    {
+      type: "compute_hold",
+      amount: 0,
+      balanceBefore: 250,
+      balanceAfter: 250,
+      frozenBefore: 0.56,
+      frozenAfter: 202.16,
+      resourceId: workspace.computeAllocationId
+    }
+  ]);
+  assert.equal(state.wallet.resourceHolds.compute[workspace.computeAllocationId].remaining, 201.6);
+  assert.equal(state.wallet.resourceHolds.storage[workspace.storageId].remaining, 0.56);
 });
 
 test("Workspace URL creation failure keeps independent resource holds and records an operator-visible notification", async () => {
@@ -301,6 +340,114 @@ test("prepaid billing uses available balance first and never debits beyond avail
   assert.equal(state.account.balance, 0);
   assert.equal(state.account.frozen, 0);
   assert.equal(state.account.balance >= 0, true);
+});
+
+test("resource billing charges active compute and storage even before a Workspace URL exists", async () => {
+  const service = createTestService({ name: "resource-billing-provider" });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  const compute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    name: "Billing compute"
+  });
+  const storage = await service.createStorageVolume({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    sizeGb: 10,
+    name: "Billing storage"
+  });
+
+  const settlement = await service.settleResourceBilling({
+    accountId: "pi-alpha",
+    hours: 1,
+    sourceEventId: "resource_billing_tick_1"
+  });
+
+  assert.deepEqual(settlement.entries.map((entry) => ({
+    type: entry.type,
+    amount: entry.amount,
+    sourceEventId: entry.sourceEventId,
+    computeAllocationId: entry.computeAllocationId,
+    storageId: entry.storageId,
+    fundingSource: entry.metadata?.fundingSource
+  })), [
+    {
+      type: "compute_debit",
+      amount: -1.2,
+      sourceEventId: `resource_billing_tick_1:compute:${compute.id}`,
+      computeAllocationId: compute.id,
+      storageId: undefined,
+      fundingSource: "available_balance"
+    },
+    {
+      type: "storage_debit",
+      amount: -0.0033,
+      sourceEventId: `resource_billing_tick_1:storage:${storage.id}`,
+      computeAllocationId: undefined,
+      storageId: storage.id,
+      fundingSource: "available_balance"
+    }
+  ]);
+
+  const state = await service.getState("pi-alpha");
+  assert.equal(state.workspaces.length, 0);
+  assert.deepEqual(state.resourceUsageLogs
+    .filter((log) => log.sourceEventId.startsWith("resource_billing_tick_1"))
+    .map((log) => ({
+      resourceType: log.resourceType,
+      computeAllocationId: log.computeAllocationId || "",
+      storageId: log.storageId || "",
+      amount: log.amount
+    })), [
+    {
+      resourceType: "compute",
+      computeAllocationId: compute.id,
+      storageId: "",
+      amount: 1.2
+    },
+    {
+      resourceType: "storage",
+      computeAllocationId: "",
+      storageId: storage.id,
+      amount: 0.0033
+    }
+  ]);
+  assert.deepEqual(state.walletTransactions
+    .filter((transaction) => transaction.sourceEventId.startsWith("resource_billing_tick_1"))
+    .map((transaction) => ({
+      type: transaction.type,
+      amount: transaction.amount,
+      resourceId: transaction.metadata?.computeAllocationId || transaction.metadata?.storageId || ""
+    })), [
+    { type: "compute_debit", amount: -1.2, resourceId: compute.id },
+    { type: "storage_debit", amount: -0.0033, resourceId: storage.id }
+  ]);
+});
+
+test("resource billing is idempotent per resource and billing hour", async () => {
+  const service = createTestService({ name: "resource-billing-idempotent-provider" });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  await service.createComputeAllocation({ accountId: "pi-alpha", packageId: "basic", name: "Billing compute" });
+
+  await service.settleResourceBilling({
+    accountId: "pi-alpha",
+    hours: 1,
+    sourceEventId: "resource_billing_tick_retry"
+  });
+  const afterFirst = await service.getState("pi-alpha");
+
+  await service.settleResourceBilling({
+    accountId: "pi-alpha",
+    hours: 1,
+    sourceEventId: "resource_billing_tick_retry"
+  });
+  const afterRetry = await service.getState("pi-alpha");
+
+  assert.equal(afterRetry.wallet.balance, afterFirst.wallet.balance);
+  assert.equal(afterRetry.billingLedger.filter((entry) => entry.sourceEventId.startsWith("resource_billing_tick_retry")).length, 1);
+  assert.equal(afterRetry.walletTransactions.filter((entry) => entry.sourceEventId.startsWith("resource_billing_tick_retry")).length, 1);
 });
 
 test("prepaid billing warns when available balance is exhausted before consuming frozen holds", async () => {
@@ -511,6 +658,44 @@ test("destroying compute allocation and storage volume releases unused prepaid h
   assert.equal(state.account.frozen, 0);
   assert.equal(state.billingLedger.filter((entry) => entry.type === "compute_hold_released").at(-1).amount, -201.6);
   assert.equal(state.billingLedger.filter((entry) => entry.type === "storage_hold_released").at(-1).amount, -0.56);
+});
+
+test("destroying one storage volume releases only that volume hold", async () => {
+  const service = createTestService({ name: "per-resource-release-provider" });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+  const first = await service.createStorageVolume({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    sizeGb: 10,
+    name: "First volume"
+  });
+  const second = await service.createStorageVolume({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    sizeGb: 10,
+    name: "Second volume"
+  });
+
+  await service.destroyStorageVolume({ accountId: "pi-alpha", storageId: first.id, confirmDataLoss: true });
+
+  const state = await service.getState("pi-alpha");
+  assert.equal(state.account.frozen, 0.56);
+  assert.equal(state.wallet.resourceHolds.storage[first.id], undefined);
+  assert.equal(state.wallet.resourceHolds.storage[second.id].remaining, 0.56);
+  assert.deepEqual(state.billingLedger
+    .filter((entry) => entry.type === "storage_hold_released")
+    .map((entry) => ({
+      amount: entry.amount,
+      storageId: entry.storageId,
+      sourceEventId: entry.sourceEventId
+    })), [
+    {
+      amount: -0.56,
+      storageId: first.id,
+      sourceEventId: "destroy_storage"
+    }
+  ]);
 });
 
 test("hold calculation uses seven days of Tencent cost plus 20 percent markup", () => {

@@ -158,6 +158,77 @@ test("billing reconciliation API records guard reports before provisioning", asy
   }
 });
 
+test("resource mutation errors expose safe provider details without raw provider data", async () => {
+  const appService = {
+    async createComputeAllocation() {
+      const error = new Error("tencent_permission_denied");
+      error.safeMessage = "CAM denied ScaleNodePool";
+      error.providerRequestId = "req-denied";
+      error.retryable = false;
+      error.providerData = {
+        action: "create_compute_allocation",
+        secretId: "should-not-leak",
+        rawTencentPayload: { credential: "should-not-leak" }
+      };
+      throw error;
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const failed = await postJson(origin, "/api/compute-allocations", {
+      accountId: "pi-alpha",
+      packageId: "basic",
+      name: "Denied compute"
+    });
+
+    assert.equal(failed.response.status, 400);
+    assert.equal(failed.payload.error, "tencent_permission_denied");
+    assert.equal(failed.payload.safeMessage, "CAM denied ScaleNodePool");
+    assert.equal(failed.payload.providerRequestId, "req-denied");
+    assert.equal(failed.payload.retryable, false);
+    assert.deepEqual(failed.payload.providerData, undefined);
+    assert.deepEqual(failed.payload.provider, {
+      requestId: "req-denied",
+      retryable: false
+    });
+  } finally {
+    await close();
+  }
+});
+
+test("admin can trigger resource billing settlement through the billing API", async () => {
+  const calls = [];
+  const appService = {
+    async settleResourceBilling(input) {
+      calls.push(["settleResourceBilling", input]);
+      return {
+        entries: [{ id: "ledger-1", type: "compute_debit" }],
+        account: { id: input.accountId, balance: 248.8, frozen: 201.6 }
+      };
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const settled = await postJson(origin, "/api/billing/resource-settlements", {
+      accountId: "pi-alpha",
+      hours: 1,
+      sourceEventId: "manual_resource_tick"
+    });
+
+    assert.equal(settled.response.status, 200);
+    assert.deepEqual(settled.payload.entries.map((entry) => entry.type), ["compute_debit"]);
+    assert.deepEqual(calls, [
+      ["settleResourceBilling", {
+        accountId: "pi-alpha",
+        hours: 1,
+        sourceEventId: "manual_resource_tick"
+      }]
+    ]);
+  } finally {
+    await close();
+  }
+});
+
 test("request usage API routes gateway usage into billing service", async () => {
   const calls = [];
   const appService = {

@@ -9,7 +9,11 @@ export async function postJson(path, body = {}, csrfToken = "") {
     body: JSON.stringify(body)
   });
   const payload = await response.json();
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || "request_failed");
+  if (!response.ok || payload.ok === false) {
+    const error = new Error(payload.safeMessage || payload.error || "request_failed");
+    error.payload = payload;
+    throw error;
+  }
   return payload;
 }
 
@@ -38,6 +42,10 @@ export function operationEnvelope(payload, defaults = {}) {
 export async function getJson(path) {
   const response = await fetch(path);
   const payload = await response.json();
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || "request_failed");
+  if (!response.ok || payload.ok === false) {
+    const error = new Error(payload.safeMessage || payload.error || "request_failed");
+    error.payload = payload;
+    throw error;
+  }
   return payload;
 }

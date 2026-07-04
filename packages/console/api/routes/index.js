@@ -36,6 +36,7 @@ export const apiRouteManifest = [
   "POST /api/workspaces/reset-token",
   "POST /api/workspaces/delete-token",
   "POST /api/billing/request-usage",
+  "POST /api/billing/resource-settlements",
   "POST /api/billing/reconciliation",
   "GET /api/ledger/task-receipts",
   "POST /api/ledger/task-receipts",

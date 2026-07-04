@@ -41,7 +41,7 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
     }
   }
 
-  async function runAction(action, success = "Done") {
+  async function runAction(action, success = "Done", { returnFailure = false } = {}) {
     try {
       const result = await action();
       await refresh();
@@ -49,7 +49,21 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
       message.success(success);
       return result || true;
     } catch (err) {
+      try {
+        await refresh();
+        await refreshAdminOps();
+      } catch (refreshError) {
+        message.error(refreshError.message);
+      }
       message.error(err.message);
+      if (returnFailure) {
+        return {
+          ok: false,
+          status: "failed",
+          failureReason: err.message,
+          ...(err.payload || {})
+        };
+      }
       return false;
     }
   }

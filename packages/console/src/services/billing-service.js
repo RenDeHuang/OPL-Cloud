@@ -8,11 +8,13 @@ import {
   addHold,
   appendWalletTransaction,
   chargeAccount,
+  chargeResourceAccount,
   debitAvailableBalance,
   ensureAccount,
   ensureBillingCollections,
   ensureUserWallet,
-  releaseHold
+  releaseHold,
+  releaseResourceHold
 } from "./wallet-service.js";
 import { incrementRequestQuota, requestUsageFingerprint } from "./usage-billing-service.js";
 import {
@@ -27,6 +29,13 @@ import {
 } from "./pricing-service.js";
 import { latestBillingReconciliationReport, latestWorkspaceForAccount } from "./workspace-service.js";
 import { OplDomainService } from "./opl-domain-service.js";
+
+function addResourceIds(target, { computeAllocationId = "", storageId = "", attachmentId = "" } = {}) {
+  if (computeAllocationId) target.computeAllocationId = computeAllocationId;
+  if (storageId) target.storageId = storageId;
+  if (attachmentId) target.attachmentId = attachmentId;
+  return target;
+}
 
 export class BillingService extends OplDomainService {
   async manualTopUp({ accountId, amount, reason, operatorUserId = "", operatorAccountId = "" }) {
@@ -127,6 +136,65 @@ export class BillingService extends OplDomainService {
       entries: settlement.entries,
       account: settlement.account
     };
+  }
+
+  async settleResourceBilling({ accountId = "", hours = 1, sourceEventId = "" } = {}) {
+    const requestedBillHours = billableHours(hours);
+    const tickId = sourceEventId || this.currentHourlyBillingTick();
+    return this.store.update((state) => {
+      ensureBillingCollections(state);
+      state.computeAllocations ??= [];
+      state.storageVolumes ??= [];
+      const entries = [];
+      const computeAllocations = state.computeAllocations.filter((compute) =>
+        (!accountId || compute.ownerAccountId === accountId) &&
+        compute.status === "running" &&
+        compute.billingStatus === "active"
+      );
+      const storageVolumes = state.storageVolumes.filter((storage) =>
+        (!accountId || storage.ownerAccountId === accountId) &&
+        ["available", "attached"].includes(storage.status) &&
+        storage.billingStatus === "active"
+      );
+
+      for (const compute of computeAllocations) {
+        const account = ensureAccount(state, compute.ownerAccountId);
+        const packagePlan = this.getPackage(compute.packageId);
+        entries.push(...this.debitComputeResourceUsage({
+          state,
+          account,
+          compute,
+          packagePlan,
+          hours: requestedBillHours,
+          sourceEventId: `${tickId}:compute:${compute.id}`
+        }));
+      }
+      for (const storage of storageVolumes) {
+        const account = ensureAccount(state, storage.ownerAccountId);
+        const packagePlan = { ...this.getPackage(storage.packageId), diskGb: storage.sizeGb };
+        entries.push(...this.debitStorageResourceUsage({
+          state,
+          account,
+          storage,
+          packagePlan,
+          hours: requestedBillHours,
+          sourceEventId: `${tickId}:storage:${storage.id}`
+        }));
+      }
+
+      if (entries.length > 0) {
+        state.audit.push(this.auditEvent({
+          accountId: accountId || "all",
+          workspaceId: "resource",
+          type: "billing.resources_settled",
+          sourceEventId: tickId
+        }));
+      }
+      return {
+        entries: entries.map(clone),
+        account: accountId ? accountSnapshotForState(state, accountId) : null
+      };
+    });
   }
 
   async billingLedger(accountId) {
@@ -329,6 +397,20 @@ export class BillingService extends OplDomainService {
     );
   }
 
+  existingResourceSettlementEntries({ state, accountId, sourceEventId, type }) {
+    return state.billingLedger.filter((entry) =>
+      entry.accountId === accountId &&
+      entry.sourceEventId === sourceEventId &&
+      entry.type === type
+    );
+  }
+
+  currentHourlyBillingTick(date = new Date()) {
+    const hour = new Date(date);
+    hour.setUTCMinutes(0, 0, 0);
+    return `resource_billing_tick:${hour.toISOString()}`;
+  }
+
   recordResourceUsage({
     state,
     account,
@@ -369,14 +451,16 @@ export class BillingService extends OplDomainService {
     return log;
   }
 
-  appendDebitEntries({ state, entries, workspaceId, accountId, type, holdType, charge, sourceEventId, billableHours, metadata }) {
+  appendDebitEntries({ state, entries, workspaceId, accountId, type, holdType, charge, sourceEventId, billableHours, metadata, account = null, resourceIds = {} }) {
     const debits = [
       { amount: charge.available, fundingSource: "available_balance" },
       { amount: charge.hold, fundingSource: `${holdType}_hold` }
     ];
     for (const debit of debits) {
       if (debit.amount <= 0) continue;
-      const entry = this.ledgerEntry({ state,
+      const balanceBefore = metadata?.balanceBefore;
+      const frozenBefore = metadata?.frozenBefore;
+      const entry = addResourceIds(this.ledgerEntry({ state,
         workspaceId,
         accountId,
         type,
@@ -388,10 +472,179 @@ export class BillingService extends OplDomainService {
           ...metadata,
           fundingSource: debit.fundingSource
         }
-      });
+      }), resourceIds);
       entries.push(entry);
       state.billingLedger.push(entry);
+      if (account) {
+        appendWalletTransaction(state, {
+          user: account,
+          accountId,
+          workspaceId,
+          type,
+          amount: -debit.amount,
+          sourceEventId,
+          ledgerEntryId: entry.id,
+          fundingSource: debit.fundingSource,
+          balanceBefore,
+          balanceAfter: account.balance,
+          frozenBefore,
+          frozenAfter: account.frozen,
+          metadata: {
+            ...resourceIds,
+            ...metadata,
+            fundingSource: debit.fundingSource
+          }
+        });
+      }
     }
+  }
+
+  debitComputeResourceUsage({ state, account, compute, packagePlan, hours, sourceEventId }) {
+    const existing = this.existingResourceSettlementEntries({
+      state,
+      accountId: compute.ownerAccountId,
+      sourceEventId,
+      type: "compute_debit"
+    });
+    if (existing.length > 0) return existing.map(clone);
+    const requestedAmount = hourlyComputeAmount({ packagePlan, pricing: this.pricing, hours });
+    const balanceBefore = money(Number(account.balance || 0));
+    const frozenBefore = money(Number(account.frozen || 0));
+    const charge = chargeResourceAccount(account, "compute", compute.id, requestedAmount);
+    const entries = [];
+    const metadata = {
+      computeAllocationId: compute.id,
+      requestedHours: hours,
+      baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
+      markup: pricingMarkup(this.pricing),
+      balanceBefore,
+      frozenBefore
+    };
+    this.appendDebitEntries({
+      state,
+      entries,
+      workspaceId: "resource",
+      accountId: compute.ownerAccountId,
+      type: "compute_debit",
+      holdType: "compute",
+      charge,
+      sourceEventId,
+      billableHours: hours,
+      metadata,
+      account,
+      resourceIds: { computeAllocationId: compute.id }
+    });
+    this.recordAccountResourceUsage({
+      state,
+      account,
+      accountId: compute.ownerAccountId,
+      resourceType: "compute",
+      computeAllocationId: compute.id,
+      quantity: hours,
+      unit: "hour",
+      unitPrice: pricedComputeHourly({ packagePlan, pricing: this.pricing }),
+      amount: charge.charged,
+      requestedAmount,
+      sourceEventId,
+      metadata
+    });
+    return entries;
+  }
+
+  debitStorageResourceUsage({ state, account, storage, packagePlan, hours, sourceEventId }) {
+    const existing = this.existingResourceSettlementEntries({
+      state,
+      accountId: storage.ownerAccountId,
+      sourceEventId,
+      type: "storage_debit"
+    });
+    if (existing.length > 0) return existing.map(clone);
+    const requestedAmount = hourlyStorageAmount({ packagePlan, pricing: this.pricing, hours });
+    const balanceBefore = money(Number(account.balance || 0));
+    const frozenBefore = money(Number(account.frozen || 0));
+    const charge = chargeResourceAccount(account, "storage", storage.id, requestedAmount);
+    const entries = [];
+    const metadata = {
+      storageId: storage.id,
+      requestedHours: hours,
+      diskGb: storage.sizeGb,
+      baseGbMonth: storageGbMonthBase(this.pricing),
+      markup: pricingMarkup(this.pricing),
+      balanceBefore,
+      frozenBefore
+    };
+    this.appendDebitEntries({
+      state,
+      entries,
+      workspaceId: "resource",
+      accountId: storage.ownerAccountId,
+      type: "storage_debit",
+      holdType: "storage",
+      charge,
+      sourceEventId,
+      billableHours: hours,
+      metadata,
+      account,
+      resourceIds: { storageId: storage.id }
+    });
+    this.recordAccountResourceUsage({
+      state,
+      account,
+      accountId: storage.ownerAccountId,
+      resourceType: "storage",
+      storageId: storage.id,
+      quantity: storage.sizeGb * hours,
+      unit: "gb_hour",
+      unitPrice: storageGbHourPrice(this.pricing),
+      amount: charge.charged,
+      requestedAmount,
+      sourceEventId,
+      metadata
+    });
+    return entries;
+  }
+
+  recordAccountResourceUsage({
+    state,
+    account,
+    accountId,
+    resourceType,
+    computeAllocationId = "",
+    storageId = "",
+    attachmentId = "",
+    quantity,
+    unit,
+    unitPrice,
+    amount,
+    requestedAmount,
+    sourceEventId,
+    metadata = {}
+  }) {
+    ensureBillingCollections(state);
+    const existing = state.resourceUsageLogs.find((log) =>
+      log.accountId === accountId &&
+      log.resourceType === resourceType &&
+      log.sourceEventId === sourceEventId
+    );
+    if (existing) return existing;
+    const log = addResourceIds({
+      id: makeId("usage-resource", accountId, computeAllocationId || storageId || attachmentId || "resource", resourceType, sourceEventId, String(state.resourceUsageLogs.length)),
+      userId: account.id,
+      accountId,
+      workspaceId: "resource",
+      resourceType,
+      quantity: money(Number(quantity || 0)),
+      unit,
+      unitPrice: money(Number(unitPrice || 0)),
+      amount: money(Number(amount || 0)),
+      requestedAmount: money(Number(requestedAmount ?? amount ?? 0)),
+      currency: "CNY",
+      sourceEventId,
+      metadata: clone(metadata),
+      createdAt: now()
+    }, { computeAllocationId, storageId, attachmentId });
+    state.resourceUsageLogs.push(log);
+    return log;
   }
 
   debitWorkspaceUsage({ state, account, workspace, packagePlan, hours, sourceEventId, billableHours: billedHours = billableHours(hours) }) {
@@ -417,7 +670,8 @@ export class BillingService extends OplDomainService {
         charge,
         sourceEventId,
         billableHours: billedHours,
-        metadata
+        metadata,
+        account
       });
       this.recordResourceUsage({
         state,
@@ -464,7 +718,8 @@ export class BillingService extends OplDomainService {
         charge,
         sourceEventId,
         billableHours: billedHours,
-        metadata
+        metadata,
+        account
       });
       this.recordResourceUsage({
         state,
@@ -556,19 +811,41 @@ export class BillingService extends OplDomainService {
     }));
   }
 
-  releaseHoldToLedger({ state, accountId, workspaceId, holdType, sourceEventId }) {
+  releaseHoldToLedger({ state, accountId, workspaceId, holdType, resourceId = "", sourceEventId }) {
     const account = ensureAccount(state, accountId);
-    const released = releaseHold(account, holdType);
+    const balanceBefore = money(Number(account.balance || 0));
+    const frozenBefore = money(Number(account.frozen || 0));
+    const released = resourceId
+      ? releaseResourceHold(account, holdType, resourceId)
+      : releaseHold(account, holdType);
     if (released <= 0) return null;
-    const entry = this.ledgerEntry({ state,
+    const resourceIds = holdType === "compute" ? { computeAllocationId: resourceId } : { storageId: resourceId };
+    const entry = addResourceIds(this.ledgerEntry({ state,
       workspaceId,
       accountId,
       type: holdType === "compute" ? "compute_hold_released" : "storage_hold_released",
       amount: -released,
       sourceEventId,
       holdType
-    });
+    }), resourceIds);
     state.billingLedger.push(entry);
+    appendWalletTransaction(state, {
+      user: account,
+      accountId,
+      workspaceId,
+      type: entry.type,
+      amount: 0,
+      sourceEventId,
+      ledgerEntryId: entry.id,
+      balanceBefore,
+      balanceAfter: account.balance,
+      frozenBefore,
+      frozenAfter: account.frozen,
+      metadata: {
+        ...resourceIds,
+        holdAmount: released
+      }
+    });
     return entry;
   }
 

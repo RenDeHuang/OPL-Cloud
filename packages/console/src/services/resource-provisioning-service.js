@@ -1,7 +1,8 @@
 import { clone, makeId, money, now } from "./core-utils.js";
 import {
   accountAvailable,
-  addHold,
+  addResourceHold,
+  appendWalletTransaction,
   ensureUserWallet
 } from "./wallet-service.js";
 import {
@@ -103,8 +104,8 @@ export class ResourceProvisioningService extends OplDomainService {
 
       const balanceBefore = money(Number(account.balance || 0));
       const frozenBefore = money(Number(account.frozen || 0));
-      addHold(account, "compute", hold.compute);
       const operationId = resourceOperationId(accountId, allocationId, "create_compute_allocation", state.runtimeOperations.length);
+      addResourceHold(account, "compute", allocationId, hold.compute);
       state.runtimeOperations.push({
         id: operationId,
         accountId,
@@ -135,6 +136,24 @@ export class ResourceProvisioningService extends OplDomainService {
         }
       }), { computeAllocationId: allocationId });
       state.billingLedger.push(ledger);
+      appendWalletTransaction(state, {
+        user: account,
+        accountId,
+        workspaceId: "resource",
+        type: "compute_hold",
+        amount: 0,
+        sourceEventId,
+        ledgerEntryId: ledger.id,
+        balanceBefore,
+        balanceAfter: account.balance,
+        frozenBefore,
+        frozenAfter: account.frozen,
+        metadata: {
+          computeAllocationId: allocationId,
+          holdAmount: hold.compute,
+          packageId
+        }
+      });
 
       const compute = {
         id: allocationId,
@@ -244,7 +263,7 @@ export class ResourceProvisioningService extends OplDomainService {
     return this.store.update((state) => {
       const current = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
       ensureUserWallet(state, { accountId, userId: current.ownerUserId });
-      this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "compute", sourceEventId: "destroy_compute" });
+      this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "compute", resourceId: computeAllocationId, sourceEventId: "destroy_compute" });
       current.status = "destroyed";
       current.billingStatus = "stopped";
       current.destroyedAt = now();
@@ -280,8 +299,8 @@ export class ResourceProvisioningService extends OplDomainService {
 
       const balanceBefore = money(Number(account.balance || 0));
       const frozenBefore = money(Number(account.frozen || 0));
-      addHold(account, "storage", hold.storage);
       const operationId = resourceOperationId(accountId, storageId, "create_storage_volume", state.runtimeOperations.length);
+      addResourceHold(account, "storage", storageId, hold.storage);
       state.runtimeOperations.push({
         id: operationId,
         accountId,
@@ -313,6 +332,25 @@ export class ResourceProvisioningService extends OplDomainService {
         }
       }), { storageId });
       state.billingLedger.push(ledger);
+      appendWalletTransaction(state, {
+        user: account,
+        accountId,
+        workspaceId: "resource",
+        type: "storage_hold",
+        amount: 0,
+        sourceEventId,
+        ledgerEntryId: ledger.id,
+        balanceBefore,
+        balanceAfter: account.balance,
+        frozenBefore,
+        frozenAfter: account.frozen,
+        metadata: {
+          storageId,
+          holdAmount: hold.storage,
+          packageId,
+          sizeGb: normalizedSizeGb
+        }
+      });
 
       const storage = {
         id: storageId,
@@ -415,7 +453,7 @@ export class ResourceProvisioningService extends OplDomainService {
     return this.store.update((state) => {
       const current = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
       ensureUserWallet(state, { accountId, userId: current.ownerUserId });
-      this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "storage", sourceEventId: "destroy_storage" });
+      this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "storage", resourceId: storageId, sourceEventId: "destroy_storage" });
       current.status = "destroyed";
       current.billingStatus = "stopped";
       current.destroyedAt = now();

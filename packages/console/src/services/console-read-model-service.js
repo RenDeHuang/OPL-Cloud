@@ -36,6 +36,16 @@ function computePoolsFromPackages(packages) {
   }));
 }
 
+function publicResourceRecord(record) {
+  const next = clone(record);
+  delete next.providerData;
+  return next;
+}
+
+function publicResourceRecords(records = []) {
+  return records.map(publicResourceRecord);
+}
+
 function defaultAccountIdForState(state) {
   return Object.values(state.users || {}).find((user) => user.accountId)?.accountId
     || Object.values(state.workspaces || {}).find((workspace) => workspace.ownerAccountId)?.ownerAccountId
@@ -381,9 +391,9 @@ export class ConsoleReadModelService extends OplDomainService {
         packages: this.packages(),
         computePools: computePoolsFromPackages(this.packages()),
         workspaces: Object.values(state.workspaces || {}).map(clone),
-        computeAllocations: (state.computeAllocations || []).map(clone),
-        storageVolumes: (state.storageVolumes || []).map(clone),
-        storageAttachments: (state.storageAttachments || []).map(clone),
+        computeAllocations: publicResourceRecords(state.computeAllocations || []),
+        storageVolumes: publicResourceRecords(state.storageVolumes || []),
+        storageAttachments: publicResourceRecords(state.storageAttachments || []),
         walletTransactions: (state.walletTransactions || []).map(clone),
         manualTopups: (state.manualTopups || []).map(clone)
       };
@@ -427,9 +437,9 @@ export class ConsoleReadModelService extends OplDomainService {
       account: accountSnapshotForState(state, resolvedAccountId),
       user: publicWalletUser(user),
       wallet,
-      computeAllocations: (state.computeAllocations || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
-      storageVolumes: (state.storageVolumes || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
-      storageAttachments: (state.storageAttachments || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
+      computeAllocations: publicResourceRecords((state.computeAllocations || []).filter((resource) => resource.ownerAccountId === resolvedAccountId)),
+      storageVolumes: publicResourceRecords((state.storageVolumes || []).filter((resource) => resource.ownerAccountId === resolvedAccountId)),
+      storageAttachments: publicResourceRecords((state.storageAttachments || []).filter((resource) => resource.ownerAccountId === resolvedAccountId)),
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === resolvedAccountId).map(clone),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       resourceUsageLogs: (state.resourceUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),

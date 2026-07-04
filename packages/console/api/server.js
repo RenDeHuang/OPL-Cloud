@@ -79,6 +79,23 @@ function sendJson(response, status, payload) {
   response.end(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
+function errorPayload(error) {
+  return {
+    ok: false,
+    error: error.message,
+    ...(error.safeMessage ? { safeMessage: error.safeMessage } : {}),
+    ...(error.providerRequestId || typeof error.retryable === "boolean" ? {
+      provider: {
+        ...(error.providerRequestId ? { requestId: error.providerRequestId } : {}),
+        ...(typeof error.retryable === "boolean" ? { retryable: error.retryable } : {})
+      }
+    } : {}),
+    ...(error.providerRequestId ? { providerRequestId: error.providerRequestId } : {}),
+    ...(typeof error.retryable === "boolean" ? { retryable: error.retryable } : {}),
+    ...(Array.isArray(error.missingEnv) ? { missingEnv: error.missingEnv } : {})
+  };
+}
+
 function sendHtml(response, status, html) {
   response.writeHead(status, { "content-type": "text/html; charset=utf-8" });
   response.end(html);
@@ -553,7 +570,7 @@ async function handleApi(request, response, pathname, appService, operatorSummar
     if (!handler) return sendJson(response, 404, { ok: false, error: "route_not_found" });
     return sendJson(response, 200, await handler());
   } catch (error) {
-    return sendJson(response, errorStatus(error), { ok: false, error: error.message });
+    return sendJson(response, errorStatus(error), errorPayload(error));
   }
 }
 

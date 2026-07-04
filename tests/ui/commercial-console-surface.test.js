@@ -99,6 +99,19 @@ test("resource provisioning pages call resource APIs instead of disabled placeho
   assert.doesNotMatch(resourceSource, /disabled: true/, "resource creation actions must not remain disabled placeholders");
 });
 
+test("resource provisioning failures preserve provider details in the visible result", async () => {
+  const stateSource = await source("packages/console/ui/store/console-state.js");
+  const apiSource = await source("packages/console/ui/api/console-api.js");
+  const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+
+  assert.match(apiSource, /payload\.safeMessage \|\| payload\.error/, "API client must prefer safe provider messages");
+  assert.match(stateSource, /returnFailure = false/, "runAction must keep false-return behavior by default");
+  assert.match(stateSource, /await refresh\(\)/, "failed resource mutations must refresh state so failed resources stay visible");
+  assert.match(stateSource, /failureReason: err\.message/, "runAction must expose caught provider errors to operation panels");
+  assert.match(resourceSource, /returnFailure: true/g, "resource mutations must opt into visible failure envelopes");
+  assert.doesNotMatch(resourceSource, /failureReason: "操作失败，请查看提示后重试。"/, "resource pages must not replace provider failures with generic copy");
+});
+
 test("resource provisioning UI shows price, hold, balance impact, and operation state", async () => {
   const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
 
@@ -168,6 +181,7 @@ test("resource mutations use confirmation, waiting state, result receipts, and c
   assert.match(actionsSource, /requiredConfirmText: "确认删除数据"/, "storage destroy action must require strong Chinese confirmation");
   assert.match(routesSource, /operationProtocol/, "route registry must expose operation protocol metadata");
   assert.match(apiSource, /operationEnvelope/, "resource API client must normalize mutation responses");
+  assert.match(resourceSource, /routeTo\("workspace\.create"/, "successful storage attachment must guide the owner to create the Workspace URL entry");
 });
 
 test("Admin cleanup route exposes orphan URL cleanup without redesigning the Console shell", async () => {

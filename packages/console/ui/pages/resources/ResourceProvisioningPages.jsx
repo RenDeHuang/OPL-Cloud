@@ -88,7 +88,11 @@ function useOperationFeedback() {
     const result = await action();
     setOperationPending(false);
     if (result === false) {
-      setOperationResult({ ok: false, status: "failed", failureReason: "操作失败，请查看提示后重试。" });
+      setOperationResult({ ok: false, status: "failed", failureReason: "操作失败。" });
+      return false;
+    }
+    if (result?.ok === false || result?.status === "failed" || result?.failureReason) {
+      setOperationResult(result);
       return false;
     }
     setOperationResult(result);
@@ -172,7 +176,8 @@ export function CreateComputeAllocationPage({ state, session, runAction }) {
           onFinish={async (values) => {
             const created = await runOperation(() => runAction(
               () => createComputeAllocation(values, session.csrfToken),
-              "计算资源开通请求已提交"
+              "计算资源开通请求已提交",
+              { returnFailure: true }
             )
             );
             if (created) navigate(routeTo("compute-allocations.detail", { id: created.id }));
@@ -254,7 +259,8 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction })
               loading={operationPending}
               onConfirm={() => runOperation(() => runAction(
                 () => destroyComputeAllocation({ computeAllocationId: resource.id, confirm: true }, session.csrfToken),
-                "计算资源销毁请求已提交"
+                "计算资源销毁请求已提交",
+                { returnFailure: true }
               ))}
             />
           ]}
@@ -322,7 +328,8 @@ export function CreateStorageVolumePage({ state, session, runAction }) {
           onFinish={async (values) => {
             const created = await runOperation(() => runAction(
               () => createStorageVolume(values, session.csrfToken),
-              "存储资源开通请求已提交"
+              "存储资源开通请求已提交",
+              { returnFailure: true }
             ));
             if (created) navigate(routeTo("storage.list"));
           }}
@@ -401,7 +408,8 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }) {
               loading={operationPending}
               onConfirm={() => runOperation(() => runAction(
                 () => destroyStorageVolume({ storageId: resource.id, confirmDataLoss: true }, session.csrfToken),
-                "存储资源销毁请求已提交"
+                "存储资源销毁请求已提交",
+                { returnFailure: true }
               ))}
             />
           ]}
@@ -477,7 +485,8 @@ export function StorageAttachmentDetailPage({ state, path, session, runAction })
               loading={operationPending}
               onConfirm={() => runOperation(() => runAction(
                 () => detachStorage({ attachmentId: attachment.id, confirm: true }, session.csrfToken),
-                "解除挂载请求已提交"
+                "解除挂载请求已提交",
+                { returnFailure: true }
               ))}
             />
           ]}
@@ -509,9 +518,10 @@ export function CreateStorageAttachmentPage({ state, session, runAction }) {
           onFinish={async (values) => {
             const created = await runOperation(() => runAction(
               () => attachStorage(values, session.csrfToken),
-              "挂载请求已提交"
+              "挂载请求已提交",
+              { returnFailure: true }
             ));
-            if (created) navigate(routeTo("attachment.list"));
+            if (created) navigate(routeTo("workspace.create"));
           }}
         >
           <Form.Item name="computeAllocationId" label="计算分配" rules={[{ required: true, message: "请选择计算分配" }]}>

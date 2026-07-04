@@ -180,6 +180,73 @@ test("admin management state lists every login user and account wallet without o
   ]);
 });
 
+test("commercial read models do not expose raw providerData", async () => {
+  const service = createTestService();
+
+  await service.store.update((state) => {
+    state.users["usr-owner"] = {
+      id: "usr-owner",
+      email: "owner@example.com",
+      name: "Owner",
+      role: "pi",
+      accountId: "acct-owner",
+      status: "active",
+      balance: 500,
+      frozen: 0,
+      holds: {},
+      totalRecharged: 500,
+      passwordHash: "scrypt:redacted"
+    };
+    state.computeAllocations.push({
+      id: "compute-sensitive",
+      ownerAccountId: "acct-owner",
+      status: "failed",
+      providerResourceId: "np-sensitive",
+      providerRequestId: "req-safe",
+      safeMessage: "CAM denied ScaleNodePool",
+      providerData: {
+        action: "create_compute_allocation",
+        rawTencentResponse: { secretShape: "must-not-leak" }
+      }
+    });
+    state.storageVolumes.push({
+      id: "storage-sensitive",
+      ownerAccountId: "acct-owner",
+      status: "available",
+      providerResourceId: "pvc-sensitive",
+      providerData: {
+        rawTencentResponse: { secretShape: "must-not-leak" }
+      }
+    });
+    state.storageAttachments.push({
+      id: "attach-sensitive",
+      ownerAccountId: "acct-owner",
+      status: "attached",
+      computeAllocationId: "compute-sensitive",
+      storageId: "storage-sensitive",
+      providerData: {
+        rawTencentResponse: { secretShape: "must-not-leak" }
+      }
+    });
+  });
+
+  const ownerState = await service.getState("acct-owner");
+  const management = await service.managementState({});
+
+  for (const collection of [
+    ownerState.computeAllocations,
+    ownerState.storageVolumes,
+    ownerState.storageAttachments,
+    management.computeAllocations,
+    management.storageVolumes,
+    management.storageAttachments
+  ]) {
+    assert.equal(collection[0].providerData, undefined);
+  }
+  assert.equal(ownerState.computeAllocations[0].providerRequestId, "req-safe");
+  assert.equal(ownerState.computeAllocations[0].safeMessage, "CAM denied ScaleNodePool");
+});
+
 test("admin can disable and delete login users while preserving account resources and billing evidence", async () => {
   const service = createTestService();
 

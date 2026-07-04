@@ -198,7 +198,7 @@ test("failed compute allocation remains visible with safe provider failure state
   assert.equal(compute.safeMessage, "CAM denied ScaleNodePool");
   assert.equal(compute.providerRequestId, "req-denied");
   assert.equal(compute.retryable, false);
-  assert.deepEqual(compute.providerData, { action: "create_compute_allocation" });
+  assert.equal(compute.providerData, undefined);
   assert.equal(operation.status, "failed");
   assert.equal(operation.safeMessage, "CAM denied ScaleNodePool");
   assert.equal(operation.providerRequestId, "req-denied");

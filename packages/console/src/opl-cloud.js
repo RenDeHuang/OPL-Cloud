@@ -153,6 +153,10 @@ export class OplCloudService {
     return this.billing.settleBilling(...args);
   }
 
+  async settleResourceBilling(...args) {
+    return this.billing.settleResourceBilling(...args);
+  }
+
   async billingLedger(...args) {
     return this.billing.billingLedger(...args);
   }
