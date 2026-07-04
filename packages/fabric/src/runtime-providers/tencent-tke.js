@@ -529,6 +529,7 @@ export class TencentTkeProvider {
     autoscalingGroup.DesiredCapacity ??= desiredNodes;
     autoscalingGroup.MaxSize ??= desiredNodes;
     autoscalingGroup.MinSize ??= 0;
+    launchConfigure.InstanceChargeType ??= this.env.OPL_TKE_INSTANCE_CHARGE_TYPE || "POSTPAID_BY_HOUR";
     const labels = nodePoolLabels({ computeId, accountId });
     return {
       ClusterId: this.env.TENCENT_DEPLOY_CLUSTER_ID,

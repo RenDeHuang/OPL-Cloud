@@ -287,6 +287,7 @@ test("Tencent TKE provider provisions node pool compute, PVC storage, runtime at
     const createInput = JSON.parse(await readFile(cliInputJsonArg.replace(/^file:\/\//, ""), "utf8"));
     assert.equal(createInput.ClusterId, requiredEnv.TENCENT_DEPLOY_CLUSTER_ID);
     assert.equal(JSON.parse(createInput.LaunchConfigurePara).InstanceType, packagePlan.server);
+    assert.equal(JSON.parse(createInput.LaunchConfigurePara).InstanceChargeType, "POSTPAID_BY_HOUR");
     assert.equal("Tags" in createInput, false);
     assert.deepEqual(createInput.Labels.map((label) => label.Name), [
       "oplcloud.cn/compute-id",
