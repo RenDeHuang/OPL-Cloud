@@ -86,7 +86,7 @@ For the current launch boundary, use [docs/status.md](./docs/status.md). The cur
 
 ## Current Implementation
 
-The current app implements the local business-chain loop with the Local Docker provider:
+The current app implements the commercial control-plane chain with the Tencent TKE runtime provider:
 
 - OPL Console UI
 - Basic and Pro CPU compute allocation creation
@@ -95,11 +95,10 @@ The current app implements the local business-chain loop with the Local Docker p
 - Workspace URL entry creation from an attachment
 - permanent workspace URL token
 - 7-day compute and storage prepaid holds
-- Local Docker Compose workspace artifacts under `.runtime/workspaces`
 - real OPL Workspace app image default: `ghcr.io/gaofeng21cn/one-person-lab-app:latest`
-- bind-mounted Workspace disk paths mapped to `/data` and `/projects`
+- TKE/CVM runtime dispatch for one-person-lab-app
+- Workspace storage mounted to `/data` and `/projects`
 - Workspace URL route with token validation
-- optional real local Docker execution with `OPL_LOCAL_DOCKER_EXECUTE=1`
 - request usage billing endpoint
 - billing ledger
 - audit receipts
@@ -120,17 +119,21 @@ GET /api/production/readiness
 
 It checks the Tencent TKE production runtime provider, TCR images, workspace domain, PostgreSQL, Tencent environment, and required host tools before launch.
 
-## Run Locally
+## Run Locally Against Staging
 
 ```bash
 npm install
 npm test
 npm run build
-PORT=8787 npm start
+cp deploy/tke/opl-cloud-staging.local.env.example .env.staging.local
+npm run staging:readiness
+npm run staging:local
+npm run staging:ui
 ```
 
-By default, local development uses an ignored JSON state file under `.runtime/`.
-For PostgreSQL control-plane persistence, set:
+`staging:local` loads the ignored `.env.staging.local`, uses `tencent-tke`, the shared staging `DATABASE_URL`, and the Go Tencent provisioner. It is the local operator Console for the same staging system used by cloud rollout.
+
+For shared PostgreSQL control-plane persistence, set:
 
 ```bash
 DATABASE_URL=postgres://opl:secret@127.0.0.1:5432/opl_cloud \
@@ -139,7 +142,7 @@ PORT=8787 npm start
 
 When `DATABASE_URL` is set, OPL Console stores login users, account balances, Workspaces, billing ledger entries, audit events, and runtime operation scaffolding in PostgreSQL tables. `OPL_CONSOLE_USERS_JSON` is only the bootstrap seed for the first PI/admin login users; after those users are written to the control-plane store, account status, roles, ownership, balances, Workspaces, billing, and audit records persist with the database across Console rollouts.
 
-If no auth seed exists, local/bootstrap startup creates only the built-in admin `admin@opl.local / OplAdminPass2026!`. It does not create a Lab Owner account, and production readiness rejects that default credential; TKE deployments must provide real PI/Admin users through secrets.
+TKE deployments must provide real PI/Admin users through secrets or an existing staging database. `OPL_CONSOLE_USERS_JSON` is a bootstrap seed, not a demo-account contract.
 
 OPL Ledger is the v1 billing truth. External metering systems are not required for production billing.
 
@@ -187,18 +190,9 @@ npm run reconcile:tencent -- --ledger ledger.json --tencent tencent-export.json 
 
 It compares Tencent cost plus the configured 20% markup against OPL ledger debits and exits non-zero on mismatch. It writes JSON to stdout only and should not leave deployment or smoke artifacts in the repository.
 
-To also start the local OPL Docker container when a Workspace is created:
+For development UI without cloud mutation, run the Vite UI against an already running local-to-staging API:
 
 ```bash
-OPL_LOCAL_DOCKER_EXECUTE=1 \
-OPL_WORKSPACE_IMAGE=ghcr.io/gaofeng21cn/one-person-lab-app:latest \
-PORT=8787 npm start
-```
-
-For development UI:
-
-```bash
-npm start
 npm run dev
 ```
 
@@ -208,36 +202,13 @@ Then open:
 http://127.0.0.1:5173
 ```
 
-For the isolated UIUX demo preview:
-
-```bash
-npm run demo:api
-npm run demo:ui
-```
-
-Then open `http://127.0.0.1:5178`. The demo API resets only `.runtime/uiux-demo-state.json` by default and seeds:
-
-- Lab Owner: `owner@opl.local` / `OplOwnerPass2026!`
-- Admin: `admin@opl.local` / `OplAdminPass2026!`
-
-The demo API is local-only and refuses `OPL_RUNTIME_PROVIDER=tencent-tke`; it must not mutate staging resources.
-
-For local Console provisioning against staging TKE, use the dedicated local-to-staging entrypoints:
-
-```bash
-cp deploy/tke/opl-cloud-staging.local.env.example .env.staging.local
-npm run staging:readiness
-npm run staging:local
-npm run staging:ui
-```
-
-`staging:local` uses `tencent-tke`, the shared staging `DATABASE_URL`, the Go Tencent provisioner, and the staging TKE/CVM settings from `.env.staging.local`. This mode is the local operator Console for the same staging system used by cloud rollout. Real E2E is protected by an explicit paid-operation guard:
+Real E2E is protected by an explicit paid-operation guard:
 
 ```bash
 OPL_CONFIRM_REAL_CLOUD_E2E=1 npm run staging:e2e
 ```
 
-See [DEV_GUIDE.md](./DEV_GUIDE.md) for the local-demo, local-to-staging, and cloud-staging gate sequence.
+See [DEV_GUIDE.md](./DEV_GUIDE.md) for the local-to-staging and cloud-staging gate sequence.
 
 ## Production Deployment Contract
 

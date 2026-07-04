@@ -43,24 +43,22 @@ function cookieFrom(response) {
   return response.headers.get("set-cookie")?.split(";")[0] || "";
 }
 
-test("auth controller bootstraps only the fixed admin when no explicit seed exists", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-auth-admin-bootstrap-"));
+test("auth controller does not bootstrap default users when no explicit seed exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-empty-bootstrap-"));
   try {
     const auth = createAuthController({
       env: {},
       usersPath: join(root, "users.json")
     });
 
-    assert.deepEqual((await auth.listUsers()).map((user) => `${user.role}:${user.email}:${user.accountId}`), [
-      "admin:admin@opl.local:admin"
-    ]);
+    assert.deepEqual(await auth.listUsers(), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("built-in admin can login but does not create a demo Lab Owner", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-auth-admin-bootstrap-login-"));
+test("default local admin credential cannot login without an explicit seed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-empty-bootstrap-login-"));
   const appService = {
     async getState(accountId) {
       return { account: { id: accountId }, workspaces: [], packages: [], billingLedger: [], audit: [], notifications: [] };
@@ -77,10 +75,9 @@ test("built-in admin can login but does not create a demo Lab Owner", async () =
       password: "OplAdminPass2026!"
     });
 
-    assert.equal(login.response.status, 200);
-    assert.equal(login.payload.user.role, "admin");
-    assert.equal(login.payload.user.accountId, "admin");
-    assert.deepEqual((await auth.listUsers()).map((user) => user.role), ["admin"]);
+    assert.equal(login.response.status, 401);
+    assert.equal(login.payload.error, "invalid_credentials");
+    assert.deepEqual(await auth.listUsers(), []);
   } finally {
     await close();
     await rm(root, { recursive: true, force: true });

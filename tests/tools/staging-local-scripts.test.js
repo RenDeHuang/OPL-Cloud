@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const repoRoot = new URL("../../", import.meta.url);
@@ -8,11 +8,20 @@ async function source(relativePath) {
   return readFile(new URL(relativePath, repoRoot), "utf8");
 }
 
-test("package scripts expose separate demo, staging-local, and cloud verifier entrypoints", async () => {
+async function exists(relativePath) {
+  try {
+    await access(new URL(relativePath, repoRoot));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("package scripts expose only staging-local and cloud verifier entrypoints", async () => {
   const packageSource = JSON.parse(await source("package.json"));
 
-  assert.equal(packageSource.scripts["demo:api"], "node tools/start-uiux-demo-api.js");
-  assert.equal(packageSource.scripts["demo:ui"], "node tools/start-uiux-demo-ui.js");
+  assert.equal(packageSource.scripts["demo:api"], undefined);
+  assert.equal(packageSource.scripts["demo:ui"], undefined);
   assert.equal(packageSource.scripts["staging:local"], "node tools/start-staging-local-api.js");
   assert.equal(packageSource.scripts["staging:ui"], "node tools/start-staging-local-ui.js");
   assert.equal(packageSource.scripts["staging:readiness"], "node tools/staging-readiness.js");
@@ -20,12 +29,11 @@ test("package scripts expose separate demo, staging-local, and cloud verifier en
   assert.equal(packageSource.scripts["verify:production"], "node tools/production-verifier.js");
 });
 
-test("UIUX demo API refuses Tencent TKE so demo cannot mutate staging resources", async () => {
-  const demoApiSource = await source("tools/start-uiux-demo-api.js");
-
-  assert.match(demoApiSource, /uiux_demo_refuses_real_tke/, "demo API must fail closed when OPL_RUNTIME_PROVIDER=tencent-tke");
-  assert.doesNotMatch(demoApiSource, /assertRuntimeReadyForProvisioning/, "real TKE readiness belongs to staging scripts, not demo API");
-  assert.doesNotMatch(demoApiSource, /runtimeReadiness/, "demo API must not preflight or seed real TKE resources");
+test("local demo tooling is removed so local operation always targets staging cloud resources", async () => {
+  assert.equal(await exists("tools/start-uiux-demo-api.js"), false);
+  assert.equal(await exists("tools/start-uiux-demo-ui.js"), false);
+  assert.equal(await exists("tools/uiux-demo-fixture.js"), false);
+  assert.equal(await exists("packages/fabric/src/runtime-providers/local-docker.js"), false);
 });
 
 test("staging-local scripts load ignored staging env files and require explicit paid E2E confirmation", async () => {

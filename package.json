@@ -6,8 +6,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "demo:api": "node tools/start-uiux-demo-api.js",
-    "demo:ui": "node tools/start-uiux-demo-ui.js",
     "staging:local": "node tools/start-staging-local-api.js",
     "staging:ui": "node tools/start-staging-local-ui.js",
     "staging:readiness": "node tools/staging-readiness.js",

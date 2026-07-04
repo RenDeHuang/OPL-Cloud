@@ -150,11 +150,11 @@ async function handleWorkspaceUrl(request, response, pathname, searchParams, app
   <body>
     <main>
       <h1>${workspace.name}</h1>
-      <p>此 URL 令牌有效。Local Docker 模式已生成下方 OPL Workspace 运行时资产。生产模式通过 TKE Ingress 路由到 Workspace Service 和正在运行的 one-person-lab-app Deployment。</p>
+      <p>此 URL 令牌有效。TKE/CVM runtime 已绑定下方计算、存储和 one-person-lab-app 服务，入口通过 Workspace 网关路由。</p>
       <dl>
         <dt>状态</dt><dd>${statusText(workspace.state)}</dd>
         <dt>计算</dt><dd>${statusText(workspace.server.status)}</dd>
-        <dt>Docker</dt><dd>${statusText(workspace.docker.status)}</dd>
+        <dt>运行容器</dt><dd>${statusText(workspace.docker.status)}</dd>
         <dt>存储</dt><dd>${statusText(workspace.disk.status)} / ${workspace.disk.mountPath}</dd>
         <dt>运行时</dt><dd><code>${runtimeTarget}</code></dd>
       </dl>

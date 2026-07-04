@@ -13,7 +13,7 @@ This repository owns:
 
 - OPL Console account, billing, access, resource allocation, support, and admin surfaces.
 - OPL Workspace URL delivery control plane.
-- Local Docker and Tencent TKE runtime handoff for v1.
+- Tencent TKE runtime handoff for v1.
 - ComputePool, ComputeAllocation, StorageVolume, and StorageAttachment contracts.
 - User wallet, resource usage, request usage, manual top-up audit, billing ledger, and reconciliation records.
 - Runtime readiness, production readiness, production manifests, and TKE deployment handoff.

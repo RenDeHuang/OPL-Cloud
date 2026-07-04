@@ -4,15 +4,12 @@ import { createServer } from "node:http";
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { PassThrough } from "node:stream";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import { createRequestHandler, createUpgradeHandler } from "../../packages/console/api/server.js";
 import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
-import { LocalDockerProvider } from "../../packages/fabric/src/runtime-providers/local-docker.js";
 import { MemoryStore } from "../../packages/console/src/store.js";
+import { createFakeRuntimeProvider } from "../helpers/fake-runtime-provider.js";
 
 async function listen(handler, upgradeHandler = null) {
   const server = createServer(handler);
@@ -77,14 +74,9 @@ function rawUpgrade({ origin, path, cookie }) {
 }
 
 test("workspace URL route validates token and returns OPL Workspace entry page", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-cloud-route-"));
   const appService = createOplCloud({
     store: new MemoryStore(),
-    runtimeProvider: new LocalDockerProvider({
-      rootDir: root,
-      baseUrl: "http://127.0.0.1:8787",
-      execute: false
-    }),
+    runtimeProvider: createFakeRuntimeProvider(),
     pricing: {
       serverHourly: { basic: 1, pro: 4 },
       diskGbMonth: 0.2,
@@ -124,10 +116,10 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
     assert.equal(validResponse.status, 200);
     assert.match(html, /Route Lab/);
     assert.match(html, /OPL Workspace/);
-    assert.match(html, /docker-compose\.yml|runtime target/);
+    assert.match(html, /TKE\/CVM runtime/);
+    assert.doesNotMatch(html, /Local Docker|docker-compose/);
   } finally {
     await close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 

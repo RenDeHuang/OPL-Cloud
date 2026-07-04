@@ -50,7 +50,7 @@ test("task evidence helper filters append-only receipts by account, workspace, a
     taskId: "task-a",
     plan: { goal: "A" },
     approval: { status: "approved" },
-    environment: { runtimeProvider: "local-docker" }
+    environment: { runtimeProvider: "tencent-tke" }
   }));
   appendTaskEvidenceReceipt(state, createTaskEvidenceReceipt({
     state,
@@ -59,7 +59,7 @@ test("task evidence helper filters append-only receipts by account, workspace, a
     taskId: "task-b",
     plan: { goal: "B" },
     approval: { status: "approved" },
-    environment: { runtimeProvider: "local-docker" }
+    environment: { runtimeProvider: "tencent-tke" }
   }));
   appendTaskEvidenceReceipt(state, createTaskEvidenceReceipt({
     state,
@@ -68,7 +68,7 @@ test("task evidence helper filters append-only receipts by account, workspace, a
     taskId: "task-a",
     plan: { goal: "Other" },
     approval: { status: "approved" },
-    environment: { runtimeProvider: "local-docker" }
+    environment: { runtimeProvider: "tencent-tke" }
   }));
 
   assert.deepEqual(
@@ -87,7 +87,7 @@ test("task evidence receipt fails closed when core provenance fields are missing
       accountId: "pi-alpha",
       taskId: "task-missing-plan",
       approval: { status: "approved" },
-      environment: { runtimeProvider: "local-docker" }
+      environment: { runtimeProvider: "tencent-tke" }
     }),
     /task_evidence_plan_required/
   );

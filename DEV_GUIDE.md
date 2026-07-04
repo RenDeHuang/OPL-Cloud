@@ -15,29 +15,12 @@ Workspace is not the only resource body. It is the access entry.
 
 ## Runtime Modes
 
-OPL Console has three supported operator modes:
+OPL Console has two supported operator modes:
 
-- `local-demo`: local UI preview with `local-docker`; never mutates Tencent Cloud.
 - `local-to-staging`: local Console API/UI connected to staging PostgreSQL and staging TKE; can create real Tencent resources after explicit operator confirmation.
 - `cloud-staging`: deployed Console in TKE using the same staging PostgreSQL and resource pool; validates rollout, ingress, TLS, image, and secret wiring.
 
-The code path is shared. The difference is environment and persistence. `local-to-staging` and `cloud-staging` must use the same `DATABASE_URL` so accounts, balances, resources, ledger rows, and Workspace URLs are one system.
-
-## Local UI Demo
-
-```bash
-npm run demo:api
-npm run demo:ui
-```
-
-Default demo accounts:
-
-- Lab Owner: `owner@opl.local` / `OplOwnerPass2026!`
-- Admin: `admin@opl.local` / `OplAdminPass2026!`
-
-Local demo seeds the current chain: manual top-up, create compute allocation, create storage, attach storage, create Workspace URL, record one sub2api request usage, and create one support ticket.
-
-`demo:api` is local-only and refuses `OPL_RUNTIME_PROVIDER=tencent-tke`. Use it for UI/UX review, not cloud resource testing.
+The code path is shared. The difference is environment and ingress. `local-to-staging` and `cloud-staging` must use the same `DATABASE_URL` so accounts, balances, resources, ledger rows, and Workspace URLs are one system.
 
 ## Local To Staging
 
@@ -96,7 +79,7 @@ unit/contract tests pass
 
 ## Required Env Vars
 
-- `OPL_RUNTIME_PROVIDER`: `local-docker` or `tencent-tke`.
+- `OPL_RUNTIME_PROVIDER`: must be `tencent-tke`.
 - `OPL_WORKSPACE_IMAGE`: pullable one-person-lab-app image.
 - `OPL_WORKSPACE_DOMAIN`: public Workspace domain.
 - `OPL_K8S_NAMESPACE`: Kubernetes namespace.
@@ -128,7 +111,7 @@ unit/contract tests pass
 ```bash
 node --test tests/contracts/route-api-contract.test.js
 node --test tests/domain/resource-provisioning.test.js
-node --test tests/providers/tencent-tke-provider.test.js tests/providers/local-docker-provider.test.js
+node --test tests/providers/tencent-tke-provider.test.js tests/providers/tencent-provisioner-client.test.js
 node --test tests/ui/commercial-console-routes.test.js tests/ui/commercial-console-surface.test.js tests/ui/console-clickability-contract.test.js
 npm run build
 git diff --check

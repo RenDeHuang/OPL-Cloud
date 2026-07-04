@@ -28,7 +28,7 @@ test("production manifest CLI fails without leaking inline secret values", async
   try {
     await writeFile(manifestPath, JSON.stringify({
       env: {
-        OPL_RUNTIME_PROVIDER: { value: "local-docker" },
+        OPL_RUNTIME_PROVIDER: { value: "unsupported-runtime" },
         DATABASE_URL: { value: "postgres://opl:secret@db.example.com:5432/opl_cloud" },
         TENCENTCLOUD_SECRET_KEY: { value: "tencent_secret" }
       }

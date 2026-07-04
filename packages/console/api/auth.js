@@ -8,15 +8,6 @@ const root = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultUsersPath = join(root, ".runtime", "opl-console-users.json");
 const sessionCookieName = "opl_console_session";
 const defaultSessionTtlMs = 24 * 60 * 60 * 1000;
-export const builtinAdminUser = Object.freeze({
-  id: "usr-admin-bootstrap",
-  email: "admin@opl.local",
-  password: "OplAdminPass2026!",
-  name: "OPL Admin",
-  role: "admin",
-  accountId: "admin"
-});
-
 function authError(status, message) {
   const error = new Error(message);
   error.status = status;
@@ -124,12 +115,10 @@ function envSeedUser(env, { prefix, role, fallbackName }) {
 
 function defaultSeedUsers(env) {
   if (env.OPL_CONSOLE_USERS_JSON) return JSON.parse(env.OPL_CONSOLE_USERS_JSON);
-  const users = [
+  return [
     envSeedUser(env, { prefix: "OPL_PI", role: "pi", fallbackName: "Lab Owner" }),
     envSeedUser(env, { prefix: "OPL_ADMIN", role: "admin", fallbackName: "OPL Admin" })
   ].filter(Boolean);
-  if (!users.some((user) => user.role === "admin")) users.push(builtinAdminUser);
-  return users;
 }
 
 async function normalizeSeedUser(user) {

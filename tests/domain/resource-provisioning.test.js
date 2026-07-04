@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import { parse } from "yaml";
 
 import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
 import { MemoryStore } from "../../packages/console/src/store.js";
-import { LocalDockerProvider } from "../../packages/fabric/src/runtime-providers/local-docker.js";
+import { createFakeRuntimeProvider } from "../helpers/fake-runtime-provider.js";
 
 const TEST_PRICING = {
   serverHourly: {
@@ -339,59 +335,48 @@ test("storage cannot attach across accounts", async () => {
   );
 });
 
-test("resource service preserves provider handles for local one-person-lab-app WebUI", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-resource-service-local-"));
-  try {
-    const service = createOplCloud({
-      store: new MemoryStore(),
-      pricing: TEST_PRICING,
-      runtimeProvider: new LocalDockerProvider({
-        rootDir: root,
-        baseUrl: "http://127.0.0.1:8787",
-        execute: false
-      })
-    });
+test("resource service preserves provider handles for one-person-lab-app runtime", async () => {
+  const service = createOplCloud({
+    store: new MemoryStore(),
+    pricing: TEST_PRICING,
+    runtimeProvider: createFakeRuntimeProvider()
+  });
 
-    await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-    const compute = await service.createComputeAllocation({
-      accountId: "pi-alpha",
-      packageId: "basic",
-      name: "Local compute"
-    });
-    const storage = await service.createStorageVolume({
-      accountId: "pi-alpha",
-      packageId: "basic",
-      sizeGb: 10,
-      name: "Local storage"
-    });
-    const attachment = await service.attachStorage({
-      accountId: "pi-alpha",
-      computeAllocationId: compute.id,
-      storageId: storage.id,
-      mountPath: "/data"
-    });
-    const workspace = await service.createWorkspace({
-      accountId: "pi-alpha",
-      workspaceName: "Local WebUI Lab",
-      attachmentId: attachment.id
-    });
-    const state = await service.getState("pi-alpha");
-    const persistedCompute = state.computeAllocations[0];
-    const persistedStorage = state.storageVolumes[0];
-    const persistedAttachment = state.storageAttachments[0];
-    const compose = parse(await readFile(persistedAttachment.composePath, "utf8"));
-    const composeService = Object.values(compose.services)[0];
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const compute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    name: "Dedicated compute"
+  });
+  const storage = await service.createStorageVolume({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    sizeGb: 10,
+    name: "Persistent storage"
+  });
+  const attachment = await service.attachStorage({
+    accountId: "pi-alpha",
+    computeAllocationId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+  const workspace = await service.createWorkspace({
+    accountId: "pi-alpha",
+    workspaceName: "Cloud WebUI Lab",
+    attachmentId: attachment.id
+  });
+  const state = await service.getState("pi-alpha");
+  const persistedCompute = state.computeAllocations[0];
+  const persistedStorage = state.storageVolumes[0];
+  const persistedAttachment = state.storageAttachments[0];
 
-    assert.equal(persistedCompute.localPath, join(root, compute.id));
-    assert.equal(persistedStorage.localPath, join(root, storage.id, "disk"));
-    assert.equal(persistedAttachment.composePath, join(root, compute.id, "docker-compose.yml"));
-    assert.equal(workspace.docker.service, `service/${persistedCompute.runtime.serviceName}`);
-    assert.equal(workspace.url, `http://127.0.0.1:8787/workspaces/${workspace.slug}?token=${workspace.access.token}`);
-    assert.deepEqual(composeService.volumes, [
-      `${join(root, storage.id, "disk", "data")}:/data`,
-      `${join(root, storage.id, "disk", "projects")}:/projects`
-    ]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.equal(persistedCompute.provider, "tencent-tke");
+  assert.equal(persistedCompute.providerResourceId, `cvm/${compute.id}`);
+  assert.equal(persistedCompute.instanceId, `ins-${compute.id}`);
+  assert.equal(persistedCompute.runtime.service, `service/opl-runtime-${compute.id}`);
+  assert.equal(persistedStorage.providerResourceId, `pvc/${storage.id}`);
+  assert.equal(persistedAttachment.providerAttachmentId, `mount/${compute.id}:${storage.id}:/data`);
+  assert.equal(workspace.docker.service, `service/${persistedCompute.runtime.serviceName}`);
+  assert.equal(workspace.disk.id, `pvc/${storage.id}`);
+  assert.equal(workspace.url, `https://workspace.example.test/w/${workspace.slug}?token=${workspace.access.token}`);
 });

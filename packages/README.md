@@ -7,7 +7,7 @@ This directory is the current implementation boundary map. The repository deploy
 | Package | Current role | Ownership target |
 | --- | --- | --- |
 | `console` | OPL Console API, control-plane service, minimal commercial management model, PostgreSQL store, production readiness, production manifest validation, and Console UI | `opl-console` |
-| `fabric` | Resource catalog, runtime provider factory, and Local Docker / Tencent TKE adapters | `opl-fabric` or `opl-fabric-adapters` |
+| `fabric` | Resource catalog, runtime provider factory, and Tencent TKE adapter | `opl-fabric` or `opl-fabric-adapters` |
 | `ledger` | Tencent bill normalization, reconciliation guard helpers, control-plane evidence helpers, and task evidence receipt helpers; billing and evidence contracts are still called by Console service | `opl-ledger` |
 | `contracts` | Machine-readable product, management, billing, resource allocation, deployment, and evidence contracts shared by Console, Fabric, Workspace, and Ledger | shared contract package or product contract repository |
 

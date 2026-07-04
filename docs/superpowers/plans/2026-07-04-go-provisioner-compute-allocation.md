@@ -246,15 +246,15 @@ Run: `node --test tests/production/production-readiness.test.js tests/production
 
 Expected: PASS.
 
-### Task 6: Local Business Chain E2E
+### Task 6: Local-To-Staging Business Chain E2E
 
 **Files:**
 - Create: `tests/e2e/local-business-chain.test.js`
-- Modify as needed: `packages/fabric/src/runtime-providers/local-docker.js`
+- Create: `tests/helpers/fake-runtime-provider.js`
 
-- [ ] **Step 1: Write failing local E2E**
+- [ ] **Step 1: Write failing local-to-staging-safe E2E**
 
-Using `LocalDockerProvider({ execute:false })`, test:
+Using a test-only fake Tencent runtime provider, test:
 
 1. top up wallet;
 2. create storage without compute;
@@ -269,7 +269,7 @@ Using `LocalDockerProvider({ execute:false })`, test:
 
 - [ ] **Step 2: Implement minimal provider/domain fixes**
 
-Only fix gaps revealed by the E2E. Do not add public staging execution.
+Only fix gaps revealed by the E2E. Do not create paid Tencent resources from the test suite.
 
 - [ ] **Step 3: Verify E2E and full focused suite**
 
