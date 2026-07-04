@@ -106,7 +106,14 @@ async function requestJsonWithResponse({ fetchImpl, origin, path, method = "GET"
   const payload = await readResponse(response);
   if (!response.ok) {
     const message = typeof payload === "string" ? payload : payload.error || JSON.stringify(payload);
-    throw new Error(`request_failed:${method}:${path}:${response.status}:${message}`);
+    const error = new Error(`request_failed:${method}:${path}:${response.status}:${message}`);
+    if (payload && typeof payload === "object") {
+      error.safeMessage = payload.safeMessage || "";
+      error.providerRequestId = payload.providerRequestId || payload.provider?.requestId || "";
+      if (typeof payload.retryable === "boolean") error.retryable = payload.retryable;
+      if (Array.isArray(payload.missingEnv)) error.missingEnv = payload.missingEnv;
+    }
+    throw error;
   }
   return { payload, response };
 }
@@ -773,6 +780,10 @@ function errorPayload(error) {
   return {
     ok: false,
     error: error.message,
+    ...(error.safeMessage ? { safeMessage: error.safeMessage } : {}),
+    ...(error.providerRequestId ? { providerRequestId: error.providerRequestId } : {}),
+    ...(typeof error.retryable === "boolean" ? { retryable: error.retryable } : {}),
+    ...(Array.isArray(error.missingEnv) ? { missingEnv: error.missingEnv } : {}),
     ...(error.cleanupErrors ? { cleanupErrors: error.cleanupErrors } : {})
   };
 }

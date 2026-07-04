@@ -173,7 +173,7 @@ function chainResponses(chain) {
   };
 }
 
-function keyedFetch({ responses, requests = [], responseHeaders = null, consoleOrigin = "https://console.oplcloud.cn" }) {
+function keyedFetch({ responses, requests = [], responseHeaders = null, statusByKey = {}, consoleOrigin = "https://console.oplcloud.cn" }) {
   const requestCounts = new Map();
   return async (url, options = {}) => {
     const parsed = new URL(String(url));
@@ -203,7 +203,7 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, consoleO
     if (typeof payload === "string") return htmlResponse(payload);
     if (payload) {
       if (key === "POST /api/auth/operator-login" && responseHeaders) return jsonResponse(payload, 200, responseHeaders);
-      return jsonResponse(payload);
+      return jsonResponse(payload, statusByKey[key] || statusByKey[key.replace(/#1$/, "")] || 200);
     }
     throw new Error(`unexpected_request:${key}`);
   };
@@ -552,5 +552,41 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
       `destroy_compute:request_failed:POST:/api/compute-allocations/${chain.compute.id}/destroy:500:destroy_compute_failed`,
       "destroy_storage:request_failed:POST:/api/storage-volumes/destroy:500:destroy_storage_failed"
     ]
+  });
+});
+
+test("production verifier CLI preserves safe provider failure details", async () => {
+  let stdout = "";
+  let stderr = "";
+  const code = await runProductionVerifierCli({
+    argv: ["--origin", "https://console.oplcloud.cn", "--account", "pi-prod", "--run-id", "provider-fail"],
+    stdout: { write: (chunk) => { stdout += chunk; } },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+    fetchImpl: keyedFetch({
+      responses: {
+        "GET /api/production/readiness": { ready: true },
+        "GET /api/runtime/readiness": { ready: true },
+        "POST /api/billing/topups": { ok: true },
+        "POST /api/compute-allocations": {
+          error: "tencent_describe_node_pool_failed",
+          safeMessage: "node pool not found: np-basic",
+          providerRequestId: "req-describe",
+          retryable: false
+        }
+      },
+      statusByKey: {
+        "POST /api/compute-allocations": 400
+      }
+    })
+  });
+
+  assert.equal(code, 1);
+  assert.equal(stdout, "");
+  assert.deepEqual(JSON.parse(stderr), {
+    ok: false,
+    error: "request_failed:POST:/api/compute-allocations:400:tencent_describe_node_pool_failed",
+    safeMessage: "node pool not found: np-basic",
+    providerRequestId: "req-describe",
+    retryable: false
   });
 });
