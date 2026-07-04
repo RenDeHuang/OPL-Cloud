@@ -111,6 +111,9 @@ test("TKE old Workspace cleanup workflow is explicit and scoped to retired runti
   assert.match(text, /secret "\$name-env"/);
   assert.match(text, /pvc "\$name-data"/);
   assert.match(text, /get deploy,svc,secret,pvc -o json/);
+  assert.match(text, /kind === "Deployment" \|\| kind === "Service"/);
+  assert.match(text, /kind === "Secret"/);
+  assert.match(text, /kind === "PersistentVolumeClaim"/);
   assert.match(text, /name\.replace\(\/-env\$\/, ""\)/);
   assert.match(text, /name\.replace\(\/-data\$\/, ""\)/);
   assert.match(text, /namespace_confirm=DELETE_MEDOPL_AND_OPL_WEBUI|NAMESPACE_CONFIRM" != "DELETE_MEDOPL_AND_OPL_WEBUI"/);

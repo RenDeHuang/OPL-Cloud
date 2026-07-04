@@ -183,9 +183,10 @@ jobs:
                   const names = new Set();
                   for (const item of payload.items || []) {
                     const name = item.metadata?.name || "";
-                    if (/^opl-ws-[a-z0-9-]+$/.test(name)) names.add(name);
-                    if (/^opl-ws-[a-z0-9-]+-env$/.test(name)) names.add(name.replace(/-env$/, ""));
-                    if (/^opl-ws-[a-z0-9-]+-data$/.test(name)) names.add(name.replace(/-data$/, ""));
+                    const kind = item.kind || "";
+                    if ((kind === "Deployment" || kind === "Service") && /^opl-ws-[a-z0-9-]+$/.test(name)) names.add(name);
+                    if (kind === "Secret" && /^opl-ws-[a-z0-9-]+-env$/.test(name)) names.add(name.replace(/-env$/, ""));
+                    if (kind === "PersistentVolumeClaim" && /^opl-ws-[a-z0-9-]+-data$/.test(name)) names.add(name.replace(/-data$/, ""));
                   }
                   for (const name of [...names].sort()) console.log(name);
                 '

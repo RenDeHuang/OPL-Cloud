@@ -268,6 +268,9 @@
     "Delete old workspace runtime resources": [
       "get deploy,svc,secret,pvc -o json",
       "^opl-ws-[a-z0-9-]+",
+      "kind === \"Deployment\" || kind === \"Service\"",
+      "kind === \"Secret\"",
+      "kind === \"PersistentVolumeClaim\"",
       "name.replace(/-env$/, \"\")",
       "name.replace(/-data$/, \"\")",
       "deployment \"$name\"",
