@@ -11,6 +11,7 @@ import {
 } from "../../api/resources-api.js";
 import { navigate, routeTo } from "../../consoleRoutes.js";
 import { ActionGroup, ConsoleSurface, InsightPanel, MetricStrip, ObjectTable, ResourceSplit, StatusPill } from "../shared/commercial-console.jsx";
+import { available, money } from "../shared/formatters.js";
 
 function resourceStatus(value) {
   const normalized = String(value || "pending");
@@ -23,6 +24,30 @@ function resourceStatus(value) {
 function selectedResource(path, items) {
   const id = path.split("/").at(-1);
   return items.find((item) => item.id === id);
+}
+
+function computeHourlyPrice(plan) {
+  return Number(plan?.price?.computeHourly || 0);
+}
+
+function computeHoldAmount(plan) {
+  return computeHourlyPrice(plan) * 24 * 7;
+}
+
+function storageGbMonthPrice(plan) {
+  return Number(plan?.price?.storageGbMonth || 0);
+}
+
+function storageHourlyEstimate(plan, sizeGb) {
+  return storageGbMonthPrice(plan) * Number(sizeGb || plan?.diskGb || 0) / 30 / 24;
+}
+
+function storageHoldAmount(plan, sizeGb) {
+  return storageHourlyEstimate(plan, sizeGb) * 24 * 7;
+}
+
+function balanceAfterHold(wallet, holdAmount) {
+  return Math.max(0, available(wallet) - Number(holdAmount || 0));
 }
 
 export function ComputeAllocationsPage({ state }) {
@@ -59,6 +84,8 @@ export function ComputeAllocationsPage({ state }) {
 export function CreateComputeAllocationPage({ state, session, runAction }) {
   const availablePackages = (state.packages || []).filter((plan) => plan.available);
   const initialPackageId = availablePackages[0]?.id || "basic";
+  const initialPlan = availablePackages.find((plan) => plan.id === initialPackageId);
+  const initialComputeHold = computeHoldAmount(initialPlan);
   return (
     <ConsoleSurface title="Create Compute" eyebrow="Provision" subtitle="Choose a verified TKE compute package" compact>
       <InsightPanel title="开通计算" eyebrow="ComputeAllocation">
@@ -87,11 +114,18 @@ export function CreateComputeAllocationPage({ state, session, runAction }) {
           <ResourceSplit
             items={availablePackages.map((plan) => ({
               label: plan.name,
-              value: plan.server,
-              meta: `${plan.cpu} CPU / ${plan.memoryGb}GB`,
+              value: `${money(computeHourlyPrice(plan))}/小时`,
+              meta: `${plan.server} · ${plan.cpu} CPU / ${plan.memoryGb}GB · 冻结 ${money(computeHoldAmount(plan))}`,
               status: "verified",
               tone: "good"
             }))}
+          />
+          <ResourceSplit
+            items={[
+              { label: "每小时价格", value: `${money(computeHourlyPrice(initialPlan))}/小时`, meta: "computeHourlyPrice", status: "billable", tone: "info" },
+              { label: "预冻结", value: money(initialComputeHold), meta: "computeHoldAmount · 7 天", status: "hold", tone: "warn" },
+              { label: "冻结后可用", value: money(balanceAfterHold(state.wallet, initialComputeHold)), meta: "balanceAfterHold", status: "after hold", tone: balanceAfterHold(state.wallet, initialComputeHold) > 0 ? "good" : "warn" }
+            ]}
           />
           <Button className="formSubmit" type="primary" htmlType="submit" icon={<Server size={15} />} disabled={!availablePackages.length}>
             开通计算
@@ -112,7 +146,9 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction })
           items={[
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "规格", value: resource.spec || "-", meta: resource.packageId },
-            { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" }
+            { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
+            { label: "操作", value: resource.operationId || "-", meta: "operationId", status: resource.providerRequestId || "pending", tone: resource.safeMessage ? "danger" : "info" },
+            { label: "失败原因", value: resource.safeMessage || "-", meta: "safeMessage", status: resource.providerRequestId || "providerRequestId", tone: resource.safeMessage ? "danger" : "neutral" }
           ]}
         />
         <ActionGroup
@@ -162,6 +198,9 @@ export function StorageVolumesPage({ state }) {
 export function CreateStorageVolumePage({ state, session, runAction }) {
   const availablePackages = (state.packages || []).filter((plan) => plan.available);
   const initialPackageId = availablePackages[0]?.id || "basic";
+  const initialPlan = availablePackages.find((plan) => plan.id === initialPackageId);
+  const initialStorageSize = availablePackages[0]?.diskGb || 10;
+  const initialStorageHold = storageHoldAmount(initialPlan, initialStorageSize);
   return (
     <ConsoleSurface title="Create Storage" eyebrow="Provision" subtitle="Create a retained TKE storage volume" compact>
       <InsightPanel title="开通存储" eyebrow="StorageVolume">
@@ -190,6 +229,14 @@ export function CreateStorageVolumePage({ state, session, runAction }) {
           <Form.Item name="sizeGb" label="容量 GB" rules={[{ required: true, message: "请输入容量" }]}>
             <InputNumber min={1} max={4096} style={{ width: "100%" }} />
           </Form.Item>
+          <ResourceSplit
+            items={[
+              { label: "存储单价", value: `${money(storageGbMonthPrice(initialPlan))}/GB月`, meta: "storageGbMonthPrice", status: "billable", tone: "info" },
+              { label: "每小时估算", value: `${money(storageHourlyEstimate(initialPlan, initialStorageSize))}/小时`, meta: "storageHourlyEstimate", status: `${initialStorageSize}GB`, tone: "info" },
+              { label: "预冻结", value: money(initialStorageHold), meta: "hold · 7 天", status: "冻结", tone: "warn" },
+              { label: "冻结后可用", value: money(balanceAfterHold(state.wallet, initialStorageHold)), meta: "balanceAfterHold", status: "after hold", tone: balanceAfterHold(state.wallet, initialStorageHold) > 0 ? "good" : "warn" }
+            ]}
+          />
           <ResourceSplit items={[{ label: "挂载路径", value: "/data", meta: "one-person-lab-app persistent state", status: "ready", tone: "info" }]} />
           <Button className="formSubmit" type="primary" htmlType="submit" icon={<Database size={15} />} disabled={!availablePackages.length}>
             开通存储
@@ -210,7 +257,9 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }) {
           items={[
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: resource.storageClassId },
-            { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" }
+            { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
+            { label: "操作", value: resource.operationId || "-", meta: "operationId", status: resource.providerRequestId || "pending", tone: resource.safeMessage ? "danger" : "info" },
+            { label: "失败原因", value: resource.safeMessage || "-", meta: "safeMessage", status: resource.providerRequestId || "providerRequestId", tone: resource.safeMessage ? "danger" : "neutral" }
           ]}
         />
         <ActionGroup

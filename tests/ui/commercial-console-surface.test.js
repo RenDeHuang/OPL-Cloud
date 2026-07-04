@@ -89,6 +89,25 @@ test("resource provisioning pages call resource APIs instead of disabled placeho
   assert.doesNotMatch(resourceSource, /disabled: true/, "resource creation actions must not remain disabled placeholders");
 });
 
+test("resource provisioning UI shows price, hold, balance impact, and operation state", async () => {
+  const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+
+  for (const requiredSignal of [
+    "computeHourlyPrice",
+    "computeHoldAmount",
+    "storageGbMonthPrice",
+    "storageHourlyEstimate",
+    "balanceAfterHold",
+    "operationId",
+    "safeMessage",
+    "providerRequestId"
+  ]) {
+    assert.match(resourceSource, new RegExp(requiredSignal), `resource UI must expose ${requiredSignal}`);
+  }
+  assert.match(resourceSource, /¥\/小时|每小时/, "compute creation must show hourly pricing before submit");
+  assert.match(resourceSource, /冻结|hold/i, "resource creation must show prepaid hold impact before submit");
+});
+
 test("Admin users surface is backed by management state and can create login users", async () => {
   const adminSource = await source("packages/console/ui/pages/admin/AdminOverviewPage.jsx");
   const stateSource = await source("packages/console/ui/store/console-state.js");

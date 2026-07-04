@@ -2,6 +2,7 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { TencentProvisionerClient } from "../tencent-provisioner-client.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const REQUIRED_ENV = [
@@ -11,6 +12,7 @@ const REQUIRED_ENV = [
   "OPL_INGRESS_CLASS",
   "OPL_IMAGE_PULL_SECRET_NAME",
   "OPL_WORKSPACE_STORAGE_CLASS",
+  "OPL_TENCENT_PROVISIONER_BIN",
   "TENCENT_DEPLOY_KUBECONFIG_REF"
 ];
 const REQUIRED_TOOLS = ["kubectl"];
@@ -42,6 +44,26 @@ function workspaceSlug(workspaceName, workspaceId) {
 
 function k8sName(workspaceId) {
   return `opl-${compactId(workspaceId)}`.slice(0, 63);
+}
+
+function computePoolInputFromPackage(packagePlan) {
+  return {
+    id: `pool-${packagePlan.id}-${packagePlan.server}`,
+    packageId: packagePlan.id,
+    instanceType: packagePlan.instanceType || packagePlan.server,
+    nodePoolId: packagePlan.nodePoolId || "",
+    desiredNodeLabels: {
+      "oplcloud.cn/pool-id": `pool-${packagePlan.id}-${packagePlan.server}`,
+      "oplcloud.cn/package-id": packagePlan.id,
+      "oplcloud.cn/instance-type": packagePlan.instanceType || packagePlan.server
+    }
+  };
+}
+
+function computeAllocationNodeSelector(allocationId) {
+  return {
+    "oplcloud.cn/compute-allocation-id": allocationId
+  };
 }
 
 async function defaultRunner({ command, args, cwd, env }) {
@@ -89,12 +111,14 @@ export class TencentTkeProvider {
     env = process.env,
     runner = defaultRunner,
     commandExists = defaultCommandExists,
+    provisionerClient = null,
     stateRootDir = join(repoRoot, ".runtime", "tencent-tke")
   } = {}) {
     this.name = "tencent-tke";
     this.env = env;
     this.runner = runner;
     this.commandExists = commandExists;
+    this.provisionerClient = provisionerClient || new TencentProvisionerClient({ env });
     this.stateRootDir = stateRootDir;
   }
 
@@ -121,42 +145,57 @@ export class TencentTkeProvider {
 
   async createComputeAllocation({ computeAllocationId, accountId = "unknown", computeAllocation = {}, packagePlan }) {
     this.requireExecutionBoundary();
-    await this.requireTools(REQUIRED_TOOLS);
     const allocationId = computeAllocationId || computeAllocation.id;
-    const name = k8sName(allocationId);
-    const manifestPath = await this.writeComputeAllocationManifest({
-      computeAllocationId: allocationId,
+    const pool = computePoolInputFromPackage(packagePlan);
+    const provisioned = await this.provisionerClient.createComputeAllocation({
       accountId,
-      compute: computeAllocation,
-      name,
-      packagePlan
+      userId: computeAllocation.ownerUserId || "",
+      packageId: packagePlan.id,
+      pool,
+      allocation: {
+        id: allocationId,
+        instanceId: computeAllocation.instanceId || "",
+        nodeName: computeAllocation.nodeName || ""
+      }
     });
-    await this.runKubectl(["apply", "-f", manifestPath]);
+    const name = k8sName(allocationId);
+    const nodeSelector = computeAllocationNodeSelector(allocationId);
     return {
-      providerResourceId: `deployment/${name}`,
-      status: "running",
+      providerResourceId: provisioned.instanceId ? `cvm/${provisioned.instanceId}` : "",
+      operationId: provisioned.operationId || "",
+      poolId: provisioned.poolId || pool.id,
+      nodePoolId: provisioned.nodePoolId || pool.nodePoolId || "",
+      instanceId: provisioned.instanceId || "",
+      nodeName: provisioned.nodeName || "",
+      status: provisioned.status || "provisioning",
       billingStatus: "active",
       spec: packagePlan.server,
       image: this.env.OPL_WORKSPACE_IMAGE,
       runtime: {
-        service: `service/${name}`,
+        service: "",
         serviceName: name,
-        dockerId: `deployment/${name}`
-      }
+        dockerId: "",
+        nodeName: provisioned.nodeName || "",
+        nodeSelector
+      },
+      nodeSelector,
+      providerData: provisioned.providerData || {}
     };
   }
 
   async attachStorage({ attachment, compute, storage }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
-    const computeName = resourceName(compute.providerResourceId || `deployment/${k8sName(attachment.computeAllocationId)}`);
+    const computeName = compute.runtime?.serviceName || k8sName(attachment.computeAllocationId);
     const storageClaimName = resourceName(storage.providerResourceId || storage.id || `pvc/${k8sName(attachment.storageId)}-data`);
     const manifestPath = await this.writeAttachmentManifest({
       attachment,
       compute,
       storage,
       computeName,
-      storageClaimName
+      storageClaimName,
+      nodeName: compute.nodeName || compute.runtime?.nodeName || "",
+      nodeSelector: compute.nodeSelector || compute.runtime?.nodeSelector || computeAllocationNodeSelector(compute.id || attachment.computeAllocationId)
     });
     await this.runKubectl(["apply", "-f", manifestPath]);
     return {
@@ -195,7 +234,24 @@ export class TencentTkeProvider {
   async destroyComputeAllocation({ computeAllocation, compute = computeAllocation }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
-    const name = resourceName(compute.providerResourceId || compute.server?.id || `deployment/${k8sName(compute.id)}`);
+    const instanceId = compute.instanceId || (String(compute.providerResourceId || "").startsWith("cvm/")
+      ? resourceName(compute.providerResourceId)
+      : "");
+    if (instanceId && typeof this.provisionerClient.destroyComputeAllocation === "function") {
+      await this.provisionerClient.destroyComputeAllocation({
+        accountId: compute.ownerAccountId || computeAllocation.ownerAccountId || "",
+        pool: {
+          id: compute.poolId || "",
+          nodePoolId: compute.nodePoolId || ""
+        },
+        allocation: {
+          id: compute.id || computeAllocation.id || "",
+          instanceId,
+          nodeName: compute.nodeName || ""
+        }
+      });
+    }
+    const name = compute.runtime?.serviceName || runtimeNameFromCompute(compute);
     let routeCleanupError = null;
     try {
       await this.removeWorkspaceRoutesForService({ serviceName: name });
@@ -237,7 +293,7 @@ export class TencentTkeProvider {
   async createWorkspaceEntry({ workspaceId, ownerAccountId = "unknown", workspaceName, token, compute, packagePlan }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
-    const computeName = resourceName(compute.providerResourceId || compute.server?.id || `deployment/${k8sName(compute.id || workspaceId)}`);
+    const computeName = compute.runtime?.serviceName || runtimeNameFromCompute(compute, workspaceId);
     const secretPath = await this.writeWorkspaceEntrySecretManifest({
       workspaceId,
       workspaceName,
@@ -530,7 +586,7 @@ export class TencentTkeProvider {
     };
   }
 
-  computeAllocationManifest({ name, computeAllocationId, accountId, compute, packagePlan, storageClaimName = null }) {
+  computeAllocationManifest({ name, computeAllocationId, accountId, compute, packagePlan, storageClaimName = null, nodeName = "", nodeSelector: explicitNodeSelector = null }) {
     const labels = {
       "app.kubernetes.io/name": "opl-compute-allocation",
       "app.kubernetes.io/instance": name,
@@ -540,6 +596,10 @@ export class TencentTkeProvider {
     const selector = { matchLabels: labels };
     const nodeSelectorKey = this.env.OPL_WORKSPACE_NODE_SELECTOR_KEY;
     const nodeSelectorValue = this.env.OPL_WORKSPACE_NODE_SELECTOR_VALUE;
+    const nodeSelector = explicitNodeSelector ||
+      (nodeName
+      ? { "kubernetes.io/hostname": nodeName }
+      : nodeSelectorKey && nodeSelectorValue ? { [nodeSelectorKey]: nodeSelectorValue } : undefined);
     const volumeMounts = storageClaimName
       ? [
         { name: "workspace-data", mountPath: "/data", subPath: "data" },
@@ -573,7 +633,7 @@ export class TencentTkeProvider {
               spec: {
                 automountServiceAccountToken: false,
                 imagePullSecrets: [{ name: this.env.OPL_IMAGE_PULL_SECRET_NAME }],
-                nodeSelector: nodeSelectorKey && nodeSelectorValue ? { [nodeSelectorKey]: nodeSelectorValue } : undefined,
+                nodeSelector,
                 initContainers: volumes
                   ? [this.codexBootstrapInitContainer({ secretName: `${name}-env` })]
                   : undefined,
@@ -627,7 +687,7 @@ export class TencentTkeProvider {
     };
   }
 
-  attachmentManifest({ attachment, compute, storage, computeName, storageClaimName }) {
+  attachmentManifest({ attachment, compute, storage, computeName, storageClaimName, nodeName = "", nodeSelector = null }) {
     return this.computeAllocationManifest({
       name: computeName,
       computeAllocationId: compute.id || attachment.computeAllocationId,
@@ -640,7 +700,9 @@ export class TencentTkeProvider {
         memoryGb: compute.memoryGb,
         accelerator: compute.accelerator || "cpu"
       },
-      storageClaimName
+      storageClaimName,
+      nodeName,
+      nodeSelector
     });
   }
 
@@ -741,6 +803,12 @@ fs.chmodSync(configPath, 0o600);
 
 function resourceName(resourceId) {
   return String(resourceId || "").split("/").pop();
+}
+
+function runtimeNameFromCompute(compute, fallbackId = "") {
+  if (compute?.runtime?.serviceName) return compute.runtime.serviceName;
+  const id = compute?.id || fallbackId;
+  return k8sName(id);
 }
 
 function computeNameFromAttachment(attachment) {

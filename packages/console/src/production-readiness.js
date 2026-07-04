@@ -30,7 +30,7 @@ const REQUIRED_TKE_ENV = [
 const PROVIDER_CONFIG = {
   [PROVIDERS.TENCENT_TKE]: {
     requiredEnv: REQUIRED_TKE_ENV,
-    requiredTools: ["kubectl"]
+    requiredTools: ["kubectl", "env:OPL_TENCENT_PROVISIONER_BIN"]
   }
 };
 
@@ -115,6 +115,15 @@ function hasProductionAuthSeed(env) {
 }
 
 async function commandExistsInPath(command, env) {
+  if (command.includes("/")) {
+    try {
+      await access(command, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   const pathValue = env.PATH || process.env.PATH || "";
   for (const dir of pathValue.split(delimiter).filter(Boolean)) {
     try {
@@ -141,7 +150,8 @@ export async function productionReadiness({ env = process.env, commandExists = (
     if (!env[key]) missingEnv.push(key);
   }
   for (const tool of providerConfig.requiredTools) {
-    if (!(await commandExists(tool))) missingTools.push(tool);
+    const command = tool.startsWith("env:") ? env[tool.slice(4)] : tool;
+    if (!command || !(await commandExists(command))) missingTools.push(command || tool);
   }
 
   const checks = [

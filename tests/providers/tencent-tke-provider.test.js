@@ -13,6 +13,7 @@ const requiredEnv = {
   OPL_INGRESS_CLASS: "qcloud",
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
   OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+  OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
   OPL_WORKSPACE_NODE_SELECTOR_KEY: "medopl.cn/workload",
   OPL_WORKSPACE_NODE_SELECTOR_VALUE: "medopl",
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig"
@@ -43,6 +44,7 @@ test("Tencent TKE provider reports readiness gaps before Kubernetes execution", 
       "OPL_INGRESS_CLASS",
       "OPL_IMAGE_PULL_SECRET_NAME",
       "OPL_WORKSPACE_STORAGE_CLASS",
+      "OPL_TENCENT_PROVISIONER_BIN",
       "TENCENT_DEPLOY_KUBECONFIG_REF"
     ],
     missingTools: ["kubectl"]
@@ -146,6 +148,19 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
     env: requiredEnv,
     runner,
     commandExists: () => true,
+    provisionerClient: {
+      async createComputeAllocation(input) {
+        return {
+          ok: true,
+          operationId: "op-provisioner",
+          poolId: input.pool.id,
+          nodePoolId: "np-basic",
+          instanceId: "ins-basic-001",
+          status: "provisioning",
+          providerData: { createRequestId: "req-create", addNodeRequestId: "req-add" }
+        };
+      }
+    },
     stateRootDir
   });
   const packagePlan = { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, gpu: 0, server: "2c4g", diskGb: 10 };
@@ -187,34 +202,31 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
     });
 
     const storageManifestPath = join(stateRootDir, "storage-tke001", "storage.pvc.k8s.json");
-    const computeManifestPath = join(stateRootDir, "compute-tke001", "compute.k8s.json");
     const attachmentManifestPath = join(stateRootDir, "attach-tke001", "attachment.k8s.json");
     const entrySecretPath = join(stateRootDir, "ws-tke-resource", "workspace-entry-secret.k8s.json");
     assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
       `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${storageManifestPath}`,
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${computeManifestPath}`,
       `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${attachmentManifestPath}`,
       `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${entrySecretPath}`
     ]);
     assert.equal(storage.providerResourceId, "pvc/opl-storage-tke001-data");
-    assert.equal(compute.providerResourceId, "deployment/opl-compute-tke001");
+    assert.equal(compute.providerResourceId, "cvm/ins-basic-001");
+    assert.equal(compute.nodePoolId, "np-basic");
+    assert.equal(compute.instanceId, "ins-basic-001");
     assert.equal(attachment.providerAttachmentId, "deployment/opl-compute-tke001:pvc/opl-storage-tke001-data:/data");
     assert.equal(entry.url, "https://workspace.medopl.cn/w/ws-tke-resource/?token=share_resource_secret");
 
     const storageManifest = JSON.parse(await readFile(storageManifestPath, "utf8"));
-    const computeManifest = JSON.parse(await readFile(computeManifestPath, "utf8"));
     const attachmentManifest = JSON.parse(await readFile(attachmentManifestPath, "utf8"));
     const entrySecret = JSON.parse(await readFile(entrySecretPath, "utf8"));
-    const computeDeployment = computeManifest.items.find((item) => item.kind === "Deployment");
     const attachmentDeployment = attachmentManifest.items.find((item) => item.kind === "Deployment");
     const attachmentContainer = attachmentDeployment.spec.template.spec.containers[0];
 
     assert.equal(storageManifest.kind, "PersistentVolumeClaim");
     assert.equal(storageManifest.metadata.name, "opl-storage-tke001-data");
     assert.equal(storageManifest.spec.resources.requests.storage, "10Gi");
-    assert.equal(computeDeployment.metadata.name, "opl-compute-tke001");
-    assert.equal(computeDeployment.spec.template.spec.volumes, undefined);
     assert.equal(attachmentDeployment.metadata.name, "opl-compute-tke001");
+    assert.equal(attachmentDeployment.spec.template.spec.nodeSelector["oplcloud.cn/compute-allocation-id"], "compute-tke001");
     assert.equal(entrySecret.kind, "Secret");
     assert.equal(entrySecret.metadata.name, "opl-compute-tke001-env");
     assert.equal(Buffer.from(entrySecret.data.OPL_SHARE_TOKEN, "base64").toString("utf8"), "share_resource_secret");
@@ -241,6 +253,57 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
   } finally {
     await rm(stateRootDir, { recursive: true, force: true });
   }
+});
+
+test("Tencent TKE provider opens account compute allocation through Go provisioner", async () => {
+  const calls = [];
+  const provisionerCalls = [];
+  const provider = new TencentTkeProvider({
+    env: {
+      ...requiredEnv,
+      OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
+      OPL_TENCENT_PROVISIONER_DRY_RUN: "true"
+    },
+    runner: async ({ command, args }) => {
+      calls.push({ command, args });
+      return "";
+    },
+    commandExists: () => true,
+    provisionerClient: {
+      async createComputeAllocation(input) {
+        provisionerCalls.push(input);
+        return {
+          ok: true,
+          operationId: "op-provisioner",
+          poolId: input.pool.id,
+          nodePoolId: "np-basic",
+          instanceId: "ins-basic-001",
+          status: "provisioning",
+          providerData: { createRequestId: "req-create", addNodeRequestId: "req-add" }
+        };
+      }
+    }
+  });
+
+  const result = await provider.createComputeAllocation({
+    computeAllocationId: "compute-tke001",
+    accountId: "pi-alpha",
+    userId: "usr-alpha",
+    computeAllocation: { id: "compute-tke001", ownerAccountId: "pi-alpha", name: "CPU node" },
+    packagePlan: { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, gpu: 0, server: "2c4g", diskGb: 10, instanceType: "SA5.LARGE4", nodePoolId: "np-basic" }
+  });
+
+  assert.equal(result.providerResourceId, "cvm/ins-basic-001");
+  assert.equal(result.operationId, "op-provisioner");
+  assert.equal(result.poolId, "pool-basic-2c4g");
+  assert.equal(result.nodePoolId, "np-basic");
+  assert.equal(result.instanceId, "ins-basic-001");
+  assert.equal(result.nodeName, "");
+  assert.deepEqual(result.runtime.nodeSelector, { "oplcloud.cn/compute-allocation-id": "compute-tke001" });
+  assert.equal(result.status, "provisioning");
+  assert.deepEqual(provisionerCalls.map((call) => call.allocation.id), ["compute-tke001"]);
+  assert.equal(provisionerCalls[0].pool.instanceType, "SA5.LARGE4");
+  assert.deepEqual(calls, []);
 });
 
 test("Tencent TKE provider detaches and destroys split resources in Kubernetes", async () => {

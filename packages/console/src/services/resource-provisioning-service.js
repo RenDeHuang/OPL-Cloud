@@ -6,6 +6,7 @@ import {
 } from "./wallet-service.js";
 import {
   computeHourlyBase,
+  hourlyStorageAmount,
   packageHoldAmount,
   pricedComputeHourly,
   pricedStorageGbMonth,
@@ -56,6 +57,17 @@ function computePoolFromPackage(plan, pricing) {
   };
 }
 
+function providerRequestId(providerResult = {}) {
+  return providerResult.providerRequestId ||
+    providerResult.providerData?.createRequestId ||
+    providerResult.providerData?.requestId ||
+    "";
+}
+
+function resourceOperationId(accountId, resourceId, operationType, sequence) {
+  return makeId("op", accountId, resourceId, operationType, String(sequence));
+}
+
 export class ResourceProvisioningService extends OplDomainService {
   computePools() {
     return this.packages().map((plan) => computePoolFromPackage(plan, this.pricing));
@@ -89,7 +101,22 @@ export class ResourceProvisioningService extends OplDomainService {
       if (existing) return { existing: true, compute: clone(existing) };
       if (accountAvailable(account) < hold.compute) throw new Error("insufficient_compute_hold_balance");
 
+      const balanceBefore = money(Number(account.balance || 0));
+      const frozenBefore = money(Number(account.frozen || 0));
       addHold(account, "compute", hold.compute);
+      const operationId = resourceOperationId(accountId, allocationId, "create_compute_allocation", state.runtimeOperations.length);
+      state.runtimeOperations.push({
+        id: operationId,
+        accountId,
+        workspaceId: "resource",
+        resourceType: "compute_allocation",
+        resourceId: allocationId,
+        operationType: "create_compute_allocation",
+        status: "running",
+        attempts: 1,
+        createdAt: now(),
+        updatedAt: now()
+      });
       const sourceEventId = `compute_allocation:${allocationId}:created`;
       const ledger = addResourceIds(this.ledgerEntry({
         state,
@@ -115,12 +142,23 @@ export class ResourceProvisioningService extends OplDomainService {
         ownerUserId: account.id,
         name: name || packagePlan.name,
         packageId,
+        poolId: computePoolFromPackage(packagePlan, this.pricing).id,
+        nodePoolId: packagePlan.nodePoolId || "",
+        operationId,
         provider: this.runtimeProvider.name || "unknown",
         providerResourceId: "",
         status: "provisioning",
         billingStatus: "active",
         spec: packagePlan.server,
         image: "",
+        hourlyPrice: pricedComputeHourly({ packagePlan, pricing: this.pricing }),
+        holdAmount: hold.compute,
+        balanceImpact: {
+          balanceBefore,
+          frozenBefore,
+          frozenAfter: money(Number(account.frozen || 0)),
+          availableAfter: accountAvailable(account)
+        },
         createdAt: now(),
         updatedAt: now()
       };
@@ -153,6 +191,11 @@ export class ResourceProvisioningService extends OplDomainService {
         const compute = findOwnedResource(state.computeAllocations, accountId, allocationId, "compute_allocation_not_found");
         Object.assign(compute, {
           providerResourceId: providerCompute.providerResourceId || providerCompute.id || compute.providerResourceId,
+          operationId: providerCompute.operationId || compute.operationId,
+          poolId: providerCompute.poolId || compute.poolId,
+          nodePoolId: providerCompute.nodePoolId || compute.nodePoolId,
+          instanceId: providerCompute.instanceId || compute.instanceId,
+          nodeName: providerCompute.nodeName || compute.nodeName,
           status: providerCompute.status || "running",
           billingStatus: providerCompute.billingStatus || compute.billingStatus,
           spec: providerCompute.spec || compute.spec,
@@ -160,9 +203,16 @@ export class ResourceProvisioningService extends OplDomainService {
           localPath: providerCompute.localPath || compute.localPath,
           composePath: providerCompute.composePath || compute.composePath,
           runtime: providerCompute.runtime ? clone(providerCompute.runtime) : compute.runtime,
-          providerData: clone(providerCompute),
+          providerData: clone(providerCompute.providerData || providerCompute),
           updatedAt: now()
         });
+        const operation = state.runtimeOperations.find((item) => item.id === compute.operationId || item.resourceId === allocationId);
+        if (operation) {
+          operation.id = compute.operationId || operation.id;
+          operation.status = "completed";
+          operation.providerRequestId = providerRequestId(providerCompute);
+          operation.updatedAt = now();
+        }
         return clone(compute);
       });
     } catch (error) {
@@ -228,7 +278,22 @@ export class ResourceProvisioningService extends OplDomainService {
       if (existing) return { existing: true, storage: clone(existing) };
       if (accountAvailable(account) < hold.storage) throw new Error("insufficient_storage_hold_balance");
 
+      const balanceBefore = money(Number(account.balance || 0));
+      const frozenBefore = money(Number(account.frozen || 0));
       addHold(account, "storage", hold.storage);
+      const operationId = resourceOperationId(accountId, storageId, "create_storage_volume", state.runtimeOperations.length);
+      state.runtimeOperations.push({
+        id: operationId,
+        accountId,
+        workspaceId: "resource",
+        resourceType: "storage_volume",
+        resourceId: storageId,
+        operationType: "create_storage_volume",
+        status: "running",
+        attempts: 1,
+        createdAt: now(),
+        updatedAt: now()
+      });
       const sourceEventId = `storage_volume:${storageId}:created`;
       const ledger = addResourceIds(this.ledgerEntry({
         state,
@@ -255,12 +320,22 @@ export class ResourceProvisioningService extends OplDomainService {
         ownerUserId: account.id,
         name: name || `${normalizedSizeGb}GB workspace storage`,
         packageId,
+        operationId,
         provider: this.runtimeProvider.name || "unknown",
         providerResourceId: "",
         status: "provisioning",
         billingStatus: "active",
         sizeGb: normalizedSizeGb,
         storageClassId: packagePlan.storageClassId,
+        gbMonthPrice: pricedStorageGbMonth(this.pricing),
+        hourlyEstimate: hourlyStorageAmount({ packagePlan: storagePlan, pricing: this.pricing, hours: 1 }),
+        holdAmount: hold.storage,
+        balanceImpact: {
+          balanceBefore,
+          frozenBefore,
+          frozenAfter: money(Number(account.frozen || 0)),
+          availableAfter: accountAvailable(account)
+        },
         createdAt: now(),
         updatedAt: now()
       };
@@ -294,6 +369,7 @@ export class ResourceProvisioningService extends OplDomainService {
         const storage = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
         Object.assign(storage, {
           providerResourceId: providerStorage.providerResourceId || providerStorage.id || storage.providerResourceId,
+          operationId: providerStorage.operationId || storage.operationId,
           status: providerStorage.status || "available",
           billingStatus: providerStorage.billingStatus || storage.billingStatus,
           localPath: providerStorage.localPath || storage.localPath,
@@ -301,6 +377,13 @@ export class ResourceProvisioningService extends OplDomainService {
           providerData: clone(providerStorage),
           updatedAt: now()
         });
+        const operation = state.runtimeOperations.find((item) => item.id === storage.operationId || item.resourceId === storageId);
+        if (operation) {
+          operation.id = storage.operationId || operation.id;
+          operation.status = "completed";
+          operation.providerRequestId = providerRequestId(providerStorage);
+          operation.updatedAt = now();
+        }
         return clone(storage);
       });
     } catch (error) {
@@ -366,12 +449,26 @@ export class ResourceProvisioningService extends OplDomainService {
       if (active) throw new Error("storage_already_attached");
 
       attachmentId = makeId("attach", accountId, computeAllocationId, storageId, mountPath, String(state.storageAttachments.length));
+      const operationId = resourceOperationId(accountId, attachmentId, "attach_storage", state.runtimeOperations.length);
+      state.runtimeOperations.push({
+        id: operationId,
+        accountId,
+        workspaceId: "resource",
+        resourceType: "storage_attachment",
+        resourceId: attachmentId,
+        operationType: "attach_storage",
+        status: "running",
+        attempts: 1,
+        createdAt: now(),
+        updatedAt: now()
+      });
       const attachment = {
         id: attachmentId,
         ownerAccountId: accountId,
         computeAllocationId,
         storageId,
         mountPath,
+        operationId,
         provider: this.runtimeProvider.name || "unknown",
         providerAttachmentId: "",
         status: "attaching",
@@ -416,12 +513,20 @@ export class ResourceProvisioningService extends OplDomainService {
         const storage = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
         Object.assign(attachment, {
           providerAttachmentId: providerAttachment.providerAttachmentId || providerAttachment.id || attachment.providerAttachmentId,
+          operationId: providerAttachment.operationId || attachment.operationId,
           status: providerAttachment.status || "attached",
           localPath: providerAttachment.localPath || attachment.localPath,
           composePath: providerAttachment.composePath || attachment.composePath,
           providerData: clone(providerAttachment),
           updatedAt: now()
         });
+        const operation = state.runtimeOperations.find((item) => item.id === attachment.operationId || item.resourceId === attachmentId);
+        if (operation) {
+          operation.id = attachment.operationId || operation.id;
+          operation.status = "completed";
+          operation.providerRequestId = providerRequestId(providerAttachment);
+          operation.updatedAt = now();
+        }
         compute.attachedStorageIds = [...new Set([...(compute.attachedStorageIds || []), storageId])];
         storage.attachmentIds = [...new Set([...(storage.attachmentIds || []), attachmentId])];
         if (providerAttachment.computeStatus) compute.status = providerAttachment.computeStatus;
@@ -569,7 +674,21 @@ export class ResourceProvisioningService extends OplDomainService {
       if (resource) {
         resource.status = "failed";
         resource.error = error.message;
+        resource.safeMessage = error.safeMessage || error.message;
+        resource.providerRequestId = error.providerRequestId || "";
+        resource.retryable = Boolean(error.retryable);
+        resource.providerData = clone(error.providerData || resource.providerData || {});
         resource.updatedAt = now();
+      }
+      const operation = state.runtimeOperations.find((item) => item.resourceId === resourceId);
+      if (operation) {
+        operation.status = "failed";
+        operation.error = error.message;
+        operation.safeMessage = error.safeMessage || error.message;
+        operation.providerRequestId = error.providerRequestId || "";
+        operation.retryable = Boolean(error.retryable);
+        operation.providerData = clone(error.providerData || {});
+        operation.updatedAt = now();
       }
       this.notify({
         state,
@@ -577,7 +696,7 @@ export class ResourceProvisioningService extends OplDomainService {
         workspaceId: "",
         type: auditType,
         severity: "error",
-        message: error.message,
+        message: error.safeMessage || error.message,
         sourceEventId: resourceId
       });
       return true;

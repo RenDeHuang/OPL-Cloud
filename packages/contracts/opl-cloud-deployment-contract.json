@@ -208,10 +208,13 @@
     "file": "Dockerfile",
     "baseImage": "node:22-bookworm-slim",
     "requiredInstructions": [
+      "FROM golang:1.22-bookworm AS provisioner-build",
+      "go build -o /out/opl-tencent-provisioner .",
       "npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
       "npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
       "npm run build",
       "kubectl",
+      "COPY --from=provisioner-build /out/opl-tencent-provisioner /usr/local/bin/opl-tencent-provisioner",
       "COPY packages ./packages",
       "EXPOSE 8787",
       "CMD [\"node\", \"packages/console/api/server.js\"]"

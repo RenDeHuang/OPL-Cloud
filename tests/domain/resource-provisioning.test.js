@@ -119,6 +119,94 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
   assert.equal(state.resourceUsageLogs.some((entry) => entry.attachmentId === attachment.id), true);
 });
 
+test("compute allocation persists provisioner ownership, pricing, hold, and operation state", async () => {
+  const service = createService({
+    async createComputeAllocation({ computeAllocationId }) {
+      return {
+        providerResourceId: "cvm/ins-alpha",
+        operationId: "op-create-alpha",
+        poolId: "pool-basic-2c4g",
+        nodePoolId: "np-basic",
+        instanceId: "ins-alpha",
+        nodeName: "10.0.0.12",
+        status: "provisioning",
+        billingStatus: "active",
+        spec: "2c4g",
+        image: "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
+        providerData: { createRequestId: "req-create", addNodeRequestId: "req-add", computeAllocationId }
+      };
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const compute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    userId: "usr-alpha",
+    packageId: "basic",
+    name: "CPU analysis node"
+  });
+  const state = await service.getState("pi-alpha");
+  const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
+
+  assert.equal(compute.providerResourceId, "cvm/ins-alpha");
+  assert.equal(compute.operationId, "op-create-alpha");
+  assert.equal(compute.poolId, "pool-basic-2c4g");
+  assert.equal(compute.nodePoolId, "np-basic");
+  assert.equal(compute.instanceId, "ins-alpha");
+  assert.equal(compute.nodeName, "10.0.0.12");
+  assert.equal(compute.hourlyPrice, 1.2);
+  assert.equal(compute.holdAmount, 201.6);
+  assert.deepEqual(compute.balanceImpact, {
+    balanceBefore: 300,
+    frozenBefore: 0,
+    frozenAfter: 201.6,
+    availableAfter: 98.4
+  });
+  assert.ok(operation, "expected a resource operation row");
+  assert.equal(operation.operationType, "create_compute_allocation");
+  assert.equal(operation.resourceType, "compute_allocation");
+  assert.equal(operation.status, "completed");
+  assert.equal(operation.providerRequestId, "req-create");
+});
+
+test("failed compute allocation remains visible with safe provider failure state", async () => {
+  const service = createService({
+    async createComputeAllocation() {
+      const error = new Error("tencent_permission_denied");
+      error.safeMessage = "CAM denied CreateClusterInstances";
+      error.providerRequestId = "req-denied";
+      error.retryable = false;
+      error.providerData = { action: "create_compute_allocation" };
+      throw error;
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  await assert.rejects(
+    service.createComputeAllocation({
+      accountId: "pi-alpha",
+      userId: "usr-alpha",
+      packageId: "basic",
+      name: "CPU analysis node"
+    }),
+    /tencent_permission_denied/
+  );
+
+  const state = await service.getState("pi-alpha");
+  const compute = state.computeAllocations[0];
+  const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
+
+  assert.equal(compute.status, "failed");
+  assert.equal(compute.error, "tencent_permission_denied");
+  assert.equal(compute.safeMessage, "CAM denied CreateClusterInstances");
+  assert.equal(compute.providerRequestId, "req-denied");
+  assert.equal(compute.retryable, false);
+  assert.deepEqual(compute.providerData, { action: "create_compute_allocation" });
+  assert.equal(operation.status, "failed");
+  assert.equal(operation.safeMessage, "CAM denied CreateClusterInstances");
+  assert.equal(operation.providerRequestId, "req-denied");
+});
+
 test("Workspace URL creation requires an attached storage and compute pair", async () => {
   const service = createService();
 
