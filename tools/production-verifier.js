@@ -265,7 +265,11 @@ async function requestRuntimeStatus({ fetchImpl, origin, accountId, workspaceId,
 function addCheck(checks, name, ok, details = {}) {
   const check = { name, ok: Boolean(ok), ...details };
   checks.push(check);
-  if (!check.ok) throw new Error(`${name}_failed`);
+  if (!check.ok) {
+    const error = new Error(`${name}_failed`);
+    error.details = details;
+    throw error;
+  }
   return check;
 }
 
@@ -413,6 +417,19 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     entry.workspaceId === workspace?.id &&
     entry.type === "request_debit"
   );
+  const missingChecks = [
+    [hasComputeLedger, "compute_ledger"],
+    [hasStorageLedger, "storage_ledger"],
+    [hasAttachmentLedger, "attachment_ledger"],
+    [hasRequestLedger, "request_ledger"],
+    [hasComputeUsage, "compute_usage"],
+    [hasStorageUsage, "storage_usage"],
+    [hasAttachmentUsage, "attachment_usage"],
+    [hasRequestUsage, "request_usage"],
+    [hasComputeWalletTransaction, "compute_wallet_transaction"],
+    [hasStorageWalletTransaction, "storage_wallet_transaction"],
+    [hasRequestWalletTransaction, "request_wallet_transaction"]
+  ].filter(([ok]) => !ok).map(([, name]) => name);
 
   addCheck(checks, "ledger_and_usage_verified", Boolean(
     state?.wallet?.accountId === accountId &&
@@ -427,7 +444,7 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     hasComputeWalletTransaction &&
     hasStorageWalletTransaction &&
     hasRequestWalletTransaction
-  ));
+  ), { missingChecks });
 }
 
 async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeAllocationId, storageId, attachmentId, checks = null, auth = null }) {
@@ -855,6 +872,7 @@ function errorPayload(error) {
     ...(error.providerRequestId ? { providerRequestId: error.providerRequestId } : {}),
     ...(typeof error.retryable === "boolean" ? { retryable: error.retryable } : {}),
     ...(Array.isArray(error.missingEnv) ? { missingEnv: error.missingEnv } : {}),
+    ...(error.details ? { details: error.details } : {}),
     ...(error.cleanupErrors ? { cleanupErrors: error.cleanupErrors } : {})
   };
 }

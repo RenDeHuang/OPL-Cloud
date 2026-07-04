@@ -429,6 +429,35 @@ test("production verifier authenticates as operator and sends CSRF on commercial
   }
 });
 
+test("production verifier reports safe ledger mismatch details", async () => {
+  const chain = tkeChain();
+  const responses = chainResponses(chain);
+  responses["GET /api/state?accountId=pi-prod"] = {
+    ...responses["GET /api/state?accountId=pi-prod"],
+    walletTransactions: []
+  };
+
+  await assert.rejects(
+    verifyProductionChain({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      workspaceName: "Production Verification Lab",
+      runId: "prod-run",
+      packageId: "basic",
+      fetchImpl: keyedFetch({ responses })
+    }),
+    (error) => {
+      assert.equal(error.message, "ledger_and_usage_verified_failed");
+      assert.deepEqual(error.details?.missingChecks, [
+        "compute_wallet_transaction",
+        "storage_wallet_transaction",
+        "request_wallet_transaction"
+      ]);
+      return true;
+    }
+  );
+});
+
 test("production verifier retries TKE runtime status and Workspace URL until ready", async () => {
   const requests = [];
   const chain = tkeChain();
