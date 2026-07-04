@@ -11,61 +11,38 @@ const TEST_PRICING = {
   markup: 0.2
 };
 
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: {
-      id: `server-${workspaceId}`,
-      status: "running",
-      billingStatus: "active",
-      spec: packagePlan.server
-    },
-    docker: {
-      id: `docker-${workspaceId}`,
-      image: "test-image",
-      status: "running"
-    },
-    disk: {
-      id: `disk-${workspaceId}`,
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data"
-    },
-    url: `https://workspace.example.com/w/${workspaceId}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
 function createTestService() {
   return createOplCloud({
     store: new MemoryStore(),
     runtimeProvider: {
       name: "test-provider",
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
-      },
-      async stopServer({ workspace }) {
-        return { ...workspace.server, status: "stopped", billingStatus: "stopped" };
+      workspaceUrl({ workspaceId, token }) {
+        return `https://workspace.example.com/w/${workspaceId}?token=${token}`;
       }
     },
     pricing: TEST_PRICING
   });
 }
 
+async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
+  const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
+  const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
+  const attachment = await service.attachStorage({
+    accountId,
+    computeAllocationId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+  return service.createWorkspace({ accountId, workspaceName, attachmentId: attachment.id });
+}
+
 test("evidence ledger records inspectable Workspace receipts separately from billing ledger", async () => {
   const service = createTestService();
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
 
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Evidence Lab",
-    packageId: "basic"
-  });
-  await service.stopServer({
-    accountId: "pi-alpha",
-    workspaceId: workspace.id,
-    confirm: true
+    workspaceName: "Evidence Lab"
   });
   await service.deleteWorkspaceToken({
     accountId: "pi-alpha",
@@ -75,7 +52,6 @@ test("evidence ledger records inspectable Workspace receipts separately from bil
   const state = await service.getState("pi-alpha");
   assert.deepEqual(state.evidenceLedger.map((entry) => entry.type), [
     "workspace.created",
-    "workspace.compute_stopped",
     "workspace.access_token_deleted"
   ]);
 
@@ -94,10 +70,10 @@ test("evidence ledger records inspectable Workspace receipts separately from bil
   assert.equal(createReceipt.resourceRefs.storageId, workspace.disk.id);
   assert.equal(createReceipt.resourceRefs.urlTokenMode, "long_lived_url_token");
   assert.deepEqual(createReceipt.billingRefs.map((entry) => entry.type), [
-    "compute_hold",
     "storage_hold",
-    "compute_debit",
-    "storage_debit"
+    "compute_hold",
+    "storage_attached",
+    "workspace_entry_created"
   ]);
   assert.equal(createReceipt.continuation.action, "open_workspace_url");
 });

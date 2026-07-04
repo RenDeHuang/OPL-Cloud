@@ -10,37 +10,37 @@ const TEST_PRICING = {
   markup: 0.2
 };
 
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: { id: `server-${workspaceId}`, status: "running", billingStatus: "active", spec: packagePlan.server },
-    docker: { id: `docker-${workspaceId}`, image: "test-image", status: "running" },
-    disk: { id: `disk-${workspaceId}`, status: "attached_retained", billingStatus: "active", sizeGb: packagePlan.diskGb, mountPath: "/data" },
-    url: `https://workspace.example.com/w/${workspaceId}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
 function createService() {
   return createOplCloud({
     store: new MemoryStore(),
     runtimeProvider: {
       name: "test-provider",
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
+      workspaceUrl({ workspaceId, token }) {
+        return `https://workspace.example.com/w/${workspaceId}?token=${token}`;
       }
     },
     pricing: TEST_PRICING
   });
 }
 
+async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
+  const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
+  const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
+  const attachment = await service.attachStorage({
+    accountId,
+    computeAllocationId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+  return service.createWorkspace({ accountId, workspaceName, attachmentId: attachment.id });
+}
+
 test("Console records and queries task evidence receipts without mixing them into billing ledger", async () => {
   const service = createService();
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Task Evidence Lab",
-    packageId: "basic"
+    workspaceName: "Task Evidence Lab"
   });
 
   const receipt = await service.recordTaskEvidenceReceipt({
@@ -76,10 +76,9 @@ test("Console task evidence receipt enforces workspace ownership", async () => {
   const service = createService();
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   await service.manualTopUp({ accountId: "pi-beta", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Owned Lab",
-    packageId: "basic"
+    workspaceName: "Owned Lab"
   });
 
   await assert.rejects(

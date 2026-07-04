@@ -3,13 +3,14 @@
 ## Workspace Resource Mapping
 
 ```text
-1 ComputeResource = account-owned one-person-lab-app runtime compute
+1 ComputePool = package-level Tencent TKE node pool for one fixed compute specification
+1 ComputeAllocation = account-owned dedicated CVM node inside one ComputePool
 1 StorageVolume = account-owned persistent storage
-1 StorageAttachment = one storage volume mounted to one compute resource
+1 StorageAttachment = one storage volume mounted to one ComputeAllocation runtime
 1 OPL Workspace = URL token and WebUI entry for one attachment
 ```
 
-One Lab Owner can own multiple compute resources, storage volumes, attachments, and OPL Workspace URL entries.
+One Lab Owner can own multiple compute allocations, storage volumes, attachments, and OPL Workspace URL entries.
 
 ## Access
 
@@ -25,9 +26,9 @@ Workspace summaries, readiness reports, and public API responses must not leak t
 
 ## Compute And Storage
 
-Compute and persistent storage have separate lifecycles.
+Compute pools, compute allocations, and persistent storage have separate lifecycles.
 
-Destroying compute must not destroy persistent storage.
+Destroying a compute allocation must not destroy persistent storage.
 
 Storage destruction requires explicit confirmation and is the only action that stops storage billing.
 
@@ -35,13 +36,13 @@ Storage destruction requires explicit confirmation and is the only action that s
 
 Billing is hourly.
 
-Before opening compute, OPL Cloud freezes enough balance for 7 days of compute. Before opening storage, it freezes enough balance for 7 days of storage.
+Before opening a compute allocation, OPL Cloud freezes enough balance for 7 days of compute. Before opening storage, it freezes enough balance for 7 days of storage.
 
 Debits charge available balance first, then the relevant frozen hold.
 
 If compute or storage holds are exhausted, OPL Console records account and runtime notifications and blocks new resource actions until top-up or admin recovery.
 
-If storage hold is exhausted, storage is preserved and the Workspace is frozen until top-up or explicit storage destruction.
+If storage hold is exhausted, storage is preserved until top-up or explicit storage destruction.
 
 Manual top-ups must create both a wallet transaction and a manual top-up audit record.
 
@@ -57,6 +58,6 @@ Lab Owner must not see request fingerprints, dedup rows, runtime evidence, produ
 
 ## Runtime
 
-Production readiness fails closed until runtime provider, registry image, workspace domain, PostgreSQL, Tencent configuration, required host tools, and auth seed/persistence requirements are satisfied.
+Production readiness fails closed until runtime provider, registry image, workspace domain, PostgreSQL, Tencent configuration, Go provisioner boundary, required host tools, and auth seed/persistence requirements are satisfied.
 
 Production manifests must not inline secrets. Sensitive values must use secret references or mounted secret files.

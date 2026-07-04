@@ -4,11 +4,12 @@
 
 OPL Console is the commercial control plane. The current resource model is:
 
-- `ComputeResource`: account-owned TKE compute runtime for one-person-lab-app.
+- `ComputePool`: package-level Tencent TKE node pool for one fixed compute specification.
+- `ComputeAllocation`: account-owned dedicated CVM node inside one ComputePool for one-person-lab-app.
 - `StorageVolume`: account-owned retained PVC/cloud storage.
-- `StorageAttachment`: a storage volume mounted to a compute resource at a mount path such as `/data`.
-- `Workspace`: URL token and WebUI entry composed from an attached compute/storage pair.
-- `Wallet` and `Ledger`: billing records reference `computeId`, `storageId`, `attachmentId`, and `workspaceId`.
+- `StorageAttachment`: a storage volume mounted to a ComputeAllocation at a mount path such as `/data`.
+- `Workspace`: URL token and WebUI entry composed from an attached compute allocation/storage pair.
+- `Wallet` and `Ledger`: billing records reference `computeAllocationId`, `computePoolId`, `storageVolumeId`, `storageAttachmentId`, and `workspaceId`.
 
 Workspace is not the only resource body. It is the access entry.
 
@@ -24,7 +25,7 @@ Default demo accounts:
 - Lab Owner: `owner@opl.local` / `OplOwnerPass2026!`
 - Admin: `admin@opl.local` / `OplAdminPass2026!`
 
-Local demo seeds the current chain: manual top-up, create compute, create storage, attach storage, create Workspace URL, record one sub2api request usage, and create one support ticket.
+Local demo seeds the current chain: manual top-up, create compute allocation, create storage, attach storage, create Workspace URL, record one sub2api request usage, and create one support ticket.
 
 ## Local Console Against Real TKE
 
@@ -39,6 +40,7 @@ OPL_INGRESS_CLASS=<ingress-class> \
 OPL_WORKSPACE_STORAGE_CLASS=<storage-class> \
 OPL_IMAGE_PULL_SECRET_NAME=<secret> \
 TENCENT_DEPLOY_KUBECONFIG_REF=<kubeconfig> \
+OPL_TENCENT_PROVISIONER_BIN=<path-to-go-provisioner> \
 npm run demo:api
 ```
 
@@ -52,11 +54,11 @@ Expected chain:
 
 1. Login.
 2. Verify or top up wallet balance.
-3. Create compute.
+3. Create compute allocation from the selected package pool.
 4. Create storage.
 5. Attach storage to compute.
 6. Create Workspace URL.
-7. Poll runtime status for Deployment, PVC, Service, Ingress, and Endpoints.
+7. Poll runtime status for the dedicated CVM node, Deployment, PVC, Service, Ingress, and Endpoints.
 8. Open the public Workspace URL and receive HTTP 200 from one-person-lab-app.
 9. Record sub2api/request usage.
 10. Verify wallet, ledger, usage logs, and runtime evidence.
@@ -79,6 +81,7 @@ npm run verify:production
 - `OPL_WORKSPACE_STORAGE_CLASS`: PVC storage class.
 - `OPL_IMAGE_PULL_SECRET_NAME`: image pull secret.
 - `TENCENT_DEPLOY_KUBECONFIG_REF`: kubeconfig path.
+- `OPL_TENCENT_PROVISIONER_BIN`: local Go SDK provisioner binary used for Tencent Cloud mutations.
 - `DATABASE_URL`: required for durable shared staging state.
 
 ## Route Contract Rules
@@ -91,11 +94,11 @@ npm run verify:production
 
 ## Compute Storage Billing Semantics
 
-- Creating compute starts compute billing and reserves a compute hold.
+- Creating a ComputeAllocation starts compute billing and reserves a compute hold.
 - Creating storage starts storage billing and reserves a storage hold.
-- Attaching storage does not create a new resource; it records the mount relationship.
+- Attaching storage does not create a new priced resource; it records the mount relationship.
 - Workspace entry creates a URL token for an existing attachment.
-- Stopping compute is not a commercial owner action in the current TKE model.
+- Stopping compute is not a commercial owner action in the current model. A dedicated CVM remains billable until the ComputeAllocation is destroyed.
 
 ## Pre-Commit Checklist
 
@@ -114,4 +117,4 @@ git diff --check
 - Localhost Workspace URL: staging e2e must use a public `OPL_WORKSPACE_DOMAIN`.
 - Missing storage class: set `OPL_WORKSPACE_STORAGE_CLASS` to an available class.
 - Ingress path not routing: check shared Ingress class and `/w/<workspaceId>` path.
-- Leftover cloud resources: detach storage, destroy compute, then destroy storage.
+- Leftover cloud resources: detach storage, destroy compute allocation, then destroy storage.

@@ -1,7 +1,10 @@
-export function buildResourceRoutes({ appService, body, scopedWorkspaceInput }) {
+export function buildResourceRoutes({ appService, body, pathParams = {}, scopedWorkspaceInput }) {
   return {
-    "POST /api/compute-resources": () => appService.createComputeResource(scopedWorkspaceInput(body)),
-    "POST /api/compute-resources/destroy": () => appService.destroyComputeResource(scopedWorkspaceInput(body)),
+    "GET /api/compute-pools": () => appService.computePools(scopedWorkspaceInput(body)),
+    "GET /api/compute-allocations": () => appService.computeAllocations(scopedWorkspaceInput(body)),
+    "GET /api/compute-allocations/:id": () => appService.computeAllocation(scopedWorkspaceInput({ ...body, computeAllocationId: pathParams.id })),
+    "POST /api/compute-allocations": () => appService.createComputeAllocation(scopedWorkspaceInput(body)),
+    "POST /api/compute-allocations/:id/destroy": () => appService.destroyComputeAllocation(scopedWorkspaceInput({ ...body, computeAllocationId: pathParams.id })),
     "POST /api/storage-volumes": () => appService.createStorageVolume(scopedWorkspaceInput(body)),
     "POST /api/storage-volumes/destroy": () => appService.destroyStorageVolume(scopedWorkspaceInput(body)),
     "POST /api/storage-attachments": () => appService.attachStorage(scopedWorkspaceInput(body)),

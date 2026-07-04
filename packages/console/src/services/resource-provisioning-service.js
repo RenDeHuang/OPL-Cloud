@@ -2,8 +2,7 @@ import { clone, makeId, money, now } from "./core-utils.js";
 import {
   accountAvailable,
   addHold,
-  ensureUserWallet,
-  releaseHold
+  ensureUserWallet
 } from "./wallet-service.js";
 import {
   computeHourlyBase,
@@ -16,7 +15,7 @@ import {
 import { OplDomainService } from "./opl-domain-service.js";
 
 function ensureResourceCollections(state) {
-  state.computeResources ??= [];
+  state.computeAllocations ??= [];
   state.storageVolumes ??= [];
   state.storageAttachments ??= [];
   state.resourceUsageLogs ??= [];
@@ -28,8 +27,8 @@ function findOwnedResource(items, accountId, id, errorName) {
   return resource;
 }
 
-function addResourceIds(target, { computeId = "", storageId = "", attachmentId = "" } = {}) {
-  if (computeId) target.computeId = computeId;
+function addResourceIds(target, { computeAllocationId = "", storageId = "", attachmentId = "" } = {}) {
+  if (computeAllocationId) target.computeAllocationId = computeAllocationId;
   if (storageId) target.storageId = storageId;
   if (attachmentId) target.attachmentId = attachmentId;
   return target;
@@ -42,23 +41,56 @@ function storagePlanFromSize(packagePlan, sizeGb) {
   };
 }
 
+function computePoolFromPackage(plan, pricing) {
+  return {
+    id: `pool-${plan.id}-${plan.server}`,
+    packageId: plan.id,
+    name: `${plan.name} pool`,
+    instanceType: plan.instanceType || plan.server,
+    cpu: plan.cpu,
+    memoryGb: plan.memoryGb,
+    nodePoolId: plan.nodePoolId || "",
+    status: plan.available ? "ready" : "missing",
+    hourlyPrice: pricedComputeHourly({ packagePlan: plan, pricing }),
+    provider: "tencent-tke"
+  };
+}
+
 export class ResourceProvisioningService extends OplDomainService {
-  async createComputeResource({ accountId, userId = "", packageId, name = "" }) {
+  computePools() {
+    return this.packages().map((plan) => computePoolFromPackage(plan, this.pricing));
+  }
+
+  async computeAllocations({ accountId }) {
+    const state = await this.store.read();
+    ensureResourceCollections(state);
+    return (state.computeAllocations || [])
+      .filter((item) => !accountId || item.ownerAccountId === accountId)
+      .map(clone);
+  }
+
+  async computeAllocation({ accountId, computeAllocationId }) {
+    const state = await this.store.read();
+    ensureResourceCollections(state);
+    return clone(findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found"));
+  }
+
+  async createComputeAllocation({ accountId, userId = "", packageId, name = "" }) {
     const packagePlan = this.getPackage(packageId);
     const hold = packageHoldAmount({ packagePlan, pricing: this.pricing });
-    let computeId = "";
+    let allocationId = "";
 
     const reservation = await this.store.update((state) => {
       ensureResourceCollections(state);
       this.assertBillingReconciliationAllowsProvisioning(state);
       const account = ensureUserWallet(state, { accountId });
-      computeId = makeId("compute", accountId, packageId, name || packagePlan.name, String(state.computeResources.length));
-      const existing = state.computeResources.find((item) => item.id === computeId);
+      allocationId = makeId("compute", accountId, packageId, name || packagePlan.name, String(state.computeAllocations.length));
+      const existing = state.computeAllocations.find((item) => item.id === allocationId);
       if (existing) return { existing: true, compute: clone(existing) };
       if (accountAvailable(account) < hold.compute) throw new Error("insufficient_compute_hold_balance");
 
       addHold(account, "compute", hold.compute);
-      const sourceEventId = `compute_resource:${computeId}:created`;
+      const sourceEventId = `compute_allocation:${allocationId}:created`;
       const ledger = addResourceIds(this.ledgerEntry({
         state,
         workspaceId: "resource",
@@ -68,17 +100,17 @@ export class ResourceProvisioningService extends OplDomainService {
         sourceEventId,
         holdType: "compute",
         metadata: {
-          computeId,
+          computeAllocationId: allocationId,
           packageId,
           holdDays: 7,
           baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
           markup: pricingMarkup(this.pricing)
         }
-      }), { computeId });
+      }), { computeAllocationId: allocationId });
       state.billingLedger.push(ledger);
 
       const compute = {
-        id: computeId,
+        id: allocationId,
         ownerAccountId: accountId,
         ownerUserId: account.id,
         name: name || packagePlan.name,
@@ -92,13 +124,13 @@ export class ResourceProvisioningService extends OplDomainService {
         createdAt: now(),
         updatedAt: now()
       };
-      state.computeResources.push(compute);
+      state.computeAllocations.push(compute);
       this.recordProvisioningUsage({
         state,
         account,
         accountId,
         resourceType: "compute",
-        computeId,
+        computeAllocationId: allocationId,
         quantity: 1,
         unit: "resource",
         unitPrice: pricedComputeHourly({ packagePlan, pricing: this.pricing }),
@@ -109,7 +141,7 @@ export class ResourceProvisioningService extends OplDomainService {
           status: "provisioning"
         }
       });
-      state.audit.push(this.auditEvent({ accountId, type: "compute.created", sourceEventId: computeId }));
+      state.audit.push(this.auditEvent({ accountId, type: "compute.created", sourceEventId: allocationId }));
       return { existing: false, compute: clone(compute) };
     });
 
@@ -118,7 +150,7 @@ export class ResourceProvisioningService extends OplDomainService {
     try {
       const providerCompute = await this.createProviderCompute({ compute: reservation.compute, packagePlan });
       return this.store.update((state) => {
-        const compute = findOwnedResource(state.computeResources, accountId, computeId, "compute_resource_not_found");
+        const compute = findOwnedResource(state.computeAllocations, accountId, allocationId, "compute_allocation_not_found");
         Object.assign(compute, {
           providerResourceId: providerCompute.providerResourceId || providerCompute.id || compute.providerResourceId,
           status: providerCompute.status || "running",
@@ -134,19 +166,19 @@ export class ResourceProvisioningService extends OplDomainService {
         return clone(compute);
       });
     } catch (error) {
-      await this.markResourceFailed({ collection: "computeResources", accountId, resourceId: computeId, error, auditType: "compute.create_failed" });
+      await this.markResourceFailed({ collection: "computeAllocations", accountId, resourceId: allocationId, error, auditType: "compute.create_failed" });
       throw error;
     }
   }
 
-  async destroyComputeResource({ accountId, computeId, confirm }) {
+  async destroyComputeAllocation({ accountId, computeAllocationId, confirm }) {
     if (confirm !== true) throw new Error("compute_destroy_confirmation_required");
     const compute = await this.store.update((state) => {
       ensureResourceCollections(state);
-      const current = findOwnedResource(state.computeResources, accountId, computeId, "compute_resource_not_found");
+      const current = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
       const activeAttachment = state.storageAttachments.find((item) =>
         item.ownerAccountId === accountId &&
-        item.computeId === computeId &&
+        item.computeAllocationId === computeAllocationId &&
         item.status === "attached"
       );
       if (activeAttachment) throw new Error("compute_has_attached_storage");
@@ -155,14 +187,14 @@ export class ResourceProvisioningService extends OplDomainService {
       return clone(current);
     });
 
-    if (typeof this.runtimeProvider.destroyComputeResource === "function") {
-      await this.runtimeProvider.destroyComputeResource({ compute });
+    if (typeof this.runtimeProvider.destroyComputeAllocation === "function") {
+      await this.runtimeProvider.destroyComputeAllocation({ computeAllocation: compute });
     }
 
     return this.store.update((state) => {
-      const current = findOwnedResource(state.computeResources, accountId, computeId, "compute_resource_not_found");
-      const account = ensureUserWallet(state, { accountId, userId: current.ownerUserId });
-      releaseHold(account, "compute");
+      const current = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
+      ensureUserWallet(state, { accountId, userId: current.ownerUserId });
+      this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "compute", sourceEventId: "destroy_compute" });
       current.status = "destroyed";
       current.billingStatus = "stopped";
       current.destroyedAt = now();
@@ -174,8 +206,8 @@ export class ResourceProvisioningService extends OplDomainService {
         type: "compute_destroyed",
         amount: 0,
         sourceEventId: "destroy_compute",
-        metadata: { computeId }
-      }), { computeId }));
+        metadata: { computeAllocationId }
+      }), { computeAllocationId }));
       return clone(current);
     });
   }
@@ -299,8 +331,8 @@ export class ResourceProvisioningService extends OplDomainService {
 
     return this.store.update((state) => {
       const current = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
-      const account = ensureUserWallet(state, { accountId, userId: current.ownerUserId });
-      releaseHold(account, "storage");
+      ensureUserWallet(state, { accountId, userId: current.ownerUserId });
+      this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "storage", sourceEventId: "destroy_storage" });
       current.status = "destroyed";
       current.billingStatus = "stopped";
       current.destroyedAt = now();
@@ -318,13 +350,13 @@ export class ResourceProvisioningService extends OplDomainService {
     });
   }
 
-  async attachStorage({ accountId, computeId, storageId, mountPath = "/data" }) {
+  async attachStorage({ accountId, computeAllocationId, storageId, mountPath = "/data" }) {
     let attachmentId = "";
     const reservation = await this.store.update((state) => {
       ensureResourceCollections(state);
-      const compute = findOwnedResource(state.computeResources, accountId, computeId, "compute_resource_not_found");
+      const compute = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
       const storage = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
-      if (compute.status === "destroyed") throw new Error("compute_resource_destroyed");
+      if (compute.status === "destroyed") throw new Error("compute_allocation_destroyed");
       if (storage.status === "destroyed") throw new Error("storage_volume_destroyed");
       const active = state.storageAttachments.find((item) =>
         item.ownerAccountId === accountId &&
@@ -333,11 +365,11 @@ export class ResourceProvisioningService extends OplDomainService {
       );
       if (active) throw new Error("storage_already_attached");
 
-      attachmentId = makeId("attach", accountId, computeId, storageId, mountPath, String(state.storageAttachments.length));
+      attachmentId = makeId("attach", accountId, computeAllocationId, storageId, mountPath, String(state.storageAttachments.length));
       const attachment = {
         id: attachmentId,
         ownerAccountId: accountId,
-        computeId,
+        computeAllocationId,
         storageId,
         mountPath,
         provider: this.runtimeProvider.name || "unknown",
@@ -355,14 +387,14 @@ export class ResourceProvisioningService extends OplDomainService {
         type: "storage_attached",
         amount: 0,
         sourceEventId,
-        metadata: { computeId, storageId, attachmentId, mountPath }
-      }), { computeId, storageId, attachmentId }));
+        metadata: { computeAllocationId, storageId, attachmentId, mountPath }
+      }), { computeAllocationId, storageId, attachmentId }));
       this.recordProvisioningUsage({
         state,
         account: ensureUserWallet(state, { accountId, userId: compute.ownerUserId }),
         accountId,
         resourceType: "attachment",
-        computeId,
+        computeAllocationId,
         storageId,
         attachmentId,
         quantity: 1,
@@ -380,7 +412,7 @@ export class ResourceProvisioningService extends OplDomainService {
       const providerAttachment = await this.attachProviderStorage(reservation);
       return this.store.update((state) => {
         const attachment = findOwnedResource(state.storageAttachments, accountId, attachmentId, "storage_attachment_not_found");
-        const compute = findOwnedResource(state.computeResources, accountId, computeId, "compute_resource_not_found");
+        const compute = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
         const storage = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
         Object.assign(attachment, {
           providerAttachmentId: providerAttachment.providerAttachmentId || providerAttachment.id || attachment.providerAttachmentId,
@@ -426,7 +458,7 @@ export class ResourceProvisioningService extends OplDomainService {
 
     return this.store.update((state) => {
       const current = findOwnedResource(state.storageAttachments, accountId, attachmentId, "storage_attachment_not_found");
-      const compute = findOwnedResource(state.computeResources, accountId, current.computeId, "compute_resource_not_found");
+      const compute = findOwnedResource(state.computeAllocations, accountId, current.computeAllocationId, "compute_allocation_not_found");
       const storage = findOwnedResource(state.storageVolumes, accountId, current.storageId, "storage_volume_not_found");
       current.status = "detached";
       current.detachedAt = now();
@@ -442,11 +474,11 @@ export class ResourceProvisioningService extends OplDomainService {
         amount: 0,
         sourceEventId: "detach_storage",
         metadata: {
-          computeId: current.computeId,
+          computeAllocationId: current.computeAllocationId,
           storageId: current.storageId,
           attachmentId
         }
-      }), { computeId: current.computeId, storageId: current.storageId, attachmentId }));
+      }), { computeAllocationId: current.computeAllocationId, storageId: current.storageId, attachmentId }));
       return clone(current);
     });
   }
@@ -456,7 +488,7 @@ export class ResourceProvisioningService extends OplDomainService {
     account,
     accountId,
     resourceType,
-    computeId = "",
+    computeAllocationId = "",
     storageId = "",
     attachmentId = "",
     workspaceId = "",
@@ -468,7 +500,7 @@ export class ResourceProvisioningService extends OplDomainService {
     metadata = {}
   }) {
     const usage = addResourceIds({
-      id: makeId("usage-resource", accountId, workspaceId || computeId || storageId || attachmentId, resourceType, sourceEventId, String(state.resourceUsageLogs.length)),
+      id: makeId("usage-resource", accountId, workspaceId || computeAllocationId || storageId || attachmentId, resourceType, sourceEventId, String(state.resourceUsageLogs.length)),
       userId: account.id,
       accountId,
       workspaceId,
@@ -482,18 +514,18 @@ export class ResourceProvisioningService extends OplDomainService {
       sourceEventId,
       metadata: clone(metadata),
       createdAt: now()
-    }, { computeId, storageId, attachmentId });
+    }, { computeAllocationId, storageId, attachmentId });
     state.resourceUsageLogs.push(usage);
     return usage;
   }
 
   async createProviderCompute({ compute, packagePlan }) {
-    if (typeof this.runtimeProvider.createComputeResource === "function") {
-      return this.runtimeProvider.createComputeResource({
-        computeId: compute.id,
+    if (typeof this.runtimeProvider.createComputeAllocation === "function") {
+      return this.runtimeProvider.createComputeAllocation({
+        computeAllocationId: compute.id,
         accountId: compute.ownerAccountId,
         packagePlan,
-        compute
+        computeAllocation: compute
       });
     }
     return {

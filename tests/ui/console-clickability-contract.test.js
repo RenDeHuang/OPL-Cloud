@@ -45,9 +45,9 @@ test("workspace and support click targets are route/action registry backed", () 
   const actionsById = new Map(consoleActions.map((action) => [action.id, action]));
 
   for (const id of [
-    "compute.create",
-    "compute.detail",
-    "compute.destroy",
+    "compute-allocations.create",
+    "compute-allocations.detail",
+    "compute-allocations.destroy",
     "storage.create",
     "storage.detail",
     "storage.destroy",
@@ -63,7 +63,7 @@ test("workspace and support click targets are route/action registry backed", () 
     "support.create",
     "support.detail",
     "admin.manualTopup",
-    "admin.userCreate.disabled",
+    "admin.userCreate",
     "admin.userWallet.disabled"
   ]) {
     assert.ok(actionsById.has(id), `missing action ${id}`);

@@ -24,7 +24,6 @@ const WORKSPACE_CODEX_SECRET_KEYS = [
   "OPL_CODEX_BASE_URL",
   "OPL_CODEX_API_KEY"
 ];
-const VOLUME_SNAPSHOT_API_GROUP = "snapshot.storage.k8s.io";
 const DEFAULT_WORKSPACE_READY_TIMEOUT_MS = 300000;
 const DEFAULT_WORKSPACE_READY_POLL_MS = 5000;
 
@@ -99,53 +98,6 @@ export class TencentTkeProvider {
     this.stateRootDir = stateRootDir;
   }
 
-  async createWorkspaceRuntime({ workspaceId, ownerAccountId = "unknown", workspaceName, packagePlan, token, restoreFromBackup = null }) {
-    this.requireExecutionBoundary();
-    await this.requireTools(REQUIRED_TOOLS);
-
-    const name = k8sName(workspaceId);
-    const slug = workspaceSlug(workspaceName, workspaceId);
-    const manifestPath = await this.writeWorkspaceManifest({
-      name,
-      slug,
-      workspaceId,
-      ownerAccountId,
-      workspaceName,
-      packagePlan,
-      token,
-      restoreFromBackup
-    });
-    try {
-      await this.runKubectl(["apply", "-f", manifestPath]);
-      await this.waitForWorkspaceRuntimeReady({
-        workspace: this.runtimeFixture({
-          name,
-          workspaceId,
-          ownerAccountId,
-          workspaceName,
-          packagePlan,
-          token,
-          slug,
-          restoreFromBackup
-        })
-      });
-    } catch (error) {
-      await this.cleanupCreatedWorkspaceResources({ name, deleteStorage: true });
-      throw error;
-    }
-
-    return this.runtimeFixture({
-      name,
-      workspaceId,
-      ownerAccountId,
-      workspaceName,
-      packagePlan,
-      token,
-      slug,
-      restoreFromBackup
-    });
-  }
-
   async createStorageVolume({ storageId, accountId = "unknown", storage = {}, packagePlan }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
@@ -167,14 +119,15 @@ export class TencentTkeProvider {
     };
   }
 
-  async createComputeResource({ computeId, accountId = "unknown", compute = {}, packagePlan }) {
+  async createComputeAllocation({ computeAllocationId, accountId = "unknown", computeAllocation = {}, packagePlan }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
-    const name = k8sName(computeId);
-    const manifestPath = await this.writeComputeResourceManifest({
-      computeId,
+    const allocationId = computeAllocationId || computeAllocation.id;
+    const name = k8sName(allocationId);
+    const manifestPath = await this.writeComputeAllocationManifest({
+      computeAllocationId: allocationId,
       accountId,
-      compute,
+      compute: computeAllocation,
       name,
       packagePlan
     });
@@ -196,7 +149,7 @@ export class TencentTkeProvider {
   async attachStorage({ attachment, compute, storage }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
-    const computeName = resourceName(compute.providerResourceId || compute.server?.id || `deployment/${k8sName(attachment.computeId)}`);
+    const computeName = resourceName(compute.providerResourceId || `deployment/${k8sName(attachment.computeAllocationId)}`);
     const storageClaimName = resourceName(storage.providerResourceId || storage.id || `pvc/${k8sName(attachment.storageId)}-data`);
     const manifestPath = await this.writeAttachmentManifest({
       attachment,
@@ -239,7 +192,7 @@ export class TencentTkeProvider {
     };
   }
 
-  async destroyComputeResource({ compute }) {
+  async destroyComputeAllocation({ computeAllocation, compute = computeAllocation }) {
     this.requireExecutionBoundary();
     await this.requireTools(REQUIRED_TOOLS);
     const name = resourceName(compute.providerResourceId || compute.server?.id || `deployment/${k8sName(compute.id)}`);
@@ -302,37 +255,6 @@ export class TencentTkeProvider {
     };
   }
 
-  runtimeFixture({ name, workspaceId, packagePlan, token, slug, restoreFromBackup = null }) {
-    return {
-      id: workspaceId,
-      provider: this.name,
-      server: {
-        id: `deployment/${name}`,
-        status: "running",
-        billingStatus: "active",
-        spec: packagePlan.server,
-        namespace: this.env.OPL_K8S_NAMESPACE
-      },
-      docker: {
-        id: `deployment/${name}`,
-        image: this.env.OPL_WORKSPACE_IMAGE,
-        status: "running",
-        service: `service/${name}`
-      },
-      disk: {
-        id: `pvc/${name}-data`,
-        status: restoreFromBackup ? "restored_retained" : "attached_retained",
-        billingStatus: "active",
-        sizeGb: packagePlan.diskGb,
-        mountPath: "/data",
-        storageClass: this.env.OPL_WORKSPACE_STORAGE_CLASS,
-        ...(restoreFromBackup ? { restoredFromBackupId: restoreFromBackup.id } : {})
-      },
-      url: this.workspaceUrl({ workspaceId, token }),
-      slug
-    };
-  }
-
   workspaceUrl({ workspaceId, token }) {
     const domain = String(this.env.OPL_WORKSPACE_DOMAIN || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
     return `https://${domain}/w/${workspaceId}/?token=${token}`;
@@ -349,168 +271,6 @@ export class TencentTkeProvider {
       ready: missingEnv.length === 0 && missingTools.length === 0,
       missingEnv,
       missingTools
-    };
-  }
-
-  async stopServer({ workspace }) {
-    await this.runKubectl(["scale", workspace.server.id, "--replicas=0"]);
-    return {
-      ...workspace.server,
-      status: "stopped",
-      billingStatus: "stopped"
-    };
-  }
-
-  async restartServer({ workspace }) {
-    await this.runKubectl(["scale", workspace.server.id, "--replicas=1"]);
-    await this.waitForWorkspaceRuntimeReady({ workspace });
-    return {
-      ...workspace.server,
-      status: "running",
-      billingStatus: "active"
-    };
-  }
-
-  async recreateServer({ workspace }) {
-    if (!workspace.disk?.id || workspace.disk.status === "destroyed") {
-      throw new Error("retained_storage_required");
-    }
-    const name = resourceName(workspace.server.id);
-    const manifestPath = await this.writeWorkspaceManifest({
-      name,
-      slug: workspace.slug,
-      workspaceId: workspace.id,
-      ownerAccountId: workspace.ownerAccountId,
-      workspaceName: workspace.name,
-      packagePlan: {
-        id: workspace.packageId,
-        server: workspace.server.spec,
-        diskGb: workspace.disk.sizeGb
-      },
-      token: workspace.access.token
-    });
-    await this.runKubectl(["apply", "-f", manifestPath]);
-    await this.waitForWorkspaceRuntimeReady({
-      workspace: {
-        ...workspace,
-        server: {
-          ...workspace.server,
-          id: `deployment/${name}`,
-          status: "running",
-          billingStatus: "active"
-        },
-        docker: {
-          ...workspace.docker,
-          id: `deployment/${name}`,
-          image: this.env.OPL_WORKSPACE_IMAGE,
-          status: "running",
-          service: `service/${name}`
-        },
-        disk: {
-          ...workspace.disk,
-          id: `pvc/${name}-data`,
-          status: "attached_retained"
-        }
-      }
-    });
-    return {
-      ...workspace.server,
-      status: "running",
-      billingStatus: "active"
-    };
-  }
-
-  async destroyServer({ workspace }) {
-    const name = resourceName(workspace.server.id);
-    let routeCleanupError = null;
-    try {
-      await this.removeWorkspaceRoute({ workspaceId: workspace.id });
-    } catch (error) {
-      routeCleanupError = error;
-    }
-    await this.runKubectl([
-      "delete",
-      `deployment/${name}`,
-      `service/${name}`,
-      `secret/${name}-env`,
-      "--ignore-not-found=true"
-    ]);
-    return {
-      ...workspace.server,
-      status: "destroyed",
-      billingStatus: "stopped",
-      ...(routeCleanupError
-        ? {
-          routeCleanupStatus: "failed",
-          routeCleanupError: routeCleanupError.message
-        }
-        : {})
-    };
-  }
-
-  async destroyDisk({ workspace }) {
-    await this.runKubectl(["delete", workspace.disk.id, "--ignore-not-found=true"]);
-    return {
-      ...workspace.disk,
-      status: "destroyed",
-      billingStatus: "stopped"
-    };
-  }
-
-  async createStorageBackup({ workspace, backupId, retentionPolicy }) {
-    const snapshotName = compactId(backupId);
-    const pvcName = resourceName(workspace.disk.id);
-    const manifestPath = await this.writeStorageBackupManifest({
-      workspace,
-      snapshotName,
-      pvcName,
-      retentionPolicy
-    });
-    await this.runKubectl(["apply", "-f", manifestPath]);
-    const raw = await this.runKubectl(["get", `volumesnapshot/${snapshotName}`, "-o", "json"]);
-    const snapshot = JSON.parse(raw);
-    if (snapshot.status?.readyToUse !== true) {
-      throw new Error(`tencent_tke_storage_backup_not_ready:${snapshotName}`);
-    }
-    return {
-      id: backupId,
-      provider: this.name,
-      status: "available",
-      workspaceId: workspace.id,
-      sourcePvc: pvcName,
-      snapshotName,
-      snapshotContentName: snapshot.status?.boundVolumeSnapshotContentName || "",
-      restoreSize: snapshot.status?.restoreSize || `${workspace.disk.sizeGb}Gi`,
-      retentionPolicy
-    };
-  }
-
-  async restoreStorageBackup({ backup, workspaceId, workspaceName, packagePlan }) {
-    const name = k8sName(workspaceId);
-    const manifestPath = await this.writeStorageRestoreManifest({
-      backup,
-      name,
-      workspaceId,
-      workspaceName,
-      packagePlan
-    });
-    await this.runKubectl(["apply", "-f", manifestPath]);
-    return {
-      id: `pvc/${name}-data`,
-      status: "restored_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data",
-      storageClass: this.env.OPL_WORKSPACE_STORAGE_CLASS,
-      restoredFromBackupId: backup.id
-    };
-  }
-
-  async deleteStorageBackup({ backup }) {
-    await this.runKubectl(["delete", `volumesnapshot/${backup.snapshotName || backup.id}`, "--ignore-not-found=true"]);
-    return {
-      ...backup,
-      status: "deleted"
     };
   }
 
@@ -642,14 +402,6 @@ export class TencentTkeProvider {
     });
   }
 
-  async writeWorkspaceManifest(input) {
-    const stateDir = join(this.stateRootDir, compactId(input.workspaceId));
-    await mkdir(stateDir, { recursive: true });
-    const manifestPath = join(stateDir, "workspace.k8s.json");
-    await writeFile(manifestPath, `${JSON.stringify(this.workspaceManifest(input), null, 2)}\n`, { mode: 0o600 });
-    return manifestPath;
-  }
-
   async writeStorageVolumeManifest(input) {
     const stateDir = join(this.stateRootDir, compactId(input.storageId));
     await mkdir(stateDir, { recursive: true });
@@ -658,11 +410,11 @@ export class TencentTkeProvider {
     return manifestPath;
   }
 
-  async writeComputeResourceManifest(input) {
-    const stateDir = join(this.stateRootDir, compactId(input.computeId));
+  async writeComputeAllocationManifest(input) {
+    const stateDir = join(this.stateRootDir, compactId(input.computeAllocationId));
     await mkdir(stateDir, { recursive: true });
     const manifestPath = join(stateDir, "compute.k8s.json");
-    await writeFile(manifestPath, `${JSON.stringify(this.computeResourceManifest(input), null, 2)}\n`, { mode: 0o600 });
+    await writeFile(manifestPath, `${JSON.stringify(this.computeAllocationManifest(input), null, 2)}\n`, { mode: 0o600 });
     return manifestPath;
   }
 
@@ -679,22 +431,6 @@ export class TencentTkeProvider {
     await mkdir(stateDir, { recursive: true });
     const manifestPath = join(stateDir, "workspace-entry-secret.k8s.json");
     await writeFile(manifestPath, `${JSON.stringify(this.workspaceEntrySecretManifest(input), null, 2)}\n`, { mode: 0o600 });
-    return manifestPath;
-  }
-
-  async writeStorageBackupManifest(input) {
-    const stateDir = join(this.stateRootDir, compactId(input.workspace.id));
-    await mkdir(stateDir, { recursive: true });
-    const manifestPath = join(stateDir, `${input.snapshotName}.volumesnapshot.k8s.json`);
-    await writeFile(manifestPath, `${JSON.stringify(this.volumeSnapshotManifest(input), null, 2)}\n`, { mode: 0o600 });
-    return manifestPath;
-  }
-
-  async writeStorageRestoreManifest(input) {
-    const stateDir = join(this.stateRootDir, compactId(input.workspaceId));
-    await mkdir(stateDir, { recursive: true });
-    const manifestPath = join(stateDir, `restore-${compactId(input.backup.id)}.pvc.k8s.json`);
-    await writeFile(manifestPath, `${JSON.stringify(this.restoredPvcManifest(input), null, 2)}\n`, { mode: 0o600 });
     return manifestPath;
   }
 
@@ -755,25 +491,6 @@ export class TencentTkeProvider {
     await this.runKubectl(["apply", "-f", manifestPath]);
   }
 
-  async cleanupCreatedWorkspaceResources({ name, deleteStorage }) {
-    await this.runKubectl([
-      "delete",
-      `deployment/${name}`,
-      `service/${name}`,
-      `secret/${name}-env`,
-      ...(deleteStorage ? [`pvc/${name}-data`] : []),
-      "--ignore-not-found=true"
-    ]);
-  }
-
-  async cleanupWorkspaceRoute({ workspaceId }) {
-    try {
-      await this.removeWorkspaceRoute({ workspaceId });
-    } catch {
-      // Best-effort cleanup. The create failure path must still remove compute and storage.
-    }
-  }
-
   async waitForWorkspaceRuntimeReady({ workspace }) {
     const deadline = Date.now() + workspaceReadyTimeoutMs(this.env);
     let status = await this.runtimeStatus({ workspace });
@@ -791,107 +508,6 @@ export class TencentTkeProvider {
     return status;
   }
 
-  workspaceManifest({ name, workspaceId, ownerAccountId, workspaceName, packagePlan, token, restoreFromBackup = null }) {
-    const labels = {
-      "app.kubernetes.io/name": "opl-workspace",
-      "app.kubernetes.io/instance": name,
-      "oplcloud.cn/workspace-id": workspaceId
-    };
-    const selector = { matchLabels: labels };
-    const nodeSelectorKey = this.env.OPL_WORKSPACE_NODE_SELECTOR_KEY;
-    const nodeSelectorValue = this.env.OPL_WORKSPACE_NODE_SELECTOR_VALUE;
-    return {
-      apiVersion: "v1",
-      kind: "List",
-      items: [
-        {
-          apiVersion: "v1",
-          kind: "Secret",
-          metadata: { name: `${name}-env`, labels },
-          type: "Opaque",
-          data: {
-            OPL_SHARE_TOKEN: b64(token),
-            ...this.workspaceCodexSecretData()
-          }
-        },
-        {
-          apiVersion: "v1",
-          kind: "PersistentVolumeClaim",
-          metadata: { name: `${name}-data`, labels },
-          spec: this.workspacePvcSpec({ packagePlan, restoreFromBackup })
-        },
-        {
-          apiVersion: "apps/v1",
-          kind: "Deployment",
-          metadata: { name, labels },
-          spec: {
-            replicas: 1,
-            selector,
-            template: {
-              metadata: { labels },
-              spec: {
-                automountServiceAccountToken: false,
-                imagePullSecrets: [{ name: this.env.OPL_IMAGE_PULL_SECRET_NAME }],
-                nodeSelector: nodeSelectorKey && nodeSelectorValue ? { [nodeSelectorKey]: nodeSelectorValue } : undefined,
-                initContainers: [
-                  this.codexBootstrapInitContainer({ secretName: `${name}-env` })
-                ],
-                containers: [
-                  {
-                    name: "workspace",
-                    image: this.env.OPL_WORKSPACE_IMAGE,
-                    imagePullPolicy: "IfNotPresent",
-                    ports: [{ name: "http", containerPort: Number(this.env.OPL_WORKSPACE_WEBUI_PORT || 3000) }],
-                    envFrom: [{ secretRef: { name: `${name}-env` } }],
-                    env: [
-                      { name: "OPL_WORKSPACE_ID", value: workspaceId },
-                      { name: "OPL_WORKSPACE_NAME", value: workspaceName },
-                      { name: "OPL_OWNER_ACCOUNT_ID", value: ownerAccountId },
-                      { name: "OPL_PACKAGE_ID", value: packagePlan.id },
-                      { name: "OPL_ACCELERATOR", value: packagePlan.accelerator || "cpu" },
-                      { name: "DATA_DIR", value: "/data" },
-                      { name: "AIONUI_DATA_DIR", value: "/data" },
-                      { name: "OPL_PROJECTS_DIR", value: "/projects" },
-                      { name: "ALLOW_REMOTE", value: "true" },
-                      { name: "OPL_WEBUI_AUTH_MODE", value: "none" },
-                      { name: "AIONUI_WEBUI_AUTH_MODE", value: "none" },
-                      { name: "HOME", value: "/data" },
-                      { name: "OPL_WORKSPACE_ROOT", value: "/projects" },
-                      { name: "CODEX_HOME", value: "/data/codex" }
-                    ],
-                    volumeMounts: [
-                      { name: "workspace-data", mountPath: "/data", subPath: "data" },
-                      { name: "workspace-data", mountPath: "/projects", subPath: "projects" }
-                    ],
-                    resources: workspaceContainerResources(packagePlan),
-                    readinessProbe: {
-                      httpGet: { path: "/", port: 3000 },
-                      initialDelaySeconds: 10,
-                      periodSeconds: 10
-                    }
-                  }
-                ],
-                volumes: [
-                  { name: "workspace-data", persistentVolumeClaim: { claimName: `${name}-data` } }
-                ]
-              }
-            }
-          }
-        },
-        {
-          apiVersion: "v1",
-          kind: "Service",
-          metadata: { name, labels },
-          spec: {
-            type: "ClusterIP",
-            selector: labels,
-            ports: [{ name: "http", port: 3000, targetPort: "http" }]
-          }
-        }
-      ]
-    };
-  }
-
   storageVolumeManifest({ name, storageId, accountId, storage, packagePlan }) {
     return {
       apiVersion: "v1",
@@ -905,7 +521,7 @@ export class TencentTkeProvider {
           "oplcloud.cn/account-id": accountId
         }
       },
-      spec: this.workspacePvcSpec({
+      spec: this.storagePvcSpec({
         packagePlan: {
           ...packagePlan,
           diskGb: storage.sizeGb || packagePlan.diskGb
@@ -914,11 +530,11 @@ export class TencentTkeProvider {
     };
   }
 
-  computeResourceManifest({ name, computeId, accountId, compute, packagePlan, storageClaimName = null }) {
+  computeAllocationManifest({ name, computeAllocationId, accountId, compute, packagePlan, storageClaimName = null }) {
     const labels = {
-      "app.kubernetes.io/name": "opl-compute-resource",
+      "app.kubernetes.io/name": "opl-compute-allocation",
       "app.kubernetes.io/instance": name,
-      "oplcloud.cn/compute-id": computeId,
+      "oplcloud.cn/compute-allocation-id": computeAllocationId,
       "oplcloud.cn/account-id": accountId
     };
     const selector = { matchLabels: labels };
@@ -939,8 +555,8 @@ export class TencentTkeProvider {
       items: [
         this.workspaceEntrySecretManifest({
           computeName: name,
-          workspaceId: compute.workspaceId || computeId,
-          workspaceName: compute.name || computeId,
+          workspaceId: compute.workspaceId || computeAllocationId,
+          workspaceName: compute.name || computeAllocationId,
           ownerAccountId: accountId,
           packagePlan,
           token: compute.token || ""
@@ -969,7 +585,7 @@ export class TencentTkeProvider {
                     ports: [{ name: "http", containerPort: Number(this.env.OPL_WORKSPACE_WEBUI_PORT || 3000) }],
                     envFrom: [{ secretRef: { name: `${name}-env` } }],
                     env: [
-                      { name: "OPL_COMPUTE_ID", value: computeId },
+                      { name: "OPL_COMPUTE_ALLOCATION_ID", value: computeAllocationId },
                       { name: "OPL_OWNER_ACCOUNT_ID", value: accountId },
                       { name: "OPL_PACKAGE_ID", value: packagePlan.id },
                       { name: "OPL_ACCELERATOR", value: packagePlan.accelerator || "cpu" },
@@ -1012,9 +628,9 @@ export class TencentTkeProvider {
   }
 
   attachmentManifest({ attachment, compute, storage, computeName, storageClaimName }) {
-    return this.computeResourceManifest({
+    return this.computeAllocationManifest({
       name: computeName,
-      computeId: compute.id || attachment.computeId,
+      computeAllocationId: compute.id || attachment.computeAllocationId,
       accountId: compute.ownerAccountId || attachment.ownerAccountId || "unknown",
       compute,
       packagePlan: {
@@ -1081,64 +697,11 @@ export class TencentTkeProvider {
     };
   }
 
-  workspacePvcSpec({ packagePlan, restoreFromBackup = null }) {
+  storagePvcSpec({ packagePlan }) {
     return {
       accessModes: ["ReadWriteOnce"],
       storageClassName: this.env.OPL_WORKSPACE_STORAGE_CLASS,
-      resources: { requests: { storage: `${packagePlan.diskGb}Gi` } },
-      ...(restoreFromBackup
-        ? {
-          dataSource: {
-            name: restoreFromBackup.snapshotName || restoreFromBackup.id,
-            kind: "VolumeSnapshot",
-            apiGroup: VOLUME_SNAPSHOT_API_GROUP
-          }
-        }
-        : {})
-    };
-  }
-
-  volumeSnapshotManifest({ workspace, snapshotName, pvcName, retentionPolicy }) {
-    return {
-      apiVersion: `${VOLUME_SNAPSHOT_API_GROUP}/v1`,
-      kind: "VolumeSnapshot",
-      metadata: {
-        name: snapshotName,
-        labels: {
-          "app.kubernetes.io/name": "opl-workspace-backup",
-          "oplcloud.cn/workspace-id": workspace.id,
-          "oplcloud.cn/source-pvc": pvcName,
-          "oplcloud.cn/retention-policy": retentionPolicy?.name || "daily_7_weekly_4"
-        }
-      },
-      spec: {
-        ...(this.env.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS
-          ? { volumeSnapshotClassName: this.env.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS }
-          : {}),
-        source: {
-          persistentVolumeClaimName: pvcName
-        }
-      }
-    };
-  }
-
-  restoredPvcManifest({ backup, name, workspaceId, workspaceName, packagePlan }) {
-    return {
-      apiVersion: "v1",
-      kind: "PersistentVolumeClaim",
-      metadata: {
-        name: `${name}-data`,
-        labels: {
-          "app.kubernetes.io/name": "opl-workspace",
-          "app.kubernetes.io/instance": name,
-          "oplcloud.cn/workspace-id": workspaceId,
-          "oplcloud.cn/restored-from-backup": backup.id
-        },
-        annotations: {
-          "oplcloud.cn/workspace-name": workspaceName
-        }
-      },
-      spec: this.workspacePvcSpec({ packagePlan, restoreFromBackup: backup })
+      resources: { requests: { storage: `${packagePlan.diskGb}Gi` } }
     };
   }
 }
@@ -1182,7 +745,7 @@ function resourceName(resourceId) {
 
 function computeNameFromAttachment(attachment) {
   const providerRef = String(attachment.providerAttachmentId || "").split(":")[0];
-  return resourceName(providerRef || `deployment/${k8sName(attachment.computeId)}`);
+  return resourceName(providerRef || `deployment/${k8sName(attachment.computeAllocationId)}`);
 }
 
 function workspaceContainerResources(packagePlan) {

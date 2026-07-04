@@ -56,7 +56,7 @@ test("UIUX demo API seeds the current compute storage attachment business chain"
   const demoApiSource = await source("tools/start-uiux-demo-api.js");
 
   for (const call of [
-    "createComputeResource",
+    "createComputeAllocation",
     "createStorageVolume",
     "attachStorage",
     "createWorkspace"

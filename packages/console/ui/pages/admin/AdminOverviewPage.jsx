@@ -35,7 +35,7 @@ export function AdminOverviewPage({ state, adminOps }) {
               { label: "Ready", value: adminOps.runtime?.ready ? "Ready" : "Blocked", meta: "runtime readiness", status: adminOps.runtime?.ready ? "pass" : "check", tone: adminOps.runtime?.ready ? "good" : "warn" },
               { label: "Launch", value: adminOps.launch?.ready ? "Ready" : "Blocked", meta: "production launch gates", status: adminOps.launch?.ready ? "pass" : "check", tone: adminOps.launch?.ready ? "good" : "warn" },
               { label: "失败操作", value: failed, meta: "runtime operation queue", status: failed ? "needs triage" : "clear", tone: failed ? "danger" : "good" },
-              { label: "存储备份", value: adminOps.operator?.storageBackups?.total ?? 0, meta: "backup evidence", status: "tracked", tone: "info" }
+              { label: "计算分配", value: adminOps.operator?.computeAllocations?.total ?? adminOps.operator?.compute?.total ?? 0, meta: "CVM allocation evidence", status: "tracked", tone: "info" }
             ]}
           />
         </InsightPanel>

@@ -31,7 +31,7 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
     <ConsoleSurface
       title="Workspaces"
       eyebrow="Delivery"
-      subtitle="Compute resource, storage volume, URL token, billing hold"
+      subtitle="Compute allocation, storage volume, URL token, billing hold"
       extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建 Workspace</Button>}
     >
       <MetricStrip
@@ -61,7 +61,7 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
               render: (_, row) => <StatusPill label={statusLabel(row)} tone={statusTone(row.state)} />
             },
             { title: "套餐", dataIndex: "packageId", render: (value) => packageText(planById[value]) },
-            { title: "计算资源", render: (_, row) => <Typography.Text ellipsis>{row.computeId || row.server?.id || "-"}</Typography.Text> },
+            { title: "计算分配", render: (_, row) => <Typography.Text ellipsis>{row.computeAllocationId || row.server?.id || "-"}</Typography.Text> },
             { title: "存储卷", render: (_, row) => <Typography.Text ellipsis>{row.storageId || row.disk?.id || "-"}</Typography.Text> },
             {
               title: "Workspace URL",

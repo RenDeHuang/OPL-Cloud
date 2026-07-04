@@ -145,6 +145,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
       OPL_WORKSPACE_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
       OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+      OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
       OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot",
       OPL_BILLING_MARKUP: env.OPL_BILLING_MARKUP,
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,
@@ -189,6 +190,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
   assert.equal(config.data.OPL_CODEX_REASONING_EFFORT, "xhigh");
   assert.equal(config.data.OPL_CODEX_BASE_URL, "https://gflabtoken.cn/v1");
   assert.equal(config.data.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS, "cbs-snapshot");
+  assert.equal(config.data.OPL_TENCENT_PROVISIONER_BIN, "/usr/local/bin/opl-tencent-provisioner");
   assert.equal(config.data.TENCENT_DEPLOY_CLUSTER_ID, "cls-oplcloud");
   assert.equal(config.data.TENCENT_TCR_REGISTRY, "uswccr.ccs.tencentyun.com");
   assert.equal(deployment.spec.template.spec.containers[0].image, "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test");
@@ -221,6 +223,7 @@ test("TKE manifest renderer can skip the shared Ingress during deploy so Workspa
       OPL_WORKSPACE_IMAGE: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
       OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+      OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
       OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot",
       OPL_BILLING_MARKUP: env.OPL_BILLING_MARKUP,
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,

@@ -1,11 +1,11 @@
 import { postJson } from "./console-api.js";
 
-export function createComputeResource(input, csrfToken) {
-  return postJson("/api/compute-resources", input, csrfToken);
+export function createComputeAllocation(input, csrfToken) {
+  return postJson("/api/compute-allocations", input, csrfToken);
 }
 
-export function destroyComputeResource(input, csrfToken) {
-  return postJson("/api/compute-resources/destroy", input, csrfToken);
+export function destroyComputeAllocation(input, csrfToken) {
+  return postJson(`/api/compute-allocations/${encodeURIComponent(input.computeAllocationId)}/destroy`, input, csrfToken);
 }
 
 export function createStorageVolume(input, csrfToken) {

@@ -13,38 +13,29 @@ const TEST_PRICING = {
   markup: 0.2
 };
 
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token, provider = "test-provider" }) {
-  return {
-    provider,
-    server: {
-      id: `server-${workspaceId}`,
-      status: "running",
-      billingStatus: "active",
-      spec: packagePlan.server
-    },
-    docker: {
-      id: `docker-${workspaceId}`,
-      image: "test-image",
-      status: "running"
-    },
-    disk: {
-      id: `disk-${workspaceId}`,
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data"
-    },
-    url: `https://workspace.example.com/w/${workspaceId}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
-function createTestService(runtimeProvider) {
+function createTestService(runtimeProvider = { name: "test-provider" }) {
   return createOplCloud({
     store: new MemoryStore(),
-    runtimeProvider,
+    runtimeProvider: {
+      workspaceUrl({ workspaceId, token }) {
+        return `https://workspace.example.com/w/${workspaceId}?token=${token}`;
+      },
+      ...runtimeProvider
+    },
     pricing: TEST_PRICING
   });
+}
+
+async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
+  const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
+  const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
+  const attachment = await service.attachStorage({
+    accountId,
+    computeAllocationId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+  return service.createWorkspace({ accountId, workspaceName, attachmentId: attachment.id });
 }
 
 test("packages expose only production-ready CPU choices from the pricing catalog", async () => {
@@ -148,34 +139,37 @@ test("manual top-up writes wallet transaction and top-up audit records", async (
   assert.equal(persisted.audit.some((entry) => entry.type === "account.credit_granted"), true);
 });
 
-test("opening a Workspace freezes seven days of compute and storage and charges the first hour from available balance", async () => {
-  const service = createTestService({
-    name: "billing-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    }
-  });
+test("opening compute and storage freezes seven days of prepaid hold before creating the Workspace URL", async () => {
+  const service = createTestService({ name: "billing-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Prepaid Lab",
-    packageId: "basic"
+    workspaceName: "Prepaid Lab"
   });
 
   const state = await service.getState("pi-alpha");
-  assert.equal(state.account.balance, 248.7967);
+  assert.equal(state.account.balance, 250);
   assert.equal(state.account.frozen, 202.16);
   assert.equal(state.user.id, "usr-pi-alpha");
-  assert.equal(state.user.balance, 248.7967);
+  assert.equal(state.user.balance, 250);
   assert.equal(state.user.frozen, 202.16);
   assert.equal(state.user.totalRecharged, 250);
-  assert.equal(state.wallet.balance, 248.7967);
+  assert.equal(state.wallet.balance, 250);
   assert.equal(state.wallet.frozen, 202.16);
   assert.equal(state.billingLedger[0].userId, "usr-pi-alpha");
   assert.equal(state.billingLedger.every((entry) => entry.userId === "usr-pi-alpha"), true);
-  assert.deepEqual(workspace.billing, {
-    holdPolicy: "seven_day_prepaid",
+  assert.equal(workspace.billing.model, "resource_scoped");
+  assert.deepEqual({
+    computeAllocationId: workspace.billing.computeAllocationId,
+    storageId: workspace.billing.storageId,
+    attachmentId: workspace.billing.attachmentId,
+    minimumBillableHours: workspace.billing.minimumBillableHours,
+    priceMarkup: workspace.billing.priceMarkup
+  }, {
+    computeAllocationId: workspace.computeAllocationId,
+    storageId: workspace.storageId,
+    attachmentId: workspace.attachmentId,
     minimumBillableHours: 1,
     priceMarkup: 0.2
   });
@@ -186,41 +180,39 @@ test("opening a Workspace freezes seven days of compute and storage and charges 
     sourceEventId: entry.sourceEventId
   })), [
     { type: "credit", amount: 250, holdType: undefined, sourceEventId: "owner_credit" },
-    { type: "compute_hold", amount: 201.6, holdType: "compute", sourceEventId: "open_workspace" },
-    { type: "storage_hold", amount: 0.56, holdType: "storage", sourceEventId: "open_workspace" },
-    { type: "compute_debit", amount: -1.2, holdType: "compute", sourceEventId: "open_workspace_initial_hour" },
-    { type: "storage_debit", amount: -0.0033, holdType: "storage", sourceEventId: "open_workspace_initial_hour" }
+    { type: "storage_hold", amount: 0.56, holdType: "storage", sourceEventId: state.storageVolumes[0].id === workspace.storageId ? `storage_volume:${workspace.storageId}:created` : undefined },
+    { type: "compute_hold", amount: 201.6, holdType: "compute", sourceEventId: state.computeAllocations[0].id === workspace.computeAllocationId ? `compute_allocation:${workspace.computeAllocationId}:created` : undefined },
+    { type: "storage_attached", amount: 0, holdType: undefined, sourceEventId: `storage_attachment:${workspace.attachmentId}:created` },
+    { type: "workspace_entry_created", amount: 0, holdType: undefined, sourceEventId: `workspace_entry:${workspace.id}:created` }
   ]);
 });
 
-test("Workspace creation failure releases holds and records an operator-visible notification", async () => {
+test("Workspace URL creation failure keeps independent resource holds and records an operator-visible notification", async () => {
   const service = createTestService({
     name: "failing-provider",
-    async createWorkspaceRuntime() {
+    async createWorkspaceEntry() {
       throw new Error("image_pull_failed");
     }
   });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   await assert.rejects(
-    service.createWorkspace({
+    createWorkspaceEntry(service, {
       accountId: "pi-alpha",
-      workspaceName: "Broken Lab",
-      packageId: "basic"
+      workspaceName: "Broken Lab"
     }),
     /image_pull_failed/
   );
 
   const state = await service.getState("pi-alpha");
   assert.equal(state.account.balance, 250);
-  assert.equal(state.account.frozen, 0);
+  assert.equal(state.account.frozen, 202.16);
   assert.equal(state.workspaces.length, 0);
   assert.deepEqual(state.billingLedger.map((entry) => entry.type), [
     "credit",
-    "compute_hold",
     "storage_hold",
-    "compute_hold_released",
-    "storage_hold_released"
+    "compute_hold",
+    "storage_attached"
   ]);
   assert.deepEqual(state.notifications.map((event) => ({
     type: event.type,
@@ -235,24 +227,13 @@ test("Workspace creation failure releases holds and records an operator-visible 
   ]);
 });
 
-test("billing settlement rounds up to full hours, consumes available balance first, and auto-stops compute when compute hold is exhausted", async () => {
-  const stopCalls = [];
-  const service = createTestService({
-    name: "auto-stop-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    },
-    async stopServer({ workspace }) {
-      stopCalls.push(workspace.id);
-      return { ...workspace.server, status: "stopped", billingStatus: "stopped" };
-    }
-  });
+test("billing settlement rounds up to full hours, consumes available balance first, and records exhausted compute hold", async () => {
+  const service = createTestService({ name: "hold-exhaustion-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Auto Stop Lab",
-    packageId: "basic"
+    workspaceName: "Hold Exhaustion Lab"
   });
 
   const settlement = await service.settleBilling({
@@ -269,19 +250,18 @@ test("billing settlement rounds up to full hours, consumes available balance fir
     holdType: entry.holdType,
     fundingSource: entry.metadata?.fundingSource
   })), [
-    { type: "compute_debit", amount: -46.6367, billableHours: 210, holdType: "compute", fundingSource: "available_balance" },
+    { type: "compute_debit", amount: -47.84, billableHours: 210, holdType: "compute", fundingSource: "available_balance" },
     { type: "compute_debit", amount: -201.6, billableHours: 210, holdType: "compute", fundingSource: "compute_hold" },
     { type: "storage_debit", amount: -0.56, billableHours: 210, holdType: "storage", fundingSource: "storage_hold" },
-    { type: "compute_auto_stopped", amount: 0, billableHours: undefined, holdType: "compute", fundingSource: undefined }
+    { type: "compute_hold_exhausted", amount: 0, billableHours: undefined, holdType: "compute", fundingSource: undefined }
   ]);
-  assert.deepEqual(stopCalls, [workspace.id]);
 
   const state = await service.getState("pi-alpha");
   assert.equal(state.account.balance, 0);
   assert.equal(state.account.frozen, 0);
-  assert.equal(state.workspaces[0].server.status, "stopped");
+  assert.equal(state.workspaces[0].server.status, "running");
   assert.equal(state.workspaces[0].disk.billingStatus, "hold_exhausted");
-  assert.equal(state.workspaces[0].state, "stopped_storage_hold_exhausted");
+  assert.equal(state.workspaces[0].state, "storage_hold_exhausted");
   assert.deepEqual(state.resourceUsageLogs.filter((log) => log.sourceEventId === "billing_tick_hold_exhausted").map((log) => log.resourceType), ["compute", "storage"]);
   const persisted = await service.store.read();
   const usageLogs = persisted.resourceUsageLogs.filter((log) => log.sourceEventId === "billing_tick_hold_exhausted");
@@ -292,26 +272,17 @@ test("billing settlement rounds up to full hours, consumes available balance fir
   assert.deepEqual(state.notifications.map((event) => event.type), [
     "account.available_balance_exhausted",
     "workspace.storage_hold_exhausted",
-    "workspace.compute_auto_stopped"
+    "workspace.compute_hold_exhausted"
   ]);
 });
 
 test("prepaid billing uses available balance first and never debits beyond available plus frozen hold pools", async () => {
-  const service = createTestService({
-    name: "bounded-debit-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    },
-    async stopServer({ workspace }) {
-      return { ...workspace.server, status: "stopped", billingStatus: "stopped" };
-    }
-  });
+  const service = createTestService({ name: "bounded-debit-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Bounded Debit Lab",
-    packageId: "basic"
+    workspaceName: "Bounded Debit Lab"
   });
 
   await service.settleBilling({
@@ -333,18 +304,12 @@ test("prepaid billing uses available balance first and never debits beyond avail
 });
 
 test("prepaid billing warns when available balance is exhausted before consuming frozen holds", async () => {
-  const service = createTestService({
-    name: "low-balance-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    }
-  });
+  const service = createTestService({ name: "low-balance-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 204, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Low Balance Lab",
-    packageId: "basic"
+    workspaceName: "Low Balance Lab"
   });
 
   await service.settleBilling({
@@ -355,8 +320,8 @@ test("prepaid billing warns when available balance is exhausted before consuming
   });
 
   const state = await service.getState("pi-alpha");
-  assert.equal(state.account.balance, 200.39);
-  assert.equal(state.account.frozen, 200.39);
+  assert.equal(state.account.balance, 201.5933);
+  assert.equal(state.account.frozen, 201.5933);
   assert.deepEqual(state.notifications.map((event) => ({
     type: event.type,
     severity: event.severity,
@@ -371,18 +336,12 @@ test("prepaid billing warns when available balance is exhausted before consuming
 });
 
 test("billing settlement is idempotent for the same source event", async () => {
-  const service = createTestService({
-    name: "idempotent-billing-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    }
-  });
+  const service = createTestService({ name: "idempotent-billing-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Idempotent Billing Lab",
-    packageId: "basic"
+    workspaceName: "Idempotent Billing Lab"
   });
 
   await service.settleBilling({
@@ -411,18 +370,12 @@ test("billing settlement is idempotent for the same source event", async () => {
 });
 
 test("request usage charges the user wallet and records request logs", async () => {
-  const service = createTestService({
-    name: "request-usage-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    }
-  });
+  const service = createTestService({ name: "request-usage-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Request Usage Lab",
-    packageId: "basic"
+    workspaceName: "Request Usage Lab"
   });
 
   const usage = await service.recordRequestUsage({
@@ -440,7 +393,7 @@ test("request usage charges the user wallet and records request logs", async () 
   const state = await service.getState("pi-alpha");
   const persisted = await service.store.read();
   assert.equal(usage.userId, "usr-pi-alpha");
-  assert.equal(state.wallet.balance, 248.5467);
+  assert.equal(state.wallet.balance, 249.75);
   assert.equal(state.requestUsageLogs.length, 1);
   assert.equal(state.requestUsageLogs[0].requestId, "req-alpha");
   assert.deepEqual(persisted.requestUsageLogs.map((log) => ({
@@ -460,18 +413,12 @@ test("request usage charges the user wallet and records request logs", async () 
 });
 
 test("request usage deduplicates same fingerprint and rejects conflicting replay", async () => {
-  const service = createTestService({
-    name: "request-dedup-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    }
-  });
+  const service = createTestService({ name: "request-dedup-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Request Dedup Lab",
-    packageId: "basic"
+    workspaceName: "Request Dedup Lab"
   });
 
   const input = {
@@ -507,18 +454,12 @@ test("request usage deduplicates same fingerprint and rejects conflicting replay
 });
 
 test("request usage quota rejects billing before wallet mutation", async () => {
-  const service = createTestService({
-    name: "request-quota-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    }
-  });
+  const service = createTestService({ name: "request-quota-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Request Quota Lab",
-    packageId: "basic"
+    workspaceName: "Request Quota Lab"
   });
   await service.store.update((state) => {
     state.users["usr-pi-alpha"].requestQuota = {
@@ -554,27 +495,17 @@ test("request usage quota rejects billing before wallet mutation", async () => {
   assert.equal(after.walletTransactions.filter((transaction) => transaction.type === "request_debit").length, 0);
 });
 
-test("destroying compute and storage releases unused prepaid holds", async () => {
-  const service = createTestService({
-    name: "destroy-provider",
-    async createWorkspaceRuntime(input) {
-      return runtimeFixture(input);
-    },
-    async destroyServer({ workspace }) {
-      return { ...workspace.server, status: "destroyed", billingStatus: "stopped" };
-    },
-    async destroyDisk({ workspace }) {
-      return { ...workspace.disk, status: "destroyed", billingStatus: "stopped" };
-    }
-  });
+test("destroying compute allocation and storage volume releases unused prepaid holds", async () => {
+  const service = createTestService({ name: "destroy-provider" });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Release Lab",
-    packageId: "basic"
+    workspaceName: "Release Lab"
   });
-  await service.destroyDisk({ accountId: "pi-alpha", workspaceId: workspace.id, confirmDataLoss: true });
+  await service.detachStorage({ accountId: "pi-alpha", attachmentId: workspace.attachmentId, confirm: true });
+  await service.destroyComputeAllocation({ accountId: "pi-alpha", computeAllocationId: workspace.computeAllocationId, confirm: true });
+  await service.destroyStorageVolume({ accountId: "pi-alpha", storageId: workspace.storageId, confirmDataLoss: true });
 
   const state = await service.getState("pi-alpha");
   assert.equal(state.account.frozen, 0);

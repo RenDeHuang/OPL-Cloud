@@ -6,12 +6,10 @@ const { Pool } = pg;
 
 export function emptyState() {
   return {
-    accounts: {},
     organizations: {},
     users: {},
     memberships: [],
     workspaces: {},
-    storageBackups: [],
     billingReconciliationReports: [],
     supportTickets: [],
     evidenceLedger: [],
@@ -19,7 +17,7 @@ export function emptyState() {
     audit: [],
     notifications: [],
     runtimeOperations: [],
-    computeResources: [],
+    computeAllocations: [],
     storageVolumes: [],
     storageAttachments: [],
     resourceUsageLogs: [],
@@ -34,39 +32,18 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function userIdForAccount(state, accountId) {
-  return Object.values(state.users || {}).find((user) => user.accountId === accountId)?.id || `usr-${accountId}`;
-}
-
-export function migrateLegacyState(rawState = {}) {
-  const state = { ...emptyState(), ...clone(rawState) };
-  state.users ??= {};
-  for (const account of Object.values(state.accounts || {})) {
-    if (!account?.id) continue;
-    const userId = userIdForAccount(state, account.id);
-    state.users[userId] ??= {
-      id: userId,
-      email: "",
-      accountId: account.id,
-      role: "pi",
-      status: "active",
-      createdAt: account.createdAt || new Date().toISOString(),
-      updatedAt: account.updatedAt || new Date().toISOString()
-    };
-    const user = state.users[userId];
-    user.accountId ||= account.id;
-    user.balance = Number(user.balance ?? account.balance ?? 0);
-    user.frozen = Number(user.frozen ?? account.frozen ?? 0);
-    user.holds ??= clone(account.holds || {});
-    user.totalRecharged = Number(user.totalRecharged ?? account.totalRecharged ?? 0);
+function currentState(rawState = {}) {
+  const source = clone(rawState || {});
+  const state = emptyState();
+  for (const key of Object.keys(state)) {
+    if (source[key] !== undefined) state[key] = source[key];
   }
-  state.accounts = {};
   return state;
 }
 
 export class MemoryStore {
   constructor(initialState = emptyState()) {
-    this.state = migrateLegacyState(initialState);
+    this.state = currentState(initialState);
   }
 
   async read() {
@@ -74,7 +51,7 @@ export class MemoryStore {
   }
 
   async write(nextState) {
-    this.state = migrateLegacyState(nextState);
+    this.state = currentState(nextState);
     return this.read();
   }
 
@@ -94,7 +71,7 @@ export class JsonFileStore {
   async read() {
     try {
       const raw = await readFile(this.filePath, "utf8");
-      return migrateLegacyState(JSON.parse(raw));
+      return currentState(JSON.parse(raw));
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       return emptyState();
@@ -125,12 +102,10 @@ export class PostgresStore {
     await this.ensureSchema(client);
     const state = emptyState();
     const [
-      accounts,
       organizations,
       users,
       memberships,
       workspaces,
-      storageBackups,
       billingReconciliationReports,
       supportTickets,
       evidenceLedger,
@@ -138,7 +113,7 @@ export class PostgresStore {
       audit,
       notifications,
       runtimeOperations,
-      computeResources,
+      computeAllocations,
       storageVolumes,
       storageAttachments,
       resourceUsageLogs,
@@ -147,12 +122,10 @@ export class PostgresStore {
       manualTopups,
       requestUsageDedup
     ] = await Promise.all([
-      client.query("SELECT id, state FROM accounts ORDER BY id"),
       client.query("SELECT id, state FROM organizations ORDER BY id"),
       client.query("SELECT id, state FROM users ORDER BY id"),
       client.query("SELECT state FROM memberships ORDER BY created_at, id"),
       client.query("SELECT id, state FROM workspaces ORDER BY id"),
-      client.query("SELECT state FROM storage_backups ORDER BY created_at, id"),
       client.query("SELECT state FROM billing_reconciliation_reports ORDER BY created_at, id"),
       client.query("SELECT state FROM support_tickets ORDER BY created_at, id"),
       client.query("SELECT state FROM evidence_ledger ORDER BY created_at, id"),
@@ -160,7 +133,7 @@ export class PostgresStore {
       client.query("SELECT state FROM audit_events ORDER BY created_at, id"),
       client.query("SELECT state FROM notifications ORDER BY created_at, id"),
       client.query("SELECT state FROM runtime_operations ORDER BY created_at, id"),
-      client.query("SELECT state FROM compute_resources ORDER BY created_at, id"),
+      client.query("SELECT state FROM compute_allocations ORDER BY created_at, id"),
       client.query("SELECT state FROM storage_volumes ORDER BY created_at, id"),
       client.query("SELECT state FROM storage_attachments ORDER BY created_at, id"),
       client.query("SELECT state FROM resource_usage_logs ORDER BY created_at, id"),
@@ -170,12 +143,10 @@ export class PostgresStore {
       client.query("SELECT state FROM request_usage_dedup ORDER BY created_at, id")
     ]);
 
-    for (const row of accounts.rows) state.accounts[row.id] = row.state;
     for (const row of organizations.rows) state.organizations[row.id] = row.state;
     for (const row of users.rows) state.users[row.id] = row.state;
     state.memberships = memberships.rows.map((row) => row.state);
     for (const row of workspaces.rows) state.workspaces[row.id] = row.state;
-    state.storageBackups = storageBackups.rows.map((row) => row.state);
     state.billingReconciliationReports = billingReconciliationReports.rows.map((row) => row.state);
     state.supportTickets = supportTickets.rows.map((row) => row.state);
     state.evidenceLedger = evidenceLedger.rows.map((row) => row.state);
@@ -183,7 +154,7 @@ export class PostgresStore {
     state.audit = audit.rows.map((row) => row.state);
     state.notifications = notifications.rows.map((row) => row.state);
     state.runtimeOperations = runtimeOperations.rows.map((row) => row.state);
-    state.computeResources = computeResources.rows.map((row) => row.state);
+    state.computeAllocations = computeAllocations.rows.map((row) => row.state);
     state.storageVolumes = storageVolumes.rows.map((row) => row.state);
     state.storageAttachments = storageAttachments.rows.map((row) => row.state);
     state.resourceUsageLogs = resourceUsageLogs.rows.map((row) => row.state);
@@ -191,12 +162,12 @@ export class PostgresStore {
     state.walletTransactions = walletTransactions.rows.map((row) => row.state);
     state.manualTopups = manualTopups.rows.map((row) => row.state);
     state.requestUsageDedup = requestUsageDedup.rows.map((row) => row.state);
-    return migrateLegacyState(state);
+    return currentState(state);
   }
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
-    await client.query("TRUNCATE accounts, organizations, users, memberships, workspaces, storage_backups, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, compute_resources, storage_volumes, storage_attachments, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
+    await client.query("TRUNCATE organizations, users, memberships, workspaces, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, compute_allocations, storage_volumes, storage_attachments, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
 
     for (const organization of Object.values(nextState.organizations || {})) {
       await client.query(
@@ -228,16 +199,6 @@ export class PostgresStore {
         "INSERT INTO workspaces (id, owner_account_id, state, updated_at) VALUES ($1, $2, $3, now()) ON CONFLICT (id) DO UPDATE SET owner_account_id = EXCLUDED.owner_account_id, state = EXCLUDED.state, updated_at = now()",
         [workspace.id, workspace.ownerAccountId, workspace]
       );
-    }
-    for (const backup of nextState.storageBackups || []) {
-      await client.query("INSERT INTO storage_backups (id, account_id, workspace_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)", [
-        backup.id,
-        backup.accountId,
-        backup.workspaceId,
-        backup,
-        backup.createdAt || new Date().toISOString(),
-        backup.updatedAt || backup.createdAt || new Date().toISOString()
-      ]);
     }
     for (const report of nextState.billingReconciliationReports || []) {
       await client.query("INSERT INTO billing_reconciliation_reports (id, state, created_at) VALUES ($1, $2, $3)", [
@@ -304,8 +265,8 @@ export class PostgresStore {
         operation.updatedAt || operation.createdAt || new Date().toISOString()
       ]);
     }
-    for (const compute of nextState.computeResources || []) {
-      await client.query("INSERT INTO compute_resources (id, account_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", [
+    for (const compute of nextState.computeAllocations || []) {
+      await client.query("INSERT INTO compute_allocations (id, account_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", [
         compute.id,
         compute.ownerAccountId,
         compute,
@@ -323,10 +284,10 @@ export class PostgresStore {
       ]);
     }
     for (const attachment of nextState.storageAttachments || []) {
-      await client.query("INSERT INTO storage_attachments (id, account_id, compute_id, storage_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+      await client.query("INSERT INTO storage_attachments (id, account_id, compute_allocation_id, storage_id, state, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
         attachment.id,
         attachment.ownerAccountId,
-        attachment.computeId,
+        attachment.computeAllocationId,
         attachment.storageId,
         attachment,
         attachment.createdAt || new Date().toISOString(),
@@ -421,13 +382,6 @@ export class PostgresStore {
   async ensureSchema(client = this.pool) {
     if (this.initialized) return;
     await client.query(`
-      CREATE TABLE IF NOT EXISTS accounts (
-        id text PRIMARY KEY,
-        state jsonb NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await client.query(`
       CREATE TABLE IF NOT EXISTS organizations (
         id text PRIMARY KEY,
         state jsonb NOT NULL,
@@ -456,16 +410,6 @@ export class PostgresStore {
         id text PRIMARY KEY,
         owner_account_id text NOT NULL,
         state jsonb NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS storage_backups (
-        id text PRIMARY KEY,
-        account_id text NOT NULL,
-        workspace_id text NOT NULL,
-        state jsonb NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
       )
     `);
@@ -535,7 +479,7 @@ export class PostgresStore {
       )
     `);
     await client.query(`
-      CREATE TABLE IF NOT EXISTS compute_resources (
+      CREATE TABLE IF NOT EXISTS compute_allocations (
         id text PRIMARY KEY,
         account_id text NOT NULL,
         state jsonb NOT NULL,
@@ -556,7 +500,7 @@ export class PostgresStore {
       CREATE TABLE IF NOT EXISTS storage_attachments (
         id text PRIMARY KEY,
         account_id text NOT NULL,
-        compute_id text NOT NULL,
+        compute_allocation_id text NOT NULL,
         storage_id text NOT NULL,
         state jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
@@ -635,7 +579,7 @@ export class PostgresStore {
       WHERE
         state->>'sourceEventId' IS NOT NULL
         AND state->>'sourceEventId' <> ''
-        AND (state->>'type') IN ('compute_debit', 'storage_debit', 'compute_auto_stopped', 'request_debit')
+        AND (state->>'type') IN ('compute_debit', 'storage_debit', 'compute_hold_exhausted', 'request_debit')
     `);
     this.initialized = true;
   }

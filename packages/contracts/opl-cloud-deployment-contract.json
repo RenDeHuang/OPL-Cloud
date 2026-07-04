@@ -32,6 +32,7 @@
       "OPL_WORKSPACE_IMAGE",
       "OPL_IMAGE_PULL_SECRET_NAME",
       "OPL_WORKSPACE_STORAGE_CLASS",
+      "OPL_TENCENT_PROVISIONER_BIN",
       "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS",
       "OPL_CONSOLE_TLS_SECRET_NAME",
       "OPL_WORKSPACE_TLS_SECRET_NAME",
@@ -170,8 +171,7 @@
         "http://127.0.0.1:18787/api/production/readiness"
       ]
     },
-    "forbiddenRunTokens": [
-    ],
+    "forbiddenRunTokens": [],
     "forbiddenRunPatterns": [
       "kubectl .* apply ",
       "kubectl .* create ",

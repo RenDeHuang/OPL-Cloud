@@ -9,7 +9,7 @@ import { valueLabel } from "../shared/formatters.js";
 export function CreateWorkspacePage({ state, session, runAction }) {
   const attachments = (state.storageAttachments || []).filter((item) => item.status === "attached");
   const initialAttachmentId = attachments[0]?.id;
-  const computeById = new Map((state.computeResources || []).map((item) => [item.id, item]));
+  const computeById = new Map((state.computeAllocations || []).map((item) => [item.id, item]));
   const storageById = new Map((state.storageVolumes || []).map((item) => [item.id, item]));
   const ready = attachments.length > 0;
   return (
@@ -36,10 +36,11 @@ export function CreateWorkspacePage({ state, session, runAction }) {
             <Form.Item name="attachmentId" label="挂载关系" rules={[{ required: true, message: "请选择挂载关系" }]}>
               <Select
                 options={attachments.map((attachment) => {
-                  const compute = computeById.get(attachment.computeId);
+                  const computeAllocationId = attachment.computeAllocationId;
+                  const compute = computeById.get(computeAllocationId);
                   const storage = storageById.get(attachment.storageId);
                   return {
-                    label: `${compute?.name || attachment.computeId} + ${storage?.name || attachment.storageId}`,
+                    label: `${compute?.name || computeAllocationId} + ${storage?.name || attachment.storageId}`,
                     value: attachment.id
                   };
                 })}
@@ -60,11 +61,12 @@ export function CreateWorkspacePage({ state, session, runAction }) {
         >
           <ResourceSplit
             items={(ready ? attachments : [{ id: "missing", status: "missing" }]).slice(0, 3).map((attachment) => {
-              const compute = computeById.get(attachment.computeId);
+              const computeAllocationId = attachment.computeAllocationId;
+              const compute = computeById.get(computeAllocationId);
               const storage = storageById.get(attachment.storageId);
               return {
                 label: attachment.id === "missing" ? "挂载关系" : "可用挂载",
-                value: attachment.id === "missing" ? "None" : (compute?.name || attachment.computeId),
+                value: attachment.id === "missing" ? "None" : (compute?.name || computeAllocationId),
                 meta: attachment.id === "missing" ? "create compute + storage + attachment first" : `${storage?.name || attachment.storageId} · ${attachment.mountPath || "/data"}`,
                 status: valueLabel(attachment.status),
                 tone: attachment.status === "attached" ? "good" : "warn"

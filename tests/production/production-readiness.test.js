@@ -20,6 +20,7 @@ const tkeProductionEnv = {
   OPL_INGRESS_CLASS: "qcloud",
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
   OPL_WORKSPACE_STORAGE_CLASS: "cbs",
+  OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
   DATABASE_URL: "postgresql://opl:secret@db.example.com:5432/opl_cloud",
   OPL_CONSOLE_USERS_JSON: JSON.stringify([
     {

@@ -10,32 +10,6 @@ const TEST_PRICING = {
   markup: 0.2
 };
 
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: {
-      id: `server-${workspaceId}`,
-      status: "running",
-      billingStatus: "active",
-      spec: packagePlan.server
-    },
-    docker: {
-      id: `docker-${workspaceId}`,
-      image: "test-image",
-      status: "running"
-    },
-    disk: {
-      id: `disk-${workspaceId}`,
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data"
-    },
-    url: `https://workspace.example.com/w/${workspaceName}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
 function createTestService() {
   return createOplCloud({
     store: new MemoryStore(),
@@ -43,22 +17,30 @@ function createTestService() {
       name: "test-provider",
       workspaceUrl({ slug, token }) {
         return `https://workspace.example.com/w/${slug}?token=${token}`;
-      },
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
       }
     },
     pricing: TEST_PRICING
   });
 }
 
+async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
+  const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
+  const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
+  const attachment = await service.attachStorage({
+    accountId,
+    computeAllocationId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+  return service.createWorkspace({ accountId, workspaceName, attachmentId: attachment.id });
+}
+
 test("Workspace access uses a long-lived URL token that can be deleted and reset after leakage", async () => {
   const service = createTestService();
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     accountId: "pi-alpha",
-    workspaceName: "Token Lab",
-    packageId: "basic"
+    workspaceName: "Token Lab"
   });
 
   assert.equal(workspace.access.mode, "long_lived_url_token");

@@ -7,11 +7,11 @@ Tencent TKE is the production runtime provider for the current OPL Console / OPL
 The deployment owns:
 
 - OPL Console control-plane pod.
-- Workspace runtime handoff to TKE.
+- ComputePool and ComputeAllocation handoff to TKE.
 - TCR image references.
 - Kubernetes Service and Ingress routing.
 - Persistent workspace storage through PVC/CBS.
-- Storage backup and restore through VolumeSnapshot.
+- one-person-lab-app runtime scheduling onto user-owned CVM nodes.
 - PostgreSQL control-plane persistence.
 
 ## Manifest Rules
@@ -24,6 +24,7 @@ Production manifests must:
 - keep Workspace image explicit;
 - use an image pull secret for private registry access;
 - keep shared Ingress changes deliberate.
+- require `OPL_TENCENT_PROVISIONER_BIN` for Tencent Cloud mutations.
 
 ## Workflow Rules
 

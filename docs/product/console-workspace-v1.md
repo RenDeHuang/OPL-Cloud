@@ -7,7 +7,7 @@ Target users are Lab Owners and administrators who create, fund, operate, and di
 The primary Lab Owner job is:
 
 ```text
-sign in -> create Workspace -> confirm cost and hold -> copy URL -> share URL with members
+sign in -> open compute allocation -> open or select storage -> attach storage -> create Workspace URL -> copy URL -> share URL with members
 ```
 
 ## Commercial Information Architecture
@@ -28,7 +28,10 @@ Lab Owner Console:
 
 - Overview
 - Workspaces
-- Create Workspace
+- Compute
+- Storage
+- Attachments
+- Create Workspace URL
 - Workspace access
 - Gateway usage summary
 - Billing wallet
@@ -56,9 +59,11 @@ Lab Owner sees:
 
 - Workspace list.
 - Workspace URL copy, open, reset, and delete.
-- Workspace state: running, stopped, compute destroyed, storage retained, storage destroyed.
-- Package, compute state, storage state, hourly estimate, and seven-day hold estimate.
-- Create Workspace flow: name, package, confirmation, balance sufficiency.
+- Workspace URL state and runtime readiness.
+- Package, ComputePool, ComputeAllocation state, storage state, hourly estimate, and seven-day hold estimate.
+- Compute creation flow: package, hourly price, hold, balance sufficiency, provisioning status, and failure details.
+- Storage creation flow: capacity, GB-month price, hourly estimate, hold, balance sufficiency, provisioning status, and failure details.
+- Attachment flow: selected compute allocation, selected storage volume, mount path, runtime image, and Workspace URL behavior.
 - Billing: balance, frozen amount, available balance, recent charges, usage, and top-ups.
 - Support tickets and alerts.
 
@@ -85,13 +90,14 @@ Admin sees:
 - raw Ledger evidence;
 - support queue.
 
-## Workspace Creation
+## Resource Creation
 
 Creation flow:
 
-1. Name.
-2. Package.
-3. Confirm.
+1. Select package and open one dedicated CVM ComputeAllocation from its ComputePool.
+2. Open or select a StorageVolume.
+3. Attach the StorageVolume to the ComputeAllocation.
+4. Create the Workspace URL entry.
 
 Confirm shows:
 
@@ -101,7 +107,7 @@ Confirm shows:
 - current balance;
 - frozen balance;
 - available balance;
-- whether the Workspace can be opened.
+- provisioning status and whether the Workspace URL can be opened.
 
 ## Billing Explanation
 

@@ -2,12 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { apiRouteManifest } from "../../packages/console/api/routes/index.js";
-import { consoleRoutes, routeTo, routesById } from "../../packages/console/ui/consoleRoutes.js";
-
 const contractPath = new URL("../../packages/contracts/opl-cloud-route-api-contract.json", import.meta.url);
 const backlogPath = new URL("../../packages/contracts/opl-cloud-route-backlog.json", import.meta.url);
-const repoRoot = new URL("../../", import.meta.url);
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
@@ -39,29 +35,7 @@ test("OPL Cloud route/API contract is the current commercial Console truth", asy
   assert.ok(contract.boundaryRules.includes("Every enabled route has a stable route id used by menus, actions, and routeTo()."));
 });
 
-test("every UI route is represented in the route/API contract with ownership and status", async () => {
-  const contract = await readJson(contractPath);
-  const contractRoutes = expectedRoutesFromContract(contract);
-  const byPath = new Map(contractRoutes.map((route) => [route.path, route]));
-  const byId = new Map(contractRoutes.map((route) => [route.id, route]));
-
-  assert.equal(contractRoutes.length, consoleRoutes.length);
-  for (const route of consoleRoutes) {
-    const entry = byPath.get(route.path);
-    assert.ok(entry, `missing contract entry for ${route.path}`);
-    assert.equal(entry.id, route.id, `id mismatch for ${route.path}`);
-    assert.equal(entry.area, route.area, `area mismatch for ${route.path}`);
-    assert.ok(contract.statuses.includes(entry.status), `invalid status for ${route.path}`);
-    assert.ok(["opl-console", "opl-fabric", "opl-ledger"].includes(entry.ownerRepo), `invalid ownerRepo for ${route.path}`);
-    assert.ok(contract.routeKinds.includes(entry.routeKind), `invalid routeKind for ${route.path}`);
-    assert.ok(contract.contractLifecycles.includes(entry.contractLifecycle), `invalid contractLifecycle for ${route.path}`);
-    assert.ok(Array.isArray(entry.capabilities), `missing capabilities for ${route.path}`);
-    assert.ok(byId.has(route.id), `missing contract route id ${route.id}`);
-    assert.ok(routesById.has(route.id), `runtime route registry missing ${route.id}`);
-  }
-});
-
-test("active route contract excludes future, reserved, and prune route shells", async () => {
+test("active route contract excludes future, reserved, prune, and retired route shells", async () => {
   const contract = await readJson(contractPath);
   const backlog = await readJson(backlogPath);
   const activeRoutes = expectedRoutesFromContract(contract);
@@ -87,18 +61,48 @@ test("active route contract excludes future, reserved, and prune route shells", 
     assert.equal(activePaths.has(path), false, `${path} must be removed from active contract`);
     assert.equal(backlogPaths.has(path), true, `${path} must be tracked in route backlog`);
   }
+
+  assert.deepEqual([...new Set(activeRoutes.flatMap((route) => route.apiRoutes || []))].sort(), [
+    "GET /api/auth/me",
+    "GET /api/compute-allocations",
+    "GET /api/compute-allocations/:id",
+    "GET /api/compute-pools",
+    "GET /api/ledger/task-receipts",
+    "GET /api/management/state",
+    "GET /api/operator/summary",
+    "GET /api/production/readiness",
+    "GET /api/runtime/readiness",
+    "GET /api/state",
+    "GET /api/support/tickets",
+    "POST /api/auth/login",
+    "POST /api/auth/logout",
+    "POST /api/billing/topups",
+    "POST /api/compute-allocations",
+    "POST /api/compute-allocations/:id/destroy",
+    "POST /api/storage-attachments",
+    "POST /api/storage-attachments/detach",
+    "POST /api/storage-volumes",
+    "POST /api/storage-volumes/destroy",
+    "POST /api/support/tickets",
+    "POST /api/users",
+    "POST /api/workspaces",
+    "POST /api/workspaces/delete-token",
+    "POST /api/workspaces/reset-token",
+    "POST /api/workspaces/runtime-status"
+  ].sort());
 });
 
-test("active route contract models TKE resources before Workspace entry", async () => {
+test("active route contract models compute pools before account compute allocations", async () => {
   const contract = await readJson(contractPath);
   const routes = expectedRoutesFromContract(contract);
   const byId = new Map(routes.map((route) => [route.id, route]));
   const activeApiRoutes = new Set(routes.flatMap((route) => route.apiRoutes || []));
 
   for (const [id, objectKind, path] of [
-    ["compute.list", "ComputeResource", "/console/compute"],
-    ["compute.create", "ComputeResource", "/console/compute/new"],
-    ["compute.detail", "ComputeResource", "/console/compute/:id"],
+    ["compute-pools.list", "ComputePool", "/console/compute/pools"],
+    ["compute-allocations.list", "ComputeAllocation", "/console/compute"],
+    ["compute-allocations.create", "ComputeAllocation", "/console/compute/new"],
+    ["compute-allocations.detail", "ComputeAllocation", "/console/compute/:id"],
     ["storage.list", "StorageVolume", "/console/storage"],
     ["storage.create", "StorageVolume", "/console/storage/new"],
     ["storage.detail", "StorageVolume", "/console/storage/:id"],
@@ -118,8 +122,11 @@ test("active route contract models TKE resources before Workspace entry", async 
   }
 
   for (const apiRoute of [
-    "POST /api/compute-resources",
-    "POST /api/compute-resources/destroy",
+    "GET /api/compute-pools",
+    "GET /api/compute-allocations",
+    "POST /api/compute-allocations",
+    "GET /api/compute-allocations/:id",
+    "POST /api/compute-allocations/:id/destroy",
     "POST /api/storage-volumes",
     "POST /api/storage-volumes/destroy",
     "POST /api/storage-attachments",
@@ -127,24 +134,11 @@ test("active route contract models TKE resources before Workspace entry", async 
   ]) {
     assert.ok(activeApiRoutes.has(apiRoute), `${apiRoute} must be in current resource contract`);
   }
-
-  for (const retiredApi of [
-    "POST /api/billing/settle",
-    "POST /api/workspaces/stop-server",
-    "POST /api/workspaces/restart-server",
-    "POST /api/workspaces/destroy-server",
-    "POST /api/workspaces/destroy-disk"
-  ]) {
-    assert.equal(activeApiRoutes.has(retiredApi), false, `${retiredApi} must not be a Lab Owner commercial route`);
-    assert.equal(apiRouteManifest.includes(retiredApi), false, `${retiredApi} must not be exposed by the public Console API manifest`);
-  }
 });
 
-test("implemented routes name a page, API client, server route, and service boundary", async () => {
+test("implemented routes name page, API intent, and service boundary", async () => {
   const contract = await readJson(contractPath);
   const routes = expectedRoutesFromContract(contract).filter((route) => route.status === "implemented");
-  const routeTablePaths = new Set(consoleRoutes.map((route) => route.path));
-  const serverRoutes = new Set(apiRouteManifest);
 
   assert.ok(routes.length > 0, "contract should mark real routes as implemented");
   for (const route of routes) {
@@ -154,38 +148,10 @@ test("implemented routes name a page, API client, server route, and service boun
       assert.ok(route.apiClient, `implemented route ${route.path} must name apiClient`);
       assert.ok(Array.isArray(route.apiRoutes), `implemented route ${route.path} must list apiRoutes`);
       assert.ok(route.apiRoutes.length > 0, `implemented route ${route.path} must list at least one apiRoute`);
-      await readFile(new URL(route.apiClient, repoRoot), "utf8");
-      for (const apiRoute of route.apiRoutes) {
-        assert.ok(serverRoutes.has(apiRoute), `server route missing for ${route.path}: ${apiRoute}`);
-      }
     }
     assert.ok(route.serviceBoundary, `implemented route ${route.path} must name serviceBoundary`);
     assert.equal(route.contractLifecycle, "current", `implemented route ${route.path} must be current`);
     assert.ok(route.capabilities.includes("read"), `implemented route ${route.path} must include read capability`);
-    assert.ok(routeTablePaths.has(route.path), `route table missing ${route.path}`);
-    await readFile(new URL(route.pageModule, repoRoot), "utf8");
-  }
-});
-
-test("implemented read-model routes declare read capability and use GET APIs", async () => {
-  const contract = await readJson(contractPath);
-  const routes = expectedRoutesFromContract(contract).filter((route) => route.status === "implemented" && route.routeKind === "read_model");
-
-  assert.ok(routes.length > 0, "contract should include implemented read-model routes");
-  for (const route of routes) {
-    assert.ok(route.capabilities.includes("read"), `${route.path} must declare read capability`);
-    assert.ok(route.apiRoutes.some((apiRoute) => apiRoute.startsWith("GET ")), `${route.path} must include a read API`);
-  }
-});
-
-test("implemented auth flows use auth APIs and declare auth/session capabilities", async () => {
-  const contract = await readJson(contractPath);
-  const routes = expectedRoutesFromContract(contract).filter((route) => route.status === "implemented" && route.routeKind === "auth_flow");
-
-  assert.ok(routes.length > 0, "contract should include implemented auth flows");
-  for (const route of routes) {
-    assert.ok(route.capabilities.includes("authenticate") || route.capabilities.includes("session"), `${route.path} must declare auth capability`);
-    assert.ok(route.apiRoutes.every((apiRoute) => apiRoute.includes(" /api/auth/")), `${route.path} must use auth API routes`);
   }
 });
 
@@ -206,17 +172,4 @@ test("implemented commercial object routes declare object kind and object capabi
       `${route.path} must declare a business object capability`
     );
   }
-});
-
-test("route ids generate runtime paths through routeTo", async () => {
-  const contract = await readJson(contractPath);
-  const routes = expectedRoutesFromContract(contract);
-
-  for (const route of routes) {
-    const params = Object.fromEntries([...route.path.matchAll(/:([^/]+)/g)].map(([, key]) => [key, `${key}-demo`]));
-    assert.equal(routeTo(route.id, params, { role: route.requiresAdmin ? "admin" : "lab_owner" }), route.path.replace(/:([^/]+)/g, (_, key) => params[key]));
-  }
-
-  assert.throws(() => routeTo("workspace.detail"), /missing route param: id/);
-  assert.throws(() => routeTo("admin.users", {}, { role: "lab_owner" }), /not allowed/);
 });

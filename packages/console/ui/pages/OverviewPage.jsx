@@ -1,6 +1,6 @@
 import React from "react";
 import { Button, Typography } from "antd";
-import { AlertTriangle, Headphones, Link as LinkIcon, Plus, Server, WalletCards } from "lucide-react";
+import { AlertTriangle, HardDrive, Headphones, Link as LinkIcon, Plus, Server, WalletCards } from "lucide-react";
 import { navigate, routeTo } from "../consoleRoutes.js";
 import {
   ActionGroup,
@@ -16,7 +16,10 @@ import { available, money, statusColor, statusLabel } from "./shared/formatters.
 
 export function OverviewPage({ state, wallet, tickets }) {
   const needsAttention = state.notifications?.length || 0;
-  const computeRunning = (state.computeResources || []).filter((compute) => compute.status === "running").length;
+  const computeAllocations = state.computeAllocations || [];
+  const storageVolumes = state.storageVolumes || [];
+  const computeRunning = computeAllocations.filter((compute) => compute.status === "running").length;
+  const storageAvailable = storageVolumes.filter((storage) => storage.status !== "destroyed").length;
   const activeTickets = tickets.tickets.filter((ticket) => ticket.status !== "closed").length;
   const usable = available(wallet);
   const freezeRatio = Number(wallet.balance || 0) > 0
@@ -49,6 +52,7 @@ export function OverviewPage({ state, wallet, tickets }) {
         items={[
           { label: "可用余额", value: money(usable), caption: `${money(wallet.frozen)} frozen`, icon: <WalletCards size={16} />, tone: usable > 0 ? "good" : "warn" },
           { label: "Workspace", value: state.workspaces.length, caption: `${computeRunning} compute running`, icon: <Server size={16} />, tone: computeRunning ? "good" : "neutral" },
+          { label: "存储资源", value: storageAvailable, caption: "StorageVolume", icon: <HardDrive size={16} />, tone: storageAvailable ? "info" : "neutral" },
           { label: "Gateway 请求", value: state.requestUsageLogs?.length || 0, caption: "gflabtoken.cn", icon: <LinkIcon size={16} />, tone: "info" },
           { label: "工单", value: activeTickets, caption: `${tickets.tickets.length} total`, icon: <Headphones size={16} />, tone: activeTickets ? "warn" : "neutral" },
           { label: "告警", value: needsAttention, caption: "owner visible", icon: <AlertTriangle size={16} />, tone: needsAttention ? "danger" : "good" }
@@ -68,7 +72,8 @@ export function OverviewPage({ state, wallet, tickets }) {
           <ResourceSplit
             items={[
               { label: "充值与冻结", value: `${money(wallet.balance)} / ${money(wallet.frozen)}`, meta: "Balance / frozen hold", status: `${Math.round(freezeRatio)}% frozen`, tone: freezeRatio > 70 ? "warn" : "info" },
-              { label: "计算交付", value: `${computeRunning}/${state.computeResources?.length || 0}`, meta: "Running compute resources", status: computeRunning ? "active" : "idle", tone: computeRunning ? "good" : "neutral" },
+              { label: "计算交付", value: `${computeRunning}/${computeAllocations.length}`, meta: "Running compute allocations", status: computeRunning ? "active" : "idle", tone: computeRunning ? "good" : "neutral" },
+              { label: "存储资源", value: storageAvailable, meta: "StorageVolume persistent data", status: storageAvailable ? "available" : "empty", tone: storageAvailable ? "good" : "neutral" },
               { label: "URL 分发", value: `${state.workspaces.filter((workspace) => workspace.access?.tokenStatus === "active").length}`, meta: "Active Workspace URLs", status: "scoped", tone: "info" },
               { label: "支持闭环", value: activeTickets, meta: "Open support tickets", status: activeTickets ? "open" : "clear", tone: activeTickets ? "warn" : "good" }
             ]}

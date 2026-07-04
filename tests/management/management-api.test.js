@@ -92,58 +92,6 @@ test("management API exposes organization, user, membership, and management stat
   }
 });
 
-test("storage backup API routes to backup, restore, and retention operations", async () => {
-  const calls = [];
-  const appService = {
-    async createStorageBackup(input) {
-      calls.push(["createStorageBackup", input]);
-      return { id: "backup-1", status: "available", workspaceId: input.workspaceId };
-    },
-    async restoreWorkspaceFromBackup(input) {
-      calls.push(["restoreWorkspaceFromBackup", input]);
-      return { id: "ws-restored", restoredFromBackupId: input.backupId };
-    },
-    async pruneStorageBackups(input) {
-      calls.push(["pruneStorageBackups", input]);
-      return { deletedBackupIds: ["backup-old"] };
-    }
-  };
-  const { origin, close } = await listen(createRequestHandler({ appService }));
-  try {
-    const backup = await postJson(origin, "/api/workspaces/storage-backups", {
-      accountId: "pi-alpha",
-      workspaceId: "ws-alpha",
-      reason: "manual"
-    });
-    assert.equal(backup.response.status, 200);
-    assert.equal(backup.payload.id, "backup-1");
-
-    const restored = await postJson(origin, "/api/workspaces/restore-storage-backup", {
-      accountId: "pi-alpha",
-      backupId: "backup-1",
-      workspaceName: "Restored Lab",
-      packageId: "basic"
-    });
-    assert.equal(restored.response.status, 200);
-    assert.equal(restored.payload.restoredFromBackupId, "backup-1");
-
-    const pruned = await postJson(origin, "/api/workspaces/prune-storage-backups", {
-      accountId: "pi-alpha",
-      workspaceId: "ws-alpha"
-    });
-    assert.equal(pruned.response.status, 200);
-    assert.deepEqual(pruned.payload.deletedBackupIds, ["backup-old"]);
-
-    assert.deepEqual(calls.map(([name]) => name), [
-      "createStorageBackup",
-      "restoreWorkspaceFromBackup",
-      "pruneStorageBackups"
-    ]);
-  } finally {
-    await close();
-  }
-});
-
 test("billing reconciliation API records guard reports before provisioning", async () => {
   const calls = [];
   const appService = {
@@ -157,7 +105,7 @@ test("billing reconciliation API records guard reports before provisioning", asy
         }
       };
     },
-    async createWorkspace() {
+    async createComputeAllocation() {
       throw new Error("billing_reconciliation_guard_blocked:tencent_bill_reconciliation_failed");
     }
   };
@@ -173,10 +121,10 @@ test("billing reconciliation API records guard reports before provisioning", asy
     assert.equal(recorded.response.status, 200);
     assert.equal(recorded.payload.guard.blockNewWorkspaces, true);
 
-    const blocked = await postJson(origin, "/api/workspaces", {
+    const blocked = await postJson(origin, "/api/compute-allocations", {
       accountId: "pi-alpha",
-      workspaceName: "Blocked Lab",
-      packageId: "basic"
+      packageId: "basic",
+      name: "Blocked compute"
     });
     assert.equal(blocked.response.status, 400);
     assert.equal(blocked.payload.error, "billing_reconciliation_guard_blocked:tencent_bill_reconciliation_failed");

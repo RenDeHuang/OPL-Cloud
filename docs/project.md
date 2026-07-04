@@ -11,10 +11,10 @@ This repository implements the OPL Cloud control-plane slice for OPL Console and
 
 This repository owns:
 
-- OPL Console account, billing, access, lifecycle, support, and admin surfaces.
-- OPL Workspace provisioning and URL delivery control plane.
+- OPL Console account, billing, access, resource allocation, support, and admin surfaces.
+- OPL Workspace URL delivery control plane.
 - Local Docker and Tencent TKE runtime handoff for v1.
-- Persistent workspace storage lifecycle, backup, restore-to-new-Workspace, and retention contracts.
+- ComputePool, ComputeAllocation, StorageVolume, and StorageAttachment contracts.
 - User wallet, resource usage, request usage, manual top-up audit, billing ledger, and reconciliation records.
 - Runtime readiness, production readiness, production manifests, and TKE deployment handoff.
 

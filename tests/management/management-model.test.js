@@ -10,42 +10,41 @@ const TEST_PRICING = {
   markup: 0.2
 };
 
-function runtimeFixture({ workspaceId, workspaceName, packagePlan, token }) {
-  return {
-    provider: "test-provider",
-    server: {
-      id: `server-${workspaceId}`,
-      status: "running",
-      billingStatus: "active",
-      spec: packagePlan.server
-    },
-    docker: {
-      id: `docker-${workspaceId}`,
-      image: "test-image",
-      status: "running"
-    },
-    disk: {
-      id: `disk-${workspaceId}`,
-      status: "attached_retained",
-      billingStatus: "active",
-      sizeGb: packagePlan.diskGb,
-      mountPath: "/data"
-    },
-    url: `https://workspace.example.com/w/${workspaceId}?token=${token}`,
-    slug: workspaceName
-  };
-}
-
 function createTestService() {
   return createOplCloud({
     store: new MemoryStore(),
     runtimeProvider: {
       name: "test-provider",
-      async createWorkspaceRuntime(input) {
-        return runtimeFixture(input);
+      workspaceUrl({ workspaceId, token }) {
+        return `https://workspace.example.com/w/${workspaceId}?token=${token}`;
       }
     },
     pricing: TEST_PRICING
+  });
+}
+
+async function createWorkspaceEntry(service, {
+  accountId = "",
+  organizationId = "",
+  userId = "",
+  workspaceName,
+  packageId = "basic"
+}) {
+  const ownerAccountId = accountId || organizationId;
+  const storage = await service.createStorageVolume({ accountId: ownerAccountId, packageId, name: `${workspaceName} storage` });
+  const compute = await service.createComputeAllocation({ accountId: ownerAccountId, packageId, name: `${workspaceName} compute` });
+  const attachment = await service.attachStorage({
+    accountId: ownerAccountId,
+    computeAllocationId: compute.id,
+    storageId: storage.id,
+    mountPath: "/data"
+  });
+  return service.createWorkspace({
+    accountId,
+    organizationId,
+    userId,
+    workspaceName,
+    attachmentId: attachment.id
   });
 }
 
@@ -76,11 +75,10 @@ test("Console management model links users, organizations, memberships, billing 
     reason: "org_top_up"
   });
 
-  const workspace = await service.createWorkspace({
+  const workspace = await createWorkspaceEntry(service, {
     organizationId: organization.id,
     userId: user.id,
-    workspaceName: "Managed Lab",
-    packageId: "basic"
+    workspaceName: "Managed Lab"
   });
 
   assert.deepEqual(workspace.owner, {
@@ -109,7 +107,7 @@ test("Console management model links users, organizations, memberships, billing 
     }
   ]);
   assert.equal(management.billingAccount.id, "org-lab");
-  assert.equal(management.billingAccount.balance, 248.7967);
+  assert.equal(management.billingAccount.balance, 250);
   assert.equal(management.billingAccount.frozen, 202.16);
   assert.deepEqual(management.packages.map((plan) => plan.id), ["basic", "pro"]);
   assert.deepEqual(management.workspaces.map((item) => item.id), [workspace.id]);
@@ -189,11 +187,10 @@ test("organization Workspace creation fails closed unless the user is an active 
   await service.manualTopUp({ accountId: "org-lab", amount: 250, reason: "org_top_up" });
 
   await assert.rejects(
-    service.createWorkspace({
+    createWorkspaceEntry(service, {
       organizationId: "org-lab",
       userId: "usr-ada",
-      workspaceName: "Blocked Lab",
-      packageId: "basic"
+      workspaceName: "Blocked Lab"
     }),
     /organization_membership_required/
   );

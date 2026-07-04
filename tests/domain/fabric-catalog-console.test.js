@@ -28,16 +28,6 @@ function createService({ catalog = defaultFabricResourceCatalog() } = {}) {
           missingEnv: [],
           missingTools: []
         };
-      },
-      async createWorkspaceRuntime(input) {
-        return {
-          provider: "catalog-test-provider",
-          server: { id: `server-${input.workspaceId}`, status: "running", billingStatus: "active", spec: input.packagePlan.server },
-          docker: { id: `docker-${input.workspaceId}`, image: "one-person-lab-app", status: "running" },
-          disk: { id: `disk-${input.workspaceId}`, status: "attached_retained", billingStatus: "active", sizeGb: input.packagePlan.diskGb, mountPath: "/data" },
-          url: `https://workspace.medopl.cn/w/${input.workspaceId}?token=${input.token}`,
-          slug: input.workspaceName
-        };
       }
     },
     pricing: TEST_PRICING
@@ -51,10 +41,10 @@ test("Console package choices come from Fabric catalog and exclude unavailable G
   assert.equal(service.resourceCatalog().workspacePackages.find((plan) => plan.id === "gpu").available, false);
   await service.manualTopUp({ accountId: "pi-alpha", amount: 5000, reason: "owner_credit" });
   await assert.rejects(
-    service.createWorkspace({
+    service.createComputeAllocation({
       accountId: "pi-alpha",
-      workspaceName: "GPU Lab",
-      packageId: "gpu"
+      packageId: "gpu",
+      name: "GPU compute"
     }),
     /package_unavailable:gpu:gpu_node_pool_not_verified/
   );

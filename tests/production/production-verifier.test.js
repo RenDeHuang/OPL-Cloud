@@ -50,7 +50,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
   const attachment = {
     id: "attach-prod001",
     ownerAccountId: "pi-prod",
-    computeId: compute.id,
+    computeAllocationId: compute.id,
     storageId: storage.id,
     mountPath: "/data",
     provider: "tencent-tke",
@@ -64,7 +64,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     packageId: "basic",
     state: "running",
     provider: "tencent-tke",
-    computeId: compute.id,
+    computeAllocationId: compute.id,
     storageId: storage.id,
     attachmentId: attachment.id,
     server: { id: compute.providerResourceId, status: "running", billingStatus: "active", namespace: "opl-cloud", spec: "2c4g" },
@@ -99,7 +99,7 @@ function chainResponses(chain) {
     "GET /api/production/readiness": { ready: true, missingEnv: [], missingTools: [], failedChecks: [], checks: [] },
     "GET /api/runtime/readiness": { provider: "tencent-tke", ready: true, missingEnv: [], missingTools: [] },
     "POST /api/billing/topups": { id: "pi-prod", balance: 1000, frozen: 0 },
-    "POST /api/compute-resources": chain.compute,
+    "POST /api/compute-allocations": chain.compute,
     "POST /api/storage-volumes": chain.storage,
     "POST /api/storage-attachments": chain.attachment,
     "POST /api/workspaces": chain.workspace,
@@ -115,13 +115,13 @@ function chainResponses(chain) {
     "GET /api/state": {
       wallet: { accountId: "pi-prod", balance: 999, frozen: 10 },
       billingLedger: [
-        { id: "ledger-compute", accountId: "pi-prod", computeId: chain.compute.id, type: "compute_hold" },
+        { id: "ledger-compute", accountId: "pi-prod", computeAllocationId: chain.compute.id, type: "compute_hold" },
         { id: "ledger-storage", accountId: "pi-prod", storageId: chain.storage.id, type: "storage_hold" },
         { id: "ledger-attach", accountId: "pi-prod", attachmentId: chain.attachment.id, type: "storage_attached" },
         { id: "ledger-request", accountId: "pi-prod", workspaceId: chain.workspace.id, type: "request_debit" }
       ],
       resourceUsageLogs: [
-        { id: "usage-compute", accountId: "pi-prod", computeId: chain.compute.id },
+        { id: "usage-compute", accountId: "pi-prod", computeAllocationId: chain.compute.id },
         { id: "usage-storage", accountId: "pi-prod", storageId: chain.storage.id },
         { id: "usage-attach", accountId: "pi-prod", attachmentId: chain.attachment.id }
       ],
@@ -130,7 +130,7 @@ function chainResponses(chain) {
       ]
     },
     "POST /api/storage-attachments/detach": { ...chain.attachment, status: "detached" },
-    "POST /api/compute-resources/destroy": { ...chain.compute, status: "destroyed", billingStatus: "stopped" },
+    [`POST /api/compute-allocations/${chain.compute.id}/destroy`]: { ...chain.compute, status: "destroyed", billingStatus: "stopped" },
     "POST /api/storage-volumes/destroy": { ...chain.storage, status: "destroyed", billingStatus: "stopped" }
   };
 }
@@ -221,7 +221,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "GET /api/production/readiness",
     "GET /api/runtime/readiness",
     "POST /api/billing/topups",
-    "POST /api/compute-resources",
+    "POST /api/compute-allocations",
     "POST /api/storage-volumes",
     "POST /api/storage-attachments",
     "POST /api/workspaces",
@@ -230,7 +230,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "POST /api/billing/request-usage",
     "GET /api/state",
     "POST /api/storage-attachments/detach",
-    "POST /api/compute-resources/destroy",
+    `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/storage-volumes/destroy"
   ]);
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces").body, {
@@ -238,7 +238,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     workspaceName: "Production Verification Lab",
     attachmentId: chain.attachment.id
   });
-  assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments").body.computeId, chain.compute.id);
+  assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments").body.computeAllocationId, chain.compute.id);
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments").body.storageId, chain.storage.id);
   assert.equal(result.workspaceId, chain.workspace.id);
   assert.equal(result.url, chain.workspace.url);
@@ -343,7 +343,7 @@ test("production verifier rejects localhost Workspace URLs and still cleans up r
 
   assert.deepEqual(requests.map((request) => request.key).slice(-3), [
     "POST /api/storage-attachments/detach",
-    "POST /api/compute-resources/destroy",
+    `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/storage-volumes/destroy"
   ]);
 });
@@ -354,7 +354,7 @@ test("production verifier reports cleanup failures without hiding the original v
     ...chainResponses(chain),
     [`GET ${chain.workspace.url}`]: "bad gateway",
     "POST /api/storage-attachments/detach": { error: "detach_failed" },
-    "POST /api/compute-resources/destroy": { error: "destroy_compute_failed" },
+    [`POST /api/compute-allocations/${chain.compute.id}/destroy`]: { error: "destroy_compute_failed" },
     "POST /api/storage-volumes/destroy": { error: "destroy_storage_failed" }
   };
   let caught = null;
@@ -370,7 +370,7 @@ test("production verifier reports cleanup failures without hiding the original v
         const method = options.method || "GET";
         const key = parsed.origin === "https://console.oplcloud.cn" ? `${method} ${parsed.pathname}` : `${method} ${String(url)}`;
         if (key === "POST /api/storage-attachments/detach") return jsonResponse(responses[key], 500);
-        if (key === "POST /api/compute-resources/destroy") return jsonResponse(responses[key], 500);
+        if (key === `POST /api/compute-allocations/${chain.compute.id}/destroy`) return jsonResponse(responses[key], 500);
         if (key === "POST /api/storage-volumes/destroy") return jsonResponse(responses[key], 500);
         const payload = responses[key];
         if (typeof payload === "string") return htmlResponse(payload, key.startsWith("GET https://") ? 502 : 200);
@@ -385,7 +385,7 @@ test("production verifier reports cleanup failures without hiding the original v
   assert.match(caught.message, /workspace_url_failed:502:bad gateway/);
   assert.deepEqual(caught.cleanupErrors, [
     "detach_storage:request_failed:POST:/api/storage-attachments/detach:500:detach_failed",
-    "destroy_compute:request_failed:POST:/api/compute-resources/destroy:500:destroy_compute_failed",
+    `destroy_compute:request_failed:POST:/api/compute-allocations/${chain.compute.id}/destroy:500:destroy_compute_failed`,
     "destroy_storage:request_failed:POST:/api/storage-volumes/destroy:500:destroy_storage_failed"
   ]);
 });
@@ -398,7 +398,7 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
     ...chainResponses(chain),
     [`GET ${chain.workspace.url}`]: "bad gateway",
     "POST /api/storage-attachments/detach": { error: "detach_failed" },
-    "POST /api/compute-resources/destroy": { error: "destroy_compute_failed" },
+    [`POST /api/compute-allocations/${chain.compute.id}/destroy`]: { error: "destroy_compute_failed" },
     "POST /api/storage-volumes/destroy": { error: "destroy_storage_failed" }
   };
   const code = await runProductionVerifierCli({
@@ -410,7 +410,7 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
       const method = options.method || "GET";
       const key = parsed.origin === "https://console.oplcloud.cn" ? `${method} ${parsed.pathname}` : `${method} ${String(url)}`;
       if (key === "POST /api/storage-attachments/detach") return jsonResponse(responses[key], 500);
-      if (key === "POST /api/compute-resources/destroy") return jsonResponse(responses[key], 500);
+      if (key === `POST /api/compute-allocations/${chain.compute.id}/destroy`) return jsonResponse(responses[key], 500);
       if (key === "POST /api/storage-volumes/destroy") return jsonResponse(responses[key], 500);
       const payload = responses[key];
       if (typeof payload === "string") return htmlResponse(payload, key.startsWith("GET https://") ? 502 : 200);
@@ -426,7 +426,7 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
     error: "workspace_url_failed:502:bad gateway",
     cleanupErrors: [
       "detach_storage:request_failed:POST:/api/storage-attachments/detach:500:detach_failed",
-      "destroy_compute:request_failed:POST:/api/compute-resources/destroy:500:destroy_compute_failed",
+      `destroy_compute:request_failed:POST:/api/compute-allocations/${chain.compute.id}/destroy:500:destroy_compute_failed`,
       "destroy_storage:request_failed:POST:/api/storage-volumes/destroy:500:destroy_storage_failed"
     ]
   });

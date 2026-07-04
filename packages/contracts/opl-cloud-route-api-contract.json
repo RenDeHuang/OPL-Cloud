@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, account-scoped compute resources, storage volumes, storage attachments, Workspace URL entry, request usage, support, and admin operations.",
+  "currentSlice": "Business-chain closure for wallet, package-level compute pools, account-owned compute allocations, storage volumes, storage attachments, Workspace URL entry, request usage, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -35,7 +35,7 @@
   "boundaryRules": [
     "Console may call Fabric only through package boundary exports or published service APIs.",
     "Console may call Ledger only through package boundary exports or published service APIs.",
-    "Implemented route means page + domain API client + server route + service boundary are all named, except static content may be API-free.",
+    "Implemented route means the current commercial route contract names page, API client, server API intent, service boundary, object kind, and permissions; runtime migration must remove retired compatibility routes before merge.",
     "Folded routes are current reachable URLs rendered by a parent page; they must be refreshable and guarded.",
     "External routes are current integration entry points and must name the external URL or integration boundary.",
     "Active route contract contains only current commercial truth; future, reserved, and prune candidates live in route backlog.",
@@ -215,14 +215,41 @@
     {
       "status": "implemented",
       "contractLifecycle": "current",
+      "ownerRepo": "opl-fabric",
+      "capabilities": [
+        "list",
+        "read",
+        "evidence"
+      ],
+      "id": "compute-pools.list",
+      "path": "/console/compute/pools",
+      "label": "Compute Pools",
+      "area": "console",
+      "role": "admin",
+      "menu": true,
+      "featureFlag": "workspaces",
+      "routeKind": "read_model",
+      "objectKind": "ComputePool",
+      "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
+      "apiClient": "packages/console/ui/api/resources-api.js",
+      "apiRoutes": [
+        "GET /api/compute-pools"
+      ],
+      "serviceBoundary": "ComputePoolCatalogService",
+      "requiresAdmin": true,
+      "requiresAuth": true,
+      "hiddenInMenu": true
+    },
+    {
+      "status": "implemented",
+      "contractLifecycle": "current",
       "ownerRepo": "opl-console",
       "capabilities": [
         "list",
         "read",
-        "action",
         "evidence"
       ],
-      "id": "compute.list",
+      "id": "compute-allocations.list",
       "path": "/console/compute",
       "label": "Compute",
       "area": "console",
@@ -230,13 +257,14 @@
       "menu": true,
       "featureFlag": "workspaces",
       "routeKind": "business_object",
-      "objectKind": "ComputeResource",
+      "objectKind": "ComputeAllocation",
       "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
       "apiClient": "packages/console/ui/api/resources-api.js",
       "apiRoutes": [
-        "GET /api/state"
+        "GET /api/state",
+        "GET /api/compute-allocations"
       ],
-      "serviceBoundary": "ResourceProvisioningService",
+      "serviceBoundary": "ComputeAllocationService",
       "requiresAdmin": false,
       "requiresAuth": true
     },
@@ -250,22 +278,22 @@
         "action",
         "evidence"
       ],
-      "id": "compute.create",
+      "id": "compute-allocations.create",
       "path": "/console/compute/new",
-      "label": "Create Compute",
+      "label": "Create Compute Allocation",
       "area": "console",
       "role": "lab_owner",
       "hiddenInMenu": true,
       "featureFlag": "workspaces",
       "routeKind": "business_object",
-      "objectKind": "ComputeResource",
+      "objectKind": "ComputeAllocation",
       "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
       "apiClient": "packages/console/ui/api/resources-api.js",
       "apiRoutes": [
-        "GET /api/state",
-        "POST /api/compute-resources"
+        "GET /api/compute-pools",
+        "POST /api/compute-allocations"
       ],
-      "serviceBoundary": "ResourceProvisioningService",
+      "serviceBoundary": "ComputeAllocationService",
       "requiresAdmin": false,
       "requiresAuth": true
     },
@@ -279,22 +307,22 @@
         "action",
         "evidence"
       ],
-      "id": "compute.detail",
+      "id": "compute-allocations.detail",
       "path": "/console/compute/:id",
-      "label": "Compute Detail",
+      "label": "Compute Allocation Detail",
       "area": "console",
       "role": "lab_owner",
       "hiddenInMenu": true,
       "featureFlag": "workspaces",
       "routeKind": "business_object",
-      "objectKind": "ComputeResource",
+      "objectKind": "ComputeAllocation",
       "pageModule": "packages/console/ui/pages/resources/ResourceProvisioningPages.jsx",
       "apiClient": "packages/console/ui/api/resources-api.js",
       "apiRoutes": [
-        "GET /api/state",
-        "POST /api/compute-resources/destroy"
+        "GET /api/compute-allocations/:id",
+        "POST /api/compute-allocations/:id/destroy"
       ],
-      "serviceBoundary": "ResourceProvisioningService",
+      "serviceBoundary": "ComputeAllocationService",
       "requiresAdmin": false,
       "requiresAuth": true
     },
@@ -439,7 +467,12 @@
       ],
       "serviceBoundary": "ResourceProvisioningService",
       "requiresAdmin": false,
-      "requiresAuth": true
+      "requiresAuth": true,
+      "inputContract": [
+        "computeAllocationId",
+        "storageVolumeId",
+        "mountPath"
+      ]
     },
     {
       "status": "implemented",
@@ -468,7 +501,10 @@
       ],
       "serviceBoundary": "ResourceProvisioningService",
       "requiresAdmin": false,
-      "requiresAuth": true
+      "requiresAuth": true,
+      "inputContract": [
+        "storageAttachmentId"
+      ]
     },
     {
       "status": "implemented",
@@ -505,7 +541,8 @@
       "ownerRepo": "opl-console",
       "capabilities": [
         "read",
-        "write"
+        "write",
+        "action"
       ],
       "id": "workspace.create",
       "path": "/console/workspaces/new",
@@ -524,7 +561,10 @@
       ],
       "serviceBoundary": "WorkspaceEntryService",
       "requiresAdmin": false,
-      "requiresAuth": true
+      "requiresAuth": true,
+      "inputContract": [
+        "storageAttachmentId"
+      ]
     },
     {
       "status": "implemented",

@@ -3,9 +3,9 @@ import { Alert, Button, Empty, Form, Input, InputNumber, Select } from "antd";
 import { Cable, Database, Plus, Server, Trash2 } from "lucide-react";
 import {
   attachStorage,
-  createComputeResource,
+  createComputeAllocation,
   createStorageVolume,
-  destroyComputeResource,
+  destroyComputeAllocation,
   destroyStorageVolume,
   detachStorage
 } from "../../api/resources-api.js";
@@ -25,27 +25,27 @@ function selectedResource(path, items) {
   return items.find((item) => item.id === id);
 }
 
-export function ComputeResourcesPage({ state }) {
-  const computeResources = state.computeResources || [];
+export function ComputeAllocationsPage({ state }) {
+  const computeAllocations = state.computeAllocations || [];
   return (
     <ConsoleSurface
       title="Compute"
-      eyebrow="TKE resources"
-      subtitle="Account-scoped runtime compute resources"
-      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("compute.create"))}>开通计算</Button>}
+      eyebrow="TKE allocations"
+      subtitle="Account-owned dedicated CVM allocations"
+      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("compute-allocations.create"))}>开通计算</Button>}
     >
       <MetricStrip
         items={[
-          { label: "计算资源", value: computeResources.length, caption: "owned by this account", tone: computeResources.length ? "info" : "neutral" },
-          { label: "运行中", value: computeResources.filter((item) => item.status === "running").length, caption: "billable runtime", tone: "good" }
+          { label: "计算分配", value: computeAllocations.length, caption: "owned by this account", tone: computeAllocations.length ? "info" : "neutral" },
+          { label: "运行中", value: computeAllocations.filter((item) => item.status === "running").length, caption: "billable CVM runtime", tone: "good" }
         ]}
       />
-      <InsightPanel title="计算资源" eyebrow="ComputeResource">
+      <InsightPanel title="计算分配" eyebrow="ComputeAllocation">
         <ObjectTable
-          data={computeResources}
-          emptyText="暂无计算资源"
+          data={computeAllocations}
+          emptyText="暂无计算分配"
           columns={[
-            { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("compute.detail", { id: row.id }))}>{row.name || row.id}</Button> },
+            { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("compute-allocations.detail", { id: row.id }))}>{row.name || row.id}</Button> },
             { title: "规格", dataIndex: "spec" },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
             { title: "云资源", dataIndex: "providerResourceId", ellipsis: true }
@@ -56,21 +56,21 @@ export function ComputeResourcesPage({ state }) {
   );
 }
 
-export function CreateComputeResourcePage({ state, session, runAction }) {
+export function CreateComputeAllocationPage({ state, session, runAction }) {
   const availablePackages = (state.packages || []).filter((plan) => plan.available);
   const initialPackageId = availablePackages[0]?.id || "basic";
   return (
     <ConsoleSurface title="Create Compute" eyebrow="Provision" subtitle="Choose a verified TKE compute package" compact>
-      <InsightPanel title="开通计算" eyebrow="ComputeResource">
+      <InsightPanel title="开通计算" eyebrow="ComputeAllocation">
         <Form
           layout="vertical"
           initialValues={{ name: "Analysis compute", packageId: initialPackageId }}
           onFinish={async (values) => {
             const created = await runAction(
-              () => createComputeResource(values, session.csrfToken),
+              () => createComputeAllocation(values, session.csrfToken),
               "计算资源已开通"
             );
-            if (created) navigate(routeTo("compute.list"));
+            if (created) navigate(routeTo("compute-allocations.detail", { id: created.id }));
           }}
         >
           <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入计算资源名称" }]}>
@@ -102,12 +102,12 @@ export function CreateComputeResourcePage({ state, session, runAction }) {
   );
 }
 
-export function ComputeResourceDetailPage({ state, path, session, runAction }) {
-  const resource = selectedResource(path, state.computeResources || []);
-  if (!resource) return <ConsoleSurface title="Compute" eyebrow="ComputeResource"><Empty description="未找到计算资源" /></ConsoleSurface>;
+export function ComputeAllocationDetailPage({ state, path, session, runAction }) {
+  const resource = selectedResource(path, state.computeAllocations || []);
+  if (!resource) return <ConsoleSurface title="Compute" eyebrow="ComputeAllocation"><Empty description="未找到计算分配" /></ConsoleSurface>;
   return (
-    <ConsoleSurface title={resource.name || resource.id} eyebrow="Compute detail" extra={<Button onClick={() => navigate(routeTo("compute.list"))}>返回列表</Button>}>
-      <InsightPanel title="计算资源" eyebrow="TKE">
+    <ConsoleSurface title={resource.name || resource.id} eyebrow="Compute allocation detail" extra={<Button onClick={() => navigate(routeTo("compute-allocations.list"))}>返回列表</Button>}>
+      <InsightPanel title="计算分配" eyebrow="TKE CVM">
         <ResourceSplit
           items={[
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
@@ -118,12 +118,12 @@ export function ComputeResourceDetailPage({ state, path, session, runAction }) {
         <ActionGroup
           actions={[
             {
-              label: "销毁 ComputeResource",
+              label: "销毁 ComputeAllocation",
               danger: true,
               icon: <Trash2 size={15} />,
               disabled: resource.status === "destroyed",
               onClick: () => runAction(
-                () => destroyComputeResource({ computeId: resource.id, confirm: true }, session.csrfToken),
+                () => destroyComputeAllocation({ computeAllocationId: resource.id, confirm: true }, session.csrfToken),
                 "计算资源已销毁"
               )
             }
@@ -238,7 +238,7 @@ export function StorageAttachmentsPage({ state }) {
     <ConsoleSurface
       title="Attachments"
       eyebrow="Mounts"
-      subtitle="Attach storage volumes to compute resources"
+      subtitle="Attach storage volumes to compute allocations"
       extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("attachment.create"))}>挂载存储</Button>}
     >
       <InsightPanel title="挂载关系" eyebrow="StorageAttachment">
@@ -247,7 +247,7 @@ export function StorageAttachmentsPage({ state }) {
           emptyText="暂无挂载关系"
           columns={[
             { title: "挂载", dataIndex: "id" },
-            { title: "计算", dataIndex: "computeId", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("attachment.detail", { id: row.id }))}>{row.computeId}</Button> },
+            { title: "计算", dataIndex: "computeAllocationId", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("attachment.detail", { id: row.id }))}>{row.computeAllocationId}</Button> },
             { title: "存储", dataIndex: "storageId" },
             { title: "路径", dataIndex: "mountPath" },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> }
@@ -267,7 +267,7 @@ export function StorageAttachmentDetailPage({ state, path, session, runAction })
         <ResourceSplit
           items={[
             { label: "状态", value: attachment.status || "-", status: attachment.status || "pending", tone: resourceStatus(attachment.status) },
-            { label: "计算", value: attachment.computeId || "-", meta: "ComputeResource" },
+            { label: "计算", value: attachment.computeAllocationId || "-", meta: "ComputeAllocation" },
             { label: "存储", value: attachment.storageId || "-", meta: attachment.mountPath || "/data" }
           ]}
         />
@@ -291,17 +291,17 @@ export function StorageAttachmentDetailPage({ state, path, session, runAction })
 }
 
 export function CreateStorageAttachmentPage({ state, session, runAction }) {
-  const computeResources = (state.computeResources || []).filter((item) => item.status !== "destroyed");
+  const computeAllocations = (state.computeAllocations || []).filter((item) => item.status !== "destroyed");
   const storageVolumes = (state.storageVolumes || []).filter((item) => !["destroyed", "attached"].includes(item.status));
-  const canAttach = computeResources.length > 0 && storageVolumes.length > 0;
+  const canAttach = computeAllocations.length > 0 && storageVolumes.length > 0;
   return (
-    <ConsoleSurface title="Attach Storage" eyebrow="Mount" subtitle="Select one compute resource and one storage volume" compact>
+    <ConsoleSurface title="Attach Storage" eyebrow="Mount" subtitle="Select one compute allocation and one storage volume" compact>
       <InsightPanel title="挂载存储" eyebrow="StorageAttachment">
         {!canAttach && <Alert type="warning" showIcon message="需要至少一个计算资源和一个未挂载存储卷。" />}
         <Form
           layout="vertical"
           initialValues={{
-            computeId: computeResources[0]?.id,
+            computeAllocationId: computeAllocations[0]?.id,
             storageId: storageVolumes[0]?.id,
             mountPath: "/data"
           }}
@@ -313,8 +313,8 @@ export function CreateStorageAttachmentPage({ state, session, runAction }) {
             if (created) navigate(routeTo("attachment.list"));
           }}
         >
-          <Form.Item name="computeId" label="计算资源" rules={[{ required: true, message: "请选择计算资源" }]}>
-            <Select options={computeResources.map((item) => ({ label: item.name || item.id, value: item.id }))} />
+          <Form.Item name="computeAllocationId" label="计算分配" rules={[{ required: true, message: "请选择计算分配" }]}>
+            <Select options={computeAllocations.map((item) => ({ label: item.name || item.id, value: item.id }))} />
           </Form.Item>
           <Form.Item name="storageId" label="存储资源" rules={[{ required: true, message: "请选择存储资源" }]}>
             <Select options={storageVolumes.map((item) => ({ label: `${item.name || item.id} · ${item.sizeGb}GB`, value: item.id }))} />

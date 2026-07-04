@@ -9,8 +9,12 @@ Supported:
 - Lab Owner login.
 - Admin login.
 - Basic and Pro CPU Workspace packages.
+- Package-level ComputePools.
+- Account-owned dedicated CVM ComputeAllocations.
 - Workspace URL distribution.
-- Compute stop, restart, destroy, and recreate from retained storage.
+- Explicit compute allocation destruction.
+- Independent storage creation before or after compute.
+- Storage attachment to a compute allocation.
 - Explicit storage destruction.
 - Seven-day compute and storage holds.
 - Resource usage, request usage, wallet transactions, manual top-up audit, billing ledger, and reconciliation records.

@@ -52,29 +52,29 @@ export const consoleActions = Object.freeze([
     requires: ["workspace.url.active"]
   },
   {
-    id: "compute.create",
+    id: "compute-allocations.create",
     label: "Create Compute",
     type: "route",
     role: "lab_owner",
-    objectKind: "ComputeResource",
-    routeId: "compute.create"
+    objectKind: "ComputeAllocation",
+    routeId: "compute-allocations.create"
   },
   {
-    id: "compute.detail",
+    id: "compute-allocations.detail",
     label: "Open Compute Detail",
     type: "route",
     role: "lab_owner",
-    objectKind: "ComputeResource",
-    routeId: "compute.detail"
+    objectKind: "ComputeAllocation",
+    routeId: "compute-allocations.detail"
   },
   {
-    id: "compute.destroy",
+    id: "compute-allocations.destroy",
     label: "Destroy Compute",
     type: "api",
     role: "lab_owner",
-    objectKind: "ComputeResource",
+    objectKind: "ComputeAllocation",
     apiClient: "packages/console/ui/api/resources-api.js",
-    apiName: "destroyComputeResource"
+    apiName: "destroyComputeAllocation"
   },
   {
     id: "storage.create",
@@ -168,12 +168,13 @@ export const consoleActions = Object.freeze([
     apiName: "manualTopUp"
   },
   {
-    id: "admin.userCreate.disabled",
+    id: "admin.userCreate",
     label: "Create User",
-    type: "disabled",
+    type: "api",
     role: "admin",
     objectKind: "User",
-    disabledReason: "User creation route is not part of the current commercial launch contract."
+    apiClient: "packages/console/ui/api/console-read-api.js",
+    apiName: "createUser"
   },
   {
     id: "admin.userWallet.disabled",

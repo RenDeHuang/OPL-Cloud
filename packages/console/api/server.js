@@ -483,9 +483,27 @@ function requireAdmin(auth, session) {
   if (auth) auth.requireAdmin(session.user);
 }
 
+function apiRouteKey(method, pathname) {
+  const computeAllocationDetail = pathname.match(/^\/api\/compute-allocations\/([^/]+)$/);
+  if (method === "GET" && computeAllocationDetail) {
+    return {
+      routeKey: "GET /api/compute-allocations/:id",
+      pathParams: { id: decodeURIComponent(computeAllocationDetail[1]) }
+    };
+  }
+  const computeAllocationDestroy = pathname.match(/^\/api\/compute-allocations\/([^/]+)\/destroy$/);
+  if (method === "POST" && computeAllocationDestroy) {
+    return {
+      routeKey: "POST /api/compute-allocations/:id/destroy",
+      pathParams: { id: decodeURIComponent(computeAllocationDestroy[1]) }
+    };
+  }
+  return { routeKey: `${method} ${pathname}`, pathParams: {} };
+}
+
 async function handleApi(request, response, pathname, appService, operatorSummaryToken = process.env.OPL_OPERATOR_SUMMARY_TOKEN, auth = null) {
   try {
-    const routeKey = `${request.method} ${pathname}`;
+    const { routeKey, pathParams } = apiRouteKey(request.method, pathname);
     const publicRoutes = buildApiRoutes({
       appService,
       auth,
@@ -493,6 +511,7 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       response,
       readJson,
       body: {},
+      pathParams,
       operatorSummaryToken,
       session: null,
       isAdminSession: false,
@@ -522,6 +541,7 @@ async function handleApi(request, response, pathname, appService, operatorSummar
       response,
       readJson,
       body,
+      pathParams,
       operatorSummaryToken,
       session,
       isAdminSession,

@@ -33,15 +33,15 @@ test("local Docker provider exposes split compute, storage, attachment, and Work
       storage: { id: "storage-local001", name: "Grant data" },
       packagePlan
     });
-    const compute = await provider.createComputeResource({
-      computeId: "compute-local001",
-      compute: { id: "compute-local001", name: "CPU node" },
+    const compute = await provider.createComputeAllocation({
+      computeAllocationId: "compute-local001",
+      computeAllocation: { id: "compute-local001", name: "CPU node" },
       packagePlan
     });
     const attachment = await provider.attachStorage({
       attachment: {
         id: "attach-local001",
-        computeId: "compute-local001",
+        computeAllocationId: "compute-local001",
         storageId: "storage-local001",
         mountPath: "/data"
       },
@@ -79,7 +79,7 @@ test("local Docker provider exposes split compute, storage, attachment, and Work
   }
 });
 
-test("local Docker provider creates real compose, disk, URL, and preserves disk after server destroy", async () => {
+test("local Docker provider creates split resources, URL entry, and preserves storage after compute destroy", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-cloud-local-docker-"));
   try {
     const provider = new LocalDockerProvider({
@@ -98,15 +98,32 @@ test("local Docker provider creates real compose, disk, URL, and preserves disk 
     });
 
     await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+    const storage = await service.createStorageVolume({
+      accountId: "pi-alpha",
+      packageId: "basic",
+      sizeGb: 10,
+      name: "Real Docker Disk"
+    });
+    const compute = await service.createComputeAllocation({
+      accountId: "pi-alpha",
+      packageId: "basic",
+      name: "Real Docker Compute"
+    });
+    const attachment = await service.attachStorage({
+      accountId: "pi-alpha",
+      computeAllocationId: compute.id,
+      storageId: storage.id,
+      mountPath: "/data"
+    });
     const workspace = await service.createWorkspace({
       accountId: "pi-alpha",
       workspaceName: "Real Docker Lab",
-      packageId: "basic"
+      attachmentId: attachment.id
     });
 
-    const workspaceDir = join(root, workspace.id);
-    const composePath = join(workspaceDir, "docker-compose.yml");
-    const diskPath = join(workspaceDir, "disk");
+    const workspaceDir = compute.localPath;
+    const composePath = workspace.docker.composePath;
+    const diskPath = storage.localPath;
     const dataPath = join(diskPath, "data");
     const projectsPath = join(diskPath, "projects");
     const envPath = join(workspaceDir, ".env");
@@ -142,24 +159,28 @@ test("local Docker provider creates real compose, disk, URL, and preserves disk 
       CODEX_HOME: "/data/codex"
     });
     assert.deepEqual(composeService.ports, ["127.0.0.1::3000"]);
-    assert.deepEqual(composeService.volumes, ["./disk/data:/data", "./disk/projects:/projects"]);
+    assert.deepEqual(composeService.volumes, [`${dataPath}:/data`, `${projectsPath}:/projects`]);
 
-    const destroyed = await service.destroyServer({
+    await service.detachStorage({
       accountId: "pi-alpha",
-      workspaceId: workspace.id,
+      attachmentId: attachment.id,
+      confirm: true
+    });
+    const destroyed = await service.destroyComputeAllocation({
+      accountId: "pi-alpha",
+      computeAllocationId: compute.id,
       confirm: true
     });
 
-    assert.equal(destroyed.server.status, "destroyed");
-    assert.equal(destroyed.disk.status, "detached_retained");
+    assert.equal(destroyed.status, "destroyed");
     assert.equal(await exists(diskPath), true);
 
-    const diskDestroyed = await service.destroyDisk({
+    const diskDestroyed = await service.destroyStorageVolume({
       accountId: "pi-alpha",
-      workspaceId: workspace.id,
+      storageId: storage.id,
       confirmDataLoss: true
     });
-    assert.equal(diskDestroyed.disk.status, "destroyed");
+    assert.equal(diskDestroyed.status, "destroyed");
     assert.equal(await exists(diskPath), false);
   } finally {
     await rm(root, { recursive: true, force: true });

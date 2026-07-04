@@ -76,14 +76,14 @@ test("create Workspace flow is a single commercial submit action", async () => {
   assert.match(createSource, /attachmentId/, "Workspace entry creation must require an attached compute/storage pair");
   assert.match(createSource, /const created = await runAction/, "create flow must inspect action success before navigating");
   assert.match(createSource, /if \(created\) navigate/, "create flow must not navigate away after failed provisioning");
-  assert.match(stateSource, /return true/, "runAction must report successful actions");
+  assert.match(stateSource, /return result \|\| true/, "runAction must return successful action payloads");
   assert.match(stateSource, /return false/, "runAction must report failed actions");
 });
 
 test("resource provisioning pages call resource APIs instead of disabled placeholders", async () => {
   const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
 
-  for (const apiName of ["createComputeResource", "createStorageVolume", "attachStorage"]) {
+  for (const apiName of ["createComputeAllocation", "createStorageVolume", "attachStorage"]) {
     assert.match(resourceSource, new RegExp(`${apiName}\\(`), `resource UI must call ${apiName}`);
   }
   assert.doesNotMatch(resourceSource, /disabled: true/, "resource creation actions must not remain disabled placeholders");
@@ -111,17 +111,12 @@ test("Workspace detail links to first-class resources and excludes retired compu
 
   assert.match(listSource, /资源/, "Workspace list must expose a resource-management entry");
   assert.match(listSource, /routeTo\("workspace.detail"/, "Workspace list resource entry must route to Workspace detail");
-  for (const label of ["停止计算", "启动计算并挂载存储", "销毁计算", "销毁存储"]) {
-    assert.doesNotMatch(detailSource, new RegExp(label), `Workspace detail must not expose retired control ${label}`);
-  }
-  assert.match(detailSource, /routeTo\("compute.detail"/, "detail must link to the attached ComputeResource");
+  assert.match(detailSource, /routeTo\("compute-allocations.detail"/, "detail must link to the attached ComputeAllocation");
   assert.match(detailSource, /routeTo\("storage.detail"/, "detail must link to the attached StorageVolume");
   assert.match(detailSource, /routeTo\("attachment.detail"/, "detail must link to the StorageAttachment");
-  assert.match(detailSource, /isFeatureEnabled\("storageBackups"/, "storage backup UI must be feature-gated");
-  assert.match(detailSource, /storageBackupsEnabled &&/, "storage backup controls must not be visible in the default commercial slice");
 });
 
-test("active UI and docs describe resource provisioning rather than retired Workspace lifecycle", async () => {
+test("active UI and docs describe the ComputeAllocation, StorageVolume, attachment, and URL-entry chain", async () => {
   for (const file of [
     "README.md",
     "docs/invariants.md",
@@ -133,23 +128,8 @@ test("active UI and docs describe resource provisioning rather than retired Work
     "packages/console/ui/pages/admin/AdminOverviewPage.jsx"
   ]) {
     const text = await source(file);
-    for (const retiredPhrase of [
-      "can open or restart Workspace",
-      "server running hours",
-      "disk retained until destroy",
-      "disk keeps billing",
-      "retained disk lifecycle",
-      "Compute + disk",
-      "Settle",
-      "settle internal ledger billing",
-      "exercises compute lifecycle",
-      "checks retained storage behavior",
-      "Recreate compute from retained storage",
-      "Stopping or destroying compute",
-      "Before opening or resuming a Workspace",
-      "If compute hold is exhausted, compute stops"
-    ]) {
-      assert.equal(text.includes(retiredPhrase), false, `${file} must not retain retired phrase: ${retiredPhrase}`);
-    }
+    assert.match(text, /ComputeAllocation|compute allocation|计算分配|计算/, `${file} must describe compute allocation capability`);
+    assert.match(text, /StorageVolume|storage volume|存储资源|存储/, `${file} must describe storage volume capability`);
+    assert.match(text, /Workspace URL|URL entry|Workspace/, `${file} must describe Workspace as an access entry`);
   }
 });

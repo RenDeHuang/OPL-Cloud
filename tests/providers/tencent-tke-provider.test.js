@@ -49,7 +49,7 @@ test("Tencent TKE provider reports readiness gaps before Kubernetes execution", 
   });
 });
 
-test("Tencent TKE provider passes Codex provider settings through workspace secrets", () => {
+test("Tencent TKE provider passes Codex provider settings through allocation and entry secrets", () => {
   const provider = new TencentTkeProvider({
     env: {
       ...requiredEnv,
@@ -60,15 +60,15 @@ test("Tencent TKE provider passes Codex provider settings through workspace secr
     },
     commandExists: () => true
   });
-  const computeManifest = provider.computeResourceManifest({
+  const computeManifest = provider.computeAllocationManifest({
     name: "opl-compute-codex",
-    computeId: "compute-codex",
+    computeAllocationId: "compute-codex",
     accountId: "pi-alpha",
     compute: { id: "compute-codex", name: "Codex node", token: "share_compute" },
     packagePlan: { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, server: "2c4g", diskGb: 10 }
   });
-  const workspaceManifest = provider.workspaceManifest({
-    name: "opl-ws-codex",
+  const entrySecretManifest = provider.workspaceEntrySecretManifest({
+    computeName: "opl-compute-codex",
     workspaceId: "ws-codex",
     ownerAccountId: "pi-alpha",
     workspaceName: "Codex Workspace",
@@ -77,7 +77,7 @@ test("Tencent TKE provider passes Codex provider settings through workspace secr
   });
 
   const computeSecret = decodedSecretData(computeManifest.items.find((item) => item.kind === "Secret"));
-  const workspaceSecret = decodedSecretData(workspaceManifest.items.find((item) => item.kind === "Secret"));
+  const entrySecret = decodedSecretData(entrySecretManifest);
   assert.deepEqual({
     OPL_CODEX_MODEL: computeSecret.OPL_CODEX_MODEL,
     OPL_CODEX_REASONING_EFFORT: computeSecret.OPL_CODEX_REASONING_EFFORT,
@@ -89,14 +89,14 @@ test("Tencent TKE provider passes Codex provider settings through workspace secr
     OPL_CODEX_BASE_URL: "https://gflabtoken.cn/v1",
     OPL_CODEX_API_KEY: "secret-codex-key"
   });
-  assert.equal(workspaceSecret.OPL_CODEX_API_KEY, "secret-codex-key");
+  assert.equal(entrySecret.OPL_CODEX_API_KEY, "secret-codex-key");
 
   const computeEnv = computeManifest.items.find((item) => item.kind === "Deployment")
     .spec.template.spec.containers[0].env;
   assert.equal(JSON.stringify(computeEnv).includes("secret-codex-key"), false);
 });
 
-test("Tencent TKE provider bootstraps Codex config into retained workspace storage before WebUI starts", () => {
+test("Tencent TKE provider bootstraps Codex config into attached storage before WebUI starts", () => {
   const provider = new TencentTkeProvider({
     env: {
       ...requiredEnv,
@@ -107,9 +107,9 @@ test("Tencent TKE provider bootstraps Codex config into retained workspace stora
     },
     commandExists: () => true
   });
-  const manifest = provider.computeResourceManifest({
+  const manifest = provider.computeAllocationManifest({
     name: "opl-compute-codex",
-    computeId: "compute-codex",
+    computeAllocationId: "compute-codex",
     accountId: "pi-alpha",
     compute: { id: "compute-codex", name: "Codex node", token: "share_compute" },
     packagePlan: { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, server: "2c4g", diskGb: 10 },
@@ -118,7 +118,7 @@ test("Tencent TKE provider bootstraps Codex config into retained workspace stora
   const deployment = manifest.items.find((item) => item.kind === "Deployment");
   const initContainer = deployment.spec.template.spec.initContainers?.find((item) => item.name === "bootstrap-codex-config");
 
-  assert.ok(initContainer, "workspace deployment must write Codex config before WebUI starts");
+  assert.ok(initContainer, "allocation deployment must write Codex config before WebUI starts");
   assert.equal(initContainer.image, requiredEnv.OPL_WORKSPACE_IMAGE);
   assert.deepEqual(initContainer.envFrom, [{ secretRef: { name: "opl-compute-codex-env" } }]);
   assert.deepEqual(Object.fromEntries(initContainer.env.map((item) => [item.name, item.value])), {
@@ -157,17 +157,17 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
       storage: { id: "storage-tke001", ownerAccountId: "pi-alpha", sizeGb: 10 },
       packagePlan
     });
-    const compute = await provider.createComputeResource({
-      computeId: "compute-tke001",
+    const compute = await provider.createComputeAllocation({
+      computeAllocationId: "compute-tke001",
       accountId: "pi-alpha",
-      compute: { id: "compute-tke001", ownerAccountId: "pi-alpha", name: "CPU node" },
+      computeAllocation: { id: "compute-tke001", ownerAccountId: "pi-alpha", name: "CPU node" },
       packagePlan
     });
     const attachment = await provider.attachStorage({
       attachment: {
         id: "attach-tke001",
         ownerAccountId: "pi-alpha",
-        computeId: "compute-tke001",
+        computeAllocationId: "compute-tke001",
         storageId: "storage-tke001",
         mountPath: "/data"
       },
@@ -224,7 +224,7 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
       "/projects:projects"
     ]);
     assert.deepEqual(Object.fromEntries(attachmentContainer.env.map((item) => [item.name, item.value])), {
-      OPL_COMPUTE_ID: "compute-tke001",
+      OPL_COMPUTE_ALLOCATION_ID: "compute-tke001",
       OPL_OWNER_ACCOUNT_ID: "pi-alpha",
       OPL_PACKAGE_ID: "basic",
       OPL_ACCELERATOR: "cpu",
@@ -271,13 +271,13 @@ test("Tencent TKE provider detaches and destroys split resources in Kubernetes",
   };
   const attachment = {
     id: "attach-tke001",
-    computeId: "compute-tke001",
+    computeAllocationId: "compute-tke001",
     providerAttachmentId: "deployment/opl-compute-tke001:pvc/opl-storage-tke001-data:/data"
   };
 
   try {
     const detached = await provider.detachStorage({ attachment });
-    const destroyedCompute = await provider.destroyComputeResource({ compute });
+    const destroyedCompute = await provider.destroyComputeAllocation({ computeAllocation: compute });
     const destroyedStorage = await provider.destroyStorageVolume({ storage });
     const routePath = join(stateRootDir, "opl-compute-tke001", "shared-ingress-route.k8s.json");
     const detachPatch = JSON.stringify({
@@ -320,7 +320,7 @@ test("Tencent TKE provider treats detach as idempotent when compute deployment i
   const detached = await provider.detachStorage({
     attachment: {
       id: "attach-gone",
-      computeId: "compute-gone",
+      computeAllocationId: "compute-gone",
       providerAttachmentId: "deployment/opl-compute-gone:pvc/opl-storage-gone-data:/data"
     }
   });
@@ -334,427 +334,7 @@ test("Tencent TKE provider treats detach as idempotent when compute deployment i
   });
 });
 
-test("Tencent TKE provider applies runtime resources behind the shared Workspace gateway", async () => {
-  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
-  const calls = [];
-  const runner = async ({ command, args, cwd, env }) => {
-    calls.push({ command, args, cwd, env });
-    if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
-      return JSON.stringify(sharedIngressFixture());
-    }
-    if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke001 pvc/opl-ws-tke001-data service/opl-ws-tke001 ingress/opl-cloud endpoints/opl-ws-tke001 -o json") {
-      return JSON.stringify(runtimeStatusFixture({
-        name: "opl-ws-tke001",
-        workspaceId: "ws-tke001",
-        image: requiredEnv.OPL_WORKSPACE_IMAGE,
-        ready: true
-      }));
-    }
-    return "";
-  };
-  const provider = new TencentTkeProvider({
-    env: requiredEnv,
-    runner,
-    commandExists: () => true,
-    stateRootDir
-  });
-
-  try {
-    const runtime = await provider.createWorkspaceRuntime({
-      workspaceId: "ws-tke001",
-      ownerAccountId: "pi-alpha",
-      workspaceName: "Grant Lab",
-      packagePlan: { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, gpu: 0, server: "2c4g", diskGb: 10 },
-      token: "share_tke_secret"
-    });
-
-    assert.equal(runtime.provider, "tencent-tke");
-    assert.equal(runtime.server.id, "deployment/opl-ws-tke001");
-    assert.equal(runtime.server.status, "running");
-    assert.equal(runtime.server.spec, "2c4g");
-    assert.equal(runtime.docker.id, "deployment/opl-ws-tke001");
-    assert.equal(runtime.docker.image, requiredEnv.OPL_WORKSPACE_IMAGE);
-    assert.equal(runtime.docker.status, "running");
-    assert.equal(runtime.disk.id, "pvc/opl-ws-tke001-data");
-    assert.equal(runtime.disk.sizeGb, 10);
-    assert.equal(runtime.disk.mountPath, "/data");
-    assert.equal(runtime.url, "https://workspace.medopl.cn/w/ws-tke001/?token=share_tke_secret");
-    assert.equal(runtime.slug, "grant-lab-tke001");
-
-    const manifestPath = join(stateRootDir, "ws-tke001", "workspace.k8s.json");
-    const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
-    assert.equal(commandLines.join("\n").includes("share_tke_secret"), false);
-    assert.deepEqual(commandLines, [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`,
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke001 pvc/opl-ws-tke001-data service/opl-ws-tke001 ingress/opl-cloud endpoints/opl-ws-tke001 -o json"
-    ]);
-
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    assert.equal(manifest.kind, "List");
-    assert.deepEqual(manifest.items.map((item) => item.kind), [
-      "Secret",
-      "PersistentVolumeClaim",
-      "Deployment",
-      "Service"
-    ]);
-    const deployment = manifest.items.find((item) => item.kind === "Deployment");
-    const pvc = manifest.items.find((item) => item.kind === "PersistentVolumeClaim");
-    const service = manifest.items.find((item) => item.kind === "Service");
-    const container = deployment.spec.template.spec.containers[0];
-    assert.equal(container.image, requiredEnv.OPL_WORKSPACE_IMAGE);
-    assert.deepEqual(container.resources, {
-      requests: { cpu: "2", memory: "4Gi" },
-      limits: { cpu: "2", memory: "4Gi" }
-    });
-    assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [{ name: "tcr-pull-secret" }]);
-    assert.deepEqual(deployment.spec.template.spec.nodeSelector, { "medopl.cn/workload": "medopl" });
-    assert.equal(container.ports[0].containerPort, 3000);
-    assert.equal(pvc.metadata.name, "opl-ws-tke001-data");
-    assert.equal(pvc.spec.storageClassName, "cbs");
-    assert.equal(deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, pvc.metadata.name);
-    assert.deepEqual(container.volumeMounts.map((mount) => `${mount.mountPath}:${mount.subPath}`), [
-      "/data:data",
-      "/projects:projects"
-    ]);
-    assert.deepEqual(Object.fromEntries(container.env.map((item) => [item.name, item.value])), {
-      OPL_WORKSPACE_ID: "ws-tke001",
-      OPL_WORKSPACE_NAME: "Grant Lab",
-      OPL_OWNER_ACCOUNT_ID: "pi-alpha",
-      OPL_PACKAGE_ID: "basic",
-      OPL_ACCELERATOR: "cpu",
-      DATA_DIR: "/data",
-      AIONUI_DATA_DIR: "/data",
-      OPL_PROJECTS_DIR: "/projects",
-      ALLOW_REMOTE: "true",
-      OPL_WEBUI_AUTH_MODE: "none",
-      AIONUI_WEBUI_AUTH_MODE: "none",
-      HOME: "/data",
-      OPL_WORKSPACE_ROOT: "/projects",
-      CODEX_HOME: "/data/codex"
-    });
-    assert.deepEqual(service.spec.selector, deployment.spec.template.metadata.labels);
-    assert.equal(service.spec.ports[0].targetPort, "http");
-  } finally {
-    await rm(stateRootDir, { recursive: true, force: true });
-  }
-});
-
-test("Tencent TKE provider scales compute lifecycle without deleting retained storage", async () => {
-  const calls = [];
-  let ingressReadCount = 0;
-  const provider = new TencentTkeProvider({
-    env: requiredEnv,
-    runner: async ({ command, args }) => {
-      calls.push({ command, args });
-      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
-        ingressReadCount += 1;
-        return JSON.stringify(ingressReadCount === 1
-          ? sharedIngressFixture({
-            workspacePaths: [{ path: "/w/ws-tke101", serviceName: "opl-ws-tke101" }]
-          })
-          : sharedIngressFixture());
-      }
-      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke101 pvc/opl-ws-tke101-data service/opl-ws-tke101 ingress/opl-cloud endpoints/opl-ws-tke101 -o json") {
-        return JSON.stringify(runtimeStatusFixture({
-          name: "opl-ws-tke101",
-          workspaceId: "ws-tke101",
-          image: requiredEnv.OPL_WORKSPACE_IMAGE,
-          ready: true
-        }));
-      }
-      return "";
-    },
-    commandExists: () => true,
-    stateRootDir: ".runtime/test-tke"
-  });
-  const workspace = {
-    id: "ws-tke101",
-    name: "Lifecycle Lab",
-    packageId: "basic",
-    slug: "lifecycle-lab-tke101",
-    access: { token: "share_lifecycle" },
-    server: { id: "deployment/opl-ws-tke101", status: "running", billingStatus: "active", spec: "2c4g" },
-    docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
-    disk: { id: "pvc/opl-ws-tke101-data", status: "attached_retained", billingStatus: "active", sizeGb: 10 }
-  };
-
-  const stopped = await provider.stopServer({ workspace });
-  const restarted = await provider.restartServer({ workspace: { ...workspace, server: stopped } });
-  const destroyed = await provider.destroyServer({ workspace });
-  const disk = await provider.destroyDisk({ workspace: { ...workspace, server: destroyed } });
-
-  assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud scale deployment/opl-ws-tke101 --replicas=0",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud scale deployment/opl-ws-tke101 --replicas=1",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke101 pvc/opl-ws-tke101-data service/opl-ws-tke101 ingress/opl-cloud endpoints/opl-ws-tke101 -o json",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/ws-tke101/shared-ingress-route.k8s.json",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke101 service/opl-ws-tke101 secret/opl-ws-tke101-env --ignore-not-found=true",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete pvc/opl-ws-tke101-data --ignore-not-found=true"
-  ]);
-  assert.equal(stopped.status, "stopped");
-  assert.equal(stopped.billingStatus, "stopped");
-  assert.equal(restarted.status, "running");
-  assert.equal(restarted.billingStatus, "active");
-  assert.equal(destroyed.status, "destroyed");
-  assert.equal(destroyed.billingStatus, "stopped");
-  assert.equal(disk.status, "destroyed");
-  assert.equal(disk.billingStatus, "stopped");
-});
-
-test("Tencent TKE provider recreates compute from retained PVC after server destroy", async () => {
-  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
-  const calls = [];
-  const provider = new TencentTkeProvider({
-    env: requiredEnv,
-    runner: async ({ command, args }) => {
-      calls.push({ command, args });
-      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke202 pvc/opl-ws-tke202-data service/opl-ws-tke202 ingress/opl-cloud endpoints/opl-ws-tke202 -o json") {
-        return JSON.stringify(runtimeStatusFixture({
-          name: "opl-ws-tke202",
-          workspaceId: "ws-tke202",
-          image: requiredEnv.OPL_WORKSPACE_IMAGE,
-          ready: true
-        }));
-      }
-      if (args.join(" ") === "--kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
-        return JSON.stringify(sharedIngressFixture());
-      }
-      return "";
-    },
-    commandExists: () => true,
-    stateRootDir
-  });
-  const workspace = {
-    id: "ws-tke202",
-    ownerAccountId: "pi-alpha",
-    name: "Recreate Lab",
-    packageId: "basic",
-    slug: "recreate-lab-tke202",
-    access: { token: "share_recreate" },
-    server: { id: "deployment/opl-ws-tke202", status: "destroyed", billingStatus: "stopped", spec: "2c4g" },
-    docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE, status: "destroyed" },
-    disk: { id: "pvc/opl-ws-tke202-data", status: "detached_retained", billingStatus: "active", sizeGb: 10 }
-  };
-
-  try {
-    const server = await provider.recreateServer({ workspace });
-    const manifestPath = join(stateRootDir, "ws-tke202", "workspace.k8s.json");
-
-    assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`,
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke202 pvc/opl-ws-tke202-data service/opl-ws-tke202 ingress/opl-cloud endpoints/opl-ws-tke202 -o json"
-    ]);
-    assert.equal(server.id, "deployment/opl-ws-tke202");
-    assert.equal(server.status, "running");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    const pvc = manifest.items.find((item) => item.kind === "PersistentVolumeClaim");
-    const deployment = manifest.items.find((item) => item.kind === "Deployment");
-    assert.equal(pvc.metadata.name, "opl-ws-tke202-data");
-    assert.equal(pvc.spec.resources.requests.storage, "10Gi");
-    assert.equal(deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, pvc.metadata.name);
-  } finally {
-    await rm(stateRootDir, { recursive: true, force: true });
-  }
-});
-
-test("Tencent TKE provider creates a VolumeSnapshot and restores a Workspace PVC from it", async () => {
-  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
-  const calls = [];
-  const provider = new TencentTkeProvider({
-    env: {
-      ...requiredEnv,
-      OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot"
-    },
-    runner: async ({ command, args }) => {
-      calls.push({ command, args });
-      const commandLine = `${command} ${args.join(" ")}`;
-      if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get volumesnapshot/backup-ws-tke202-001 -o json") {
-        return JSON.stringify({
-          apiVersion: "snapshot.storage.k8s.io/v1",
-          kind: "VolumeSnapshot",
-          metadata: {
-            name: "backup-ws-tke202-001",
-            namespace: "opl-cloud",
-            labels: {
-              "oplcloud.cn/workspace-id": "ws-tke202"
-            }
-          },
-          status: {
-            readyToUse: true,
-            boundVolumeSnapshotContentName: "snapcontent-001",
-            restoreSize: "10Gi"
-          }
-        });
-      }
-      return "";
-    },
-    commandExists: () => true,
-    stateRootDir
-  });
-  const workspace = {
-    id: "ws-tke202",
-    ownerAccountId: "pi-alpha",
-    name: "Recreate Lab",
-    packageId: "basic",
-    server: { id: "deployment/opl-ws-tke202", status: "running", billingStatus: "active", spec: "2c4g" },
-    docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
-    disk: { id: "pvc/opl-ws-tke202-data", status: "attached_retained", billingStatus: "active", sizeGb: 10 }
-  };
-
-  try {
-    const backup = await provider.createStorageBackup({
-      workspace,
-      backupId: "backup-ws-tke202-001",
-      retentionPolicy: { name: "daily_7_weekly_4", retainLast: 11 }
-    });
-    const restoredDisk = await provider.restoreStorageBackup({
-      backup,
-      workspaceId: "ws-tke777",
-      workspaceName: "Restored Lab",
-      packagePlan: { id: "basic", diskGb: 10 }
-    });
-    const snapshotManifestPath = join(stateRootDir, "ws-tke202", "backup-ws-tke202-001.volumesnapshot.k8s.json");
-    const restoreManifestPath = join(stateRootDir, "ws-tke777", "restore-backup-ws-tke202-001.pvc.k8s.json");
-
-    assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${snapshotManifestPath}`,
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get volumesnapshot/backup-ws-tke202-001 -o json",
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${restoreManifestPath}`
-    ]);
-    assert.deepEqual(backup, {
-      id: "backup-ws-tke202-001",
-      provider: "tencent-tke",
-      status: "available",
-      workspaceId: "ws-tke202",
-      sourcePvc: "opl-ws-tke202-data",
-      snapshotName: "backup-ws-tke202-001",
-      snapshotContentName: "snapcontent-001",
-      restoreSize: "10Gi",
-      retentionPolicy: { name: "daily_7_weekly_4", retainLast: 11 }
-    });
-    assert.deepEqual(restoredDisk, {
-      id: "pvc/opl-ws-tke777-data",
-      status: "restored_retained",
-      billingStatus: "active",
-      sizeGb: 10,
-      mountPath: "/data",
-      storageClass: "cbs",
-      restoredFromBackupId: "backup-ws-tke202-001"
-    });
-
-    const snapshotManifest = JSON.parse(await readFile(snapshotManifestPath, "utf8"));
-    assert.equal(snapshotManifest.kind, "VolumeSnapshot");
-    assert.equal(snapshotManifest.spec.volumeSnapshotClassName, "cbs-snapshot");
-    assert.equal(snapshotManifest.spec.source.persistentVolumeClaimName, "opl-ws-tke202-data");
-
-    const restoreManifest = JSON.parse(await readFile(restoreManifestPath, "utf8"));
-    assert.equal(restoreManifest.kind, "PersistentVolumeClaim");
-    assert.equal(restoreManifest.metadata.name, "opl-ws-tke777-data");
-    assert.deepEqual(restoreManifest.spec.dataSource, {
-      name: "backup-ws-tke202-001",
-      kind: "VolumeSnapshot",
-      apiGroup: "snapshot.storage.k8s.io"
-    });
-  } finally {
-    await rm(stateRootDir, { recursive: true, force: true });
-  }
-});
-
-test("Tencent TKE provider cleans up a partially-created runtime when runtime status cannot be read", async () => {
-  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
-  const calls = [];
-  const runner = async ({ command, args }) => {
-    calls.push({ command, args });
-    const commandLine = `${command} ${args.join(" ")}`;
-    if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke404 pvc/opl-ws-tke404-data service/opl-ws-tke404 ingress/opl-cloud endpoints/opl-ws-tke404 -o json") {
-      throw new Error("runtime_status_read_failed");
-    }
-    return "";
-  };
-  const provider = new TencentTkeProvider({
-    env: requiredEnv,
-    runner,
-    commandExists: () => true,
-    stateRootDir
-  });
-
-  try {
-    await assert.rejects(
-      provider.createWorkspaceRuntime({
-        workspaceId: "ws-tke404",
-        ownerAccountId: "pi-alpha",
-        workspaceName: "Route Failure Lab",
-        packagePlan: { id: "basic", server: "2c4g", diskGb: 10 },
-        token: "share_route_failure"
-      }),
-      /runtime_status_read_failed/
-    );
-
-    const commandLines = calls.map((call) => `${call.command} ${call.args.join(" ")}`);
-    assert.deepEqual(commandLines, [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${join(stateRootDir, "ws-tke404", "workspace.k8s.json")}`,
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke404 pvc/opl-ws-tke404-data service/opl-ws-tke404 ingress/opl-cloud endpoints/opl-ws-tke404 -o json",
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke404 service/opl-ws-tke404 secret/opl-ws-tke404-env pvc/opl-ws-tke404-data --ignore-not-found=true"
-    ]);
-  } finally {
-    await rm(stateRootDir, { recursive: true, force: true });
-  }
-});
-
-test("Tencent TKE provider fails closed and cleans up when the Workspace runtime never becomes ready", async () => {
-  const stateRootDir = await mkdtemp(join(tmpdir(), "opl-cloud-tke-state-"));
-  const calls = [];
-  const runner = async ({ command, args }) => {
-    calls.push({ command, args });
-    const commandLine = `${command} ${args.join(" ")}`;
-    if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
-      return JSON.stringify(sharedIngressFixture());
-    }
-    if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke909 pvc/opl-ws-tke909-data service/opl-ws-tke909 ingress/opl-cloud endpoints/opl-ws-tke909 -o json") {
-      return JSON.stringify(runtimeStatusFixture({
-        name: "opl-ws-tke909",
-        workspaceId: "ws-tke909",
-        image: requiredEnv.OPL_WORKSPACE_IMAGE,
-        ready: false
-      }));
-    }
-    return "";
-  };
-  const provider = new TencentTkeProvider({
-    env: {
-      ...requiredEnv,
-      OPL_TKE_WORKSPACE_READY_TIMEOUT_MS: "0"
-    },
-    runner,
-    commandExists: () => true,
-    stateRootDir
-  });
-
-  try {
-    await assert.rejects(
-      provider.createWorkspaceRuntime({
-        workspaceId: "ws-tke909",
-        ownerAccountId: "pi-alpha",
-        workspaceName: "Pending Runtime Lab",
-        packagePlan: { id: "pro", accelerator: "cpu", cpu: 8, memoryGb: 16, server: "8c16g", diskGb: 100 },
-        token: "share_pending_runtime"
-      }),
-      /tencent_tke_workspace_not_ready:deployment_ready,workspace_image_pulled,service_endpoints_ready/
-    );
-
-    const manifestPath = join(stateRootDir, "ws-tke909", "workspace.k8s.json");
-    assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-      `kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f ${manifestPath}`,
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke909 pvc/opl-ws-tke909-data service/opl-ws-tke909 ingress/opl-cloud endpoints/opl-ws-tke909 -o json",
-      "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke909 service/opl-ws-tke909 secret/opl-ws-tke909-env pvc/opl-ws-tke909-data --ignore-not-found=true"
-    ]);
-  } finally {
-    await rm(stateRootDir, { recursive: true, force: true });
-  }
-});
-
-test("Tencent TKE provider still destroys compute when shared Ingress route cleanup fails", async () => {
+test("Tencent TKE provider still destroys compute allocation when shared Ingress route cleanup fails", async () => {
   const calls = [];
   const provider = new TencentTkeProvider({
     env: requiredEnv,
@@ -763,7 +343,7 @@ test("Tencent TKE provider still destroys compute when shared Ingress route clea
       const commandLine = `${command} ${args.join(" ")}`;
       if (commandLine === "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json") {
         return JSON.stringify(sharedIngressFixture({
-          workspacePaths: [{ path: "/w/ws-tke505", serviceName: "opl-ws-tke505" }]
+          workspacePaths: [{ path: "/w/ws-tke505", serviceName: "opl-compute-tke505" }]
         }));
       }
       if (commandLine.endsWith("shared-ingress-route.k8s.json")) {
@@ -774,19 +354,17 @@ test("Tencent TKE provider still destroys compute when shared Ingress route clea
     commandExists: () => true,
     stateRootDir: ".runtime/test-tke"
   });
-  const workspace = {
-    id: "ws-tke505",
-    server: { id: "deployment/opl-ws-tke505", status: "running", billingStatus: "active", spec: "2c4g" },
-    docker: { image: requiredEnv.OPL_WORKSPACE_IMAGE },
-    disk: { id: "pvc/opl-ws-tke505-data", status: "attached_retained", billingStatus: "active", sizeGb: 10 }
+  const computeAllocation = {
+    id: "compute-tke505",
+    providerResourceId: "deployment/opl-compute-tke505"
   };
 
-  const destroyed = await provider.destroyServer({ workspace });
+  const destroyed = await provider.destroyComputeAllocation({ computeAllocation });
 
   assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
     "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get ingress/opl-cloud -o json",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/ws-tke505/shared-ingress-route.k8s.json",
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-ws-tke505 service/opl-ws-tke505 secret/opl-ws-tke505-env --ignore-not-found=true"
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud apply -f .runtime/test-tke/opl-compute-tke505/shared-ingress-route.k8s.json",
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud delete deployment/opl-compute-tke505 service/opl-compute-tke505 secret/opl-compute-tke505-env --ignore-not-found=true"
   ]);
   assert.equal(destroyed.status, "destroyed");
   assert.equal(destroyed.billingStatus, "stopped");
@@ -800,95 +378,21 @@ test("Tencent TKE provider reports runtime status from Kubernetes resources with
     env: requiredEnv,
     runner: async ({ command, args }) => {
       calls.push({ command, args });
-      return JSON.stringify({
-        apiVersion: "v1",
-        kind: "List",
-        items: [
-          {
-            apiVersion: "apps/v1",
-            kind: "Deployment",
-            metadata: {
-              name: "opl-ws-tke303",
-              labels: {
-                "app.kubernetes.io/name": "opl-workspace",
-                "app.kubernetes.io/instance": "opl-ws-tke303",
-                "oplcloud.cn/workspace-id": "ws-tke303"
-              }
-            },
-            spec: {
-              template: {
-                metadata: {
-                  labels: {
-                    "app.kubernetes.io/name": "opl-workspace",
-                    "app.kubernetes.io/instance": "opl-ws-tke303",
-                    "oplcloud.cn/workspace-id": "ws-tke303"
-                  }
-                },
-                spec: {
-                  containers: [{ name: "workspace", image: requiredEnv.OPL_WORKSPACE_IMAGE }],
-                  volumes: [{ name: "workspace-data", persistentVolumeClaim: { claimName: "opl-ws-tke303-data" } }]
-                }
-              }
-            },
-            status: { readyReplicas: 1, availableReplicas: 1 }
-          },
-          {
-            apiVersion: "v1",
-            kind: "PersistentVolumeClaim",
-            metadata: { name: "opl-ws-tke303-data" },
-            spec: { storageClassName: "cbs" },
-            status: { phase: "Bound" }
-          },
-          {
-            apiVersion: "v1",
-            kind: "Service",
-            metadata: { name: "opl-ws-tke303" },
-            spec: {
-              selector: {
-                "app.kubernetes.io/name": "opl-workspace",
-                "app.kubernetes.io/instance": "opl-ws-tke303",
-                "oplcloud.cn/workspace-id": "ws-tke303"
-              },
-              ports: [{ name: "http", port: 3000, targetPort: "http" }]
-            }
-          },
-          {
-            apiVersion: "networking.k8s.io/v1",
-            kind: "Ingress",
-            metadata: { name: "opl-cloud" },
-            spec: {
-              rules: [
-                {
-                  host: "workspace.medopl.cn",
-                  http: {
-                    paths: [
-                      {
-                        path: "/",
-                        backend: { service: { name: "opl-cloud-control-plane", port: { number: 8787 } } }
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          },
-          {
-            apiVersion: "v1",
-            kind: "Endpoints",
-            metadata: { name: "opl-ws-tke303" },
-            subsets: [{ addresses: [{ ip: "10.0.0.8" }], ports: [{ name: "http", port: 3000 }] }]
-          }
-        ]
-      });
+      return JSON.stringify(runtimeStatusFixture({
+        name: "opl-compute-tke303",
+        workspaceId: "ws-tke303",
+        image: requiredEnv.OPL_WORKSPACE_IMAGE,
+        ready: true
+      }));
     },
     commandExists: () => true,
     stateRootDir: ".runtime/test-tke"
   });
   const workspace = {
     id: "ws-tke303",
-    server: { id: "deployment/opl-ws-tke303" },
-    docker: { id: "deployment/opl-ws-tke303", image: requiredEnv.OPL_WORKSPACE_IMAGE, service: "service/opl-ws-tke303" },
-    disk: { id: "pvc/opl-ws-tke303-data", storageClass: "cbs" },
+    server: { id: "deployment/opl-compute-tke303" },
+    docker: { id: "deployment/opl-compute-tke303", image: requiredEnv.OPL_WORKSPACE_IMAGE, service: "service/opl-compute-tke303" },
+    disk: { id: "pvc/opl-compute-tke303-data", storageClass: "cbs" },
     access: { token: "share_runtime_status" },
     url: "https://workspace.medopl.cn/w/ws-tke303/?token=share_runtime_status"
   };
@@ -896,7 +400,7 @@ test("Tencent TKE provider reports runtime status from Kubernetes resources with
   const status = await provider.runtimeStatus({ workspace });
 
   assert.deepEqual(calls.map((call) => `${call.command} ${call.args.join(" ")}`), [
-    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-ws-tke303 pvc/opl-ws-tke303-data service/opl-ws-tke303 ingress/opl-cloud endpoints/opl-ws-tke303 -o json"
+    "kubectl --kubeconfig /tmp/kubeconfig --namespace opl-cloud get deployment/opl-compute-tke303 pvc/opl-compute-tke303-data service/opl-compute-tke303 ingress/opl-cloud endpoints/opl-compute-tke303 -o json"
   ]);
   assert.equal(JSON.stringify(status).includes("share_runtime_status"), false);
   assert.equal(status.provider, "tencent-tke");
@@ -912,9 +416,9 @@ test("Tencent TKE provider reports runtime status from Kubernetes resources with
     "ingress_routes_workspace_gateway:true"
   ]);
   assert.equal(status.resources.deployment.image, requiredEnv.OPL_WORKSPACE_IMAGE);
-  assert.equal(status.resources.pvc.name, "opl-ws-tke303-data");
+  assert.equal(status.resources.pvc.name, "opl-compute-tke303-data");
   assert.equal(status.resources.pvc.phase, "Bound");
-  assert.equal(status.resources.service.name, "opl-ws-tke303");
+  assert.equal(status.resources.service.name, "opl-compute-tke303");
   assert.equal(status.resources.ingress.name, "opl-cloud");
   assert.equal(status.resources.ingress.path, "/");
   assert.equal(status.resources.endpoints.readyAddresses, 1);
@@ -989,7 +493,7 @@ function runtimeStatusFixture({ name, workspaceId, image, ready }) {
         metadata: {
           name,
           labels: {
-            "app.kubernetes.io/name": "opl-workspace",
+            "app.kubernetes.io/name": "opl-compute-allocation",
             "app.kubernetes.io/instance": name,
             "oplcloud.cn/workspace-id": workspaceId
           }
@@ -998,7 +502,7 @@ function runtimeStatusFixture({ name, workspaceId, image, ready }) {
           template: {
             metadata: {
               labels: {
-                "app.kubernetes.io/name": "opl-workspace",
+                "app.kubernetes.io/name": "opl-compute-allocation",
                 "app.kubernetes.io/instance": name,
                 "oplcloud.cn/workspace-id": workspaceId
               }
@@ -1024,7 +528,7 @@ function runtimeStatusFixture({ name, workspaceId, image, ready }) {
         metadata: { name },
         spec: {
           selector: {
-            "app.kubernetes.io/name": "opl-workspace",
+            "app.kubernetes.io/name": "opl-compute-allocation",
             "app.kubernetes.io/instance": name,
             "oplcloud.cn/workspace-id": workspaceId
           },

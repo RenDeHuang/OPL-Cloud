@@ -187,11 +187,10 @@ function assertComputeShape(checks, compute) {
   addCheck(checks, "compute_created", Boolean(
     compute?.id &&
     compute?.provider === "tencent-tke" &&
-    compute?.providerResourceId?.startsWith("deployment/") &&
-    compute?.status === "running" &&
-    compute?.billingStatus === "active" &&
-    compute?.image
-  ), { computeId: compute?.id });
+    (compute?.instanceId || compute?.providerResourceId || compute?.nodeName) &&
+    ["provisioning", "running"].includes(compute?.status) &&
+    compute?.billingStatus === "active"
+  ), { computeAllocationId: compute?.id });
 }
 
 function assertStorageShape(checks, storage) {
@@ -209,7 +208,7 @@ function assertAttachmentShape(checks, attachment, { compute, storage }) {
   addCheck(checks, "storage_attached", Boolean(
     attachment?.id &&
     attachment?.provider === "tencent-tke" &&
-    attachment?.computeId === compute?.id &&
+    attachment?.computeAllocationId === compute?.id &&
     attachment?.storageId === storage?.id &&
     attachment?.mountPath === DEFAULT_MOUNT_PATH &&
     attachment?.status === "attached"
@@ -220,7 +219,7 @@ function assertWorkspaceShape(checks, workspace, { compute, storage, attachment 
   addCheck(checks, "workspace_created", Boolean(
     workspace?.id &&
     workspace?.provider === "tencent-tke" &&
-    workspace?.computeId === compute?.id &&
+    workspace?.computeAllocationId === compute?.id &&
     workspace?.storageId === storage?.id &&
     workspace?.attachmentId === attachment?.id &&
     workspace?.url &&
@@ -254,7 +253,7 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
   const resourceUsage = state?.resourceUsageLogs || [];
   const requestUsageLogs = state?.requestUsageLogs || [];
 
-  const hasComputeLedger = ledger.some((entry) => entry.accountId === accountId && entry.computeId === compute?.id);
+  const hasComputeLedger = ledger.some((entry) => entry.accountId === accountId && entry.computeAllocationId === compute?.id);
   const hasStorageLedger = ledger.some((entry) => entry.accountId === accountId && entry.storageId === storage?.id);
   const hasAttachmentLedger = ledger.some((entry) => entry.accountId === accountId && entry.attachmentId === attachment?.id);
   const hasRequestLedger = ledger.some((entry) =>
@@ -262,7 +261,7 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     entry.workspaceId === workspace?.id &&
     entry.type === "request_debit"
   );
-  const hasComputeUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.computeId === compute?.id);
+  const hasComputeUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.computeAllocationId === compute?.id);
   const hasStorageUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.storageId === storage?.id);
   const hasAttachmentUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.attachmentId === attachment?.id);
   const hasRequestUsage = requestUsageLogs.some((entry) =>
@@ -284,7 +283,7 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
   ));
 }
 
-async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeId, storageId, attachmentId, checks = null, auth = null }) {
+async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeAllocationId, storageId, attachmentId, checks = null, auth = null }) {
   const cleanupErrors = [];
 
   if (attachmentId) {
@@ -305,15 +304,15 @@ async function cleanupVerificationResources({ fetchImpl, origin, accountId, comp
     }
   }
 
-  if (computeId) {
+  if (computeAllocationId) {
     try {
       const destroyed = await requestJson({
         fetchImpl,
         origin,
-        path: "/api/compute-resources/destroy",
+        path: `/api/compute-allocations/${encodeURIComponent(computeAllocationId)}/destroy`,
         method: "POST",
         auth,
-        body: { accountId, computeId, confirm: true }
+        body: { accountId, computeAllocationId, confirm: true }
       });
       if (checks) {
         addCheck(checks, "verification_compute_destroyed", Boolean(
@@ -399,7 +398,7 @@ export async function verifyProductionChain({
     compute = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
-      path: "/api/compute-resources",
+      path: "/api/compute-allocations",
       method: "POST",
       auth,
       body: { accountId, packageId, name: computeName }
@@ -424,7 +423,7 @@ export async function verifyProductionChain({
       auth,
       body: {
         accountId,
-        computeId: compute.id,
+        computeAllocationId: compute.id,
         storageId: storage.id,
         mountPath: DEFAULT_MOUNT_PATH
       }
@@ -493,7 +492,7 @@ export async function verifyProductionChain({
       fetchImpl,
       origin: normalizedOrigin,
       accountId,
-      computeId: compute.id,
+      computeAllocationId: compute.id,
       storageId: storage.id,
       attachmentId: attachment.id,
       checks,
@@ -520,7 +519,7 @@ export async function verifyProductionChain({
       fetchImpl,
       origin: normalizedOrigin,
       accountId,
-      computeId: compute?.id,
+      computeAllocationId: compute?.id,
       storageId: storage?.id,
       attachmentId: attachment?.id,
       auth

@@ -32,9 +32,10 @@ test("commercial Console route contract covers current public, auth, owner, and 
     ["public.status", "folded_into_parent"],
     ["auth.login", "implemented"],
     ["console.overview", "implemented"],
-    ["compute.list", "implemented"],
-    ["compute.create", "implemented"],
-    ["compute.detail", "implemented"],
+    ["compute-pools.list", "implemented"],
+    ["compute-allocations.list", "implemented"],
+    ["compute-allocations.create", "implemented"],
+    ["compute-allocations.detail", "implemented"],
     ["storage.list", "implemented"],
     ["storage.create", "implemented"],
     ["storage.detail", "implemented"],
@@ -130,7 +131,7 @@ test("route table and routeTo do not expose reserved routes in visible owner or 
   }
 
   assert.equal(routeTo("workspace.detail", { id: "ws_demo" }), "/console/workspaces/ws_demo");
-  assert.equal(routeTo("compute.detail", { id: "compute_demo" }), "/console/compute/compute_demo");
+  assert.equal(routeTo("compute-allocations.detail", { id: "compute_demo" }), "/console/compute/compute_demo");
   assert.equal(routeTo("storage.detail", { id: "storage_demo" }), "/console/storage/storage_demo");
   assert.equal(routeTo("attachment.detail", { id: "attachment_demo" }), "/console/attachments/attachment_demo");
   assert.equal(routeTo("support.detail", { id: "ticket_demo" }), "/console/support/ticket_demo");

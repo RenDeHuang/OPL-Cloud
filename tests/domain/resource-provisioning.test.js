@@ -27,9 +27,9 @@ function createService(runtimeProviderOverrides = {}) {
       workspaceUrl({ slug, token }) {
         return `https://workspace.example.test/w/${slug}?token=${token}`;
       },
-      async createComputeResource({ computeId, packagePlan }) {
+      async createComputeAllocation({ computeAllocationId, packagePlan }) {
         return {
-          providerResourceId: `provider-${computeId}`,
+          providerResourceId: `provider-${computeAllocationId}`,
           status: "running",
           billingStatus: "active",
           spec: packagePlan.server,
@@ -66,7 +66,7 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
 
-  const compute = await service.createComputeResource({
+  const compute = await service.createComputeAllocation({
     accountId: "pi-alpha",
     userId: "usr-alpha",
     packageId: "basic",
@@ -81,7 +81,7 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
   });
   const attachment = await service.attachStorage({
     accountId: "pi-alpha",
-    computeId: compute.id,
+    computeAllocationId: compute.id,
     storageId: storage.id,
     mountPath: "/data"
   });
@@ -98,23 +98,23 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
   assert.equal(storage.ownerAccountId, "pi-alpha");
   assert.equal(storage.sizeGb, 20);
   assert.equal(storage.status, "available");
-  assert.equal(attachment.computeId, compute.id);
+  assert.equal(attachment.computeAllocationId, compute.id);
   assert.equal(attachment.storageId, storage.id);
   assert.equal(attachment.status, "attached");
   assert.equal(workspace.attachmentId, attachment.id);
-  assert.equal(workspace.computeId, compute.id);
+  assert.equal(workspace.computeAllocationId, compute.id);
   assert.equal(workspace.storageId, storage.id);
   assert.match(workspace.url, /^https:\/\/workspace\.example\.test\/w\//);
 
   const state = await service.getState("pi-alpha");
-  assert.deepEqual(state.computeResources.map((item) => item.id), [compute.id]);
+  assert.deepEqual(state.computeAllocations.map((item) => item.id), [compute.id]);
   assert.deepEqual(state.storageVolumes.map((item) => item.id), [storage.id]);
   assert.deepEqual(state.storageAttachments.map((item) => item.id), [attachment.id]);
   assert.deepEqual(state.workspaces.map((item) => item.id), [workspace.id]);
-  assert.equal(state.billingLedger.some((entry) => entry.computeId === compute.id), true);
+  assert.equal(state.billingLedger.some((entry) => entry.computeAllocationId === compute.id), true);
   assert.equal(state.billingLedger.some((entry) => entry.storageId === storage.id), true);
   assert.equal(state.billingLedger.some((entry) => entry.attachmentId === attachment.id), true);
-  assert.equal(state.resourceUsageLogs.some((entry) => entry.computeId === compute.id), true);
+  assert.equal(state.resourceUsageLogs.some((entry) => entry.computeAllocationId === compute.id), true);
   assert.equal(state.resourceUsageLogs.some((entry) => entry.storageId === storage.id), true);
   assert.equal(state.resourceUsageLogs.some((entry) => entry.attachmentId === attachment.id), true);
 });
@@ -123,7 +123,7 @@ test("Workspace URL creation requires an attached storage and compute pair", asy
   const service = createService();
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-  const compute = await service.createComputeResource({
+  const compute = await service.createComputeAllocation({
     accountId: "pi-alpha",
     packageId: "basic",
     name: "CPU analysis node"
@@ -155,7 +155,7 @@ test("Workspace URL creation requires an attached storage and compute pair", asy
 
   const attachment = await service.attachStorage({
     accountId: "pi-alpha",
-    computeId: compute.id,
+    computeAllocationId: compute.id,
     storageId: storage.id,
     mountPath: "/data"
   });
@@ -185,7 +185,7 @@ test("storage detach retry completes when a previous provider attempt left the a
   });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-  const compute = await service.createComputeResource({
+  const compute = await service.createComputeAllocation({
     accountId: "pi-alpha",
     packageId: "basic",
     name: "CPU analysis node"
@@ -198,7 +198,7 @@ test("storage detach retry completes when a previous provider attempt left the a
   });
   const attachment = await service.attachStorage({
     accountId: "pi-alpha",
-    computeId: compute.id,
+    computeAllocationId: compute.id,
     storageId: storage.id,
     mountPath: "/data"
   });
@@ -219,7 +219,7 @@ test("storage detach retry completes when a previous provider attempt left the a
   assert.equal(detached.status, "detached");
   const state = await service.getState("pi-alpha");
   assert.equal(state.storageAttachments[0].status, "detached");
-  assert.deepEqual(state.computeResources[0].attachedStorageIds, []);
+  assert.deepEqual(state.computeAllocations[0].attachedStorageIds, []);
   assert.deepEqual(state.storageVolumes[0].attachmentIds, []);
 });
 
@@ -228,7 +228,7 @@ test("storage cannot attach across accounts", async () => {
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
   await service.manualTopUp({ accountId: "pi-beta", amount: 300, reason: "owner_credit" });
-  const compute = await service.createComputeResource({
+  const compute = await service.createComputeAllocation({
     accountId: "pi-alpha",
     packageId: "basic",
     name: "Alpha compute"
@@ -243,7 +243,7 @@ test("storage cannot attach across accounts", async () => {
   await assert.rejects(
     service.attachStorage({
       accountId: "pi-alpha",
-      computeId: compute.id,
+      computeAllocationId: compute.id,
       storageId: storage.id,
       mountPath: "/data"
     }),
@@ -265,7 +265,7 @@ test("resource service preserves provider handles for local one-person-lab-app W
     });
 
     await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-    const compute = await service.createComputeResource({
+    const compute = await service.createComputeAllocation({
       accountId: "pi-alpha",
       packageId: "basic",
       name: "Local compute"
@@ -278,7 +278,7 @@ test("resource service preserves provider handles for local one-person-lab-app W
     });
     const attachment = await service.attachStorage({
       accountId: "pi-alpha",
-      computeId: compute.id,
+      computeAllocationId: compute.id,
       storageId: storage.id,
       mountPath: "/data"
     });
@@ -288,7 +288,7 @@ test("resource service preserves provider handles for local one-person-lab-app W
       attachmentId: attachment.id
     });
     const state = await service.getState("pi-alpha");
-    const persistedCompute = state.computeResources[0];
+    const persistedCompute = state.computeAllocations[0];
     const persistedStorage = state.storageVolumes[0];
     const persistedAttachment = state.storageAttachments[0];
     const compose = parse(await readFile(persistedAttachment.composePath, "utf8"));

@@ -40,16 +40,16 @@ Production must provide:
 The following actions require explicit human approval:
 
 - running real production verification;
-- creating real cloud runtime resources;
+- creating real ComputeAllocation, StorageVolume, and StorageAttachment resources;
 - injecting or confirming production secrets;
 - changing production domain, TLS, registry, or kubeconfig inputs;
-- destroying retained production Workspace storage.
+- destroying production StorageVolume data.
 
 ## Verification
 
 Use the production verifier only from an approved operator environment.
 
-The verifier creates real compute, storage, and attachment resources, creates a Workspace URL entry, opens the public URL, records one Gateway request usage event, verifies wallet/ledger/usage state, and attempts cleanup.
+The verifier creates a real ComputeAllocation, StorageVolume, and StorageAttachment, creates a Workspace URL entry, opens the public URL, records one Gateway request usage event, verifies wallet/ledger/usage state, and attempts cleanup.
 
 Verification output belongs in runtime evidence or `docs/history/**`, not active docs.
 

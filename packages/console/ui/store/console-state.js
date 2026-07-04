@@ -43,11 +43,11 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
 
   async function runAction(action, success = "Done") {
     try {
-      await action();
+      const result = await action();
       await refresh();
       await refreshAdminOps();
       message.success(success);
-      return true;
+      return result || true;
     } catch (err) {
       message.error(err.message);
       return false;

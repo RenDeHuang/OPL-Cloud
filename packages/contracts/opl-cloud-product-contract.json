@@ -19,11 +19,12 @@
   "console": "OPL Console",
   "workspace": "OPL Workspace",
   "resourceMapping": {
-    "workspace": 1,
-    "server": 1,
+    "workspaceUrlEntry": 1,
+    "computeAllocation": 1,
     "onePersonLabAppDocker": 1,
-    "cloudDisk": 1,
-    "url": 1
+    "storageVolume": 1,
+    "storageAttachment": 1,
+    "urlToken": 1
   },
   "access": {
     "urlPattern": "https://workspace.medopl.cn/w/<workspaceId>/?token=<share-token>",
@@ -80,9 +81,9 @@
   },
   "nonGoals": [
     "member_login_for_shared_urls",
-    "automatic_cloud_disk_delete_when_server_stops_or_is_destroyed",
+    "workspace_owned_compute_or_storage_lifecycle",
     "local_development_requires_kubernetes",
     "external_payment_settlement",
-    "live_tencent_price_lookup_before_each_workspace_open"
+    "live_tencent_price_lookup_before_each_resource_create"
   ]
 }

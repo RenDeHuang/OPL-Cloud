@@ -21,6 +21,21 @@ import { billingPolicy } from "./pricing-service.js";
 import { latestBillingReconciliationReport, operatorNotificationInScope } from "./workspace-service.js";
 import { OplDomainService } from "./opl-domain-service.js";
 
+function computePoolsFromPackages(packages) {
+  return packages.map((plan) => ({
+    id: `pool-${plan.id}-${plan.server}`,
+    packageId: plan.id,
+    name: `${plan.name} pool`,
+    instanceType: plan.instanceType || plan.server,
+    cpu: plan.cpu,
+    memoryGb: plan.memoryGb,
+    nodePoolId: plan.nodePoolId || "",
+    status: plan.available ? "ready" : "missing",
+    hourlyPrice: plan.price?.computeHourly || 0,
+    provider: "tencent-tke"
+  }));
+}
+
 function defaultAccountIdForState(state) {
   return Object.values(state.users || {}).find((user) => user.accountId)?.accountId
     || Object.values(state.workspaces || {}).find((workspace) => workspace.ownerAccountId)?.ownerAccountId
@@ -219,8 +234,9 @@ export class ConsoleReadModelService extends OplDomainService {
         memberships: (state.memberships || []).map(clone),
         accounts: accountIds.map((accountId) => accountSnapshotForState(state, accountId)),
         packages: this.packages(),
+        computePools: computePoolsFromPackages(this.packages()),
         workspaces: Object.values(state.workspaces || {}).map(clone),
-        computeResources: (state.computeResources || []).map(clone),
+        computeAllocations: (state.computeAllocations || []).map(clone),
         storageVolumes: (state.storageVolumes || []).map(clone),
         storageAttachments: (state.storageAttachments || []).map(clone),
         walletTransactions: (state.walletTransactions || []).map(clone),
@@ -262,10 +278,11 @@ export class ConsoleReadModelService extends OplDomainService {
       },
       billingPolicy: billingPolicy(this.pricing),
       packages: this.packages(),
+      computePools: computePoolsFromPackages(this.packages()),
       account: accountSnapshotForState(state, resolvedAccountId),
       user: publicWalletUser(user),
       wallet,
-      computeResources: (state.computeResources || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
+      computeAllocations: (state.computeAllocations || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
       storageVolumes: (state.storageVolumes || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
       storageAttachments: (state.storageAttachments || []).filter((resource) => resource.ownerAccountId === resolvedAccountId).map(clone),
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === resolvedAccountId).map(clone),
@@ -275,7 +292,6 @@ export class ConsoleReadModelService extends OplDomainService {
       walletTransactions: (state.walletTransactions || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       manualTopups: (state.manualTopups || []).filter((entry) => entry.targetAccountId === resolvedAccountId).map(clone),
       requestUsageDedup: (state.requestUsageDedup || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
-      storageBackups: (state.storageBackups || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       billingReconciliation: {
         latestReport: clone(latestBillingReconciliationReport(state)),
         guard: clone(latestBillingReconciliationReport(state)?.guard || {
@@ -302,7 +318,7 @@ export class ConsoleReadModelService extends OplDomainService {
     const accounts = [...accountIds]
       .filter((id) => !accountId || id === accountId)
       .map((id) => accountSnapshotForState(state, id));
-    const storageBackups = (state.storageBackups || []).filter((backup) => !accountId || backup.accountId === accountId);
+    const computeAllocations = (state.computeAllocations || []).filter((allocation) => !accountId || allocation.ownerAccountId === accountId);
     const latestReconciliation = latestBillingReconciliationReport(state);
     const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
     const attentionWorkspaces = workspaces.filter((workspace) =>
@@ -324,10 +340,14 @@ export class ConsoleReadModelService extends OplDomainService {
       workspaces: {
         total: workspaces.length,
         running: workspaces.filter((workspace) => workspace.state === "running").length,
-        stopped: workspaces.filter((workspace) => workspace.state === "stopped_server_disk_retained").length,
-        computeDestroyedStorageRetained: workspaces.filter((workspace) => workspace.state === "server_destroyed_disk_retained").length,
+        urlActive: workspaces.filter((workspace) => workspace.access?.tokenStatus === "active").length,
         destroyed: workspaces.filter((workspace) => workspace.state === "destroyed").length,
         needsAttention: attentionWorkspaces.length
+      },
+      computeAllocations: {
+        total: computeAllocations.length,
+        running: computeAllocations.filter((allocation) => allocation.status === "running").length,
+        failed: computeAllocations.filter((allocation) => allocation.status === "failed").length
       },
       notifications: {
         total: notifications.length,
@@ -354,11 +374,6 @@ export class ConsoleReadModelService extends OplDomainService {
           error: operation.error,
           updatedAt: operation.updatedAt
         }))
-      },
-      storageBackups: {
-        total: storageBackups.length,
-        available: storageBackups.filter((backup) => backup.status === "available").length,
-        failed: storageBackups.filter((backup) => String(backup.status).endsWith("_failed")).length
       },
       billingReconciliation: {
         reports: state.billingReconciliationReports?.length || 0,

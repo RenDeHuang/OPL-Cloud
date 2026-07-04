@@ -53,7 +53,7 @@ export function BillingPage({ state, wallet }) {
         <InsightPanel title="资源用量" eyebrow="Usage">
           <ResourceSplit
             items={[
-              { label: "Compute", value: `${usageQuantity(resourceUsage, "compute").toFixed(1)} h`, meta: "compute resource usage", status: "hourly", tone: "info" },
+              { label: "Compute", value: `${usageQuantity(resourceUsage, "compute").toFixed(1)} h`, meta: "compute allocation usage", status: "hourly", tone: "info" },
               { label: "Storage", value: `${usageQuantity(resourceUsage, "storage").toFixed(1)} GB-h`, meta: "storage volume usage", status: "retained", tone: "good" },
               { label: "Gateway", value: requestUsage.length, meta: "request usage logs", status: "metered", tone: "info" },
               { label: "充值记录", value: state.manualTopups?.length || 0, meta: "admin top-up evidence", status: "audited", tone: "good" }

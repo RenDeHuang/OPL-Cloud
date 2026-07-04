@@ -93,12 +93,24 @@ export class OplCloudService {
     return this.workspaceLifecycle.createWorkspace(...args);
   }
 
-  async createComputeResource(...args) {
-    return this.resourceProvisioning.createComputeResource(...args);
+  async computePools(...args) {
+    return this.resourceProvisioning.computePools(...args);
   }
 
-  async destroyComputeResource(...args) {
-    return this.resourceProvisioning.destroyComputeResource(...args);
+  async computeAllocations(...args) {
+    return this.resourceProvisioning.computeAllocations(...args);
+  }
+
+  async computeAllocation(...args) {
+    return this.resourceProvisioning.computeAllocation(...args);
+  }
+
+  async createComputeAllocation(...args) {
+    return this.resourceProvisioning.createComputeAllocation(...args);
+  }
+
+  async destroyComputeAllocation(...args) {
+    return this.resourceProvisioning.destroyComputeAllocation(...args);
   }
 
   async createStorageVolume(...args) {
@@ -115,38 +127,6 @@ export class OplCloudService {
 
   async detachStorage(...args) {
     return this.resourceProvisioning.detachStorage(...args);
-  }
-
-  async createStorageBackup(...args) {
-    return this.workspaceLifecycle.createStorageBackup(...args);
-  }
-
-  async restoreWorkspaceFromBackup(...args) {
-    return this.workspaceLifecycle.restoreWorkspaceFromBackup(...args);
-  }
-
-  async pruneStorageBackups(...args) {
-    return this.workspaceLifecycle.pruneStorageBackups(...args);
-  }
-
-  async stopServer(...args) {
-    return this.workspaceLifecycle.stopServer(...args);
-  }
-
-  async restartServer(...args) {
-    return this.workspaceLifecycle.restartServer(...args);
-  }
-
-  async restartOperationType(...args) {
-    return this.workspaceLifecycle.restartOperationType(...args);
-  }
-
-  async destroyServer(...args) {
-    return this.workspaceLifecycle.destroyServer(...args);
-  }
-
-  async destroyDisk(...args) {
-    return this.workspaceLifecycle.destroyDisk(...args);
   }
 
   async resetWorkspaceToken(...args) {
@@ -229,16 +209,8 @@ export class OplCloudService {
     return this.billing.releaseHoldToLedger(...args);
   }
 
-  async releaseWorkspaceHoldsAfterCreateFailure(...args) {
-    return this.workspaceLifecycle.releaseWorkspaceHoldsAfterCreateFailure(...args);
-  }
-
   async recordCreateWorkspaceFailure(...args) {
     return this.workspaceLifecycle.recordCreateWorkspaceFailure(...args);
-  }
-
-  async stopRuntimeAfterHoldExhausted(...args) {
-    return this.workspaceLifecycle.stopRuntimeAfterHoldExhausted(...args);
   }
 
   notify(...args) {

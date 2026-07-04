@@ -64,7 +64,8 @@
         "OPL_STORAGE_GB_MONTH_CNY": "0.36",
         "OPL_CODEX_MODEL": "gpt-5.5",
         "OPL_CODEX_REASONING_EFFORT": "xhigh",
-        "OPL_CODEX_BASE_URL": "https://gflabtoken.cn/v1"
+        "OPL_CODEX_BASE_URL": "https://gflabtoken.cn/v1",
+        "OPL_TENCENT_PROVISIONER_BIN": "/usr/local/bin/opl-tencent-provisioner"
       }
     },
     {

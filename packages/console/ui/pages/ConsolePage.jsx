@@ -20,9 +20,9 @@ import { AlertsPage, ApprovalsPage, ReceiptsPage, ResourcesPage } from "./catalo
 import { GatewayPage } from "./gateway/GatewayPage.jsx";
 import { OverviewPage } from "./OverviewPage.jsx";
 import {
-  ComputeResourceDetailPage,
-  ComputeResourcesPage,
-  CreateComputeResourcePage,
+  ComputeAllocationDetailPage,
+  ComputeAllocationsPage,
+  CreateComputeAllocationPage,
   CreateStorageAttachmentPage,
   CreateStorageVolumePage,
   StorageAttachmentDetailPage,
@@ -100,9 +100,9 @@ function renderRoute(ctx) {
   if (path.startsWith("/admin/runtime")) return <AdminRuntimePage {...ctx} />;
   if (path.startsWith("/admin/support")) return <AdminSupportPage {...ctx} />;
   if (path.startsWith("/admin")) return <AdminOverviewPage {...ctx} />;
-  if (path.startsWith("/console/compute/new")) return <CreateComputeResourcePage {...ctx} />;
-  if (path.startsWith("/console/compute/")) return <ComputeResourceDetailPage {...ctx} />;
-  if (path.startsWith("/console/compute")) return <ComputeResourcesPage {...ctx} />;
+  if (path.startsWith("/console/compute/new")) return <CreateComputeAllocationPage {...ctx} />;
+  if (path.startsWith("/console/compute/")) return <ComputeAllocationDetailPage {...ctx} />;
+  if (path.startsWith("/console/compute")) return <ComputeAllocationsPage {...ctx} />;
   if (path.startsWith("/console/storage/new")) return <CreateStorageVolumePage {...ctx} />;
   if (path.startsWith("/console/storage/")) return <StorageVolumeDetailPage {...ctx} />;
   if (path.startsWith("/console/storage")) return <StorageVolumesPage {...ctx} />;

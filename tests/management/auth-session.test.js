@@ -328,8 +328,8 @@ test("admin resource writes default to the admin account when no accountId is su
   const root = await mkdtemp(join(tmpdir(), "opl-auth-admin-resource-"));
   const calls = [];
   const appService = {
-    async createComputeResource(input) {
-      calls.push(["createComputeResource", input]);
+    async createComputeAllocation(input) {
+      calls.push(["createComputeAllocation", input]);
       return { id: "compute-admin", ownerAccountId: input.accountId, status: "running" };
     },
     async createStorageVolume(input) {
@@ -361,7 +361,7 @@ test("admin resource writes default to the admin account when no accountId is su
       "x-opl-csrf": adminLogin.payload.csrfToken
     };
 
-    const compute = await postJson(origin, "/api/compute-resources", {
+    const compute = await postJson(origin, "/api/compute-allocations", {
       packageId: "basic",
       name: "Admin compute"
     }, headers);
@@ -377,7 +377,7 @@ test("admin resource writes default to the admin account when no accountId is su
     assert.equal(storage.payload.ownerAccountId, "admin");
 
     assert.deepEqual(calls, [
-      ["createComputeResource", {
+      ["createComputeAllocation", {
         accountId: "admin",
         userId: "usr-admin",
         packageId: "basic",
@@ -567,7 +567,6 @@ test("auth users seed into the control-plane store and survive controller recrea
     assert.equal(persisted.users["usr-pi-seed"].frozen, 0);
     assert.deepEqual(persisted.users["usr-pi-seed"].holds, {});
     assert.equal(persisted.users["usr-pi-seed"].totalRecharged, 0);
-    assert.deepEqual(persisted.accounts, {});
 
     const recreatedAuth = createAuthController({ store, usersPath, seedUsers: [] });
     const recreatedServer = await listen(createRequestHandler({ appService, auth: recreatedAuth }));
@@ -637,7 +636,7 @@ test("store-backed disabled users cannot login and existing sessions are revoked
   }
 });
 
-test("store-backed auth ignores old usersPath data and seeds current store users", async () => {
+test("store-backed auth ignores file-backed usersPath data and seeds current store users", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-store-auth-current-seed-"));
   const usersPath = join(root, "users.json");
   const store = new MemoryStore();
@@ -649,12 +648,12 @@ test("store-backed auth ignores old usersPath data and seeds current store users
   await writeFile(usersPath, JSON.stringify({
     users: [
       {
-        id: "usr-legacy",
-        email: "legacy@example.com",
-        password: "legacy-secret",
-        name: "Legacy PI",
+        id: "usr-file",
+        email: "file@example.com",
+        password: "file-secret",
+        name: "File PI",
         role: "pi",
-        accountId: "legacy-account"
+        accountId: "file-account"
       }
     ]
   }));
@@ -675,11 +674,11 @@ test("store-backed auth ignores old usersPath data and seeds current store users
   });
   const { origin, close } = await listen(createRequestHandler({ appService, auth }));
   try {
-    const legacyLogin = await postJson(origin, "/api/auth/login", {
-      email: "legacy@example.com",
-      password: "legacy-secret"
+    const fileLogin = await postJson(origin, "/api/auth/login", {
+      email: "file@example.com",
+      password: "file-secret"
     });
-    assert.equal(legacyLogin.response.status, 401);
+    assert.equal(fileLogin.response.status, 401);
 
     const seedLogin = await postJson(origin, "/api/auth/login", {
       email: "seed@example.com",
@@ -689,9 +688,8 @@ test("store-backed auth ignores old usersPath data and seeds current store users
     assert.equal(seedLogin.payload.user.accountId, "seed-account");
 
     const persisted = await store.read();
-    assert.equal(persisted.users["usr-legacy"], undefined);
+    assert.equal(persisted.users["usr-file"], undefined);
     assert.equal(persisted.users["usr-seed"].email, "seed@example.com");
-    assert.deepEqual(persisted.accounts, {});
   } finally {
     await close();
     await rm(root, { recursive: true, force: true });
@@ -741,67 +739,8 @@ test("store-backed auth does not create account wallet mirrors for persisted log
 
     const persisted = await store.read();
     assert.equal(persisted.users["usr-pi-repair"].accountId, "pi-repair");
-    assert.deepEqual(persisted.accounts, {});
   } finally {
     await currentServer.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("store-backed auth migrates legacy account wallet fields onto persisted users", async () => {
-  const root = await mkdtemp(join(tmpdir(), "opl-store-auth-wallet-"));
-  const usersPath = join(root, "users.json");
-  const store = new MemoryStore({
-    accounts: {
-      "pi-wallet": {
-        id: "pi-wallet",
-        balance: 248.7967,
-        frozen: 202.16,
-        holds: {
-          compute: 201.6,
-          storage: 0.56
-        },
-        totalRecharged: 250
-      }
-    },
-    organizations: {},
-    users: {
-      "usr-pi-wallet": {
-        id: "usr-pi-wallet",
-        email: "wallet@example.com",
-        name: "Wallet PI",
-        role: "pi",
-        accountId: "pi-wallet",
-        status: "active",
-        passwordHash: "scrypt:94ffcb9fc02bdc377ead1ae046cfe792:71389fc96c628b6779c107f28bbdce446a6b82f1a4d6cd1a3643801fff81d52e95a1271b02b999f56ae5f63072b0a5609a893fdfb7cf106b9a18bed169391167"
-      }
-    },
-    memberships: [],
-    workspaces: {},
-    storageBackups: [],
-    billingReconciliationReports: [],
-    evidenceLedger: [],
-    billingLedger: [],
-    audit: [],
-    notifications: [],
-    runtimeOperations: [],
-    resourceUsageLogs: [],
-    requestUsageLogs: []
-  });
-  try {
-    const auth = createAuthController({ store, usersPath, seedUsers: [] });
-    await auth.listUsers();
-
-    const persisted = await store.read();
-    assert.equal(persisted.users["usr-pi-wallet"].balance, 248.7967);
-    assert.equal(persisted.users["usr-pi-wallet"].frozen, 202.16);
-    assert.deepEqual(persisted.users["usr-pi-wallet"].holds, {
-      compute: 201.6,
-      storage: 0.56
-    });
-    assert.equal(persisted.users["usr-pi-wallet"].totalRecharged, 250);
-    assert.deepEqual(persisted.accounts, {});
-  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

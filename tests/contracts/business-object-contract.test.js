@@ -34,15 +34,16 @@ test("business object contract defines the current commercial object boundary", 
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
 });
 
-test("business object contract uses account scoped TKE resources as current product truth", async () => {
+test("business object contract uses compute pools and account allocations as current product truth", async () => {
   const contract = await readJson(businessObjectContractPath);
   const kinds = new Map(contract.objectKinds.map((object) => [object.kind, object]));
 
   for (const [kind, requiredCapabilities] of [
-    ["ComputeResource", ["list", "detail", "read", "write", "action", "evidence"]],
+    ["ComputePool", ["list", "read", "evidence"]],
+    ["ComputeAllocation", ["list", "detail", "read", "write", "action", "evidence"]],
     ["StorageVolume", ["list", "detail", "read", "write", "action", "evidence"]],
     ["StorageAttachment", ["list", "detail", "read", "write", "action", "evidence"]],
-    ["Workspace", ["list", "detail", "read", "write", "action", "evidence"]]
+    ["Workspace", ["list", "detail", "read", "write", "action"]]
   ]) {
     const object = kinds.get(kind);
     assert.ok(object, `missing object kind ${kind}`);
@@ -51,8 +52,20 @@ test("business object contract uses account scoped TKE resources as current prod
     }
   }
 
-  assert.equal(kinds.has("WorkspaceCompute"), false, "WorkspaceCompute must be retired from current object truth");
-  assert.equal(kinds.has("WorkspaceStorage"), false, "WorkspaceStorage must be retired from current object truth");
+  assert.deepEqual([...kinds.keys()].sort(), [
+    "ComputeAllocation",
+    "ComputePool",
+    "GatewayIntegration",
+    "RuntimeReadiness",
+    "StorageAttachment",
+    "StorageVolume",
+    "SupportTicket",
+    "Usage",
+    "User",
+    "Wallet",
+    "Workspace",
+    "WorkspaceAccess"
+  ].sort());
 });
 
 test("route object kinds map to committed object specs and owner repos", async () => {

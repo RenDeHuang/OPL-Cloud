@@ -69,7 +69,7 @@ async function seedBusinessChain() {
     operatorAccountId: admin.accountId
   });
 
-  const compute = await service.createComputeResource({
+  const compute = await service.createComputeAllocation({
     accountId: owner.accountId,
     userId: owner.id,
     name: "OPL Demo Compute",
@@ -84,7 +84,7 @@ async function seedBusinessChain() {
   });
   const attachment = await service.attachStorage({
     accountId: owner.accountId,
-    computeId: compute.id,
+    computeAllocationId: compute.id,
     storageId: storage.id,
     mountPath: "/data"
   });

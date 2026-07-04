@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, account-scoped compute and storage provisioning, Workspace URL sharing, request usage billing, support, and admin operations.",
+  "currentSlice": "Business-chain closure for wallet, package-level compute pools, account-owned compute allocations, independent storage volumes, storage attachments, Workspace URL sharing, request usage billing, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -23,9 +23,12 @@
   ],
   "principles": [
     "Active business object contract contains only current commercial objects.",
+    "ComputePool is the package-level TKE node pool; ComputeAllocation is one account-owned dedicated CVM in that pool.",
+    "StorageVolume can exist without compute; StorageAttachment mounts one volume to one ComputeAllocation runtime.",
+    "Workspace is the URL/token/runtime entry and does not own compute or storage lifecycle.",
     "Business objects are protected by route ids, action ids, API clients, permission boundaries, and tests.",
     "Lab Owner sees business outcomes; Admin sees operator evidence and commercial operations.",
-    "Future approval, policy, and raw provider diagnostics objects live in the backlog until implemented."
+    "Future approval, policy, raw provider diagnostics, snapshot/recovery, and retired runtime lifecycle objects live outside the active contract until implemented."
   ],
   "repoBoundaryRules": [
     "Console owns UI, auth, route contracts, and read-model orchestration.",
@@ -70,10 +73,10 @@
         "detail",
         "read",
         "write",
-        "action",
-        "evidence"
+        "action"
       ],
-      "evidenceRequired": true
+      "evidenceRequired": true,
+      "boundary": "URL/token/runtime entry for a StorageAttachment-backed one-person-lab-app runtime; not a compute or storage lifecycle owner."
     },
     {
       "kind": "WorkspaceAccess",
@@ -88,10 +91,23 @@
       "evidenceRequired": true
     },
     {
-      "kind": "ComputeResource",
+      "kind": "ComputePool",
+      "ownerRepo": "opl-fabric",
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "read",
+        "evidence"
+      ],
+      "evidenceRequired": true
+    },
+    {
+      "kind": "ComputeAllocation",
       "ownerRepo": "opl-console",
       "routeKind": "business_object",
       "lifecycle": "current",
+      "evidenceRequired": true,
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",
@@ -99,8 +115,7 @@
         "write",
         "action",
         "evidence"
-      ],
-      "evidenceRequired": true
+      ]
     },
     {
       "kind": "StorageVolume",
@@ -115,7 +130,8 @@
         "action",
         "evidence"
       ],
-      "evidenceRequired": true
+      "evidenceRequired": true,
+      "boundary": "Account-owned storage that can exist without compute and can attach to one active ComputeAllocation at a time."
     },
     {
       "kind": "StorageAttachment",
@@ -130,7 +146,8 @@
         "action",
         "evidence"
       ],
-      "evidenceRequired": true
+      "evidenceRequired": true,
+      "boundary": "Mounts one StorageVolume to one ComputeAllocation runtime."
     },
     {
       "kind": "Usage",

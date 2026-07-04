@@ -23,11 +23,13 @@ Use only these OPL Cloud names in product copy, UI, and design documents.
 
 ```text
 PI signs in to OPL Console
--> opens a ComputeResource
+-> selects a compute package
+-> OPL Cloud ensures the package ComputePool exists
+-> opens one dedicated CVM ComputeAllocation for the PI
 -> opens a StorageVolume
--> attaches the storage volume to the compute resource
+-> attaches the storage volume to the ComputeAllocation
+-> OPL Cloud deploys/routes one-person-lab-app WebUI runtime onto that CVM
 -> creates an OPL Workspace URL entry from the attachment
--> OPL Cloud deploys/routes one-person-lab-app WebUI runtime
 -> OPL Console shows the URL
 -> PI copies and shares the URL
 -> members open the URL and enter the OPL Workspace without login
@@ -36,19 +38,20 @@ PI signs in to OPL Console
 ## Core Resource Mapping
 
 ```text
-1 ComputeResource = account-owned runtime compute
-1 StorageVolume = account-owned retained storage
-1 StorageAttachment = one storage volume mounted to one compute resource
+1 ComputePool = package-level Tencent TKE node pool for one compute specification
+1 ComputeAllocation = account-owned dedicated CVM node inside one ComputePool
+1 StorageVolume = persistent account-owned storage
+1 StorageAttachment = one storage volume mounted to one ComputeAllocation runtime
 1 OPL Workspace = URL token and one-person-lab-app WebUI entry for an attachment
 ```
 
-One PI account can own multiple compute resources, storage volumes, attachments, and Workspace URL entries.
+One PI account can own multiple compute allocations, storage volumes, attachments, and Workspace URL entries.
 
 ## Critical Lifecycle Rule
 
-Compute and persistent storage lifecycles are separate first-class resources.
+Compute pools, compute allocations, and persistent storage lifecycles are separate first-class resources.
 
-Lab Owner controls are: open compute, open storage, attach storage, create Workspace URL, reset/delete URL, detach storage, destroy compute, and destroy storage. The current TKE commercial model does not expose "stop compute to save cost" as an owner action, because TKE runtime reconciliation may still be billable.
+Lab Owner controls are: open compute allocation, open storage, attach storage, create Workspace URL, reset/delete URL, detach storage, destroy compute allocation, and destroy storage. The current commercial model does not expose "stop compute to save cost" as an owner action because a dedicated CVM remains billable until destroyed.
 
 ## Access Rule
 
@@ -67,13 +70,13 @@ The token is permanent until the owner deletes or resets it. Opening the URL doe
 | Basic Workspace | 2 CPU / 4GB | 10GB |
 | Pro Workspace | 8 CPU / 16GB | 100GB |
 
-GPU Workspaces are outside the current production package list. They require a verified GPU node pool before becoming a product package.
+GPU Workspaces are outside the current production package list. They require a verified GPU ComputePool before becoming a product package.
 
 ## Billing Rule
 
 Billing is hourly. The user-facing price is Tencent Cloud resource cost plus a 20% platform markup.
 
-Compute and storage must not operate unpaid. OPL Cloud freezes enough balance for 7 days of compute before opening compute, and enough balance for 7 days of storage before opening storage. Ledger and usage records carry `computeId`, `storageId`, `attachmentId`, and `workspaceId` where applicable. If available balance or holds are exhausted, OPL Console records account and runtime notifications; owner-facing controls remain resource based.
+Compute and storage must not operate unpaid. OPL Cloud freezes enough balance for 7 days of compute before opening a ComputeAllocation, and enough balance for 7 days of storage before opening storage. Ledger and usage records carry `computeAllocationId`, `computePoolId`, `storageVolumeId`, `storageAttachmentId`, and `workspaceId` where applicable. If available balance or holds are exhausted, OPL Console records account and runtime notifications; owner-facing controls remain resource based.
 
 ## Product Design
 
@@ -86,8 +89,8 @@ For the current launch boundary, use [docs/status.md](./docs/status.md). The cur
 The current app implements the local business-chain loop with the Local Docker provider:
 
 - OPL Console UI
-- Basic and Pro CPU compute creation
-- retained storage creation
+- Basic and Pro CPU compute allocation creation
+- persistent storage creation
 - storage attachment to compute
 - Workspace URL entry creation from an attachment
 - permanent workspace URL token
@@ -237,7 +240,7 @@ npm run validate:production-manifest -- --manifest deploy/production-manifest.ex
 
 The manifest format requires sensitive values to use `secretRef`, not inline plaintext.
 
-Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, and Workspace storage class. ComputeResource maps to Deployment/Service, StorageVolume maps to PVC, StorageAttachment reconciles the Deployment volume mount, and Workspace maps to token Secret plus shared Ingress path.
+Run the Console with `OPL_RUNTIME_PROVIDER=tencent-tke`, TCR image refs, a kubeconfig reference, namespace, Ingress class, image pull Secret, Workspace storage class, and `OPL_TENCENT_PROVISIONER_BIN`. ComputePool maps to the package-level TKE node pool, ComputeAllocation maps to one account-owned CVM node in that pool, StorageVolume maps to PVC/CBS, StorageAttachment deploys one-person-lab-app onto the selected allocation and mounts storage, and Workspace maps to the URL token entry.
 
 ## Production Verification
 
@@ -252,23 +255,24 @@ The verifier is fail-closed. It first checks:
 - `GET /api/production/readiness`
 - `GET /api/runtime/readiness`
 
-Only when both are ready does it create a real verification Workspace and exercise:
+Only when both are ready does it create real verification resources and exercise:
 
 ```text
 credit account
-create compute
+ensure ComputePool
+create dedicated CVM ComputeAllocation
 create storage
-attach storage
+attach storage to the allocation
 create Workspace URL
-verify TKE runtime status for Deployment/PVC/Service/Ingress/Endpoints
+verify TKE runtime status for CVM node/Deployment/PVC/Service/Ingress/Endpoints
 open Workspace URL
 record Gateway request usage
 detach storage
-destroy verification compute
+destroy verification compute allocation
 destroy verification storage
 ```
 
-This command creates billable Tencent Cloud runtime resources and lifecycle events, then attempts to clean up the verification compute and storage on both success and post-creation failure paths. By default, the Workspace name and verification ledger source events include a unique run id so repeated verification runs create fresh cloud resources and remain traceable in billing records. Use a dedicated verification account. Successful runs write structured JSON to stdout; failed runs write structured JSON to stderr, including `cleanupErrors` when cleanup does not fully complete. If the verifier reports cleanup errors, inspect OPL Console and Tencent Cloud and explicitly destroy any remaining verification resources. The command writes no smoke report or generated artifact into the repository.
+This command creates billable Tencent Cloud allocation and storage resources, then attempts to clean them up on both success and post-creation failure paths. By default, the Workspace name and verification ledger source events include a unique run id so repeated verification runs create fresh cloud resources and remain traceable in billing records. Use a dedicated verification account. Successful runs write structured JSON to stdout; failed runs write structured JSON to stderr, including `cleanupErrors` when cleanup does not fully complete. If the verifier reports cleanup errors, inspect OPL Console and Tencent Cloud and explicitly destroy any remaining verification resources. The command writes no smoke report or generated artifact into the repository.
 
 Optional verifier controls:
 
