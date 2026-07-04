@@ -161,7 +161,7 @@ export class TencentTkeProvider {
       nodePoolId = created?.Response?.NodePoolId;
       if (!nodePoolId) throw new Error("tencent_tke_nodepool_create_missing_id");
     }
-    const detail = await this.describeNodePool(nodePoolId);
+    const detail = await this.waitForNodePoolReady(nodePoolId, desiredNodes);
     const readyNodes = nodePoolReadyNodes(detail);
     return {
       providerResourceId: `nodepool/${nodePoolId}`,
@@ -481,6 +481,18 @@ export class TencentTkeProvider {
       nodePoolId
     ]);
     return response?.Response?.NodePool || {};
+  }
+
+  async waitForNodePoolReady(nodePoolId, desiredNodes) {
+    const timeoutMs = nodePoolReadyTimeoutMs(this.env);
+    const pollMs = nodePoolReadyPollMs(this.env);
+    const deadline = Date.now() + timeoutMs;
+    let detail = await this.describeNodePool(nodePoolId);
+    while (timeoutMs > 0 && nodePoolReadyNodes(detail) < desiredNodes && Date.now() < deadline) {
+      await delay(pollMs);
+      detail = await this.describeNodePool(nodePoolId);
+    }
+    return detail;
   }
 
   nodePoolCreateInput({ computeId, accountId, compute, name, packagePlan, desiredNodes }) {
@@ -938,6 +950,16 @@ function nodePoolIdFromCompute(compute = {}) {
 function nodePoolReadyNodes(nodePool = {}) {
   const summary = nodePool.NodeCountSummary || {};
   return Number(summary.AutoscalingAdded?.Normal || 0) + Number(summary.ManuallyAdded?.Normal || 0);
+}
+
+function nodePoolReadyTimeoutMs(env) {
+  const value = Number(env.OPL_TKE_NODEPOOL_READY_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function nodePoolReadyPollMs(env) {
+  const value = Number(env.OPL_TKE_NODEPOOL_READY_POLL_MS);
+  return Number.isFinite(value) && value >= 0 ? value : 5000;
 }
 
 function resourceName(resourceId) {

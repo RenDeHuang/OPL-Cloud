@@ -1,0 +1,105 @@
+name: E2E TKE Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type RUN_TKE_E2E to create and clean up real paid TKE resources.
+        required: true
+        type: string
+      account_id:
+        description: Billing account id used for the E2E run.
+        required: true
+        default: pi-production-persistence-e2e
+        type: string
+      package_id:
+        description: OPL package id to provision.
+        required: true
+        default: basic
+        type: choice
+        options:
+          - basic
+          - pro
+      credit_amount:
+        description: Manual top-up amount for the E2E account.
+        required: true
+        default: "2000"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  persistence-e2e:
+    name: TKE compute/storage persistence E2E
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    environment: production
+    env:
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+      OPL_VERIFY_OPERATOR_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
+
+    steps:
+      - name: Confirm paid-resource E2E boundary
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "RUN_TKE_E2E" ]; then
+            echo "Mutating production E2E requires confirm=RUN_TKE_E2E." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          chmod 700 "$secret_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No deploy kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Verify TKE access
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" get ns
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get deployment/opl-cloud-control-plane
+
+      - name: Run production persistence E2E
+        shell: bash
+        env:
+          OPL_E2E_ACCOUNT_ID: ${{ inputs.account_id }}
+          OPL_E2E_PACKAGE_ID: ${{ inputs.package_id }}
+          OPL_E2E_CREDIT_AMOUNT: ${{ inputs.credit_amount }}
+          OPL_E2E_URL_ATTEMPTS: "90"
+          OPL_E2E_RETRY_DELAY_MS: "10000"
+          OPL_E2E_NODE_TIMEOUT_MS: "900000"
+          OPL_E2E_POD_TIMEOUT_MS: "900000"
+          OPL_E2E_KUBE_POLL_MS: "10000"
+        run: |
+          set -euo pipefail
+          node tools/production-persistence-e2e.js

@@ -306,6 +306,57 @@ test("Tencent TKE provider provisions node pool compute, PVC storage, runtime at
   }
 });
 
+test("Tencent TKE provider waits for node pool capacity before returning running compute", async () => {
+  const calls = [];
+  let describeCount = 0;
+  const provider = new TencentTkeProvider({
+    env: {
+      ...requiredEnv,
+      OPL_TKE_NODEPOOL_READY_TIMEOUT_MS: "50",
+      OPL_TKE_NODEPOOL_READY_POLL_MS: "0"
+    },
+    runner: async ({ command, args }) => {
+      calls.push({ command, args });
+      if (command === "tccli" && args.includes("CreateClusterNodePool")) {
+        return JSON.stringify({ Response: { NodePoolId: "np-compute-wait", RequestId: "req-create-nodepool" } });
+      }
+      if (command === "tccli" && args.includes("DescribeClusterNodePoolDetail")) {
+        describeCount += 1;
+        return JSON.stringify({
+          Response: {
+            NodePool: {
+              NodePoolId: "np-compute-wait",
+              Name: "opl-compute-wait",
+              LifeState: describeCount > 1 ? "normal" : "creating",
+              DesiredNodesNum: 1,
+              NodeCountSummary: {
+                AutoscalingAdded: { Normal: describeCount > 1 ? 1 : 0, Total: 1 },
+                ManuallyAdded: { Normal: 0, Total: 0 }
+              }
+            }
+          }
+        });
+      }
+      return "";
+    },
+    commandExists: () => true
+  });
+
+  const compute = await provider.createComputeResource({
+    computeId: "compute-wait",
+    accountId: "pi-alpha",
+    compute: { id: "compute-wait", ownerAccountId: "pi-alpha", name: "CPU node" },
+    packagePlan: { id: "basic", accelerator: "cpu", cpu: 2, memoryGb: 4, gpu: 0, server: "SA5.LARGE8", diskGb: 10 }
+  });
+
+  assert.equal(compute.status, "running");
+  assert.equal(compute.readyNodes, 1);
+  assert.equal(
+    calls.filter((call) => call.command === "tccli" && call.args.includes("DescribeClusterNodePoolDetail")).length,
+    2
+  );
+});
+
 test("Tencent TKE runtime status inspects the runtime deployment instead of the node pool handle", async () => {
   const calls = [];
   const provider = new TencentTkeProvider({

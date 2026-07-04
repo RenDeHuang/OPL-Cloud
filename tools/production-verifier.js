@@ -485,7 +485,7 @@ export async function verifyProductionChain({
     const state = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
-      path: "/api/state",
+      path: `/api/state?accountId=${encodeURIComponent(accountId)}`,
       auth
     });
     assertLedgerAndUsage(checks, state, { accountId, compute, storage, attachment, workspace, requestUsage });
