@@ -59,6 +59,25 @@ test("public entry is Console-first and does not use the retired marketing hero 
   assert.doesNotMatch(homeSource, /homeHero|heroPreview|chainPreview/, "retired marketing hero classes must stay removed");
 });
 
+test("public entry visible copy is concise Chinese without old English labels", async () => {
+  const homeSource = await source("packages/console/ui/pages/HomePage.jsx");
+  for (const chineseCopy of [
+    "业务链",
+    "钱包",
+    "余额与冻结",
+    "计算与存储",
+    "访问入口",
+    "用量证据",
+    "充值",
+    "开通",
+    "分发 URL",
+    "计费"
+  ]) {
+    assert.match(homeSource, new RegExp(chineseCopy), `HomePage must show ${chineseCopy}`);
+  }
+  assert.doesNotMatch(homeSource, /(?:>|label=|value=|<h2>)(?:"?)(Business chain|Live Console|Wallet|Balance \+ holds|Workspace|Compute \+ storage|Scoped access|Usage evidence|Top up|Create|Share URL|Meter|Lab Owner|Billing|Admin)/, "public home must not retain English product labels");
+});
+
 test("authenticated shell is branded as OPL Console", async () => {
   const shellSource = await source("packages/console/ui/pages/ConsolePage.jsx");
   assert.match(shellSource, /title="OPL Console"/, "authenticated app shell must use OPL Console product naming");
@@ -300,6 +319,6 @@ test("active UI and docs describe the ComputeAllocation, StorageVolume, attachme
     const text = await source(file);
     assert.match(text, /ComputeAllocation|compute allocation|计算分配|计算/, `${file} must describe compute allocation capability`);
     assert.match(text, /StorageVolume|storage volume|存储资源|存储/, `${file} must describe storage volume capability`);
-    assert.match(text, /Workspace URL|URL entry|Workspace/, `${file} must describe Workspace as an access entry`);
+    assert.match(text, /Workspace URL|URL entry|Workspace|工作区|访问入口/, `${file} must describe Workspace as an access entry`);
   }
 });

@@ -3,7 +3,11 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
 
-import { createRequestHandler } from "../../packages/console/api/server.js";
+import {
+  createRequestHandler,
+  hourlyResourceBillingSourceEventId,
+  startResourceBillingWorker
+} from "../../packages/console/api/server.js";
 
 async function listen(handler) {
   const server = createServer(handler);
@@ -227,6 +231,68 @@ test("admin can trigger resource billing settlement through the billing API", as
   } finally {
     await close();
   }
+});
+
+test("production server schedules hourly resource billing ticks", async () => {
+  const calls = [];
+  let scheduledTick = null;
+  let scheduledMs = 0;
+  const worker = startResourceBillingWorker({
+    appService: {
+      async settleResourceBilling(input) {
+        calls.push(input);
+        return { entries: [] };
+      }
+    },
+    env: {
+      NODE_ENV: "production",
+      OPL_RESOURCE_BILLING_WORKER_ENABLED: "1",
+      OPL_RESOURCE_BILLING_INTERVAL_MS: "60000"
+    },
+    setIntervalFn: (fn, ms) => {
+      scheduledTick = fn;
+      scheduledMs = ms;
+      return "timer-1";
+    },
+    clearIntervalFn: (timer) => calls.push({ cleared: timer }),
+    nowFn: () => new Date("2026-07-05T10:34:56.000Z"),
+    logger: { info() {}, warn() {}, error() {} }
+  });
+
+  assert.equal(worker.started, true);
+  assert.equal(scheduledMs, 60000);
+  assert.equal(hourlyResourceBillingSourceEventId(new Date("2026-07-05T10:34:56.000Z")), "resource_billing_tick:2026-07-05T10:00:00.000Z");
+
+  await scheduledTick();
+
+  assert.deepEqual(calls, [{
+    hours: 1,
+    sourceEventId: "resource_billing_tick:2026-07-05T10:00:00.000Z"
+  }]);
+
+  worker.stop();
+  assert.deepEqual(calls.at(-1), { cleared: "timer-1" });
+});
+
+test("resource billing worker stays disabled outside production unless explicitly enabled", () => {
+  let scheduled = false;
+  const worker = startResourceBillingWorker({
+    appService: {
+      async settleResourceBilling() {
+        throw new Error("must_not_settle");
+      }
+    },
+    env: { NODE_ENV: "test" },
+    setIntervalFn: () => {
+      scheduled = true;
+      return "timer-1";
+    },
+    clearIntervalFn: () => {},
+    logger: { info() {}, warn() {}, error() {} }
+  });
+
+  assert.equal(worker.started, false);
+  assert.equal(scheduled, false);
 });
 
 test("request usage API routes gateway usage into billing service", async () => {

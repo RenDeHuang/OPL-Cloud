@@ -228,6 +228,60 @@ test("workspace gateway validates URL token, sets scoped cookies, and proxies We
   }
 });
 
+test("workspace gateway shows productized unavailable page when runtime fetch fails", async () => {
+  const appService = {
+    async resolveWorkspaceAccess({ workspaceId, token }) {
+      if (workspaceId !== "ws-released001") throw new Error("workspace_not_found");
+      if (token !== "share_released") throw new Error("workspace_token_invalid");
+      return {
+        id: workspaceId,
+        state: "running",
+        server: { status: "running" },
+        access: { tokenStatus: "active" },
+        docker: { localUrl: "http://127.0.0.1:9" }
+      };
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const response = await fetch(`${origin}/w/ws-released001/?token=share_released`);
+    const html = await response.text();
+
+    assert.equal(response.status, 502);
+    assert.match(html, /工作区已释放或运行时不可用/);
+    assert.match(html, /返回控制台检查资源状态/);
+    assert.doesNotMatch(html, /fetch failed|ECONNREFUSED|127\.0\.0\.1:9/);
+  } finally {
+    await close();
+  }
+});
+
+test("workspace gateway explains stopped or released resources without raw status jargon", async () => {
+  const appService = {
+    async resolveWorkspaceAccess() {
+      return {
+        id: "ws-stopped001",
+        state: "destroyed",
+        server: { status: "destroyed" },
+        access: { tokenStatus: "active" },
+        docker: {}
+      };
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const response = await fetch(`${origin}/w/ws-stopped001/?token=share_stopped`);
+    const html = await response.text();
+
+    assert.equal(response.status, 409);
+    assert.match(html, /工作区已释放或资源不可用/);
+    assert.match(html, /存储数据是否保留请以控制台资源状态为准/);
+    assert.doesNotMatch(html, /尚未运行/);
+  } finally {
+    await close();
+  }
+});
+
 test("workspace gateway proxies active workspace websocket upgrades without leaking gateway cookies", async () => {
   let upstreamUpgrade = null;
   const upstreamServer = createServer();

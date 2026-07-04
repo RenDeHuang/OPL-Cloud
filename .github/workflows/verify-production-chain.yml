@@ -58,6 +58,8 @@ jobs:
       OPL_VERIFY_URL_ATTEMPTS: ${{ inputs.url_attempts }}
       OPL_VERIFY_RETRY_DELAY_MS: ${{ inputs.retry_delay_ms }}
       OPL_VERIFY_RUN_ID: ${{ inputs.run_id }}
+      OPL_VERIFY_BROWSER_E2E: "1"
+      OPL_VERIFY_SCREENSHOT_DIR: "artifacts/production-browser-e2e"
 
     steps:
       - name: Checkout
@@ -71,5 +73,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
       - name: Verify production chain
         run: npm run verify:production
+
+      - name: Upload browser E2E screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-browser-e2e
+          path: artifacts/production-browser-e2e
+          if-no-files-found: ignore

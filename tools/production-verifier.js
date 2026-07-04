@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 const DEFAULT_ACCOUNT_ID = "pi-production-verifier";
 const DEFAULT_WORKSPACE_NAME = "Production Verification Lab";
 const DEFAULT_PACKAGE_ID = "basic";
@@ -235,6 +239,89 @@ async function verifyWorkspacePersistedFile({ fetchImpl, checks, workspaceUrl, f
     body: { path: fileProof.filePath, workspace: WORKSPACE_PERSISTENCE_ROOT }
   });
   addCheck(checks, "workspace_persisted_file_read", runtimePayloadData(read) === fileProof.content, { path: fileProof.filePath });
+}
+
+async function defaultBrowserFactory() {
+  try {
+    return await import("playwright");
+  } catch {
+    throw new Error("playwright_required_for_browser_e2e");
+  }
+}
+
+async function writeBrowserUploadFixture({ runId }) {
+  const dir = await mkdtemp(join(tmpdir(), "opl-browser-e2e-"));
+  const fileName = `opl-browser-e2e-${runId}.txt`;
+  const filePath = join(dir, fileName);
+  const content = `OPL_BROWSER_FILE_${runId}`;
+  await writeFile(filePath, content, "utf8");
+  return { fileName, filePath, content };
+}
+
+async function requireFirstFileInput(page) {
+  const input = page.locator('input[type="file"]').first();
+  if (await input.count() < 1) throw new Error("workspace_browser_file_input_missing");
+  return input;
+}
+
+async function clickSendControl(page) {
+  try {
+    await page.getByRole("button", { name: /发送|Send|提交|运行|Ask/i }).first().click({ timeout: 15_000 });
+  } catch (error) {
+    if (page.keyboard?.press) {
+      await page.keyboard.press("Enter");
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function verifyWorkspaceBrowserUi({
+  workspaceUrl,
+  runId,
+  checks,
+  browserFactory = null,
+  screenshotDir = "",
+  launchOptions = { headless: true }
+} = {}) {
+  if (!workspaceUrl) throw new Error("workspace_url_required");
+  if (!runId) throw new Error("run_id_required");
+  const factory = browserFactory || await defaultBrowserFactory();
+  if (!factory?.chromium?.launch) throw new Error("playwright_chromium_required");
+  const browser = await factory.chromium.launch(launchOptions);
+  try {
+    const page = await browser.newPage();
+    await page.goto(workspaceUrl, { waitUntil: "networkidle", timeout: 120_000 });
+    addCheck(checks, "workspace_browser_opened", true, { url: workspaceUrl });
+
+    const fixture = await writeBrowserUploadFixture({ runId });
+    const fileInput = await requireFirstFileInput(page);
+    await fileInput.setInputFiles(fixture.filePath);
+    addCheck(checks, "workspace_browser_file_uploaded", true, { fileName: fixture.fileName });
+
+    await page.waitForFunction(({ fileName, content }) => {
+      const text = document.body?.innerText || "";
+      return text.includes(fileName) || text.includes(content);
+    }, { fileName: fixture.fileName, content: fixture.content }, { timeout: 60_000 });
+    addCheck(checks, "workspace_browser_file_read", true, { fileName: fixture.fileName });
+
+    const marker = `OPL_BROWSER_E2E_${runId}`;
+    const prompt = `请只回复：${marker}`;
+    await page.getByRole("textbox").first().fill(prompt);
+    await clickSendControl(page);
+    addCheck(checks, "workspace_browser_message_sent", true);
+
+    await page.waitForFunction(({ marker: expected }) => {
+      return (document.body?.innerText || "").includes(expected);
+    }, { marker }, { timeout: 180_000 });
+    addCheck(checks, "workspace_browser_reply_seen", true, { marker });
+
+    if (screenshotDir) {
+      await page.screenshot({ path: join(screenshotDir, `workspace-browser-e2e-${runId}.png`), fullPage: true });
+    }
+  } finally {
+    await browser.close();
+  }
 }
 
 async function requestRuntimeStatus({ fetchImpl, origin, accountId, workspaceId, attempts, retryDelayMs, auth = null }) {
@@ -524,6 +611,9 @@ export async function verifyProductionChain({
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   operatorToken = "",
   allowPrivateConsoleOrigin = false,
+  browserE2E = false,
+  browserFactory = null,
+  screenshotDir = "",
   fetchImpl = globalThis.fetch
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch_required");
@@ -629,6 +719,15 @@ export async function verifyProductionChain({
       retryDelayMs
     });
     addCheck(checks, "workspace_url", true, { url: workspace.url, attempts: workspaceUrlResult.attempts });
+    if (browserE2E) {
+      await verifyWorkspaceBrowserUi({
+        workspaceUrl: workspace.url,
+        runId,
+        checks,
+        browserFactory,
+        screenshotDir
+      });
+    }
     const fileProof = await verifyWorkspaceRuntimeFile({ fetchImpl, checks, workspaceUrl: workspace.url, runId });
 
     firstComputeForLedger = compute;
@@ -860,6 +959,8 @@ function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalTh
     workspaceUrlAttempts: Number(args["url-attempts"] || env.OPL_VERIFY_URL_ATTEMPTS || DEFAULT_WORKSPACE_URL_ATTEMPTS),
     retryDelayMs: Number(args["retry-delay-ms"] || env.OPL_VERIFY_RETRY_DELAY_MS || DEFAULT_RETRY_DELAY_MS),
     operatorToken: args["operator-token"] || env.OPL_VERIFY_OPERATOR_TOKEN || "",
+    browserE2E: ["1", "true"].includes(String(args["browser-e2e"] || env.OPL_VERIFY_BROWSER_E2E || "").toLowerCase()),
+    screenshotDir: args["screenshot-dir"] || env.OPL_VERIFY_SCREENSHOT_DIR || "",
     fetchImpl
   };
 }

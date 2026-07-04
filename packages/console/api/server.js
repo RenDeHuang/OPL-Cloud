@@ -101,6 +101,41 @@ function sendHtml(response, status, html) {
   response.end(html);
 }
 
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function workspaceUnavailableHtml({
+  title = "OPL Workspace 不可用",
+  heading = "工作区已释放或资源不可用",
+  message = "返回控制台检查资源状态；存储数据是否保留请以控制台资源状态为准。"
+} = {}) {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #111827; }
+      main { max-width: 680px; margin: 10vh auto; padding: 28px; background: #fff; border: 1px solid #d9dee7; border-radius: 8px; }
+      h1 { margin: 0 0 10px; font-size: 26px; }
+      p { margin: 0; line-height: 1.65; color: #4b5563; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>${escapeHtml(heading)}</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+  </body>
+</html>`;
+}
+
 async function readJson(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -347,6 +382,57 @@ function workspaceErrorText(value) {
   return labels[value] || value;
 }
 
+export function hourlyResourceBillingSourceEventId(date = new Date()) {
+  const hour = new Date(date);
+  hour.setUTCMinutes(0, 0, 0);
+  return `resource_billing_tick:${hour.toISOString()}`;
+}
+
+function billingWorkerEnabled(env = process.env) {
+  const explicit = env.OPL_RESOURCE_BILLING_WORKER_ENABLED;
+  if (explicit === "1" || explicit === "true") return true;
+  if (explicit === "0" || explicit === "false") return false;
+  return env.NODE_ENV === "production";
+}
+
+export function startResourceBillingWorker({
+  appService = service,
+  env = process.env,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
+  nowFn = () => new Date(),
+  logger = console
+} = {}) {
+  if (!billingWorkerEnabled(env)) {
+    return { started: false, stop() {}, async tick() {} };
+  }
+  const intervalMs = Math.max(60_000, Number(env.OPL_RESOURCE_BILLING_INTERVAL_MS || 3_600_000));
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    const sourceEventId = hourlyResourceBillingSourceEventId(nowFn());
+    try {
+      const result = await appService.settleResourceBilling({ hours: 1, sourceEventId });
+      logger.info?.(`OPL resource billing tick settled ${result?.entries?.length || 0} entries for ${sourceEventId}`);
+    } catch (error) {
+      logger.error?.(`OPL resource billing tick failed for ${sourceEventId}: ${error.message}`);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setIntervalFn(tick, intervalMs);
+  timer?.unref?.();
+  return {
+    started: true,
+    intervalMs,
+    tick,
+    stop() {
+      clearIntervalFn(timer);
+    }
+  };
+}
+
 async function handleWorkspaceGateway(request, response, url, appService) {
   const parts = url.pathname.split("/").filter(Boolean);
   const workspaceId = workspaceGatewayId(url, request);
@@ -368,7 +454,7 @@ async function handleWorkspaceGateway(request, response, url, appService) {
 
   const unavailableStatus = workspaceUnavailableStatus(workspace);
   if (unavailableStatus) {
-    return sendHtml(response, unavailableStatus, "<!doctype html><title>OPL Workspace 不可用</title><h1>OPL Workspace 尚未运行</h1>");
+    return sendHtml(response, unavailableStatus, workspaceUnavailableHtml());
   }
 
   const setCookie = queryToken ? workspaceAccessCookies({ workspaceId, token: queryToken }) : null;
@@ -410,7 +496,11 @@ async function handleWorkspaceGateway(request, response, url, appService) {
     }
     response.end();
   } catch (error) {
-    return sendHtml(response, 502, `<!doctype html><title>OPL Workspace 网关错误</title><h1>OPL Workspace 网关错误</h1><p>${workspaceErrorText(error.message)}</p>`);
+    return sendHtml(response, 502, workspaceUnavailableHtml({
+      title: "OPL Workspace 网关不可用",
+      heading: "工作区已释放或运行时不可用",
+      message: "返回控制台检查资源状态，或带上 Workspace ID 提交工单。"
+    }));
   }
 }
 
@@ -620,8 +710,10 @@ export function createRequestHandler({ appService = service, staticDir = publicD
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const server = createServer(createRequestHandler());
   server.on("upgrade", createUpgradeHandler());
+  const billingWorker = startResourceBillingWorker();
   server.listen(port, () => {
     console.log(`OPL Cloud API listening on http://127.0.0.1:${port}`);
     console.log(`State file: ${dataPath}`);
   });
+  server.on("close", () => billingWorker.stop());
 }

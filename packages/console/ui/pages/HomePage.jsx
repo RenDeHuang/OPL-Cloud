@@ -11,9 +11,9 @@ export default function HomePage({ session }) {
           <strong>OPL Console</strong>
         </a>
         <nav className="publicLinks">
-          <a href="/console/workspaces">Workspace</a>
-          <a href="/console/billing">Billing</a>
-          <a href="/console/support">Support</a>
+          <a href="/console/workspaces">工作区</a>
+          <a href="/console/billing">账单</a>
+          <a href="/console/support">支持</a>
           <a className="navButton" href={target}>{session ? "打开 Console" : "登录"}</a>
         </nav>
       </header>
@@ -23,26 +23,26 @@ export default function HomePage({ session }) {
           <div className="publicConsoleCopy">
             <p className="eyebrow">OPL Console</p>
             <h1>OPL Console</h1>
-            <p>开通 Workspace，分发访问 URL，按计算、存储和 Gateway 请求扣费。</p>
+            <p>开通工作区，分发访问 URL，按计算、存储和网关请求扣费。</p>
             <a className="primaryLink" href={target}>进入控制台 <ArrowRight size={16} /></a>
           </div>
 
           <div className="publicConsolePanel" aria-label="OPL Console product surface">
             <div className="publicPanelTop">
-              <strong>Business chain</strong>
-              <span>Live Console</span>
+              <strong>业务链</strong>
+              <span>生产控制台</span>
             </div>
             <div className="publicMetrics">
-              <PublicMetric icon={<WalletCards />} label="Wallet" value="Balance + holds" />
-              <PublicMetric icon={<Server />} label="Workspace" value="Compute + storage" />
-              <PublicMetric icon={<KeyRound />} label="URL" value="Scoped access" />
-              <PublicMetric icon={<Database />} label="Ledger" value="Usage evidence" />
+              <PublicMetric icon={<WalletCards />} label="钱包" value="余额与冻结" />
+              <PublicMetric icon={<Server />} label="工作区" value="计算与存储" />
+              <PublicMetric icon={<KeyRound />} label="访问入口" value="授权 URL" />
+              <PublicMetric icon={<Database />} label="账本" value="用量证据" />
             </div>
             <div className="publicFlow">
-              <span>Top up</span>
-              <span>Create</span>
-              <span>Share URL</span>
-              <span>Meter</span>
+              <span>充值</span>
+              <span>开通</span>
+              <span>分发 URL</span>
+              <span>计费</span>
             </div>
           </div>
         </section>
@@ -50,17 +50,17 @@ export default function HomePage({ session }) {
         <section className="homeBand">
           <article>
             <ShieldCheck />
-            <h2>Lab Owner</h2>
-            <p>余额、Workspace、URL、工单。</p>
+            <h2>实验室负责人</h2>
+            <p>余额、工作区、URL、工单。</p>
           </article>
           <article>
             <WalletCards />
-            <h2>Billing</h2>
+            <h2>账单</h2>
             <p>充值、冻结、小时扣费。</p>
           </article>
           <article>
             <Headphones />
-            <h2>Admin</h2>
+            <h2>管理员</h2>
             <p>用户、充值、运行证据。</p>
           </article>
         </section>

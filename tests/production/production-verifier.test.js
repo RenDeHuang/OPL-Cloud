@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runProductionVerifierCli, verifyProductionChain } from "../../tools/production-verifier.js";
+import {
+  runProductionVerifierCli,
+  verifyProductionChain,
+  verifyWorkspaceBrowserUi
+} from "../../tools/production-verifier.js";
 
 function jsonResponse(payload, status = 200, headers = new Headers({ "content-type": "application/json" })) {
   return {
@@ -230,6 +234,65 @@ function workspaceUrl(baseUrl, path) {
   return parsed.toString();
 }
 
+function fakeBrowserFactory(actions = []) {
+  const page = {
+    async goto(url) {
+      actions.push(["goto", url]);
+    },
+    locator(selector) {
+      actions.push(["locator", selector]);
+      return {
+        first() {
+          return this;
+        },
+        async count() {
+          return selector === 'input[type="file"]' ? 1 : 0;
+        },
+        async setInputFiles(filePath) {
+          actions.push(["setInputFiles", filePath]);
+        }
+      };
+    },
+    getByRole(role, options = {}) {
+      actions.push(["getByRole", role, String(options.name || "")]);
+      return {
+        first() {
+          return this;
+        },
+        async fill(value) {
+          actions.push(["fill", role, value]);
+        },
+        async click() {
+          actions.push(["click", role]);
+        }
+      };
+    },
+    async waitForFunction(_fn, ...args) {
+      actions.push(["waitForFunction", ...args.slice(0, 2)]);
+      return true;
+    },
+    async screenshot(options = {}) {
+      actions.push(["screenshot", options.path || ""]);
+    }
+  };
+  return {
+    chromium: {
+      async launch() {
+        actions.push(["launch"]);
+        return {
+          async newPage() {
+            actions.push(["newPage"]);
+            return page;
+          },
+          async close() {
+            actions.push(["close"]);
+          }
+        };
+      }
+    }
+  };
+}
+
 test("production verifier refuses localhost Console origins", async () => {
   await assert.rejects(
     verifyProductionChain({
@@ -394,6 +457,62 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "verification_compute_destroyed:true",
     "verification_storage_destroyed:true"
   ]);
+});
+
+test("production verifier can exercise one-person-lab-app through a real browser surface", async () => {
+  const checks = [];
+  const actions = [];
+
+  await verifyWorkspaceBrowserUi({
+    workspaceUrl: "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser",
+    runId: "browser-run",
+    checks,
+    browserFactory: fakeBrowserFactory(actions),
+    screenshotDir: ""
+  });
+
+  assert.deepEqual(checks.map((check) => `${check.name}:${check.ok}`), [
+    "workspace_browser_opened:true",
+    "workspace_browser_file_uploaded:true",
+    "workspace_browser_file_read:true",
+    "workspace_browser_message_sent:true",
+    "workspace_browser_reply_seen:true"
+  ]);
+  assert.deepEqual(actions.filter(([name]) => ["goto", "setInputFiles", "fill", "click", "close"].includes(name)).map(([name]) => name), [
+    "goto",
+    "setInputFiles",
+    "fill",
+    "click",
+    "close"
+  ]);
+});
+
+test("production verifier runs optional browser UI checks after Workspace URL is ready", async () => {
+  const requests = [];
+  const actions = [];
+  const chain = tkeChain();
+  const result = await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    workspaceName: "Production Verification Lab",
+    runId: "prod-run",
+    packageId: "basic",
+    browserE2E: true,
+    browserFactory: fakeBrowserFactory(actions),
+    fetchImpl: keyedFetch({ responses: chainResponses(chain), requests })
+  });
+
+  const browserChecks = result.checks
+    .filter((check) => check.name.startsWith("workspace_browser_"))
+    .map((check) => `${check.name}:${check.ok}`);
+  assert.deepEqual(browserChecks, [
+    "workspace_browser_opened:true",
+    "workspace_browser_file_uploaded:true",
+    "workspace_browser_file_read:true",
+    "workspace_browser_message_sent:true",
+    "workspace_browser_reply_seen:true"
+  ]);
+  assert.equal(actions.find((action) => action[0] === "goto")?.[1], chain.workspace.url);
 });
 
 test("production verifier authenticates as operator and sends CSRF on commercial write APIs", async () => {

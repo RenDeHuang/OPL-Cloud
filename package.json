@@ -33,6 +33,7 @@
     "path-to-regexp": "^8.4.0"
   },
   "devDependencies": {
+    "playwright": "^1.61.1",
     "yaml": "^2.9.0"
   }
 }
