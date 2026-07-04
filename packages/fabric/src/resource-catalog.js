@@ -10,6 +10,14 @@ function workspaceHost(value) {
   return String(value || DEFAULT_WORKSPACE_DOMAIN).replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
+function packageCloudShape(env, packageId) {
+  const prefix = packageId.toUpperCase();
+  return {
+    instanceType: env[`OPL_${prefix}_COMPUTE_INSTANCE_TYPE`] || "",
+    nodePoolId: env[`OPL_${prefix}_COMPUTE_NODE_POOL_ID`] || ""
+  };
+}
+
 function summarizeResources(items = []) {
   return {
     available: items.filter((item) => item.available).map((item) => item.id),
@@ -26,6 +34,8 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
   const storageClassName = env.OPL_WORKSPACE_STORAGE_CLASS || DEFAULT_STORAGE_CLASS;
   const workspaceImage = env.OPL_WORKSPACE_IMAGE || DEFAULT_WORKSPACE_IMAGE;
   const workspaceDomain = workspaceHost(env.OPL_WORKSPACE_DOMAIN);
+  const basicCloudShape = packageCloudShape(env, "basic");
+  const proCloudShape = packageCloudShape(env, "pro");
 
   const commonRefs = {
     storageClassId: "workspace-cbs",
@@ -50,6 +60,7 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
         available: true,
         verified: true,
         computeProfileId: "cpu-basic",
+        ...basicCloudShape,
         ...commonRefs
       },
       {
@@ -64,6 +75,7 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
         available: true,
         verified: true,
         computeProfileId: "cpu-pro",
+        ...proCloudShape,
         ...commonRefs
       },
       {

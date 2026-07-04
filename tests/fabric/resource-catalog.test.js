@@ -73,3 +73,40 @@ test("Fabric catalog readiness summarizes available and unavailable resource cla
   assert.deepEqual(readiness.workspaceImages.available, ["one-person-lab-app"]);
   assert.deepEqual(readiness.ingressDomains.available, ["workspace"]);
 });
+
+test("Fabric resource catalog maps product packages to Tencent instance types and node pools", () => {
+  const catalog = defaultFabricResourceCatalog({
+    env: {
+      OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-2c4g",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-8c16g"
+    }
+  });
+
+  assert.deepEqual(catalog.workspacePackages.map((plan) => ({
+    id: plan.id,
+    server: plan.server,
+    instanceType: plan.instanceType || "",
+    nodePoolId: plan.nodePoolId || ""
+  })), [
+    {
+      id: "basic",
+      server: "2c4g",
+      instanceType: "SA5.MEDIUM4",
+      nodePoolId: "np-basic-2c4g"
+    },
+    {
+      id: "pro",
+      server: "8c16g",
+      instanceType: "SA5.LARGE16",
+      nodePoolId: "np-pro-8c16g"
+    },
+    {
+      id: "gpu",
+      server: "16c64g-1gpu",
+      instanceType: "",
+      nodePoolId: ""
+    }
+  ]);
+});

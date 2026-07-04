@@ -151,6 +151,10 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,
       OPL_PRO_COMPUTE_HOURLY_CNY: env.OPL_PRO_COMPUTE_HOURLY_CNY,
       OPL_STORAGE_GB_MONTH_CNY: env.OPL_STORAGE_GB_MONTH_CNY,
+      OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-package",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-package",
       OPL_CODEX_MODEL: "gpt-5.5",
       OPL_CODEX_REASONING_EFFORT: "xhigh",
       OPL_CODEX_BASE_URL: "https://gflabtoken.cn/v1",
@@ -186,6 +190,10 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
   assert.equal(config.data.OPL_PRO_COMPUTE_HOURLY_CNY, env.OPL_PRO_COMPUTE_HOURLY_CNY);
   assert.equal(config.data.OPL_GPU_COMPUTE_HOURLY_CNY, undefined);
   assert.equal(config.data.OPL_STORAGE_GB_MONTH_CNY, env.OPL_STORAGE_GB_MONTH_CNY);
+  assert.equal(config.data.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "SA5.MEDIUM4");
+  assert.equal(config.data.OPL_BASIC_COMPUTE_NODE_POOL_ID, "np-basic-package");
+  assert.equal(config.data.OPL_PRO_COMPUTE_INSTANCE_TYPE, "SA5.LARGE16");
+  assert.equal(config.data.OPL_PRO_COMPUTE_NODE_POOL_ID, "np-pro-package");
   assert.equal(config.data.OPL_CODEX_MODEL, "gpt-5.5");
   assert.equal(config.data.OPL_CODEX_REASONING_EFFORT, "xhigh");
   assert.equal(config.data.OPL_CODEX_BASE_URL, "https://gflabtoken.cn/v1");
@@ -229,6 +237,10 @@ test("TKE manifest renderer can skip the shared Ingress during deploy so Workspa
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,
       OPL_PRO_COMPUTE_HOURLY_CNY: env.OPL_PRO_COMPUTE_HOURLY_CNY,
       OPL_STORAGE_GB_MONTH_CNY: env.OPL_STORAGE_GB_MONTH_CNY,
+      OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
+      OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-package",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-package",
       OPL_CODEX_MODEL: "gpt-5.5",
       OPL_CODEX_REASONING_EFFORT: "xhigh",
       OPL_CODEX_BASE_URL: "https://gflabtoken.cn/v1",
