@@ -565,6 +565,7 @@ export class PostgresStore {
     `);
     await this.ensureCurrentColumns(client);
     await this.dropRetiredColumnRequirements(client);
+    await this.pruneRetiredRows(client);
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx ON request_usage_logs (workspace_id, request_id)");
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx ON request_usage_dedup (workspace_id, source_event_id)");
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_workspace_resource_source_idx ON resource_usage_logs (workspace_id, resource_type, ((state->>'sourceEventId')))");
@@ -710,5 +711,9 @@ export class PostgresStore {
       END
       $$;
     `);
+  }
+
+  async pruneRetiredRows(client) {
+    await client.query("DELETE FROM storage_attachments WHERE NOT (state ? 'computeAllocationId')");
   }
 }
