@@ -131,7 +131,7 @@ const replacementCompute = await requestJson({
 });
 ```
 
-Attach the original `storage.id`, create a second Workspace URL, open it, and read `/projects/opl-e2e-<runId>.txt`.
+Attach the original `storage.id`, create a second Workspace URL, open it, and read `/data/opl-e2e-<runId>.txt`.
 
 - [ ] **Step 3: Harden cleanup**
 

@@ -42,7 +42,7 @@ The verifier uses only stable WebUI APIs discovered from the current source:
 - `GET /api/conversations/:conversation_id/workspace?path=<relative>`: list workspace files.
 - `GET /ws`: runtime event stream.
 
-For the persistence proof, the verifier writes a deterministic text file under `/projects/opl-e2e-<runId>.txt` and reads it back before and after compute recreation. Multipart upload is attempted against `/api/fs/upload`; if it returns an absolute path, the verifier reads that path and records a separate upload check.
+For the persistence proof, the verifier writes a deterministic text file under `/data/opl-e2e-<runId>.txt` and reads it back before and after compute recreation. This uses the mounted WebUI data root because the current AionCore `/api/fs/write` sandbox allows the default data/work roots; project-file `/projects` write coverage belongs to the WebUI runtime contract, not the OPL Cloud resource-chain verifier.
 
 ## Chat Probe
 

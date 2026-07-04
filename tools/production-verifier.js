@@ -5,6 +5,7 @@ const DEFAULT_CREDIT_AMOUNT = 1000;
 const DEFAULT_WORKSPACE_URL_ATTEMPTS = 12;
 const DEFAULT_RETRY_DELAY_MS = 5000;
 const DEFAULT_MOUNT_PATH = "/data";
+const WORKSPACE_PERSISTENCE_ROOT = "/data";
 const DEFAULT_REQUEST_USAGE_AMOUNT = 0.42;
 
 function defaultRunId() {
@@ -182,7 +183,7 @@ function runtimePayloadData(payload) {
 }
 
 async function verifyWorkspaceRuntimeFile({ fetchImpl, checks, workspaceUrl, runId }) {
-  const filePath = `/projects/opl-e2e-${runId}.txt`;
+  const filePath = `${WORKSPACE_PERSISTENCE_ROOT}/opl-e2e-${runId}.txt`;
   const content = `opl persistence ${runId}`;
   const user = await requestWorkspaceJson({
     fetchImpl,
@@ -212,7 +213,7 @@ async function verifyWorkspaceRuntimeFile({ fetchImpl, checks, workspaceUrl, run
     workspaceUrl,
     path: "/api/fs/read",
     method: "POST",
-    body: { path: filePath, workspace: "/projects" }
+    body: { path: filePath, workspace: WORKSPACE_PERSISTENCE_ROOT }
   });
   addCheck(checks, "workspace_file_read", runtimePayloadData(read) === content, { path: filePath });
   return { filePath, content };
@@ -224,7 +225,7 @@ async function verifyWorkspacePersistedFile({ fetchImpl, checks, workspaceUrl, f
     workspaceUrl,
     path: "/api/fs/read",
     method: "POST",
-    body: { path: fileProof.filePath, workspace: "/projects" }
+    body: { path: fileProof.filePath, workspace: WORKSPACE_PERSISTENCE_ROOT }
   });
   addCheck(checks, "workspace_persisted_file_read", runtimePayloadData(read) === fileProof.content, { path: fileProof.filePath });
 }

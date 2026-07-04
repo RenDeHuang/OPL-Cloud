@@ -337,17 +337,17 @@ test("production verifier exercises the public TKE resource provisioning chain",
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments").body.computeAllocationId, chain.compute.id);
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments").body.storageId, chain.storage.id);
   assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.workspace.url, "/api/fs/write")}`).body, {
-    path: "/projects/opl-e2e-prod-run.txt",
+    path: "/data/opl-e2e-prod-run.txt",
     data: "opl persistence prod-run"
   });
   assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}`).body, {
-    path: "/projects/opl-e2e-prod-run.txt",
-    workspace: "/projects"
+    path: "/data/opl-e2e-prod-run.txt",
+    workspace: "/data"
   });
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments#2").body.storageId, chain.storage.id);
   assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.replacementWorkspace.url, "/api/fs/read")}`).body, {
-    path: "/projects/opl-e2e-prod-run.txt",
-    workspace: "/projects"
+    path: "/data/opl-e2e-prod-run.txt",
+    workspace: "/data"
   });
   assert.equal(result.workspaceId, chain.workspace.id);
   assert.equal(result.url, chain.workspace.url);
