@@ -321,6 +321,27 @@ test("TKE production E2E resolves operator token from the existing cluster secre
   );
 });
 
+test("TKE production E2E resolves admin credentials from auth seed when operator token is absent", async () => {
+  const workflow = await readWorkflow(".github/workflows/e2e-tke-production.yml");
+  const currentJob = job(workflow, "persistence-e2e");
+  const stepMap = stepsByName(currentJob);
+  const step = stepMap.get("Resolve Console admin credentials");
+
+  assert.ok(step, "E2E workflow must resolve admin credentials before running API mutations");
+  const text = serializedStep(step);
+  assert.match(text, /get secret opl-cloud-auth/);
+  assert.match(text, /OPL_CONSOLE_USERS_JSON/);
+  assert.match(text, /role === "admin"/);
+  assert.match(text, /admin\.password/);
+  assert.match(text, /::add-mask::/);
+  assert.match(text, /OPL_VERIFY_ADMIN_EMAIL=/);
+  assert.match(text, /OPL_VERIFY_ADMIN_PASSWORD<<EOF/);
+  assert.ok(
+    [...stepMap.keys()].indexOf("Resolve Console admin credentials") < [...stepMap.keys()].indexOf("Run production persistence E2E"),
+    "admin credentials must be resolved before running the production E2E"
+  );
+});
+
 test("TKE diagnostics do not print account state or Workspace URL tokens", async () => {
   const contract = await readJson(deploymentContractPath);
   const workflow = await readWorkflow(contract.diagnosticsWorkflow.file);

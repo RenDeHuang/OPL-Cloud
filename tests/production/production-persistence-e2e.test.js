@@ -270,3 +270,115 @@ test("production persistence E2E recreates compute while retaining and verifying
     assert.equal(request.csrf, "csrf-auth");
   }
 });
+
+test("production persistence E2E can authenticate with admin credentials when operator token is absent", async () => {
+  const runId = "admin-auth";
+  const chain = resourceChain(runId);
+  const requests = [];
+  const responses = {
+    "GET /api/production/readiness": { ready: true, failedChecks: [], checks: [] },
+    "GET /api/runtime/readiness": { ready: true, missingEnv: [], missingTools: [] },
+    "POST /api/auth/login": { user: { accountId: "admin", role: "admin" }, csrfToken: "csrf-admin" },
+    "POST /api/billing/topups": { id: "pi-e2e", balance: 2000 },
+    "POST /api/compute-resources": chain.computeA,
+    "POST /api/storage-volumes": chain.storage,
+    "POST /api/storage-attachments": chain.attachmentA,
+    "POST /api/workspaces": chain.workspaceA,
+    "POST /api/workspaces/runtime-status": readyRuntimeStatus(chain.workspaceA),
+    [`GET ${chain.workspaceA.url}`]: "<html>one-person-lab-app</html>",
+    "POST /api/storage-attachments/detach": { ...chain.attachmentA, status: "detached" },
+    "POST /api/compute-resources/destroy": { ...chain.computeA, status: "destroyed", billingStatus: "closed" },
+    "POST /api/compute-resources#2": chain.computeB,
+    "POST /api/storage-attachments#2": chain.attachmentB,
+    "POST /api/workspaces#2": chain.workspaceB,
+    "POST /api/workspaces/runtime-status#2": readyRuntimeStatus(chain.workspaceB),
+    [`GET ${chain.workspaceB.url}`]: "<html>one-person-lab-app</html>",
+    "POST /api/billing/request-usage": {
+      id: "usage-request-e2e",
+      workspaceId: chain.workspaceB.id,
+      accountId: "pi-e2e",
+      requestId: `production-persistence-e2e:${runId}`
+    },
+    "GET /api/state": {
+      wallet: { accountId: "pi-e2e", balance: 1999, frozen: 10 },
+      billingLedger: [
+        { accountId: "pi-e2e", computeId: chain.computeA.id },
+        { accountId: "pi-e2e", computeId: chain.computeB.id },
+        { accountId: "pi-e2e", storageId: chain.storage.id },
+        { accountId: "pi-e2e", attachmentId: chain.attachmentA.id },
+        { accountId: "pi-e2e", attachmentId: chain.attachmentB.id },
+        { accountId: "pi-e2e", workspaceId: chain.workspaceB.id, type: "request_debit" }
+      ],
+      resourceUsageLogs: [
+        { accountId: "pi-e2e", computeId: chain.computeA.id },
+        { accountId: "pi-e2e", computeId: chain.computeB.id },
+        { accountId: "pi-e2e", storageId: chain.storage.id },
+        { accountId: "pi-e2e", attachmentId: chain.attachmentA.id },
+        { accountId: "pi-e2e", attachmentId: chain.attachmentB.id }
+      ],
+      requestUsageLogs: [
+        { accountId: "pi-e2e", workspaceId: chain.workspaceB.id, requestId: `production-persistence-e2e:${runId}` }
+      ]
+    },
+    "POST /api/storage-attachments/detach#2": { ...chain.attachmentB, status: "detached" },
+    "POST /api/compute-resources/destroy#2": { ...chain.computeB, status: "destroyed", billingStatus: "closed" },
+    "POST /api/storage-volumes/destroy": { ...chain.storage, status: "destroyed", billingStatus: "closed" }
+  };
+  const callCounts = new Map();
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(String(url));
+    const method = options.method || "GET";
+    let key = parsed.origin === "https://console.oplcloud.cn" ? `${method} ${parsed.pathname}` : `${method} ${String(url)}`;
+    if (["POST /api/compute-resources", "POST /api/storage-attachments", "POST /api/workspaces", "POST /api/workspaces/runtime-status", "POST /api/storage-attachments/detach", "POST /api/compute-resources/destroy"].includes(key)) {
+      const count = (callCounts.get(key) || 0) + 1;
+      callCounts.set(key, count);
+      if (count > 1) key = `${key}#${count}`;
+    }
+    requests.push({ key, body: options.body ? JSON.parse(options.body) : null, csrf: options.headers?.["x-opl-csrf-token"] || "" });
+    const payload = responses[key];
+    if (typeof payload === "string") return htmlResponse(payload);
+    if (payload) {
+      if (key === "POST /api/auth/login") {
+        return jsonResponse(payload, 200, new Headers({
+          "content-type": "application/json",
+          "set-cookie": "opl_console_session=admin-session; Path=/; HttpOnly; SameSite=Lax",
+          "x-opl-csrf-token": "csrf-admin"
+        }));
+      }
+      return jsonResponse(payload);
+    }
+    throw new Error(`unexpected_request:${key}`);
+  };
+  const kube = {
+    async waitForComputeNodes() {},
+    async waitForRuntimePod(workspace) {
+      return { podName: `pod-${workspace.computeId}` };
+    },
+    async writeFile({ content }) {
+      return { sha256: createHash("sha256").update(content).digest("hex") };
+    },
+    async readFile() {
+      const content = `OPL Cloud persistence E2E ${runId}\n`;
+      return { content, sha256: createHash("sha256").update(content).digest("hex") };
+    }
+  };
+
+  await verifyProductionPersistenceChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-e2e",
+    runId,
+    adminEmail: "admin@example.com",
+    adminPassword: "admin-secret",
+    retryDelayMs: 0,
+    workspaceUrlAttempts: 1,
+    fetchImpl,
+    kube
+  });
+
+  assert.deepEqual(requests.slice(0, 4), [
+    { key: "GET /api/production/readiness", body: null, csrf: "" },
+    { key: "GET /api/runtime/readiness", body: null, csrf: "" },
+    { key: "POST /api/auth/login", body: { email: "admin@example.com", password: "admin-secret" }, csrf: "" },
+    { key: "POST /api/billing/topups", body: { accountId: "pi-e2e", amount: 2000, reason: `production_persistence_e2e_credit:${runId}` }, csrf: "csrf-admin" }
+  ]);
+});

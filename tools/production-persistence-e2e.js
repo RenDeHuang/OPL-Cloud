@@ -146,6 +146,26 @@ async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
   };
 }
 
+async function requestAdminSession({ fetchImpl, origin, adminEmail, adminPassword }) {
+  if (!adminEmail || !adminPassword) throw new Error("admin_credentials_required");
+  const { payload, response } = await requestJsonWithResponse({
+    fetchImpl,
+    origin,
+    path: "/api/auth/login",
+    method: "POST",
+    body: { email: adminEmail, password: adminPassword }
+  });
+  return {
+    cookie: cookieHeaderFromSetCookie(response.headers),
+    csrf: response.headers?.get?.("x-opl-csrf-token") || payload?.csrfToken || ""
+  };
+}
+
+async function requestMutationSession({ fetchImpl, origin, operatorToken, adminEmail, adminPassword }) {
+  if (operatorToken) return requestOperatorSession({ fetchImpl, origin, operatorToken });
+  return requestAdminSession({ fetchImpl, origin, adminEmail, adminPassword });
+}
+
 function sleep(ms) {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -495,6 +515,8 @@ export async function verifyProductionPersistenceChain({
   workspaceUrlAttempts = DEFAULT_WORKSPACE_URL_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   operatorToken = "",
+  adminEmail = "",
+  adminPassword = "",
   fetchImpl = globalThis.fetch,
   kube = null,
   nodeTimeoutMs = DEFAULT_NODE_TIMEOUT_MS,
@@ -531,7 +553,7 @@ export async function verifyProductionPersistenceChain({
     const runtimeReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/runtime/readiness" });
     assertReady({ checks, name: "runtime_readiness", payload: runtimeReadiness });
 
-    auth = await requestOperatorSession({ fetchImpl, origin: normalizedOrigin, operatorToken });
+    auth = await requestMutationSession({ fetchImpl, origin: normalizedOrigin, operatorToken, adminEmail, adminPassword });
 
     await requestJson({
       fetchImpl,
@@ -809,6 +831,8 @@ function optionsFromArgs({ argv, env = process.env, fetchImpl = globalThis.fetch
     podTimeoutMs: Number(args["pod-timeout-ms"] || env.OPL_E2E_POD_TIMEOUT_MS || DEFAULT_POD_TIMEOUT_MS),
     kubePollMs: Number(args["kube-poll-ms"] || env.OPL_E2E_KUBE_POLL_MS || DEFAULT_KUBE_POLL_MS),
     operatorToken: args["operator-token"] || env.OPL_VERIFY_OPERATOR_TOKEN || "",
+    adminEmail: args["admin-email"] || env.OPL_VERIFY_ADMIN_EMAIL || "",
+    adminPassword: args["admin-password"] || env.OPL_VERIFY_ADMIN_PASSWORD || "",
     fetchImpl
   };
 }
