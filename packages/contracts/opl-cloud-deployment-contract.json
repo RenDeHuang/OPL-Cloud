@@ -265,20 +265,26 @@
         "^opl-ws-",
         "kubectl --kubeconfig \"$KUBECONFIG\" apply -f \"$next_ingress_file\""
       ],
-      "Delete old workspace runtime resources": [
-        "app.kubernetes.io/name=opl-workspace",
-        "deployment \"$name\"",
-        "service \"$name\"",
-        "secret \"$name-env\"",
+    "Delete old workspace runtime resources": [
+      "get deploy,svc,secret,pvc -o json",
+      "^opl-ws-[a-z0-9-]+",
+      "name.replace(/-env$/, \"\")",
+      "name.replace(/-data$/, \"\")",
+      "deployment \"$name\"",
+      "service \"$name\"",
+      "secret \"$name-env\"",
         "pvc \"$name-data\"",
         "--ignore-not-found=true"
       ],
-      "Delete legacy namespaces": [
-        "LEGACY_NAMESPACES",
-        "case \"$namespace\" in",
-        "medopl|opl-webui",
-        "kubectl --kubeconfig \"$KUBECONFIG\" delete namespace \"$namespace\" --wait=true --timeout=300s"
-      ],
+    "Delete legacy namespaces": [
+      "LEGACY_NAMESPACES",
+      "case \"$namespace\" in",
+      "medopl|opl-webui",
+      "delete deploy,sts,ds,job,cronjob",
+      "delete pod",
+      "cleanup_failed: namespace/$namespace still has pods before namespace deletion",
+      "kubectl --kubeconfig \"$KUBECONFIG\" delete namespace \"$namespace\" --wait=true --timeout=300s"
+    ],
       "Verify cleanup": [
         "cleanup_failed",
         "app.kubernetes.io/name=opl-workspace",

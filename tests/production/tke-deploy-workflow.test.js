@@ -110,8 +110,14 @@ test("TKE old Workspace cleanup workflow is explicit and scoped to retired runti
   assert.match(text, /service "\$name"/);
   assert.match(text, /secret "\$name-env"/);
   assert.match(text, /pvc "\$name-data"/);
+  assert.match(text, /get deploy,svc,secret,pvc -o json/);
+  assert.match(text, /name\.replace\(\/-env\$\/, ""\)/);
+  assert.match(text, /name\.replace\(\/-data\$\/, ""\)/);
   assert.match(text, /namespace_confirm=DELETE_MEDOPL_AND_OPL_WEBUI|NAMESPACE_CONFIRM" != "DELETE_MEDOPL_AND_OPL_WEBUI"/);
   assert.match(text, /case "\$namespace" in\s+medopl\|opl-webui/s);
+  assert.match(text, /delete deploy,sts,ds,job,cronjob/);
+  assert.match(text, /delete pod\s+\\\n\s+--all/);
+  assert.match(text, /cleanup_failed: namespace\/\$namespace still has pods before namespace deletion/);
   assert.match(text, /kubectl --kubeconfig "\$KUBECONFIG" delete namespace "\$namespace" --wait=true --timeout=300s/);
   assert.doesNotMatch(text, /delete namespace --all/);
   assert.doesNotMatch(text, /kubectl .* delete\s+ingress/);
