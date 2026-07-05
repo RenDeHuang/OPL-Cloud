@@ -1,0 +1,189 @@
+name: Cleanup TKE NodePool Machines
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_pool_id:
+        description: TKE NodePool id that owns the target machines.
+        required: true
+        default: "np-m17obipm"
+        type: string
+      machine_names:
+        description: Comma-separated TKE machine names to delete.
+        required: true
+        type: string
+      node_names:
+        description: Comma-separated Kubernetes node names matching machine_names order.
+        required: true
+        type: string
+      dry_run:
+        description: Inspect only unless set to false.
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      confirm_machine_names:
+        description: For dry_run=false, must exactly equal machine_names.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Cleanup selected TKE NodePool machines
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    environment: production
+    env:
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+      TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
+      TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
+      TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
+      TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
+      RUN_TENCENT_CREATE_RELEASE_EXECUTION: "1"
+      NODE_POOL_ID: ${{ inputs.node_pool_id }}
+      MACHINE_NAMES: ${{ inputs.machine_names }}
+      NODE_NAMES: ${{ inputs.node_names }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      CONFIRM_MACHINE_NAMES: ${{ inputs.confirm_machine_names }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          chmod 700 "$secret_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No deploy kubeconfig was provided." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Validate targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$NODE_POOL_ID" | grep -Eq '^np-[A-Za-z0-9-]+$'; then
+            echo "node_pool_id must match ^np-[A-Za-z0-9-]+$" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$MACHINE_NAMES" | grep -Eq '^[A-Za-z0-9._:-]+(,[A-Za-z0-9._:-]+)*$'; then
+            echo "machine_names must be a comma-separated list of machine ids." >&2
+            exit 1
+          fi
+          if ! printf '%s' "$NODE_NAMES" | grep -Eq '^[A-Za-z0-9._:-]+(,[A-Za-z0-9._:-]+)*$'; then
+            echo "node_names must be a comma-separated list of Kubernetes node names." >&2
+            exit 1
+          fi
+          IFS=',' read -r -a machines <<< "$MACHINE_NAMES"
+          IFS=',' read -r -a nodes <<< "$NODE_NAMES"
+          if [ "${#machines[@]}" -ne "${#nodes[@]}" ]; then
+            echo "machine_names and node_names must have the same length." >&2
+            exit 1
+          fi
+          if [ "${#machines[@]}" -gt 10 ]; then
+            echo "Refusing to clean more than 10 machines in one run." >&2
+            exit 1
+          fi
+          if [ "$DRY_RUN" = "false" ] && [ "$CONFIRM_MACHINE_NAMES" != "$MACHINE_NAMES" ]; then
+            echo "confirm_machine_names must exactly equal machine_names for live cleanup." >&2
+            exit 1
+          fi
+
+      - name: Verify targets have no workload pods
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a nodes <<< "$NODE_NAMES"
+          for node in "${nodes[@]}"; do
+            kubectl --kubeconfig "$KUBECONFIG" get node "$node" -o wide
+            kubectl --kubeconfig "$KUBECONFIG" get pods -A --field-selector "spec.nodeName=$node" -o json \
+              | TARGET_NODE="$node" node -e '
+                  const fs = require("node:fs");
+                  const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+                  const blockers = (payload.items || []).filter((pod) => {
+                    const phase = pod.status?.phase || "";
+                    if (phase === "Succeeded" || phase === "Failed") return false;
+                    const owners = pod.metadata?.ownerReferences || [];
+                    if (owners.some((owner) => owner.kind === "DaemonSet")) return false;
+                    return true;
+                  }).map((pod) => `${pod.metadata?.namespace}/${pod.metadata?.name}`);
+                  if (blockers.length > 0) {
+                    console.error(`node ${process.env.TARGET_NODE} has non-daemon workload pods: ${blockers.join(",")}`);
+                    process.exit(1);
+                  }
+                  console.log(`node ${process.env.TARGET_NODE} has no non-daemon workload pods.`);
+                '
+          done
+
+      - name: Build provisioner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd cmd/opl-tencent-provisioner
+          go build -o /tmp/opl-tencent-provisioner .
+
+      - name: Delete selected machines through TKE
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a machines <<< "$MACHINE_NAMES"
+          IFS=',' read -r -a nodes <<< "$NODE_NAMES"
+          for index in "${!machines[@]}"; do
+            machine="${machines[$index]}"
+            node_name="${nodes[$index]}"
+            response="$(
+              MACHINE_NAME="$machine" NODE_NAME="$node_name" node -e '
+                const clean = String(process.env.MACHINE_NAME).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+                const payload = {
+                  action: "destroy_compute_allocation",
+                  dryRun: process.env.DRY_RUN !== "false",
+                  accountId: "ops-nodepool-cleanup",
+                  pool: {
+                    id: "pool-basic-2c4g",
+                    nodePoolId: process.env.NODE_POOL_ID
+                  },
+                  allocation: {
+                    id: `compute-nodepool-cleanup-${clean}`.slice(0, 63),
+                    machineName: process.env.MACHINE_NAME,
+                    nodeName: process.env.NODE_NAME
+                  }
+                };
+                process.stdout.write(JSON.stringify(payload));
+              ' | /tmp/opl-tencent-provisioner
+            )"
+            RESPONSE="$response" node -e '
+              const response = JSON.parse(process.env.RESPONSE || "{}");
+              console.log(`TKE_NODEPOOL_MACHINE_CLEANUP_RESULT=${JSON.stringify(response)}`);
+              if (!response.ok) process.exit(1);
+            '
+          done
+
+      - name: Show remaining target nodes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a nodes <<< "$NODE_NAMES"
+          for node in "${nodes[@]}"; do
+            kubectl --kubeconfig "$KUBECONFIG" get node "$node" -o wide || true
+          done
