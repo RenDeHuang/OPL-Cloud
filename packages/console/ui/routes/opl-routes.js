@@ -1,29 +1,52 @@
 import { defaultLaunchConfig, isFeatureEnabled } from "../config/launch-config.js";
 
-const paidMutationProtocol = Object.freeze({
+const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
+const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
+const storageDestroyStages = Object.freeze(["已提交", "释放冻结", "销毁存储", "已删除"]);
+const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
+const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
+const workspaceEntryStages = Object.freeze(["已提交", "生成 URL", "URL 可用"]);
+
+const computeCreateProtocol = Object.freeze({
   mutation: true,
+  asyncProvisioning: true,
+  initialStatus: "provisioning",
+  readyStatus: "running",
+  pollRoute: "GET /api/compute-allocations/:id",
+  pollQuery: ["accountId"],
   confirmation: "normal",
   costImpact: "required",
   operationTimeline: true,
   failureVisible: true,
-  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
+  visibleStages: computeAllocationStages
 });
 
 const normalMutationProtocol = Object.freeze({
   mutation: true,
   confirmation: "normal",
   operationTimeline: true,
-  failureVisible: true,
-  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
+  failureVisible: true
 });
 
-const destructiveMutationProtocol = Object.freeze({
+const computeDestroyProtocol = Object.freeze({
   mutation: true,
+  asyncProvisioning: true,
+  pollRoute: "GET /api/compute-allocations/:id",
+  pollQuery: ["accountId"],
   confirmation: "normal",
   destructive: true,
   operationTimeline: true,
   failureVisible: true,
-  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
+  visibleStages: computeAllocationStages
+});
+
+const storageCreateProtocol = Object.freeze({
+  mutation: true,
+  confirmation: "normal",
+  costImpact: "required",
+  operationTimeline: true,
+  failureVisible: true,
+  visibleStages: storageCreateStages
 });
 
 const storageDestroyProtocol = Object.freeze({
@@ -34,7 +57,40 @@ const storageDestroyProtocol = Object.freeze({
   confirmText: "确认删除数据",
   operationTimeline: true,
   failureVisible: true,
-  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
+  visibleStages: storageDestroyStages
+});
+
+const attachmentCreateProtocol = Object.freeze({
+  mutation: true,
+  confirmation: "normal",
+  operationTimeline: true,
+  failureVisible: true,
+  visibleStages: attachmentCreateStages
+});
+
+const attachmentDetachProtocol = Object.freeze({
+  mutation: true,
+  confirmation: "normal",
+  destructive: true,
+  operationTimeline: true,
+  failureVisible: true,
+  visibleStages: attachmentDetachStages
+});
+
+const workspaceCreateProtocol = Object.freeze({
+  mutation: true,
+  confirmation: "normal",
+  operationTimeline: true,
+  failureVisible: true,
+  visibleStages: workspaceEntryStages
+});
+
+const destructiveMutationProtocol = Object.freeze({
+  mutation: true,
+  confirmation: "normal",
+  destructive: true,
+  operationTimeline: true,
+  failureVisible: true
 });
 
 const computeAllocationFields = Object.freeze([
@@ -61,6 +117,7 @@ const storageVolumeFields = Object.freeze([
   "sizeGb",
   "storageClassId",
   "providerResourceId",
+  "hourlyEstimate",
   "billingStatus",
   "status",
   "operationId",
@@ -241,7 +298,7 @@ export const oplRoutes = Object.freeze([
     serviceBoundary: "ComputeAllocationService",
     dynamicFields: computeAllocationFields,
     capabilities: ["read", "write", "action", "evidence"],
-    operationProtocol: paidMutationProtocol
+    operationProtocol: computeCreateProtocol
   }),
   currentRoute({
     id: "compute-allocations.detail",
@@ -259,7 +316,7 @@ export const oplRoutes = Object.freeze([
     serviceBoundary: "ComputeAllocationService",
     dynamicFields: computeAllocationFields,
     capabilities: ["detail", "read", "action", "evidence"],
-    operationProtocol: destructiveMutationProtocol
+    operationProtocol: computeDestroyProtocol
   }),
   currentRoute({
     id: "storage.list",
@@ -294,7 +351,7 @@ export const oplRoutes = Object.freeze([
     serviceBoundary: "ResourceProvisioningService",
     dynamicFields: storageVolumeFields,
     capabilities: ["read", "write", "action", "evidence"],
-    operationProtocol: paidMutationProtocol
+    operationProtocol: storageCreateProtocol
   }),
   currentRoute({
     id: "storage.detail",
@@ -345,7 +402,7 @@ export const oplRoutes = Object.freeze([
     apiRoutes: ["GET /api/state", "POST /api/storage-attachments"],
     serviceBoundary: "ResourceProvisioningService",
     capabilities: ["read", "write", "action", "evidence"],
-    operationProtocol: normalMutationProtocol
+    operationProtocol: attachmentCreateProtocol
   }),
   currentRoute({
     id: "attachment.detail",
@@ -362,7 +419,7 @@ export const oplRoutes = Object.freeze([
     apiRoutes: ["GET /api/state", "POST /api/storage-attachments/detach"],
     serviceBoundary: "ResourceProvisioningService",
     capabilities: ["detail", "read", "action", "evidence"],
-    operationProtocol: destructiveMutationProtocol
+    operationProtocol: attachmentDetachProtocol
   }),
   currentRoute({
     id: "resources.relationships",
@@ -411,7 +468,7 @@ export const oplRoutes = Object.freeze([
     apiRoutes: ["GET /api/state", "POST /api/workspaces"],
     serviceBoundary: "WorkspaceEntryService",
     capabilities: ["read", "write"],
-    operationProtocol: normalMutationProtocol
+    operationProtocol: workspaceCreateProtocol
   }),
   currentRoute({
     id: "workspace.detail",

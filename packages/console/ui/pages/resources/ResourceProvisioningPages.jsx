@@ -29,6 +29,12 @@ import {
 } from "../shared/commercial-console.jsx";
 import { available, money } from "../shared/formatters.js";
 
+const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
+const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
+const storageDestroyStages = Object.freeze(["已提交", "释放冻结", "销毁存储", "已删除"]);
+const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
+const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
+
 function resourceStatus(value) {
   const normalized = String(value || "pending");
   if (["running", "bound", "attached", "ready", "active"].includes(normalized)) return "good";
@@ -296,7 +302,7 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction })
       </InsightPanel>
       <div className="consoleGrid equal">
         <InsightPanel title="操作时间线" eyebrow="进度">
-          <OperationTimeline operations={state.runtimeOperations || []} resourceId={resource.id} />
+          <OperationTimeline operations={state.runtimeOperations || []} resourceId={resource.id} stages={computeAllocationStages} />
         </InsightPanel>
         <InsightPanel title="失败处理" eyebrow="恢复">
           <FailureRecoveryPanel
@@ -386,6 +392,7 @@ export function CreateStorageVolumePage({ state, session, runAction }) {
           />
           <WalletRiskPanel wallet={state.wallet} requiredHold={selectedStorageHold} resourceLabel="存储资源" />
           <ResourceSplit items={[{ label: "数据目录", value: "/data", meta: "用户文件保存位置", status: "可挂载", tone: "info" }]} />
+          <OperationTimeline operations={[]} stages={storageCreateStages} emptyText="提交后开始创建存储" />
           <OperationResultPanel pending={operationPending} result={operationResult} />
           <Form.Item>
             <OperationConfirmButton
@@ -419,7 +426,7 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }) {
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: resource.storageClassId },
             { label: "存储句柄", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
-            { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyPrice)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
+            { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyEstimate)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
             { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
             { label: "操作", value: resource.operationId || "-", meta: "操作编号", status: resource.providerRequestId || "等待中", tone: resource.safeMessage ? "danger" : "info" },
             { label: "失败原因", value: resource.safeMessage || "-", meta: "用户可见原因", status: resource.providerRequestId || "请求编号", tone: resource.safeMessage ? "danger" : "neutral" }
@@ -450,7 +457,7 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }) {
       </InsightPanel>
       <div className="consoleGrid equal">
         <InsightPanel title="操作时间线" eyebrow="进度">
-          <OperationTimeline operations={state.runtimeOperations || []} resourceId={resource.id} />
+          <OperationTimeline operations={state.runtimeOperations || []} resourceId={resource.id} stages={storageDestroyStages} />
         </InsightPanel>
         <InsightPanel title="失败处理" eyebrow="恢复">
           <FailureRecoveryPanel
@@ -525,6 +532,9 @@ export function StorageAttachmentDetailPage({ state, path, session, runAction })
         />
         <OperationResultPanel pending={operationPending} result={operationResult} />
       </InsightPanel>
+      <InsightPanel title="操作时间线" eyebrow="进度">
+        <OperationTimeline operations={state.runtimeOperations || []} resourceId={attachment.id} stages={attachmentDetachStages} />
+      </InsightPanel>
     </ConsoleSurface>
   );
 }
@@ -566,6 +576,7 @@ export function CreateStorageAttachmentPage({ state, session, runAction }) {
             <Input />
           </Form.Item>
           <ResourceSplit items={[{ label: "数据目录", value: "/data", meta: "用户文件保存位置", status: "必需", tone: "info" }]} />
+          <OperationTimeline operations={[]} stages={attachmentCreateStages} emptyText="提交后开始挂载" />
           <OperationResultPanel pending={operationPending} result={operationResult} />
           <Form.Item>
             <OperationConfirmButton

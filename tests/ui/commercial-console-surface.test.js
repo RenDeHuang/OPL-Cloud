@@ -133,6 +133,7 @@ test("resource provisioning failures preserve provider details in the visible re
 
 test("resource provisioning UI shows price, hold, balance impact, and operation state", async () => {
   const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+  const billingSource = await source("packages/console/ui/pages/billing/BillingPage.jsx");
 
   for (const requiredSignal of [
     "computeHourlyPrice",
@@ -152,6 +153,8 @@ test("resource provisioning UI shows price, hold, balance impact, and operation 
   assert.match(resourceSource, /PriceImpactPanel/, "resource creation must use the maintained pricing impact component");
   assert.match(resourceSource, /OperationTimeline/, "resource detail must show operation timeline evidence");
   assert.match(resourceSource, /FailureRecoveryPanel/, "resource detail must expose failed-operation recovery guidance");
+  assert.match(resourceSource, /resource\.hourlyEstimate/, "storage detail must show hourlyEstimate instead of compute hourlyPrice");
+  assert.match(billingSource, /item\.hourlyEstimate/, "billing hourly estimate must include storage hourlyEstimate");
 });
 
 test("resource mutations use confirmation, waiting state, result receipts, and concise Chinese copy", async () => {
@@ -233,6 +236,7 @@ test("Billing and Workspace pages explain commercial charging and URL lifecycle"
 
 test("resource UI exposes dedicated node identity and cold-start progress without generic cloud-resource copy", async () => {
   const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+  const createWorkspaceSource = await source("packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx");
   const surfaceSource = await source("packages/console/ui/pages/shared/commercial-console.jsx");
 
   for (const signal of [
@@ -256,6 +260,13 @@ test("resource UI exposes dedicated node identity and cold-start progress withou
   for (const stage of ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]) {
     assert.match(surfaceSource, new RegExp(stage), `operation timeline must include ${stage}`);
   }
+  for (const stage of ["存储创建中", "可挂载", "释放冻结", "销毁存储", "可创建入口"]) {
+    assert.match(resourceSource, new RegExp(stage), `resource pages must pass object-specific stage ${stage}`);
+  }
+  for (const stage of ["生成 URL", "URL 可用"]) {
+    assert.match(createWorkspaceSource, new RegExp(stage), `workspace create page must pass URL-entry stage ${stage}`);
+  }
+  assert.match(surfaceSource, /stages = resourceOperationStages/, "OperationTimeline must accept route/object-specific stages");
 
   assert.doesNotMatch(resourceSource, /title: "云资源"|label: "云资源"/, "resource UI must not collapse node identity into generic cloud-resource labels");
 });

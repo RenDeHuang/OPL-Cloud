@@ -219,7 +219,10 @@ test("resource route contract declares dynamic fields, billing fields, and visib
 
   const computeList = byId.get("compute-allocations.list");
   const computeDetail = byId.get("compute-allocations.detail");
+  const storageCreate = byId.get("storage.create");
   const storageDetail = byId.get("storage.detail");
+  const attachmentCreate = byId.get("attachment.create");
+  const workspaceCreate = byId.get("workspace.create");
   const billingOverview = byId.get("billing.overview");
 
   for (const field of ["nodePoolId", "nodeName", "privateIp", "instanceId", "billingStatus", "workspaceId"]) {
@@ -235,8 +238,31 @@ test("resource route contract declares dynamic fields, billing fields, and visib
     "存储挂载中",
     "URL 可用"
   ]);
+  assert.deepEqual(storageCreate.operationProtocol.visibleStages, [
+    "已提交",
+    "冻结余额",
+    "存储创建中",
+    "可挂载"
+  ], "storage create must not claim compute Runtime or URL stages");
+  assert.deepEqual(storageDetail.operationProtocol.visibleStages, [
+    "已提交",
+    "释放冻结",
+    "销毁存储",
+    "已删除"
+  ], "storage destroy stages must reflect data deletion risk");
+  assert.deepEqual(attachmentCreate.operationProtocol.visibleStages, [
+    "已提交",
+    "挂载中",
+    "可创建入口"
+  ], "attachment create stages must lead to Workspace URL creation");
+  assert.deepEqual(workspaceCreate.operationProtocol.visibleStages, [
+    "已提交",
+    "生成 URL",
+    "URL 可用"
+  ], "workspace create stages must describe URL entry creation");
   assert.deepEqual(computeDetail.operationProtocol.pollQuery, ["accountId"], "compute detail polling must preserve account scope");
   assert.ok(storageDetail.dynamicFields?.includes("providerResourceId"), "storage detail must expose provider storage handle");
+  assert.ok(storageDetail.dynamicFields?.includes("hourlyEstimate"), "storage detail must expose the storage hourly estimate field");
   assert.ok(storageDetail.dynamicFields?.includes("billingStatus"), "storage detail must expose billing status");
 
   for (const field of ["availableBalance", "frozenBalance", "activeHourlyEstimate", "nextSettlementAt", "runningDuration"]) {

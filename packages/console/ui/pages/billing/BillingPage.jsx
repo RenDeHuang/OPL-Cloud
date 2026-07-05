@@ -37,7 +37,7 @@ function activeHourlyEstimate(state = {}) {
     .reduce((sum, item) => sum + Number(item.hourlyPrice || 0), 0);
   const storageHourly = (state.storageVolumes || [])
     .filter((item) => item.billingStatus === "active" && item.status !== "destroyed")
-    .reduce((sum, item) => sum + Number(item.hourlyPrice || 0), 0);
+    .reduce((sum, item) => sum + Number(item.hourlyEstimate || 0), 0);
   return computeHourly + storageHourly;
 }
 

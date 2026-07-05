@@ -326,7 +326,7 @@ export function ProductionE2EPanel({ summary = {} }) {
   );
 }
 
-export function OperationTimeline({ operations = [], resourceId = "", emptyText = "暂无操作记录" }) {
+export function OperationTimeline({ operations = [], resourceId = "", emptyText = "暂无操作记录", stages = resourceOperationStages }) {
   const scopedOperations = operations
     .filter((operation) => !resourceId || operation.resourceId === resourceId || operation.workspaceId === resourceId)
     .slice(-8)
@@ -343,7 +343,7 @@ export function OperationTimeline({ operations = [], resourceId = "", emptyText 
         meta: statusText(operation.status) || operation.updatedAt || operation.createdAt,
         tone: operation.status === "failed" ? "danger" : operation.status === "completed" ? "good" : "info"
       }))
-    : resourceOperationStages.map((stage, index) => ({
+    : stages.map((stage, index) => ({
         title: stage,
         description: index === 0 ? emptyText : "等待上一步完成",
         meta: index === 0 ? "等待中" : "未开始",

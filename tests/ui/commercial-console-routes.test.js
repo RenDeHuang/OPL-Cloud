@@ -145,6 +145,28 @@ test("route table and routeTo do not expose reserved routes in visible owner or 
   assert.equal(routeTo("support.detail", { id: "ticket_demo" }), "/console/support/ticket_demo");
 });
 
+test("runtime route registry mirrors contract resource operation protocols", async () => {
+  const contract = await readContract();
+  const contractById = new Map(allContractRoutes(contract).map((route) => [route.id, route]));
+
+  for (const id of [
+    "compute-allocations.create",
+    "compute-allocations.detail",
+    "storage.create",
+    "storage.detail",
+    "attachment.create",
+    "attachment.detail",
+    "workspace.create",
+    "workspace.detail"
+  ]) {
+    const contractRoute = contractById.get(id);
+    const runtimeRoute = routesById.get(id);
+    assert.deepEqual(runtimeRoute?.operationProtocol, contractRoute?.operationProtocol, `${id} runtime operation protocol must mirror active contract`);
+  }
+
+  assert.deepEqual(routesById.get("storage.detail")?.dynamicFields, contractById.get("storage.detail")?.dynamicFields, "storage runtime dynamic fields must mirror active contract");
+});
+
 test("current auth UI does not link to reserved account flows", async () => {
   const source = await readFile(new URL("../../packages/console/ui/pages/LoginPage.jsx", import.meta.url), "utf8");
 

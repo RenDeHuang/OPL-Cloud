@@ -3,8 +3,10 @@ import { Alert, Button, Form, Input, Select } from "antd";
 import { Link as LinkIcon, Plus } from "lucide-react";
 import { createWorkspace } from "../../api/workspaces-api.js";
 import { navigate, routeTo } from "../../consoleRoutes.js";
-import { ConsoleSurface, InsightPanel, ResourceSplit, StatusPill } from "../shared/commercial-console.jsx";
+import { ConsoleSurface, InsightPanel, OperationTimeline, ResourceSplit, StatusPill } from "../shared/commercial-console.jsx";
 import { valueLabel } from "../shared/formatters.js";
+
+const workspaceEntryStages = Object.freeze(["已提交", "生成 URL", "URL 可用"]);
 
 export function CreateWorkspacePage({ state, session, runAction }) {
   const attachments = (state.storageAttachments || []).filter((item) => item.status === "attached");
@@ -48,6 +50,7 @@ export function CreateWorkspacePage({ state, session, runAction }) {
             </Form.Item>
             {!ready && <Alert type="warning" showIcon message="需要先开通计算、开通存储，并完成挂载。" />}
             {ready && <Alert type="success" showIcon message="工作区入口只生成访问 URL，不再开新计算或新存储。" />}
+            <OperationTimeline operations={[]} stages={workspaceEntryStages} emptyText="提交后生成访问 URL" />
             <Button className="formSubmit" type="primary" htmlType="submit" icon={<Plus size={15} />} disabled={!ready}>
               创建工作区入口
             </Button>

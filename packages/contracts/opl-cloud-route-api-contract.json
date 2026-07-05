@@ -449,6 +449,7 @@
         "sizeGb",
         "storageClassId",
         "providerResourceId",
+        "hourlyEstimate",
         "billingStatus",
         "status",
         "operationId",
@@ -490,6 +491,7 @@
         "sizeGb",
         "storageClassId",
         "providerResourceId",
+        "hourlyEstimate",
         "billingStatus",
         "status",
         "operationId",
@@ -505,10 +507,8 @@
         "visibleStages": [
           "已提交",
           "冻结余额",
-          "云资源创建中",
-          "Runtime 部署中",
-          "存储挂载中",
-          "URL 可用"
+          "存储创建中",
+          "可挂载"
         ]
       },
       "requiresAdmin": false,
@@ -546,6 +546,7 @@
         "sizeGb",
         "storageClassId",
         "providerResourceId",
+        "hourlyEstimate",
         "billingStatus",
         "status",
         "operationId",
@@ -562,11 +563,9 @@
         "failureVisible": true,
         "visibleStages": [
           "已提交",
-          "冻结余额",
-          "云资源创建中",
-          "Runtime 部署中",
-          "存储挂载中",
-          "URL 可用"
+          "释放冻结",
+          "销毁存储",
+          "已删除"
         ]
       },
       "requiresAdmin": false,
@@ -630,7 +629,12 @@
         "mutation": true,
         "confirmation": "normal",
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "挂载中",
+          "可创建入口"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
@@ -666,7 +670,12 @@
         "confirmation": "normal",
         "destructive": true,
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "解除挂载",
+          "存储保留"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
@@ -755,7 +764,12 @@
         "mutation": true,
         "confirmation": "normal",
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "生成 URL",
+          "URL 可用"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
