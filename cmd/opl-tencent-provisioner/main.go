@@ -311,14 +311,27 @@ func (client *tencentSDKClient) describeClusterMachines(nodePoolId string) ([]*t
 	describeRequest := tke2022.NewDescribeClusterMachinesRequest()
 	describeRequest.ClusterId = common.StringPtr(client.clusterId)
 	describeRequest.Limit = common.Int64Ptr(100)
-	describeRequest.Filters = []*tke2022.Filter{
-		{Name: common.StringPtr("NodePoolsId"), Values: []*string{common.StringPtr(nodePoolId)}},
+	if strings.TrimSpace(nodePoolId) != "" {
+		describeRequest.Filters = []*tke2022.Filter{
+			{Name: common.StringPtr("NodePoolsId"), Values: []*string{common.StringPtr(nodePoolId)}},
+		}
 	}
 	describeResponse, err := client.nativeTkeClient.DescribeClusterMachines(describeRequest)
+	if err != nil && strings.TrimSpace(nodePoolId) != "" && isInvalidMachineFilterError(err) {
+		fallbackRequest := tke2022.NewDescribeClusterMachinesRequest()
+		fallbackRequest.ClusterId = common.StringPtr(client.clusterId)
+		fallbackRequest.Limit = common.Int64Ptr(100)
+		describeResponse, err = client.nativeTkeClient.DescribeClusterMachines(fallbackRequest)
+	}
 	if err != nil {
 		return nil, "", err
 	}
 	return describeResponse.Response.Machines, stringValue(describeResponse.Response.RequestId), nil
+}
+
+func isInvalidMachineFilterError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "invalid filter name") || strings.Contains(message, "invalidparameter")
 }
 
 func (client *tencentSDKClient) waitForNewPoolMachine(nodePoolId string, before []*tke2022.Machine, request Request, env map[string]string) (*tke2022.Machine, string, error) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -307,6 +308,7 @@ type fakeNativeTkeAPI struct {
 	nodePoolId               string
 	discoverNodePoolId       string
 	replicas                 int64
+	rejectMachinePoolFilter  bool
 	calls                    []string
 }
 
@@ -376,6 +378,9 @@ func (api *fakeNativeTkeAPI) DescribeNodePools(request *tke2022.DescribeNodePool
 func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeClusterMachinesRequest) (*tke2022.DescribeClusterMachinesResponse, error) {
 	api.calls = append(api.calls, "DescribeClusterMachines")
 	api.describeMachinesRequest = append(api.describeMachinesRequest, request)
+	if api.rejectMachinePoolFilter && clusterMachineNodePoolIdFilterValue(request) != "" {
+		return nil, errors.New("[TencentCloudSDKError] Code=InvalidParameter, Message=invalid filter name NodePoolsId")
+	}
 	machines := []*tke2022.Machine{}
 	for index := int64(1); index <= api.replicas; index++ {
 		machines = append(machines, &tke2022.Machine{
@@ -395,6 +400,15 @@ func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeCl
 }
 
 func nodePoolIdFilterValue(request *tke2022.DescribeNodePoolsRequest) string {
+	for _, filter := range request.Filters {
+		if filter.Name != nil && *filter.Name == "NodePoolsId" && len(filter.Values) > 0 && filter.Values[0] != nil {
+			return *filter.Values[0]
+		}
+	}
+	return ""
+}
+
+func clusterMachineNodePoolIdFilterValue(request *tke2022.DescribeClusterMachinesRequest) string {
 	for _, filter := range request.Filters {
 		if filter.Name != nil && *filter.Name == "NodePoolsId" && len(filter.Values) > 0 && filter.Values[0] != nil {
 			return *filter.Values[0]
@@ -463,6 +477,43 @@ func TestTencentSDKClientCreateAllocationScalesExistingPackageNodePool(t *testin
 	}
 	if response.ProviderData["replicasBefore"] != "1" || response.ProviderData["replicasAfter"] != "2" {
 		t.Fatalf("expected replica evidence: %#v", response.ProviderData)
+	}
+}
+
+func TestTencentSDKClientCreateAllocationFallsBackWhenClusterMachinesRejectsNodePoolFilter(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, rejectMachinePoolFilter: true}
+	client := &tencentSDKClient{
+		region:          "ap-guangzhou",
+		clusterId:       "cls-123",
+		nativeTkeClient: tkeAPI,
+	}
+
+	response := client.CreateComputeAllocation(Request{
+		AccountId: "pi-alpha",
+		UserId:    "usr-alpha",
+		PackageId: "basic",
+		Pool: ComputePoolInput{
+			Id:           "pool-basic-2c4g",
+			InstanceType: "SA5.LARGE4",
+			NodePoolId:   "np-basic",
+		},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, map[string]string{})
+
+	if !response.Ok {
+		t.Fatalf("expected fallback without machine filter to still provision node identity: %#v", response)
+	}
+	if response.NodeName == "" || response.PrivateIp == "" {
+		t.Fatalf("expected node identity after fallback: %#v", response)
+	}
+	if len(tkeAPI.describeMachinesRequest) < 3 {
+		t.Fatalf("expected filtered attempt and unfiltered fallback calls: %#v", tkeAPI.describeMachinesRequest)
+	}
+	if clusterMachineNodePoolIdFilterValue(tkeAPI.describeMachinesRequest[0]) != "np-basic" {
+		t.Fatalf("first machine describe should try node pool filter: %#v", tkeAPI.describeMachinesRequest[0])
+	}
+	if clusterMachineNodePoolIdFilterValue(tkeAPI.describeMachinesRequest[1]) != "" {
+		t.Fatalf("second machine describe should fallback without filter: %#v", tkeAPI.describeMachinesRequest[1])
 	}
 }
 
