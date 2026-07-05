@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
@@ -44,6 +45,8 @@ type ComputeAllocationInput struct {
 	Id         string `json:"id,omitempty"`
 	InstanceId string `json:"instanceId,omitempty"`
 	NodeName   string `json:"nodeName,omitempty"`
+	PrivateIp  string `json:"privateIp,omitempty"`
+	PublicIp   string `json:"publicIp,omitempty"`
 }
 
 type Response struct {
@@ -53,6 +56,8 @@ type Response struct {
 	NodePoolId        string            `json:"nodePoolId,omitempty"`
 	InstanceId        string            `json:"instanceId,omitempty"`
 	NodeName          string            `json:"nodeName,omitempty"`
+	PrivateIp         string            `json:"privateIp,omitempty"`
+	PublicIp          string            `json:"publicIp,omitempty"`
 	Status            string            `json:"status,omitempty"`
 	ProviderRequestId string            `json:"providerRequestId,omitempty"`
 	ProviderData      map[string]string `json:"providerData,omitempty"`
@@ -77,6 +82,7 @@ type tencentSDKClient struct {
 
 type tkeNativeAPI interface {
 	CreateNodePool(request *tke2022.CreateNodePoolRequest) (*tke2022.CreateNodePoolResponse, error)
+	DescribeClusterMachines(request *tke2022.DescribeClusterMachinesRequest) (*tke2022.DescribeClusterMachinesResponse, error)
 	DescribeNodePools(request *tke2022.DescribeNodePoolsRequest) (*tke2022.DescribeNodePoolsResponse, error)
 	ScaleNodePool(request *tke2022.ScaleNodePoolRequest) (*tke2022.ScaleNodePoolResponse, error)
 	DeleteClusterMachines(request *tke2022.DeleteClusterMachinesRequest) (*tke2022.DeleteClusterMachinesResponse, error)
@@ -197,6 +203,12 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 		describeRequestId = requestId
 	}
 	currentReplicas := nativeReplicas(pool)
+	beforeMachines, beforeMachinesRequestId, err := client.describeClusterMachines(nodePoolId)
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_cluster_machines_failed", err)
+		response.ProviderRequestId = describeRequestId
+		return response
+	}
 	targetReplicas := currentReplicas + 1
 	scaleRequest := tke2022.NewScaleNodePoolRequest()
 	scaleRequest.ClusterId = common.StringPtr(client.clusterId)
@@ -209,23 +221,52 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 		return response
 	}
 	scaleRequestId := stringValue(scaleResponse.Response.RequestId)
+	machine, machineRequestId, err := client.waitForNewPoolMachine(nodePoolId, beforeMachines, request, env)
+	if err != nil {
+		return Response{
+			Ok:                false,
+			ErrorCode:         "compute_allocation_node_identity_required",
+			Message:           "Tencent TKE did not return a dedicated node for this compute allocation.",
+			ProviderRequestId: firstNonEmpty(machineRequestId, scaleRequestId),
+			Retryable:         true,
+			ProviderData: map[string]string{
+				"clusterId":                    client.clusterId,
+				"region":                       client.region,
+				"createNodePoolRequestId":      createNodePoolRequestId,
+				"describeNodePoolRequestId":    describeRequestId,
+				"describeMachinesBeforeReqId":  beforeMachinesRequestId,
+				"describeMachinesLatestReqId":  machineRequestId,
+				"scaleNodePoolRequestId":       scaleRequestId,
+				"instanceType":                 request.Pool.InstanceType,
+				"replicasBefore":               fmt.Sprintf("%d", currentReplicas),
+				"replicasAfter":                fmt.Sprintf("%d", targetReplicas),
+			},
+		}
+	}
+	nodeName := stringValue(machine.MachineName)
+	privateIp := stringValue(machine.LanIP)
 	return Response{
 		Ok:                true,
 		OperationId:       "op-create-compute-" + stableSuffix(request.AccountId, request.Allocation.Id, nodePoolId, fmt.Sprintf("%d", targetReplicas))[:12],
 		PoolId:            request.Pool.Id,
 		NodePoolId:        nodePoolId,
-		NodeName:          request.Allocation.NodeName,
-		Status:            "provisioning",
+		NodeName:          nodeName,
+		PrivateIp:         privateIp,
+		Status:            "running",
 		ProviderRequestId: scaleRequestId,
 		ProviderData: map[string]string{
-			"clusterId":                 client.clusterId,
-			"region":                    client.region,
-			"createNodePoolRequestId":   createNodePoolRequestId,
-			"describeNodePoolRequestId": describeRequestId,
-			"scaleNodePoolRequestId":    scaleRequestId,
-			"instanceType":              request.Pool.InstanceType,
-			"replicasBefore":            fmt.Sprintf("%d", currentReplicas),
-			"replicasAfter":             fmt.Sprintf("%d", targetReplicas),
+			"clusterId":                   client.clusterId,
+			"region":                      client.region,
+			"createNodePoolRequestId":     createNodePoolRequestId,
+			"describeNodePoolRequestId":   describeRequestId,
+			"describeMachinesBeforeReqId": beforeMachinesRequestId,
+			"describeMachinesReadyReqId":  machineRequestId,
+			"scaleNodePoolRequestId":      scaleRequestId,
+			"instanceType":                request.Pool.InstanceType,
+			"replicasBefore":              fmt.Sprintf("%d", currentReplicas),
+			"replicasAfter":               fmt.Sprintf("%d", targetReplicas),
+			"nodeName":                    nodeName,
+			"privateIp":                   privateIp,
 		},
 	}
 }
@@ -237,39 +278,20 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 	if strings.TrimSpace(request.Pool.NodePoolId) == "" {
 		return Response{Ok: false, ErrorCode: "node_pool_id_required", Message: "ComputePool nodePoolId is required.", Retryable: false}
 	}
-	providerRequestId := ""
-	if strings.TrimSpace(request.Allocation.NodeName) != "" {
-		deleteRequest := tke2022.NewDeleteClusterMachinesRequest()
-		deleteRequest.ClusterId = common.StringPtr(client.clusterId)
-		deleteRequest.MachineNames = []*string{common.StringPtr(request.Allocation.NodeName)}
-		deleteRequest.EnableScaleDown = common.BoolPtr(true)
-		deleteRequest.InstanceDeleteMode = common.StringPtr("terminate")
-		deleteResponse, err := client.nativeTkeClient.DeleteClusterMachines(deleteRequest)
-		if err != nil {
-			return sdkErrorResponse("tencent_delete_cluster_machine_failed", err)
-		}
-		providerRequestId = stringValue(deleteResponse.Response.RequestId)
-	} else {
-		pool, describeRequestId, err := client.describeNativeNodePool(request.Pool.NodePoolId)
-		if err != nil {
-			return sdkErrorResponse("tencent_describe_node_pool_failed", err)
-		}
-		targetReplicas := nativeReplicas(pool) - 1
-		if targetReplicas < 0 {
-			targetReplicas = 0
-		}
-		scaleRequest := tke2022.NewScaleNodePoolRequest()
-		scaleRequest.ClusterId = common.StringPtr(client.clusterId)
-		scaleRequest.NodePoolId = common.StringPtr(request.Pool.NodePoolId)
-		scaleRequest.Replicas = common.Int64Ptr(targetReplicas)
-		scaleResponse, err := client.nativeTkeClient.ScaleNodePool(scaleRequest)
-		if err != nil {
-			response := sdkErrorResponse("tencent_scale_node_pool_failed", err)
-			response.ProviderRequestId = describeRequestId
-			return response
-		}
-		providerRequestId = stringValue(scaleResponse.Response.RequestId)
+	if strings.TrimSpace(request.Allocation.NodeName) == "" {
+		return Response{Ok: false, ErrorCode: "compute_allocation_node_identity_required", Message: "ComputeAllocation nodeName is required to destroy a dedicated node.", Retryable: false}
 	}
+	providerRequestId := ""
+	deleteRequest := tke2022.NewDeleteClusterMachinesRequest()
+	deleteRequest.ClusterId = common.StringPtr(client.clusterId)
+	deleteRequest.MachineNames = []*string{common.StringPtr(request.Allocation.NodeName)}
+	deleteRequest.EnableScaleDown = common.BoolPtr(true)
+	deleteRequest.InstanceDeleteMode = common.StringPtr("terminate")
+	deleteResponse, err := client.nativeTkeClient.DeleteClusterMachines(deleteRequest)
+	if err != nil {
+		return sdkErrorResponse("tencent_delete_cluster_machine_failed", err)
+	}
+	providerRequestId = stringValue(deleteResponse.Response.RequestId)
 	return Response{
 		Ok:                true,
 		OperationId:       "op-destroy-compute-" + stableSuffix(request.AccountId, request.Allocation.Id, request.Pool.NodePoolId, request.Allocation.NodeName)[:12],
@@ -283,6 +305,73 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 			"region":    client.region,
 		},
 	}
+}
+
+func (client *tencentSDKClient) describeClusterMachines(nodePoolId string) ([]*tke2022.Machine, string, error) {
+	describeRequest := tke2022.NewDescribeClusterMachinesRequest()
+	describeRequest.ClusterId = common.StringPtr(client.clusterId)
+	describeRequest.Limit = common.Int64Ptr(100)
+	describeRequest.Filters = []*tke2022.Filter{
+		{Name: common.StringPtr("NodePoolsId"), Values: []*string{common.StringPtr(nodePoolId)}},
+	}
+	describeResponse, err := client.nativeTkeClient.DescribeClusterMachines(describeRequest)
+	if err != nil {
+		return nil, "", err
+	}
+	return describeResponse.Response.Machines, stringValue(describeResponse.Response.RequestId), nil
+}
+
+func (client *tencentSDKClient) waitForNewPoolMachine(nodePoolId string, before []*tke2022.Machine, request Request, env map[string]string) (*tke2022.Machine, string, error) {
+	beforeNames := map[string]bool{}
+	for _, machine := range before {
+		if name := stringValue(machine.MachineName); name != "" {
+			beforeNames[name] = true
+		}
+	}
+	attempts := intFromEnv(env, "TENCENT_TKE_NODE_READY_ATTEMPTS", 30)
+	if attempts < 1 {
+		attempts = 1
+	}
+	delayMs := intFromEnv(env, "TENCENT_TKE_NODE_READY_DELAY_MS", 10000)
+	if delayMs < 0 {
+		delayMs = 0
+	}
+	var lastRequestId string
+	for attempt := 1; attempt <= attempts; attempt++ {
+		machines, requestId, err := client.describeClusterMachines(nodePoolId)
+		lastRequestId = requestId
+		if err != nil {
+			return nil, requestId, err
+		}
+		if machine := selectNewReadyMachine(machines, beforeNames, request.Pool.InstanceType); machine != nil {
+			return machine, requestId, nil
+		}
+		if attempt < attempts && delayMs > 0 {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+	}
+	return nil, lastRequestId, fmt.Errorf("new node in pool %s not ready", nodePoolId)
+}
+
+func selectNewReadyMachine(machines []*tke2022.Machine, beforeNames map[string]bool, instanceType string) *tke2022.Machine {
+	for _, machine := range machines {
+		if machine == nil {
+			continue
+		}
+		name := stringValue(machine.MachineName)
+		if name == "" || beforeNames[name] {
+			continue
+		}
+		if instanceType != "" && stringValue(machine.InstanceType) != "" && stringValue(machine.InstanceType) != instanceType {
+			continue
+		}
+		state := strings.ToLower(strings.TrimSpace(stringValue(machine.MachineState)))
+		if state != "" && state != "running" && state != "normal" && state != "ready" {
+			continue
+		}
+		return machine
+	}
+	return nil
 }
 
 func (client *tencentSDKClient) describeNativeNodePool(nodePoolId string) (*tke2022.NodePool, string, error) {
@@ -351,6 +440,15 @@ func isDeletingNodePool(pool *tke2022.NodePool) bool {
 
 func isNodePoolNotFound(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "node pool not found")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*tke2022.CreateNodePoolRequest, *Response) {
@@ -551,7 +649,8 @@ func dryRunCreateComputeAllocation(request Request, env map[string]string) Respo
 		NodePoolId:  nodePoolId,
 		InstanceId:  instanceId,
 		NodeName:    nodeName,
-		Status:      "provisioning",
+		PrivateIp:   "10.0.0." + strconv.Itoa(len(stable)),
+		Status:      "running",
 		ProviderData: map[string]string{
 			"accountId":       request.AccountId,
 			"userId":          request.UserId,

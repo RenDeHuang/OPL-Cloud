@@ -70,6 +70,24 @@ test("business object contract uses compute pools and account allocations as cur
   ].sort());
 });
 
+test("ComputeAllocation contract requires dedicated CVM or Kubernetes node identity", async () => {
+  const contract = await readJson(businessObjectContractPath);
+  const computeAllocation = contract.objectKinds.find((object) => object.kind === "ComputeAllocation");
+
+  assert.ok(computeAllocation, "ComputeAllocation must be current object truth");
+  assert.match(computeAllocation.boundary || "", /dedicated CVM/i);
+  assert.deepEqual(computeAllocation.requiredProviderFields, [
+    "nodePoolId",
+    "nodeName",
+    "privateIp",
+    "ownerAccountId",
+    "billingStatus",
+    "destroyedAt",
+    "lastProviderSyncAt"
+  ]);
+  assert.ok(computeAllocation.requiredProviderFields.includes("nodeName"), "nodeName must be required for a running allocation");
+});
+
 test("route object kinds map to committed object specs and owner repos", async () => {
   const businessContract = await readJson(businessObjectContractPath);
   const routeContract = await readJson(routeContractPath);

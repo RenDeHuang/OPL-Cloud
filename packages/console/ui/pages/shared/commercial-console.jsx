@@ -36,6 +36,15 @@ function statusText(value = "") {
   }[value] || value || "等待中";
 }
 
+const resourceOperationStages = Object.freeze([
+  "已提交",
+  "冻结余额",
+  "云资源创建中",
+  "Runtime 部署中",
+  "存储挂载中",
+  "URL 可用"
+]);
+
 export function ConsoleSurface({ title, eyebrow, subtitle, extra, children, compact = false }) {
   return (
     <PageContainer
@@ -170,7 +179,7 @@ export function OperationResultPanel({ result, pending = false }) {
         type="info"
         showIcon
         message="操作已提交"
-        description="正在处理云资源，请等待页面刷新状态。"
+        description="正在冻结余额、创建云资源并部署 Runtime，通常需要 3-5 分钟。"
       />
     );
   }
@@ -318,21 +327,28 @@ export function ProductionE2EPanel({ summary = {} }) {
 }
 
 export function OperationTimeline({ operations = [], resourceId = "", emptyText = "暂无操作记录" }) {
-  const scoped = operations
+  const scopedOperations = operations
     .filter((operation) => !resourceId || operation.resourceId === resourceId || operation.workspaceId === resourceId)
     .slice(-8)
-    .reverse()
-    .map((operation) => ({
-      title: {
-        create_compute_allocation: "开通计算资源",
-        create_storage_volume: "开通存储资源",
-        attach_storage: "挂载存储资源",
-        create_workspace: "创建工作区入口"
-      }[operation.operationType || operation.type] || "资源操作",
-      description: operation.safeMessage || operation.error || operation.resourceId || operation.workspaceId,
-      meta: statusText(operation.status) || operation.updatedAt || operation.createdAt,
-      tone: operation.status === "failed" ? "danger" : operation.status === "completed" ? "good" : "info"
-    }));
+    .reverse();
+  const scoped = scopedOperations.length
+    ? scopedOperations.map((operation) => ({
+        title: {
+          create_compute_allocation: "开通计算资源",
+          create_storage_volume: "开通存储资源",
+          attach_storage: "挂载存储资源",
+          create_workspace: "创建工作区入口"
+        }[operation.operationType || operation.type] || "资源操作",
+        description: operation.safeMessage || operation.error || operation.resourceId || operation.workspaceId,
+        meta: statusText(operation.status) || operation.updatedAt || operation.createdAt,
+        tone: operation.status === "failed" ? "danger" : operation.status === "completed" ? "good" : "info"
+      }))
+    : resourceOperationStages.map((stage, index) => ({
+        title: stage,
+        description: index === 0 ? emptyText : "等待上一步完成",
+        meta: index === 0 ? "等待中" : "未开始",
+        tone: index === 0 ? "info" : "neutral"
+      }));
   return <TimelineList items={scoped} emptyText={emptyText} />;
 }
 

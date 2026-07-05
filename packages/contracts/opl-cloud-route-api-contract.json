@@ -264,6 +264,23 @@
         "GET /api/compute-allocations"
       ],
       "serviceBoundary": "ComputeAllocationService",
+      "dynamicFields": [
+        "id",
+        "name",
+        "packageId",
+        "spec",
+        "nodePoolId",
+        "nodeName",
+        "instanceId",
+        "privateIp",
+        "publicIp",
+        "billingStatus",
+        "workspaceId",
+        "status",
+        "operationId",
+        "providerRequestId",
+        "safeMessage"
+      ],
       "requiresAdmin": false,
       "requiresAuth": true
     },
@@ -293,12 +310,37 @@
         "POST /api/compute-allocations"
       ],
       "serviceBoundary": "ComputeAllocationService",
+      "dynamicFields": [
+        "id",
+        "name",
+        "packageId",
+        "spec",
+        "nodePoolId",
+        "nodeName",
+        "instanceId",
+        "privateIp",
+        "publicIp",
+        "billingStatus",
+        "workspaceId",
+        "status",
+        "operationId",
+        "providerRequestId",
+        "safeMessage"
+      ],
       "operationProtocol": {
         "mutation": true,
         "confirmation": "normal",
         "costImpact": "required",
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "冻结余额",
+          "云资源创建中",
+          "Runtime 部署中",
+          "存储挂载中",
+          "URL 可用"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
@@ -329,12 +371,37 @@
         "POST /api/compute-allocations/:id/destroy"
       ],
       "serviceBoundary": "ComputeAllocationService",
+      "dynamicFields": [
+        "id",
+        "name",
+        "packageId",
+        "spec",
+        "nodePoolId",
+        "nodeName",
+        "instanceId",
+        "privateIp",
+        "publicIp",
+        "billingStatus",
+        "workspaceId",
+        "status",
+        "operationId",
+        "providerRequestId",
+        "safeMessage"
+      ],
       "operationProtocol": {
         "mutation": true,
         "confirmation": "normal",
         "destructive": true,
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "冻结余额",
+          "云资源创建中",
+          "Runtime 部署中",
+          "存储挂载中",
+          "URL 可用"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
@@ -364,6 +431,18 @@
         "GET /api/state"
       ],
       "serviceBoundary": "ResourceProvisioningService",
+      "dynamicFields": [
+        "id",
+        "name",
+        "sizeGb",
+        "storageClassId",
+        "providerResourceId",
+        "billingStatus",
+        "status",
+        "operationId",
+        "providerRequestId",
+        "safeMessage"
+      ],
       "requiresAdmin": false,
       "requiresAuth": true
     },
@@ -393,12 +472,32 @@
         "POST /api/storage-volumes"
       ],
       "serviceBoundary": "ResourceProvisioningService",
+      "dynamicFields": [
+        "id",
+        "name",
+        "sizeGb",
+        "storageClassId",
+        "providerResourceId",
+        "billingStatus",
+        "status",
+        "operationId",
+        "providerRequestId",
+        "safeMessage"
+      ],
       "operationProtocol": {
         "mutation": true,
         "confirmation": "normal",
         "costImpact": "required",
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "冻结余额",
+          "云资源创建中",
+          "Runtime 部署中",
+          "存储挂载中",
+          "URL 可用"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
@@ -429,6 +528,18 @@
         "POST /api/storage-volumes/destroy"
       ],
       "serviceBoundary": "ResourceProvisioningService",
+      "dynamicFields": [
+        "id",
+        "name",
+        "sizeGb",
+        "storageClassId",
+        "providerResourceId",
+        "billingStatus",
+        "status",
+        "operationId",
+        "providerRequestId",
+        "safeMessage"
+      ],
       "operationProtocol": {
         "mutation": true,
         "confirmation": "strong",
@@ -436,7 +547,15 @@
         "dataLoss": true,
         "confirmText": "确认删除数据",
         "operationTimeline": true,
-        "failureVisible": true
+        "failureVisible": true,
+        "visibleStages": [
+          "已提交",
+          "冻结余额",
+          "云资源创建中",
+          "Runtime 部署中",
+          "存储挂载中",
+          "URL 可用"
+        ]
       },
       "requiresAdmin": false,
       "requiresAuth": true
@@ -714,6 +833,13 @@
         "GET /api/state"
       ],
       "serviceBoundary": "WalletService",
+      "dynamicFields": [
+        "availableBalance",
+        "frozenBalance",
+        "activeHourlyEstimate",
+        "nextSettlementAt",
+        "runningDuration"
+      ],
       "requiresAdmin": false,
       "requiresAuth": true
     },
@@ -740,6 +866,13 @@
         "GET /api/state"
       ],
       "serviceBoundary": "WalletService",
+      "dynamicFields": [
+        "availableBalance",
+        "frozenBalance",
+        "activeHourlyEstimate",
+        "nextSettlementAt",
+        "runningDuration"
+      ],
       "requiresAdmin": false,
       "requiresAuth": true
     },

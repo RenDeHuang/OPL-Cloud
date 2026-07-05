@@ -108,6 +108,16 @@
       "routeKind": "business_object",
       "lifecycle": "current",
       "evidenceRequired": true,
+      "boundary": "Account-owned dedicated CVM or Kubernetes node allocation inside a package ComputePool; nodePoolId is the placement pool, not the compute resource identity.",
+      "requiredProviderFields": [
+        "nodePoolId",
+        "nodeName",
+        "privateIp",
+        "ownerAccountId",
+        "billingStatus",
+        "destroyedAt",
+        "lastProviderSyncAt"
+      ],
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",

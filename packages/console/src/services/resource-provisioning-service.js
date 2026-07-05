@@ -65,6 +65,18 @@ function providerRequestId(providerResult = {}) {
     "";
 }
 
+function providerNodeIdentity(providerCompute = {}) {
+  return String(providerCompute.nodeName || providerCompute.instanceId || "").trim();
+}
+
+function computeNodeIdentityError(providerCompute = {}) {
+  const error = new Error("compute_allocation_node_identity_required");
+  error.safeMessage = "计算资源未返回独占节点，请重试或联系支持。";
+  error.providerRequestId = providerRequestId(providerCompute);
+  error.retryable = true;
+  return error;
+}
+
 function resourceOperationId(accountId, resourceId, operationType, sequence) {
   return makeId("op", accountId, resourceId, operationType, String(sequence));
 }
@@ -206,6 +218,9 @@ export class ResourceProvisioningService extends OplDomainService {
 
     try {
       const providerCompute = await this.createProviderCompute({ compute: reservation.compute, packagePlan });
+      if (!providerNodeIdentity(providerCompute)) {
+        throw computeNodeIdentityError(providerCompute);
+      }
       return this.store.update((state) => {
         const compute = findOwnedResource(state.computeAllocations, accountId, allocationId, "compute_allocation_not_found");
         Object.assign(compute, {
@@ -215,6 +230,8 @@ export class ResourceProvisioningService extends OplDomainService {
           nodePoolId: providerCompute.nodePoolId || compute.nodePoolId,
           instanceId: providerCompute.instanceId || compute.instanceId,
           nodeName: providerCompute.nodeName || compute.nodeName,
+          privateIp: providerCompute.privateIp || compute.privateIp || "",
+          publicIp: providerCompute.publicIp || compute.publicIp || "",
           status: providerCompute.status || "running",
           billingStatus: providerCompute.billingStatus || compute.billingStatus,
           spec: providerCompute.spec || compute.spec,
@@ -223,6 +240,7 @@ export class ResourceProvisioningService extends OplDomainService {
           composePath: providerCompute.composePath || compute.composePath,
           runtime: providerCompute.runtime ? clone(providerCompute.runtime) : compute.runtime,
           providerData: clone(providerCompute.providerData || providerCompute),
+          lastProviderSyncAt: now(),
           updatedAt: now()
         });
         const operation = state.runtimeOperations.find((item) => item.id === compute.operationId || item.resourceId === allocationId);

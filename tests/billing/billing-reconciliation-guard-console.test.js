@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createOplCloud } from "../../packages/console/src/opl-cloud.js";
 import { MemoryStore } from "../../packages/console/src/store.js";
+import { createFakeRuntimeProvider } from "../helpers/fake-runtime-provider.js";
 
 const TEST_PRICING = {
   serverHourly: {
@@ -16,12 +17,12 @@ const TEST_PRICING = {
 function createService() {
   return createOplCloud({
     store: new MemoryStore(),
-    runtimeProvider: {
+    runtimeProvider: createFakeRuntimeProvider({
       name: "test-provider",
       workspaceUrl({ workspaceId, token }) {
         return `http://127.0.0.1:8787/workspaces/${workspaceId}?token=${token}`;
       }
-    },
+    }),
     pricing: TEST_PRICING
   });
 }

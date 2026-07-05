@@ -163,14 +163,17 @@ export class TencentTkeProvider {
       }
     });
     const name = k8sName(allocationId);
-    const nodeSelector = computePoolNodeSelector(pool.id);
+    const nodeName = provisioned.nodeName || "";
+    const nodeSelector = nodeName ? { "kubernetes.io/hostname": nodeName } : computePoolNodeSelector(pool.id);
     return {
-      providerResourceId: provisioned.nodePoolId ? `nodepool/${provisioned.nodePoolId}` : "",
+      providerResourceId: nodeName ? `node/${nodeName}` : "",
       operationId: provisioned.operationId || "",
       poolId: provisioned.poolId || pool.id,
       nodePoolId: provisioned.nodePoolId || pool.nodePoolId || "",
       instanceId: provisioned.instanceId || "",
-      nodeName: provisioned.nodeName || "",
+      nodeName,
+      privateIp: provisioned.privateIp || "",
+      publicIp: provisioned.publicIp || "",
       status: provisioned.status || "provisioning",
       billingStatus: "active",
       spec: packagePlan.server,
@@ -179,7 +182,7 @@ export class TencentTkeProvider {
         service: "",
         serviceName: name,
         dockerId: "",
-        nodeName: provisioned.nodeName || "",
+        nodeName,
         nodeSelector
       },
       nodeSelector,

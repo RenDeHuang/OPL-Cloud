@@ -25,7 +25,14 @@ function createService(runtimeProviderOverrides = {}) {
       },
       async createComputeAllocation({ computeAllocationId, packagePlan }) {
         return {
-          providerResourceId: `provider-${computeAllocationId}`,
+          providerResourceId: `node/node-${computeAllocationId}`,
+          operationId: `op-${computeAllocationId}`,
+          poolId: `pool-${packagePlan.id}-${packagePlan.server}`,
+          nodePoolId: `np-${packagePlan.id}`,
+          instanceId: `ins-${computeAllocationId}`,
+          nodeName: `node-${computeAllocationId}`,
+          privateIp: "10.0.0.21",
+          publicIp: "",
           status: "running",
           billingStatus: "active",
           spec: packagePlan.server,
@@ -119,18 +126,20 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   const service = createService({
     async createComputeAllocation({ computeAllocationId }) {
       return {
-        providerResourceId: "nodepool/np-basic",
+        providerResourceId: "node/node-created",
         operationId: "op-create-alpha",
         poolId: "pool-basic-2c4g",
         nodePoolId: "np-basic",
-        instanceId: "",
-        nodeName: "",
-        status: "provisioning",
+        instanceId: "ins-created",
+        nodeName: "node-created",
+        privateIp: "10.0.0.12",
+        publicIp: "",
+        status: "running",
         billingStatus: "active",
         spec: "2c4g",
         image: "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
         providerRequestId: "req-scale",
-        providerData: { scaleNodePoolRequestId: "req-scale", replicasBefore: "0", replicasAfter: "1", computeAllocationId }
+        providerData: { scaleNodePoolRequestId: "req-scale", nodeName: "node-created", privateIp: "10.0.0.12", computeAllocationId }
       };
     }
   });
@@ -145,12 +154,15 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   const state = await service.getState("pi-alpha");
   const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
 
-  assert.equal(compute.providerResourceId, "nodepool/np-basic");
+  assert.equal(compute.providerResourceId, "node/node-created");
   assert.equal(compute.operationId, "op-create-alpha");
   assert.equal(compute.poolId, "pool-basic-2c4g");
   assert.equal(compute.nodePoolId, "np-basic");
-  assert.equal(compute.instanceId || "", "");
-  assert.equal(compute.nodeName || "", "");
+  assert.equal(compute.instanceId, "ins-created");
+  assert.equal(compute.nodeName, "node-created");
+  assert.equal(compute.privateIp, "10.0.0.12");
+  assert.equal(compute.publicIp, "");
+  assert.equal(compute.lastProviderSyncAt.length > 0, true);
   assert.equal(compute.hourlyPrice, 1.2);
   assert.equal(compute.holdAmount, 201.6);
   assert.deepEqual(compute.balanceImpact, {
@@ -164,6 +176,42 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   assert.equal(operation.resourceType, "compute_allocation");
   assert.equal(operation.status, "completed");
   assert.equal(operation.providerRequestId, "req-scale");
+});
+
+test("compute allocation cannot complete without a dedicated CVM or node identity", async () => {
+  const service = createService({
+    async createComputeAllocation() {
+      return {
+        providerResourceId: "nodepool/np-basic",
+        operationId: "op-create-alpha",
+        poolId: "pool-basic-2c4g",
+        nodePoolId: "np-basic",
+        status: "provisioning",
+        billingStatus: "active",
+        spec: "2c4g",
+        image: "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
+        providerRequestId: "req-scale"
+      };
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  await assert.rejects(
+    service.createComputeAllocation({
+      accountId: "pi-alpha",
+      userId: "usr-alpha",
+      packageId: "basic",
+      name: "CPU analysis node"
+    }),
+    /compute_allocation_node_identity_required/
+  );
+
+  const state = await service.getState("pi-alpha");
+  const compute = state.computeAllocations[0];
+  const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
+  assert.equal(compute.status, "failed");
+  assert.equal(compute.safeMessage, "计算资源未返回独占节点，请重试或联系支持。");
+  assert.equal(operation.status, "failed");
 });
 
 test("failed compute allocation remains visible with safe provider failure state", async () => {
@@ -372,8 +420,10 @@ test("resource service preserves provider handles for one-person-lab-app runtime
   const persistedAttachment = state.storageAttachments[0];
 
   assert.equal(persistedCompute.provider, "tencent-tke");
-  assert.equal(persistedCompute.providerResourceId, "nodepool/np-basic");
-  assert.equal(persistedCompute.instanceId || "", "");
+  assert.equal(persistedCompute.providerResourceId, `node/node-${compute.id}`);
+  assert.equal(persistedCompute.instanceId, `ins-${compute.id}`);
+  assert.equal(persistedCompute.nodeName, `node-${compute.id}`);
+  assert.equal(persistedCompute.privateIp, "10.0.0.21");
   assert.equal(persistedCompute.runtime.service, `service/opl-runtime-${compute.id}`);
   assert.equal(persistedStorage.providerResourceId, `pvc/${storage.id}`);
   assert.equal(persistedAttachment.providerAttachmentId, `mount/${compute.id}:${storage.id}:/data`);

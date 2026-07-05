@@ -224,8 +224,40 @@ test("Billing and Workspace pages explain commercial charging and URL lifecycle"
 
   assert.match(billingSource, /计费规则|billingPolicy/, "billing page must explain holds, release, and request debit policy");
   assert.match(billingSource, /request_debit|请求扣费/, "billing page must expose request debit evidence");
+  for (const signal of ["activeHourlyEstimate", "nextSettlementAt", "runningDuration", "下次结算", "运行时长", "预计每小时"]) {
+    assert.match(billingSource, new RegExp(signal), `billing page must show ${signal}`);
+  }
   assert.match(detailSource, /WorkspaceLifecyclePanel/, "Workspace detail must expose URL/resource lifecycle state");
   assert.match(detailSource, /tokenStatus/, "Workspace detail must show token lifecycle status");
+});
+
+test("resource UI exposes dedicated node identity and cold-start progress without generic cloud-resource copy", async () => {
+  const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+  const surfaceSource = await source("packages/console/ui/pages/shared/commercial-console.jsx");
+
+  for (const signal of [
+    "nodePoolId",
+    "nodeName",
+    "privateIp",
+    "instanceId",
+    "billingStatus",
+    "workspaceId",
+    "节点池",
+    "独占节点",
+    "内网 IP",
+    "公网 IP",
+    "计费状态",
+    "绑定入口",
+    "预计等待"
+  ]) {
+    assert.match(resourceSource, new RegExp(signal), `resource UI must expose ${signal}`);
+  }
+
+  for (const stage of ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]) {
+    assert.match(surfaceSource, new RegExp(stage), `operation timeline must include ${stage}`);
+  }
+
+  assert.doesNotMatch(resourceSource, /title: "云资源"|label: "云资源"/, "resource UI must not collapse node identity into generic cloud-resource labels");
 });
 
 test("Admin users surface is backed by management state and can create login users", async () => {

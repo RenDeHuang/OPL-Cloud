@@ -5,14 +5,16 @@ const paidMutationProtocol = Object.freeze({
   confirmation: "normal",
   costImpact: "required",
   operationTimeline: true,
-  failureVisible: true
+  failureVisible: true,
+  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
 });
 
 const normalMutationProtocol = Object.freeze({
   mutation: true,
   confirmation: "normal",
   operationTimeline: true,
-  failureVisible: true
+  failureVisible: true,
+  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
 });
 
 const destructiveMutationProtocol = Object.freeze({
@@ -20,7 +22,8 @@ const destructiveMutationProtocol = Object.freeze({
   confirmation: "normal",
   destructive: true,
   operationTimeline: true,
-  failureVisible: true
+  failureVisible: true,
+  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
 });
 
 const storageDestroyProtocol = Object.freeze({
@@ -30,8 +33,48 @@ const storageDestroyProtocol = Object.freeze({
   dataLoss: true,
   confirmText: "确认删除数据",
   operationTimeline: true,
-  failureVisible: true
+  failureVisible: true,
+  visibleStages: ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]
 });
+
+const computeAllocationFields = Object.freeze([
+  "id",
+  "name",
+  "packageId",
+  "spec",
+  "nodePoolId",
+  "nodeName",
+  "instanceId",
+  "privateIp",
+  "publicIp",
+  "billingStatus",
+  "workspaceId",
+  "status",
+  "operationId",
+  "providerRequestId",
+  "safeMessage"
+]);
+
+const storageVolumeFields = Object.freeze([
+  "id",
+  "name",
+  "sizeGb",
+  "storageClassId",
+  "providerResourceId",
+  "billingStatus",
+  "status",
+  "operationId",
+  "providerRequestId",
+  "safeMessage"
+]);
+
+const billingFields = Object.freeze([
+  "availableBalance",
+  "frozenBalance",
+  "activeHourlyEstimate",
+  "nextSettlementAt",
+  "runningDuration"
+]);
 
 function currentRoute(route) {
   return Object.freeze({
@@ -179,6 +222,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/resources-api.js",
     apiRoutes: ["GET /api/state", "GET /api/compute-allocations"],
     serviceBoundary: "ComputeAllocationService",
+    dynamicFields: computeAllocationFields,
     capabilities: ["list", "read", "evidence"]
   }),
   currentRoute({
@@ -195,6 +239,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/resources-api.js",
     apiRoutes: ["GET /api/compute-pools", "POST /api/compute-allocations"],
     serviceBoundary: "ComputeAllocationService",
+    dynamicFields: computeAllocationFields,
     capabilities: ["read", "write", "action", "evidence"],
     operationProtocol: paidMutationProtocol
   }),
@@ -212,6 +257,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/resources-api.js",
     apiRoutes: ["GET /api/compute-allocations/:id", "POST /api/compute-allocations/:id/destroy"],
     serviceBoundary: "ComputeAllocationService",
+    dynamicFields: computeAllocationFields,
     capabilities: ["detail", "read", "action", "evidence"],
     operationProtocol: destructiveMutationProtocol
   }),
@@ -229,6 +275,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/resources-api.js",
     apiRoutes: ["GET /api/state"],
     serviceBoundary: "ResourceProvisioningService",
+    dynamicFields: storageVolumeFields,
     capabilities: ["list", "read", "action", "evidence"]
   }),
   currentRoute({
@@ -245,6 +292,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/resources-api.js",
     apiRoutes: ["GET /api/state", "POST /api/storage-volumes"],
     serviceBoundary: "ResourceProvisioningService",
+    dynamicFields: storageVolumeFields,
     capabilities: ["read", "write", "action", "evidence"],
     operationProtocol: paidMutationProtocol
   }),
@@ -262,6 +310,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/resources-api.js",
     apiRoutes: ["GET /api/state", "POST /api/storage-volumes/destroy"],
     serviceBoundary: "ResourceProvisioningService",
+    dynamicFields: storageVolumeFields,
     capabilities: ["detail", "read", "action", "evidence"],
     operationProtocol: storageDestroyProtocol
   }),
@@ -416,6 +465,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/billing-api.js",
     apiRoutes: ["GET /api/state"],
     serviceBoundary: "WalletService",
+    dynamicFields: billingFields,
     capabilities: ["read", "list", "detail"]
   }),
   currentRoute({
@@ -434,6 +484,7 @@ export const oplRoutes = Object.freeze([
     apiClient: "packages/console/ui/api/billing-api.js",
     apiRoutes: ["GET /api/state"],
     serviceBoundary: "WalletService",
+    dynamicFields: billingFields,
     capabilities: ["read", "detail"]
   }),
   currentRoute({

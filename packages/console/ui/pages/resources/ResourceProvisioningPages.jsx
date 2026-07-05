@@ -66,6 +66,23 @@ function balanceAfterHold(wallet, holdAmount) {
   return Math.max(0, available(wallet) - Number(holdAmount || 0));
 }
 
+function workspaceForResource(state, resource = {}) {
+  return (state.workspaces || []).find((workspace) =>
+    workspace.computeAllocationId === resource.id ||
+    workspace.storageId === resource.id ||
+    workspace.attachmentId === resource.id
+  );
+}
+
+function billingStatusLabel(value) {
+  return {
+    active: "计费中",
+    released: "已释放",
+    stopped: "已停止",
+    pending: "等待中"
+  }[value] || value || "等待中";
+}
+
 function supportContextPath(resource = {}, resourceType = "resource") {
   const params = new URLSearchParams();
   params.set("category", "Workspace");
@@ -125,7 +142,10 @@ export function ComputeAllocationsPage({ state }) {
             { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("compute-allocations.detail", { id: row.id }))}>{row.name || row.id}</Button> },
             { title: "规格", dataIndex: "spec" },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
-            { title: "云资源", dataIndex: "providerResourceId", ellipsis: true }
+            { title: "节点池", dataIndex: "nodePoolId", ellipsis: true },
+            { title: "独占节点", dataIndex: "nodeName", ellipsis: true, render: (value) => value || "等待分配" },
+            { title: "内网 IP", dataIndex: "privateIp", ellipsis: true, render: (value) => value || "-" },
+            { title: "计费状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={value === "active" ? "good" : "warn"} /> }
           ]}
         />
       </InsightPanel>
@@ -207,7 +227,8 @@ export function CreateComputeAllocationPage({ state, session, runAction }) {
             items={[
               { label: "每小时价格", value: `${money(computeHourlyPrice(selectedPlan))}/小时`, meta: selectedPlan?.server || "-", status: "计费", tone: "info" },
               { label: "预冻结", value: money(selectedComputeHold), meta: "7 天", status: "冻结", tone: "warn" },
-              { label: "冻结后可用", value: money(balanceAfterHold(state.wallet, selectedComputeHold)), meta: "可用余额", status: "余额", tone: balanceAfterHold(state.wallet, selectedComputeHold) > 0 ? "good" : "warn" }
+              { label: "冻结后可用", value: money(balanceAfterHold(state.wallet, selectedComputeHold)), meta: "可用余额", status: "余额", tone: balanceAfterHold(state.wallet, selectedComputeHold) > 0 ? "good" : "warn" },
+              { label: "预计等待", value: "3-5 分钟", meta: "扩容节点并部署 Runtime", status: "冷启动", tone: "info" }
             ]}
           />
           <WalletRiskPanel wallet={state.wallet} requiredHold={selectedComputeHold} resourceLabel="计算资源" />
@@ -234,6 +255,8 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction })
   const { operationPending, operationResult, runOperation } = useOperationFeedback();
   const resource = selectedResource(path, state.computeAllocations || []);
   if (!resource) return <ConsoleSurface title="计算资源" eyebrow="资源"><Empty description="未找到计算资源" /></ConsoleSurface>;
+  const workspace = workspaceForResource(state, resource);
+  const workspaceId = workspace?.id || resource.workspaceId || "";
   return (
     <ConsoleSurface title={resource.name || resource.id} eyebrow="计算详情" extra={<Button onClick={() => navigate(routeTo("compute-allocations.list"))}>返回列表</Button>}>
       <InsightPanel title="计算资源" eyebrow="资源">
@@ -241,7 +264,11 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction })
           items={[
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "规格", value: resource.spec || "-", meta: resource.packageId },
-            { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
+            { label: "节点池", value: resource.nodePoolId || "-", meta: "规格资源池", status: resource.poolId || "pool", tone: "info" },
+            { label: "独占节点", value: resource.nodeName || "-", meta: resource.instanceId || "实例 ID 等待云厂商返回", status: "CVM/Node", tone: resource.nodeName ? "good" : "warn" },
+            { label: "内网 IP", value: resource.privateIp || "-", meta: resource.publicIp ? `公网 IP ${resource.publicIp}` : "公网 IP 未开放" },
+            { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyPrice)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
+            { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
             { label: "操作", value: resource.operationId || "-", meta: "操作编号", status: resource.providerRequestId || "等待中", tone: resource.safeMessage ? "danger" : "info" },
             { label: "失败原因", value: resource.safeMessage || "-", meta: "用户可见原因", status: resource.providerRequestId || "请求编号", tone: resource.safeMessage ? "danger" : "neutral" }
           ]}
@@ -300,7 +327,8 @@ export function StorageVolumesPage({ state }) {
             { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("storage.detail", { id: row.id }))}>{row.name || row.id}</Button> },
             { title: "容量", dataIndex: "sizeGb", render: (value) => `${value || 0}GB` },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
-            { title: "云资源", dataIndex: "providerResourceId", ellipsis: true }
+            { title: "存储句柄", dataIndex: "providerResourceId", ellipsis: true },
+            { title: "计费状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={value === "active" ? "good" : "warn"} /> }
           ]}
         />
       </InsightPanel>
@@ -381,6 +409,8 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }) {
   const { operationPending, operationResult, runOperation } = useOperationFeedback();
   const resource = selectedResource(path, state.storageVolumes || []);
   if (!resource) return <ConsoleSurface title="存储资源" eyebrow="资源"><Empty description="未找到存储资源" /></ConsoleSurface>;
+  const workspace = workspaceForResource(state, resource);
+  const workspaceId = workspace?.id || resource.workspaceId || "";
   return (
     <ConsoleSurface title={resource.name || resource.id} eyebrow="存储详情" extra={<Button onClick={() => navigate(routeTo("storage.list"))}>返回列表</Button>}>
       <InsightPanel title="存储资源" eyebrow="资源">
@@ -388,7 +418,9 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }) {
           items={[
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: resource.storageClassId },
-            { label: "云资源", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
+            { label: "存储句柄", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
+            { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyPrice)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
+            { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
             { label: "操作", value: resource.operationId || "-", meta: "操作编号", status: resource.providerRequestId || "等待中", tone: resource.safeMessage ? "danger" : "info" },
             { label: "失败原因", value: resource.safeMessage || "-", meta: "用户可见原因", status: resource.providerRequestId || "请求编号", tone: resource.safeMessage ? "danger" : "neutral" }
           ]}
@@ -524,8 +556,8 @@ export function CreateStorageAttachmentPage({ state, session, runAction }) {
             if (created) navigate(routeTo("workspace.create"));
           }}
         >
-          <Form.Item name="computeAllocationId" label="计算分配" rules={[{ required: true, message: "请选择计算分配" }]}>
-            <Select options={computeAllocations.map((item) => ({ label: item.name || item.id, value: item.id }))} />
+          <Form.Item name="computeAllocationId" label="计算资源" rules={[{ required: true, message: "请选择计算资源" }]}>
+            <Select options={computeAllocations.map((item) => ({ label: `${item.name || item.id} · ${item.nodeName || "等待节点"} · ${item.privateIp || "无内网 IP"}`, value: item.id }))} />
           </Form.Item>
           <Form.Item name="storageId" label="存储资源" rules={[{ required: true, message: "请选择存储资源" }]}>
             <Select options={storageVolumes.map((item) => ({ label: `${item.name || item.id} · ${item.sizeGb}GB`, value: item.id }))} />

@@ -5,23 +5,29 @@ export function createFakeRuntimeProvider(overrides = {}) {
       return `https://workspace.example.test/w/${slug}?token=${token}`;
     },
     async createComputeAllocation({ computeAllocationId, packagePlan }) {
+      const nodeName = `node-${computeAllocationId}`;
       return {
-        providerResourceId: `nodepool/${packagePlan.nodePoolId || `np-${packagePlan.id}`}`,
+        providerResourceId: `node/${nodeName}`,
         operationId: `op-${computeAllocationId}`,
         poolId: `pool-${packagePlan.id}-${packagePlan.server}`,
         nodePoolId: packagePlan.nodePoolId || `np-${packagePlan.id}`,
-        instanceId: "",
-        nodeName: "",
+        instanceId: `ins-${computeAllocationId}`,
+        nodeName,
+        privateIp: "10.0.0.21",
+        publicIp: "",
         status: "running",
         billingStatus: "active",
         spec: packagePlan.server,
         image: "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
         runtime: {
           serviceName: `opl-runtime-${computeAllocationId}`,
-          service: `service/opl-runtime-${computeAllocationId}`
+          service: `service/opl-runtime-${computeAllocationId}`,
+          nodeName,
+          nodeSelector: { "kubernetes.io/hostname": nodeName }
         },
         providerData: {
           computeAllocationId,
+          nodeName,
           packageId: packagePlan.id,
           requestId: `req-${computeAllocationId}`
         }
@@ -69,7 +75,7 @@ export function createFakeRuntimeProvider(overrides = {}) {
         slug,
         url: `https://workspace.example.test/w/${slug}?token=${token}`,
         status: "ready",
-        provider: "tencent-tke",
+        provider: this.name,
         providerData: {
           workspaceId,
           runtimeService: compute.runtime?.serviceName || ""

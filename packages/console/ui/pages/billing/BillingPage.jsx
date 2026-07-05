@@ -10,6 +10,48 @@ import {
 } from "../shared/commercial-console.jsx";
 import { available, money, usageQuantity } from "../shared/formatters.js";
 
+function nextSettlementAt(now = new Date()) {
+  const next = new Date(now);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return next.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function runningDuration(startedAt) {
+  if (!startedAt) return "-";
+  const elapsedMs = Math.max(0, Date.now() - new Date(startedAt).getTime());
+  const hours = Math.floor(elapsedMs / 3600000);
+  const minutes = Math.floor((elapsedMs % 3600000) / 60000);
+  if (hours <= 0) return `${minutes} 分钟`;
+  return `${hours} 小时 ${minutes} 分钟`;
+}
+
+function activeHourlyEstimate(state = {}) {
+  const computeHourly = (state.computeAllocations || [])
+    .filter((item) => item.billingStatus === "active" && !["destroyed", "failed"].includes(item.status))
+    .reduce((sum, item) => sum + Number(item.hourlyPrice || 0), 0);
+  const storageHourly = (state.storageVolumes || [])
+    .filter((item) => item.billingStatus === "active" && item.status !== "destroyed")
+    .reduce((sum, item) => sum + Number(item.hourlyPrice || 0), 0);
+  return computeHourly + storageHourly;
+}
+
+function oldestActiveResourceStartedAt(state = {}) {
+  return [
+    ...(state.computeAllocations || []),
+    ...(state.storageVolumes || [])
+  ]
+    .filter((item) => item.billingStatus === "active" && item.status !== "destroyed")
+    .map((item) => item.createdAt)
+    .filter(Boolean)
+    .sort()[0];
+}
+
 export function BillingPage({ state, wallet }) {
   const billingPolicy = state.billingPolicy || {};
   const resourceUsage = state.resourceUsageLogs || [];
@@ -22,6 +64,9 @@ export function BillingPage({ state, wallet }) {
   const frozen = Number(wallet.frozen || 0);
   const balance = Number(wallet.balance || 0);
   const frozenPercent = balance > 0 ? Math.min(100, Math.round((frozen / balance) * 100)) : 0;
+  const hourlyEstimate = activeHourlyEstimate(state);
+  const nextBillingTime = nextSettlementAt();
+  const activeStartedAt = oldestActiveResourceStartedAt(state);
   const walletEvents = (state.walletTransactions || []).slice(-6).reverse().map((event) => ({
     title: event.type,
     description: event.workspaceId || event.accountId,
@@ -36,6 +81,7 @@ export function BillingPage({ state, wallet }) {
           { label: "可用", value: money(usable), caption: "可开通计算或存储", tone: usable > 0 ? "good" : "warn" },
           { label: "冻结", value: money(wallet.frozen), caption: `余额 ${frozenPercent}%`, tone: frozenPercent > 70 ? "warn" : "info" },
           { label: "余额", value: money(wallet.balance), caption: "可用加冻结", tone: "neutral" },
+          { label: "预计每小时", value: money(hourlyEstimate), caption: "活跃计算和存储", tone: hourlyEstimate > 0 ? "info" : "neutral" },
           { label: "累计充值", value: money(wallet.totalRecharged), caption: "人工充值记录", tone: "good" },
           { label: "扣费记录", value: recent.length, caption: "最近资源事件", tone: recent.length ? "info" : "neutral" }
         ]}
@@ -48,6 +94,7 @@ export function BillingPage({ state, wallet }) {
             <div className="stackRow"><span>可用余额</span><strong>{money(usable)}</strong></div>
             <div className="stackRow"><span>冻结金额</span><strong>{money(wallet.frozen)}</strong></div>
             <div className="stackRow"><span>总余额</span><strong>{money(wallet.balance)}</strong></div>
+            <div className="stackRow"><span>下次结算</span><strong>{nextBillingTime}</strong></div>
           </div>
         </InsightPanel>
 
@@ -56,6 +103,8 @@ export function BillingPage({ state, wallet }) {
             items={[
               { label: "计算", value: `${usageQuantity(resourceUsage, "compute").toFixed(1)} 小时`, meta: "计算资源用量", status: "按小时", tone: "info" },
               { label: "存储", value: `${usageQuantity(resourceUsage, "storage").toFixed(1)} GB-小时`, meta: "存储资源用量", status: "保留", tone: "good" },
+              { label: "运行时长", value: runningDuration(activeStartedAt), meta: `下次结算 ${nextBillingTime}`, status: "按小时", tone: activeStartedAt ? "info" : "neutral" },
+              { label: "预计每小时", value: money(hourlyEstimate), meta: "当前活跃资源", status: "预估", tone: hourlyEstimate > 0 ? "warn" : "neutral" },
               { label: "网关", value: requestUsage.length, meta: "请求用量记录", status: "计量", tone: "info" },
               { label: "充值记录", value: state.manualTopups?.length || 0, meta: "人工充值证据", status: "已审计", tone: "good" }
             ]}

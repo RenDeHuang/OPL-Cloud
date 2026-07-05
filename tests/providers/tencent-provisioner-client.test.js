@@ -25,7 +25,10 @@ test("TencentProvisionerClient invokes JSON stdin/stdout provisioner", async () 
       operationId: "op-test",
       poolId: input.pool.id,
       nodePoolId: input.pool.nodePoolId,
-      status: "provisioning",
+      instanceId: "ins-created",
+      nodeName: "node-created",
+      privateIp: "10.0.0.12",
+      status: "running",
       providerData: {
         action: input.action,
         dryRun: String(input.dryRun),
@@ -48,7 +51,9 @@ test("TencentProvisionerClient invokes JSON stdin/stdout provisioner", async () 
     });
 
     assert.equal(result.operationId, "op-test");
-    assert.equal(result.instanceId || "", "");
+    assert.equal(result.instanceId, "ins-created");
+    assert.equal(result.nodeName, "node-created");
+    assert.equal(result.privateIp, "10.0.0.12");
     assert.equal(result.providerData.action, "create_compute_allocation");
     assert.equal(result.providerData.dryRun, "true");
     assert.equal(result.providerData.accountId, "pi-alpha");

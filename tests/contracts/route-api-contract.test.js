@@ -211,3 +211,34 @@ test("paid and destructive route mutations declare commercial operation protocol
   assert.equal(byId.get("storage.detail").operationProtocol.dataLoss, true, "storage destroy route must declare data-loss risk");
   assert.equal(byId.get("storage.detail").operationProtocol.confirmText, "确认删除数据", "storage destroy must require strong Chinese confirmation text");
 });
+
+test("resource route contract declares dynamic fields, billing fields, and visible operation stages", async () => {
+  const contract = await readJson(contractPath);
+  const routes = expectedRoutesFromContract(contract);
+  const byId = new Map(routes.map((route) => [route.id, route]));
+
+  const computeList = byId.get("compute-allocations.list");
+  const computeDetail = byId.get("compute-allocations.detail");
+  const storageDetail = byId.get("storage.detail");
+  const billingOverview = byId.get("billing.overview");
+
+  for (const field of ["nodePoolId", "nodeName", "privateIp", "instanceId", "billingStatus", "workspaceId"]) {
+    assert.ok(computeList.dynamicFields?.includes(field), `compute list must declare ${field}`);
+    assert.ok(computeDetail.dynamicFields?.includes(field), `compute detail must declare ${field}`);
+  }
+
+  assert.deepEqual(computeDetail.operationProtocol.visibleStages, [
+    "已提交",
+    "冻结余额",
+    "云资源创建中",
+    "Runtime 部署中",
+    "存储挂载中",
+    "URL 可用"
+  ]);
+  assert.ok(storageDetail.dynamicFields?.includes("providerResourceId"), "storage detail must expose provider storage handle");
+  assert.ok(storageDetail.dynamicFields?.includes("billingStatus"), "storage detail must expose billing status");
+
+  for (const field of ["availableBalance", "frozenBalance", "activeHourlyEstimate", "nextSettlementAt", "runningDuration"]) {
+    assert.ok(billingOverview.dynamicFields?.includes(field), `billing overview must declare ${field}`);
+  }
+});

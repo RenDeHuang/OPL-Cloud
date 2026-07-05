@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
@@ -299,6 +300,7 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 
 type fakeNativeTkeAPI struct {
 	createNodePoolRequest    *tke2022.CreateNodePoolRequest
+	describeMachinesRequest  []*tke2022.DescribeClusterMachinesRequest
 	describeNodePoolsRequest []*tke2022.DescribeNodePoolsRequest
 	scaleNodePoolRequest     *tke2022.ScaleNodePoolRequest
 	deleteMachinesRequest    *tke2022.DeleteClusterMachinesRequest
@@ -371,6 +373,27 @@ func (api *fakeNativeTkeAPI) DescribeNodePools(request *tke2022.DescribeNodePool
 	}, nil
 }
 
+func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeClusterMachinesRequest) (*tke2022.DescribeClusterMachinesResponse, error) {
+	api.calls = append(api.calls, "DescribeClusterMachines")
+	api.describeMachinesRequest = append(api.describeMachinesRequest, request)
+	machines := []*tke2022.Machine{}
+	for index := int64(1); index <= api.replicas; index++ {
+		machines = append(machines, &tke2022.Machine{
+			MachineName:  common.StringPtr(fmt.Sprintf("node-basic-%d", index)),
+			MachineState: common.StringPtr("Running"),
+			LanIP:        common.StringPtr(fmt.Sprintf("10.0.0.%d", index+10)),
+			InstanceType: common.StringPtr("SA5.LARGE4"),
+		})
+	}
+	return &tke2022.DescribeClusterMachinesResponse{
+		Response: &tke2022.DescribeClusterMachinesResponseParams{
+			Machines:   machines,
+			TotalCount: common.Int64Ptr(int64(len(machines))),
+			RequestId:  common.StringPtr("req-describe-machines"),
+		},
+	}, nil
+}
+
 func nodePoolIdFilterValue(request *tke2022.DescribeNodePoolsRequest) string {
 	for _, filter := range request.Filters {
 		if filter.Name != nil && *filter.Name == "NodePoolsId" && len(filter.Values) > 0 && filter.Values[0] != nil {
@@ -429,8 +452,11 @@ func TestTencentSDKClientCreateAllocationScalesExistingPackageNodePool(t *testin
 	if response.NodePoolId != "np-basic" {
 		t.Fatalf("unexpected node pool id: %#v", response)
 	}
-	if response.InstanceId != "" {
-		t.Fatalf("native scale allocation should not fake an instance id: %#v", response)
+	if response.NodeName == "" {
+		t.Fatalf("native scale allocation must return a dedicated node identity: %#v", response)
+	}
+	if response.Status != "running" {
+		t.Fatalf("allocation must complete only after node is running: %#v", response)
 	}
 	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 2 {
 		t.Fatalf("expected scale to 2 replicas: %#v", tkeAPI.scaleNodePoolRequest)
@@ -465,13 +491,16 @@ func TestTencentSDKClientCreateAllocationDiscoversExistingPackageNodePool(t *tes
 	if response.NodePoolId != "np-discovered" {
 		t.Fatalf("expected discovered node pool id: %#v", response)
 	}
+	if response.NodeName == "" {
+		t.Fatalf("expected discovered pool allocation to return a node identity: %#v", response)
+	}
 	if tkeAPI.createNodePoolRequest != nil {
 		t.Fatalf("must reuse discovered package pool before creating: %#v", tkeAPI.createNodePoolRequest)
 	}
 	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 3 {
 		t.Fatalf("expected scale to 3 replicas: %#v", tkeAPI.scaleNodePoolRequest)
 	}
-	expectedCalls := []string{"DescribeNodePools", "ScaleNodePool"}
+	expectedCalls := []string{"DescribeNodePools", "DescribeClusterMachines", "ScaleNodePool", "DescribeClusterMachines"}
 	if len(tkeAPI.calls) != len(expectedCalls) {
 		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
 	}
@@ -508,13 +537,16 @@ func TestTencentSDKClientCreateAllocationFallsBackFromStaleConfiguredNodePool(t 
 	if response.NodePoolId != "np-live" {
 		t.Fatalf("expected discovered live node pool id: %#v", response)
 	}
+	if response.NodeName == "" {
+		t.Fatalf("expected fallback allocation to return a node identity: %#v", response)
+	}
 	if tkeAPI.createNodePoolRequest != nil {
 		t.Fatalf("must not create when matching live package pool exists: %#v", tkeAPI.createNodePoolRequest)
 	}
 	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 5 {
 		t.Fatalf("expected scale to 5 replicas: %#v", tkeAPI.scaleNodePoolRequest)
 	}
-	expectedCalls := []string{"DescribeNodePools", "DescribeNodePools", "ScaleNodePool"}
+	expectedCalls := []string{"DescribeNodePools", "DescribeNodePools", "DescribeClusterMachines", "ScaleNodePool", "DescribeClusterMachines"}
 	if len(tkeAPI.calls) != len(expectedCalls) {
 		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
 	}
@@ -560,13 +592,16 @@ func TestTencentSDKClientCreateAllocationCreatesMissingPackageNodePoolThenScales
 	if response.NodePoolId != "np-created" {
 		t.Fatalf("expected created node pool id: %#v", response)
 	}
+	if response.NodeName == "" {
+		t.Fatalf("expected created pool allocation to return a node identity: %#v", response)
+	}
 	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.NodePoolId == nil || *tkeAPI.scaleNodePoolRequest.NodePoolId != "np-created" {
 		t.Fatalf("expected scale of created node pool: %#v", tkeAPI.scaleNodePoolRequest)
 	}
 	if tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 1 {
 		t.Fatalf("expected scale to one replica: %#v", tkeAPI.scaleNodePoolRequest)
 	}
-	expectedCalls := []string{"DescribeNodePools", "CreateNodePool", "DescribeNodePools", "ScaleNodePool"}
+	expectedCalls := []string{"DescribeNodePools", "CreateNodePool", "DescribeNodePools", "DescribeClusterMachines", "ScaleNodePool", "DescribeClusterMachines"}
 	if len(tkeAPI.calls) != len(expectedCalls) {
 		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
 	}
@@ -612,7 +647,7 @@ func TestTencentSDKClientDestroyAllocationDeletesNamedMachine(t *testing.T) {
 	}
 }
 
-func TestTencentSDKClientDestroyAllocationWithoutMachineNameScalesDownPool(t *testing.T) {
+func TestTencentSDKClientDestroyAllocationWithoutMachineNameFailsClosed(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2}
 	client := &tencentSDKClient{
 		region:          "ap-guangzhou",
@@ -626,10 +661,13 @@ func TestTencentSDKClientDestroyAllocationWithoutMachineNameScalesDownPool(t *te
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
-	if !response.Ok {
-		t.Fatalf("expected ok response: %#v", response)
+	if response.Ok {
+		t.Fatalf("expected destroy without node identity to fail closed: %#v", response)
 	}
-	if tkeAPI.scaleNodePoolRequest == nil || tkeAPI.scaleNodePoolRequest.Replicas == nil || *tkeAPI.scaleNodePoolRequest.Replicas != 1 {
-		t.Fatalf("expected scale down to one replica: %#v", tkeAPI.scaleNodePoolRequest)
+	if response.ErrorCode != "compute_allocation_node_identity_required" {
+		t.Fatalf("unexpected error: %#v", response)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil {
+		t.Fatalf("destroy must not scale down a pool without a node identity: %#v", tkeAPI.scaleNodePoolRequest)
 	}
 }
