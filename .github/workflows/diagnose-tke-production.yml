@@ -296,7 +296,7 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward service/opl-cloud-control-plane 18788:8787 > /tmp/opl-cloud-resource-state-port-forward.log 2>&1 &
           port_forward_pid="$!"
           trap 'kill "$port_forward_pid" 2>/dev/null || true' EXIT
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const origin = "http://127.0.0.1:18788";
           const accountId = process.env.OPL_DIAG_ACCOUNT_ID || "pi-production-verifier";
           const computeAllocationId = process.env.OPL_DIAG_COMPUTE_ALLOCATION_ID || "";

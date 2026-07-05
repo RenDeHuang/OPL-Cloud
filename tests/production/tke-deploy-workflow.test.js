@@ -421,6 +421,7 @@ test("TKE diagnostics can print a redacted single-resource console state summary
 
   assert.ok(workflow.on.workflow_dispatch.inputs.account_id, "diagnostics must accept account_id input");
   assert.ok(workflow.on.workflow_dispatch.inputs.compute_allocation_id, "diagnostics must accept compute_allocation_id input");
+  assert.match(text, /node --input-type=module <<'NODE'/, "diagnostics stdin script must allow top-level await");
   assert.match(text, /\/api\/auth\/operator-login/, "diagnostics must use operator auth instead of public state");
   assert.match(text, /\/api\/state\?accountId=/, "diagnostics must scope state to one account");
   assert.match(text, /computeAllocationId/, "summary must identify the selected compute allocation");
