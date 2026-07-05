@@ -34,6 +34,7 @@ test("business chain keeps storage independent while dedicated compute is replac
     packageId: "basic",
     name: "Analysis node A"
   });
+  await service.processPendingResourceProvisioning({ limit: 1 });
   const firstAttachment = await service.attachStorage({
     accountId: "pi-alpha",
     computeAllocationId: firstCompute.id,
@@ -70,6 +71,7 @@ test("business chain keeps storage independent while dedicated compute is replac
     packageId: "basic",
     name: "Analysis node B"
   });
+  await service.processPendingResourceProvisioning({ limit: 1 });
   const secondAttachment = await service.attachStorage({
     accountId: "pi-alpha",
     computeAllocationId: secondCompute.id,

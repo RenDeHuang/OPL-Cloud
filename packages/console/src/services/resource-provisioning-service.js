@@ -81,6 +81,12 @@ function resourceOperationId(accountId, resourceId, operationType, sequence) {
   return makeId("op", accountId, resourceId, operationType, String(sequence));
 }
 
+function isOperationLockExpired(operation, lockTimeoutMs, timestamp = Date.now()) {
+  const updatedAt = Date.parse(operation?.updatedAt || operation?.createdAt || "");
+  if (!Number.isFinite(updatedAt)) return true;
+  return timestamp - updatedAt > lockTimeoutMs;
+}
+
 export class ResourceProvisioningService extends OplDomainService {
   computePools() {
     return this.packages().map((plan) => computePoolFromPackage(plan, this.pricing));
@@ -125,8 +131,8 @@ export class ResourceProvisioningService extends OplDomainService {
         resourceType: "compute_allocation",
         resourceId: allocationId,
         operationType: "create_compute_allocation",
-        status: "running",
-        attempts: 1,
+        status: "queued",
+        attempts: 0,
         createdAt: now(),
         updatedAt: now()
       });
@@ -216,46 +222,99 @@ export class ResourceProvisioningService extends OplDomainService {
 
     if (reservation.existing) return reservation.compute;
 
-    try {
-      const providerCompute = await this.createProviderCompute({ compute: reservation.compute, packagePlan });
-      if (!providerNodeIdentity(providerCompute)) {
-        throw computeNodeIdentityError(providerCompute);
-      }
-      return this.store.update((state) => {
-        const compute = findOwnedResource(state.computeAllocations, accountId, allocationId, "compute_allocation_not_found");
-        Object.assign(compute, {
-          providerResourceId: providerCompute.providerResourceId || providerCompute.id || compute.providerResourceId,
-          operationId: providerCompute.operationId || compute.operationId,
-          poolId: providerCompute.poolId || compute.poolId,
-          nodePoolId: providerCompute.nodePoolId || compute.nodePoolId,
-          instanceId: providerCompute.instanceId || compute.instanceId,
-          nodeName: providerCompute.nodeName || compute.nodeName,
-          privateIp: providerCompute.privateIp || compute.privateIp || "",
-          publicIp: providerCompute.publicIp || compute.publicIp || "",
-          status: providerCompute.status || "running",
-          billingStatus: providerCompute.billingStatus || compute.billingStatus,
-          spec: providerCompute.spec || compute.spec,
-          image: providerCompute.image || compute.image,
-          localPath: providerCompute.localPath || compute.localPath,
-          composePath: providerCompute.composePath || compute.composePath,
-          runtime: providerCompute.runtime ? clone(providerCompute.runtime) : compute.runtime,
-          providerData: clone(providerCompute.providerData || providerCompute),
-          lastProviderSyncAt: now(),
-          updatedAt: now()
+    return reservation.compute;
+  }
+
+  async processPendingResourceProvisioning({ limit = 1, lockTimeoutMs = 600_000 } = {}) {
+    const claims = await this.claimPendingComputeAllocations({ limit, lockTimeoutMs });
+    const completed = [];
+    const failed = [];
+
+    for (const claim of claims) {
+      try {
+        const packagePlan = this.getPackage(claim.packageId);
+        const providerCompute = await this.createProviderCompute({ compute: claim, packagePlan });
+        if (!providerNodeIdentity(providerCompute)) {
+          throw computeNodeIdentityError(providerCompute);
+        }
+        await this.completeProviderCompute({
+          accountId: claim.ownerAccountId,
+          allocationId: claim.id,
+          providerCompute
         });
-        const operation = state.runtimeOperations.find((item) => item.id === compute.operationId || item.resourceId === allocationId);
+        completed.push(claim.id);
+      } catch (error) {
+        await this.markResourceFailed({
+          collection: "computeAllocations",
+          accountId: claim.ownerAccountId,
+          resourceId: claim.id,
+          error,
+          auditType: "compute.create_failed"
+        });
+        failed.push({ id: claim.id, error: error.message });
+      }
+    }
+
+    return { processed: claims.length, completed, failed };
+  }
+
+  async claimPendingComputeAllocations({ limit = 1, lockTimeoutMs = 600_000 } = {}) {
+    const timestamp = Date.now();
+    return this.store.update((state) => {
+      ensureResourceCollections(state);
+      const claims = [];
+      for (const compute of state.computeAllocations || []) {
+        if (claims.length >= limit) break;
+        if (compute.status !== "provisioning") continue;
+        const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
+        if (operation?.status === "running" && !isOperationLockExpired(operation, lockTimeoutMs, timestamp)) continue;
+        compute.updatedAt = now();
+        compute.provisioningStage = "cloud_resource_creating";
         if (operation) {
-          operation.id = compute.operationId || operation.id;
-          operation.status = "completed";
-          operation.providerRequestId = providerRequestId(providerCompute);
+          operation.status = "running";
+          operation.attempts = Number(operation.attempts || 0) + 1;
           operation.updatedAt = now();
         }
-        return clone(compute);
+        claims.push(clone(compute));
+      }
+      return claims;
+    });
+  }
+
+  async completeProviderCompute({ accountId, allocationId, providerCompute }) {
+    return this.store.update((state) => {
+      const compute = findOwnedResource(state.computeAllocations, accountId, allocationId, "compute_allocation_not_found");
+      Object.assign(compute, {
+        providerResourceId: providerCompute.providerResourceId || providerCompute.id || compute.providerResourceId,
+        operationId: providerCompute.operationId || compute.operationId,
+        poolId: providerCompute.poolId || compute.poolId,
+        nodePoolId: providerCompute.nodePoolId || compute.nodePoolId,
+        instanceId: providerCompute.instanceId || compute.instanceId,
+        nodeName: providerCompute.nodeName || compute.nodeName,
+        privateIp: providerCompute.privateIp || compute.privateIp || "",
+        publicIp: providerCompute.publicIp || compute.publicIp || "",
+        status: providerCompute.status || "running",
+        billingStatus: providerCompute.billingStatus || compute.billingStatus,
+        spec: providerCompute.spec || compute.spec,
+        image: providerCompute.image || compute.image,
+        localPath: providerCompute.localPath || compute.localPath,
+        composePath: providerCompute.composePath || compute.composePath,
+        runtime: providerCompute.runtime ? clone(providerCompute.runtime) : compute.runtime,
+        providerData: clone(providerCompute.providerData || providerCompute),
+        providerRequestId: providerRequestId(providerCompute),
+        provisioningStage: "runtime_ready",
+        lastProviderSyncAt: now(),
+        updatedAt: now()
       });
-    } catch (error) {
-      await this.markResourceFailed({ collection: "computeAllocations", accountId, resourceId: allocationId, error, auditType: "compute.create_failed" });
-      throw error;
-    }
+      const operation = state.runtimeOperations.find((item) => item.id === compute.operationId || item.resourceId === allocationId);
+      if (operation) {
+        operation.id = compute.operationId || operation.id;
+        operation.status = "completed";
+        operation.providerRequestId = providerRequestId(providerCompute);
+        operation.updatedAt = now();
+      }
+      return clone(compute);
+    });
   }
 
   async destroyComputeAllocation({ accountId, computeAllocationId, confirm }) {
@@ -496,6 +555,7 @@ export class ResourceProvisioningService extends OplDomainService {
       const compute = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
       const storage = findOwnedResource(state.storageVolumes, accountId, storageId, "storage_volume_not_found");
       if (compute.status === "destroyed") throw new Error("compute_allocation_destroyed");
+      if (compute.status !== "running") throw new Error("compute_allocation_not_running");
       if (storage.status === "destroyed") throw new Error("storage_volume_destroyed");
       const active = state.storageAttachments.find((item) =>
         item.ownerAccountId === accountId &&

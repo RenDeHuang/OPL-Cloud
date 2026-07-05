@@ -73,6 +73,22 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
   }, []);
 
   useEffect(() => {
+    const resources = [
+      ...(state?.computeAllocations || []),
+      ...(state?.storageVolumes || []),
+      ...(state?.storageAttachments || [])
+    ];
+    const hasPendingResource = resources.some((item) =>
+      ["provisioning", "attaching", "destroying", "detaching"].includes(item.status)
+    );
+    if (!hasPendingResource) return undefined;
+    const timer = setInterval(() => {
+      refresh().catch((err) => message.error(err.message));
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [state?.computeAllocations, state?.storageVolumes, state?.storageAttachments]);
+
+  useEffect(() => {
     refreshAdminOps();
   }, [isAdmin]);
 

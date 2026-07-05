@@ -372,10 +372,53 @@ function assertComputeShape(checks, compute, name = "compute_created") {
   addCheck(checks, name, Boolean(
     compute?.id &&
     compute?.provider === "tencent-tke" &&
-    (compute?.instanceId || compute?.providerResourceId || compute?.nodeName) &&
-    ["provisioning", "running"].includes(compute?.status) &&
+    compute?.nodeName &&
+    (compute?.instanceId || compute?.providerResourceId) &&
+    compute?.status === "running" &&
     compute?.billingStatus === "active"
   ), { computeAllocationId: compute?.id });
+}
+
+async function waitForComputeReady({
+  fetchImpl,
+  origin,
+  accountId,
+  compute,
+  attempts,
+  retryDelayMs,
+  auth = null,
+  checks,
+  name = "compute_created"
+}) {
+  let current = compute;
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    if (
+      current?.id &&
+      current?.provider === "tencent-tke" &&
+      current?.nodeName &&
+      (current?.instanceId || current?.providerResourceId) &&
+      current?.status === "running" &&
+      current?.billingStatus === "active"
+    ) {
+      addCheck(checks, name, true, {
+        computeAllocationId: current.id,
+        nodeName: current.nodeName,
+        attempts: attempt + 1
+      });
+      return current;
+    }
+    if (!current?.id) break;
+    if (attempt >= attempts) break;
+    if (attempt > 0) await sleep(retryDelayMs);
+    current = await requestJson({
+      fetchImpl,
+      origin,
+      path: `/api/compute-allocations/${encodeURIComponent(current.id)}`,
+      auth
+    });
+  }
+  assertComputeShape(checks, current, name);
+  return current;
 }
 
 function assertStorageShape(checks, storage) {
@@ -663,7 +706,16 @@ export async function verifyProductionChain({
       auth,
       body: { accountId, packageId, name: computeName }
     });
-    assertComputeShape(checks, compute);
+    compute = await waitForComputeReady({
+      fetchImpl,
+      origin: normalizedOrigin,
+      accountId,
+      compute,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs,
+      auth,
+      checks
+    });
 
     storage = await requestJson({
       fetchImpl,
@@ -757,7 +809,17 @@ export async function verifyProductionChain({
       auth,
       body: { accountId, packageId, name: `${effectiveWorkspaceName} replacement compute ${runId}` }
     });
-    assertComputeShape(checks, replacementCompute, "replacement_compute_created");
+    replacementCompute = await waitForComputeReady({
+      fetchImpl,
+      origin: normalizedOrigin,
+      accountId,
+      compute: replacementCompute,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs,
+      auth,
+      checks,
+      name: "replacement_compute_created"
+    });
 
     replacementAttachment = await requestJson({
       fetchImpl,

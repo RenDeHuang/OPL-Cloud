@@ -96,6 +96,7 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
       packageId: "basic",
       name: "Route compute"
     });
+    await appService.processPendingResourceProvisioning({ limit: 1 });
     const attachment = await appService.attachStorage({
       accountId: "pi-route",
       computeAllocationId: compute.id,

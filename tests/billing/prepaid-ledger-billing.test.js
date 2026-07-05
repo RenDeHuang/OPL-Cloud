@@ -30,6 +30,7 @@ function createTestService(runtimeProvider = { name: "test-provider" }) {
 async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
   const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
   const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
+  await service.processPendingResourceProvisioning({ limit: 1 });
   const attachment = await service.attachStorage({
     accountId,
     computeAllocationId: compute.id,
@@ -352,6 +353,7 @@ test("resource billing charges active compute and storage even before a Workspac
     packageId: "basic",
     name: "Billing compute"
   });
+  await service.processPendingResourceProvisioning({ limit: 1 });
   const storage = await service.createStorageVolume({
     accountId: "pi-alpha",
     packageId: "basic",
@@ -431,6 +433,7 @@ test("resource billing is idempotent per resource and billing hour", async () =>
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
   await service.createComputeAllocation({ accountId: "pi-alpha", packageId: "basic", name: "Billing compute" });
+  await service.processPendingResourceProvisioning({ limit: 1 });
 
   await service.settleResourceBilling({
     accountId: "pi-alpha",

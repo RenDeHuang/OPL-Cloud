@@ -117,6 +117,10 @@ export class OplCloudService {
     return this.resourceProvisioning.createComputeAllocation(...args);
   }
 
+  async processPendingResourceProvisioning(...args) {
+    return this.resourceProvisioning.processPendingResourceProvisioning(...args);
+  }
+
   async destroyComputeAllocation(...args) {
     return this.resourceProvisioning.destroyComputeAllocation(...args);
   }

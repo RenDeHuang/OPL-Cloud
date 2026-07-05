@@ -6,7 +6,8 @@ import test from "node:test";
 import {
   createRequestHandler,
   hourlyResourceBillingSourceEventId,
-  startResourceBillingWorker
+  startResourceBillingWorker,
+  startResourceProvisioningWorker
 } from "../../packages/console/api/server.js";
 
 async function listen(handler) {
@@ -272,6 +273,39 @@ test("production server schedules hourly resource billing ticks", async () => {
 
   worker.stop();
   assert.deepEqual(calls.at(-1), { cleared: "timer-1" });
+});
+
+test("production server schedules resource provisioning ticks outside public HTTP requests", async () => {
+  const calls = [];
+  let scheduledTick = null;
+  let scheduledMs = 0;
+  const worker = startResourceProvisioningWorker({
+    appService: {
+      async processPendingResourceProvisioning(input) {
+        calls.push(["processPendingResourceProvisioning", input]);
+        return { processed: 1, completed: ["compute-alpha"], failed: [] };
+      }
+    },
+    env: {
+      NODE_ENV: "production",
+      OPL_RESOURCE_PROVISIONING_INTERVAL_MS: "60000"
+    },
+    setIntervalFn(fn, ms) {
+      scheduledTick = fn;
+      scheduledMs = ms;
+      return { unref() {} };
+    },
+    clearIntervalFn() {},
+    logger: { info() {}, error() {} }
+  });
+
+  assert.equal(worker.started, true);
+  assert.equal(scheduledMs, 60000);
+  await scheduledTick();
+
+  assert.deepEqual(calls, [
+    ["processPendingResourceProvisioning", { limit: 1, lockTimeoutMs: 600000 }]
+  ]);
 });
 
 test("resource billing worker stays disabled outside production unless explicitly enabled", () => {

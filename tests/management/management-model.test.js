@@ -34,6 +34,7 @@ async function createWorkspaceEntry(service, {
   const ownerAccountId = accountId || organizationId;
   const storage = await service.createStorageVolume({ accountId: ownerAccountId, packageId, name: `${workspaceName} storage` });
   const compute = await service.createComputeAllocation({ accountId: ownerAccountId, packageId, name: `${workspaceName} compute` });
+  await service.processPendingResourceProvisioning({ limit: 1 });
   const attachment = await service.attachStorage({
     accountId: ownerAccountId,
     computeAllocationId: compute.id,

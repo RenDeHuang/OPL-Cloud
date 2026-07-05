@@ -30,6 +30,7 @@ function createService() {
 async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
   const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
   const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
+  await service.processPendingResourceProvisioning({ limit: 1 });
   const attachment = await service.attachStorage({
     accountId,
     computeAllocationId: compute.id,

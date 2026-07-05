@@ -64,6 +64,17 @@ function createService(runtimeProviderOverrides = {}) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function provisionNextCompute(service) {
+  const result = await service.processPendingResourceProvisioning({ limit: 1 });
+  assert.equal(result.failed.length, 0);
+  assert.equal(result.completed.length, 1);
+  return result.completed[0];
+}
+
 test("account provisions compute, storage, attachment, then a Workspace URL entry", async () => {
   const service = createService();
 
@@ -75,6 +86,8 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
     packageId: "basic",
     name: "CPU analysis node"
   });
+  await provisionNextCompute(service);
+  const readyCompute = await service.computeAllocation({ accountId: "pi-alpha", computeAllocationId: compute.id });
   const storage = await service.createStorageVolume({
     accountId: "pi-alpha",
     userId: "usr-alpha",
@@ -84,7 +97,7 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
   });
   const attachment = await service.attachStorage({
     accountId: "pi-alpha",
-    computeAllocationId: compute.id,
+    computeAllocationId: readyCompute.id,
     storageId: storage.id,
     mountPath: "/data"
   });
@@ -95,31 +108,92 @@ test("account provisions compute, storage, attachment, then a Workspace URL entr
     attachmentId: attachment.id
   });
 
-  assert.equal(compute.ownerAccountId, "pi-alpha");
-  assert.equal(compute.packageId, "basic");
-  assert.equal(compute.status, "running");
+  assert.equal(readyCompute.ownerAccountId, "pi-alpha");
+  assert.equal(readyCompute.packageId, "basic");
+  assert.equal(readyCompute.status, "running");
   assert.equal(storage.ownerAccountId, "pi-alpha");
   assert.equal(storage.sizeGb, 20);
   assert.equal(storage.status, "available");
-  assert.equal(attachment.computeAllocationId, compute.id);
+  assert.equal(attachment.computeAllocationId, readyCompute.id);
   assert.equal(attachment.storageId, storage.id);
   assert.equal(attachment.status, "attached");
   assert.equal(workspace.attachmentId, attachment.id);
-  assert.equal(workspace.computeAllocationId, compute.id);
+  assert.equal(workspace.computeAllocationId, readyCompute.id);
   assert.equal(workspace.storageId, storage.id);
   assert.match(workspace.url, /^https:\/\/workspace\.example\.test\/w\//);
 
   const state = await service.getState("pi-alpha");
-  assert.deepEqual(state.computeAllocations.map((item) => item.id), [compute.id]);
+  assert.deepEqual(state.computeAllocations.map((item) => item.id), [readyCompute.id]);
   assert.deepEqual(state.storageVolumes.map((item) => item.id), [storage.id]);
   assert.deepEqual(state.storageAttachments.map((item) => item.id), [attachment.id]);
   assert.deepEqual(state.workspaces.map((item) => item.id), [workspace.id]);
-  assert.equal(state.billingLedger.some((entry) => entry.computeAllocationId === compute.id), true);
+  assert.equal(state.billingLedger.some((entry) => entry.computeAllocationId === readyCompute.id), true);
   assert.equal(state.billingLedger.some((entry) => entry.storageId === storage.id), true);
   assert.equal(state.billingLedger.some((entry) => entry.attachmentId === attachment.id), true);
-  assert.equal(state.resourceUsageLogs.some((entry) => entry.computeAllocationId === compute.id), true);
+  assert.equal(state.resourceUsageLogs.some((entry) => entry.computeAllocationId === readyCompute.id), true);
   assert.equal(state.resourceUsageLogs.some((entry) => entry.storageId === storage.id), true);
   assert.equal(state.resourceUsageLogs.some((entry) => entry.attachmentId === attachment.id), true);
+});
+
+test("compute allocation returns a provisioning record before slow provider work completes", async () => {
+  let resolveProviderCompute = null;
+  let providerCalls = 0;
+  const service = createService({
+    async createComputeAllocation({ computeAllocationId, packagePlan }) {
+      providerCalls += 1;
+      return new Promise((resolve) => {
+        resolveProviderCompute = () => resolve({
+          providerResourceId: `node/node-${computeAllocationId}`,
+          operationId: `op-${computeAllocationId}`,
+          poolId: `pool-${packagePlan.id}-${packagePlan.server}`,
+          nodePoolId: "np-basic",
+          instanceId: `ins-${computeAllocationId}`,
+          nodeName: `node-${computeAllocationId}`,
+          privateIp: "10.0.0.21",
+          publicIp: "",
+          status: "running",
+          billingStatus: "active",
+          spec: packagePlan.server,
+          image: "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
+          providerRequestId: "req-scale"
+        });
+      });
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const createPromise = service.createComputeAllocation({
+    accountId: "pi-alpha",
+    userId: "usr-alpha",
+    packageId: "basic",
+    name: "Slow compute"
+  });
+  const compute = await Promise.race([
+    createPromise,
+    sleep(25).then(() => null)
+  ]);
+
+  assert.ok(compute, "createComputeAllocation must not wait for TKE node readiness");
+  assert.equal(providerCalls, 0);
+  assert.equal(compute.status, "provisioning");
+  assert.equal(compute.nodeName, undefined);
+
+  const pendingState = await service.getState("pi-alpha");
+  const pendingOperation = pendingState.runtimeOperations.find((item) => item.resourceId === compute.id);
+  assert.equal(pendingOperation.status, "queued");
+
+  const workerPromise = service.processPendingResourceProvisioning({ limit: 1 });
+  await sleep(0);
+  assert.equal(providerCalls, 1);
+  resolveProviderCompute();
+  const result = await workerPromise;
+  assert.equal(result.processed, 1);
+  assert.deepEqual(result.completed, [compute.id]);
+
+  const completed = await service.computeAllocation({ accountId: "pi-alpha", computeAllocationId: compute.id });
+  assert.equal(completed.status, "running");
+  assert.equal(completed.nodeName, `node-${compute.id}`);
+  assert.equal(completed.providerRequestId, "req-scale");
 });
 
 test("compute allocation persists provisioner ownership, pricing, hold, and operation state", async () => {
@@ -145,12 +219,14 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-  const compute = await service.createComputeAllocation({
+  const pendingCompute = await service.createComputeAllocation({
     accountId: "pi-alpha",
     userId: "usr-alpha",
     packageId: "basic",
     name: "CPU analysis node"
   });
+  await provisionNextCompute(service);
+  const compute = await service.computeAllocation({ accountId: "pi-alpha", computeAllocationId: pendingCompute.id });
   const state = await service.getState("pi-alpha");
   const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
 
@@ -196,15 +272,16 @@ test("compute allocation cannot complete without a dedicated CVM or node identit
   });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-  await assert.rejects(
-    service.createComputeAllocation({
-      accountId: "pi-alpha",
-      userId: "usr-alpha",
-      packageId: "basic",
-      name: "CPU analysis node"
-    }),
-    /compute_allocation_node_identity_required/
-  );
+  const pendingCompute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    userId: "usr-alpha",
+    packageId: "basic",
+    name: "CPU analysis node"
+  });
+  const result = await service.processPendingResourceProvisioning({ limit: 1 });
+  assert.deepEqual(result.completed, []);
+  assert.equal(result.failed[0].id, pendingCompute.id);
+  assert.equal(result.failed[0].error, "compute_allocation_node_identity_required");
 
   const state = await service.getState("pi-alpha");
   const compute = state.computeAllocations[0];
@@ -227,15 +304,16 @@ test("failed compute allocation remains visible with safe provider failure state
   });
 
   await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
-  await assert.rejects(
-    service.createComputeAllocation({
-      accountId: "pi-alpha",
-      userId: "usr-alpha",
-      packageId: "basic",
-      name: "CPU analysis node"
-    }),
-    /tencent_permission_denied/
-  );
+  const pendingCompute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    userId: "usr-alpha",
+    packageId: "basic",
+    name: "CPU analysis node"
+  });
+  const result = await service.processPendingResourceProvisioning({ limit: 1 });
+  assert.deepEqual(result.completed, []);
+  assert.equal(result.failed[0].id, pendingCompute.id);
+  assert.equal(result.failed[0].error, "tencent_permission_denied");
 
   const state = await service.getState("pi-alpha");
   const compute = state.computeAllocations[0];
@@ -267,6 +345,17 @@ test("Workspace URL creation requires an attached storage and compute pair", asy
     sizeGb: 10,
     name: "Grant data volume"
   });
+
+  await assert.rejects(
+    service.attachStorage({
+      accountId: "pi-alpha",
+      computeAllocationId: compute.id,
+      storageId: storage.id,
+      mountPath: "/data"
+    }),
+    /compute_allocation_not_running/
+  );
+  await provisionNextCompute(service);
 
   await assert.rejects(
     service.createWorkspace({
@@ -323,6 +412,7 @@ test("storage detach retry completes when a previous provider attempt left the a
     packageId: "basic",
     name: "CPU analysis node"
   });
+  await provisionNextCompute(service);
   const storage = await service.createStorageVolume({
     accountId: "pi-alpha",
     packageId: "basic",
@@ -397,6 +487,7 @@ test("resource service preserves provider handles for one-person-lab-app runtime
     packageId: "basic",
     name: "Dedicated compute"
   });
+  await provisionNextCompute(service);
   const storage = await service.createStorageVolume({
     accountId: "pi-alpha",
     packageId: "basic",

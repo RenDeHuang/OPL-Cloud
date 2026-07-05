@@ -532,13 +532,13 @@ export function StorageAttachmentDetailPage({ state, path, session, runAction })
 export function CreateStorageAttachmentPage({ state, session, runAction }) {
   const { operationPending, operationResult, runOperation } = useOperationFeedback();
   const [form] = Form.useForm();
-  const computeAllocations = (state.computeAllocations || []).filter((item) => item.status !== "destroyed");
+  const computeAllocations = (state.computeAllocations || []).filter((item) => item.status === "running");
   const storageVolumes = (state.storageVolumes || []).filter((item) => !["destroyed", "attached"].includes(item.status));
   const canAttach = computeAllocations.length > 0 && storageVolumes.length > 0;
   return (
     <ConsoleSurface title="挂载存储" eyebrow="资源" subtitle="选择计算资源和存储资源" compact>
       <InsightPanel title="挂载存储" eyebrow="挂载">
-        {!canAttach && <Alert type="warning" showIcon message="需要至少一个计算资源和一个未挂载存储卷。" />}
+        {!canAttach && <Alert type="warning" showIcon message="需要一个运行中的计算资源和一个未挂载存储卷。" />}
         <Form
           form={form}
           layout="vertical"

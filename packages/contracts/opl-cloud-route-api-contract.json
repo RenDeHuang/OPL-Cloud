@@ -329,6 +329,10 @@
       ],
       "operationProtocol": {
         "mutation": true,
+        "asyncProvisioning": true,
+        "initialStatus": "provisioning",
+        "readyStatus": "running",
+        "pollRoute": "GET /api/compute-allocations/:id",
         "confirmation": "normal",
         "costImpact": "required",
         "operationTimeline": true,
@@ -390,6 +394,8 @@
       ],
       "operationProtocol": {
         "mutation": true,
+        "asyncProvisioning": true,
+        "pollRoute": "GET /api/compute-allocations/:id",
         "confirmation": "normal",
         "destructive": true,
         "operationTimeline": true,

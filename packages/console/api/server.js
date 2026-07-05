@@ -395,6 +395,13 @@ function billingWorkerEnabled(env = process.env) {
   return env.NODE_ENV === "production";
 }
 
+function provisioningWorkerEnabled(env = process.env) {
+  const explicit = env.OPL_RESOURCE_PROVISIONING_WORKER_ENABLED;
+  if (explicit === "1" || explicit === "true") return true;
+  if (explicit === "0" || explicit === "false") return false;
+  return env.NODE_ENV === "production";
+}
+
 export function startResourceBillingWorker({
   appService = service,
   env = process.env,
@@ -417,6 +424,46 @@ export function startResourceBillingWorker({
       logger.info?.(`OPL resource billing tick settled ${result?.entries?.length || 0} entries for ${sourceEventId}`);
     } catch (error) {
       logger.error?.(`OPL resource billing tick failed for ${sourceEventId}: ${error.message}`);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setIntervalFn(tick, intervalMs);
+  timer?.unref?.();
+  return {
+    started: true,
+    intervalMs,
+    tick,
+    stop() {
+      clearIntervalFn(timer);
+    }
+  };
+}
+
+export function startResourceProvisioningWorker({
+  appService = service,
+  env = process.env,
+  setIntervalFn = setInterval,
+  clearIntervalFn = clearInterval,
+  logger = console
+} = {}) {
+  if (!provisioningWorkerEnabled(env)) {
+    return { started: false, stop() {}, async tick() {} };
+  }
+  const intervalMs = Math.max(10_000, Number(env.OPL_RESOURCE_PROVISIONING_INTERVAL_MS || 30_000));
+  const limit = Math.max(1, Number(env.OPL_RESOURCE_PROVISIONING_LIMIT || 1));
+  const lockTimeoutMs = Math.max(60_000, Number(env.OPL_RESOURCE_PROVISIONING_LOCK_MS || 600_000));
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const result = await appService.processPendingResourceProvisioning({ limit, lockTimeoutMs });
+      if (result?.processed) {
+        logger.info?.(`OPL resource provisioning processed ${result.processed} pending allocations`);
+      }
+    } catch (error) {
+      logger.error?.(`OPL resource provisioning tick failed: ${error.message}`);
     } finally {
       running = false;
     }
@@ -711,9 +758,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const server = createServer(createRequestHandler());
   server.on("upgrade", createUpgradeHandler());
   const billingWorker = startResourceBillingWorker();
+  const provisioningWorker = startResourceProvisioningWorker();
   server.listen(port, () => {
     console.log(`OPL Cloud API listening on http://127.0.0.1:${port}`);
     console.log(`State file: ${dataPath}`);
   });
-  server.on("close", () => billingWorker.stop());
+  server.on("close", () => {
+    billingWorker.stop();
+    provisioningWorker.stop();
+  });
 }

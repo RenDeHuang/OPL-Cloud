@@ -33,7 +33,10 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     ownerAccountId: "pi-prod",
     packageId: "basic",
     provider: "tencent-tke",
-    providerResourceId: "deployment/opl-compute-prod001",
+    providerResourceId: "node/opl-node-prod001",
+    instanceId: "ins-prod001",
+    nodeName: "opl-node-prod001",
+    privateIp: "10.0.0.21",
     status: "running",
     billingStatus: "active",
     spec: "2c4g",
@@ -81,7 +84,10 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
   const replacementCompute = {
     ...compute,
     id: "compute-prod002",
-    providerResourceId: "deployment/opl-compute-prod002",
+    providerResourceId: "node/opl-node-prod002",
+    instanceId: "ins-prod002",
+    nodeName: "opl-node-prod002",
+    privateIp: "10.0.0.22",
     runtime: { service: "service/opl-compute-prod002", serviceName: "opl-compute-prod002" }
   };
   const replacementAttachment = {
@@ -206,7 +212,8 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
         "POST /api/workspaces",
         "POST /api/workspaces/runtime-status",
         "POST /api/storage-attachments/detach"
-      ].includes(key)
+      ].includes(key) ||
+      key.startsWith("GET /api/compute-allocations/")
     ) {
       const count = (requestCounts.get(key) || 0) + 1;
       requestCounts.set(key, count);
@@ -457,6 +464,44 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "verification_compute_destroyed:true",
     "verification_storage_destroyed:true"
   ]);
+});
+
+test("production verifier waits for async compute provisioning before mounting storage", async () => {
+  const requests = [];
+  const chain = tkeChain();
+  const provisioningCompute = {
+    ...chain.compute,
+    providerResourceId: "",
+    instanceId: "",
+    nodeName: "",
+    privateIp: "",
+    status: "provisioning",
+    operationId: "op-compute-prod001"
+  };
+  const responses = chainResponses(chain);
+  responses["POST /api/compute-allocations"] = provisioningCompute;
+  responses[`GET /api/compute-allocations/${chain.compute.id}`] = provisioningCompute;
+  responses[`GET /api/compute-allocations/${chain.compute.id}#2`] = chain.compute;
+
+  const result = await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    workspaceName: "Production Verification Lab",
+    runId: "prod-run",
+    packageId: "basic",
+    workspaceUrlAttempts: 2,
+    retryDelayMs: 0,
+    fetchImpl: keyedFetch({ responses, requests })
+  });
+
+  const requestKeys = requests.map((request) => request.key);
+  const firstComputePoll = requestKeys.indexOf(`GET /api/compute-allocations/${chain.compute.id}`);
+  const secondComputePoll = requestKeys.indexOf(`GET /api/compute-allocations/${chain.compute.id}#2`);
+  const storageCreate = requestKeys.indexOf("POST /api/storage-volumes");
+  assert.equal(result.ok, true);
+  assert.ok(firstComputePoll > requestKeys.indexOf("POST /api/compute-allocations"));
+  assert.ok(secondComputePoll > firstComputePoll);
+  assert.ok(storageCreate > secondComputePoll);
 });
 
 test("production verifier can exercise one-person-lab-app through a real browser surface", async () => {
