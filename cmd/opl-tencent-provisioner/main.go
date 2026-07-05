@@ -88,6 +88,7 @@ type tkeNativeAPI interface {
 	DescribeClusterInstances(request *tke2022.DescribeClusterInstancesRequest) (*tke2022.DescribeClusterInstancesResponse, error)
 	DescribeClusterMachines(request *tke2022.DescribeClusterMachinesRequest) (*tke2022.DescribeClusterMachinesResponse, error)
 	DescribeNodePools(request *tke2022.DescribeNodePoolsRequest) (*tke2022.DescribeNodePoolsResponse, error)
+	ModifyNodePool(request *tke2022.ModifyNodePoolRequest) (*tke2022.ModifyNodePoolResponse, error)
 	ScaleNodePool(request *tke2022.ScaleNodePoolRequest) (*tke2022.ScaleNodePoolResponse, error)
 	DeleteClusterMachines(request *tke2022.DeleteClusterMachinesRequest) (*tke2022.DeleteClusterMachinesResponse, error)
 }
@@ -222,6 +223,17 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 		pool = describedPool
 		describeRequestId = requestId
 	}
+	modifyAutoscalingRequestId := ""
+	if nativeAutoscalingEnabled(pool) {
+		requestId, err := client.disableNativeNodePoolAutoscaling(nodePoolId)
+		if err != nil {
+			response := sdkErrorResponse("tencent_disable_node_pool_autoscaling_failed", err)
+			response.ProviderRequestId = describeRequestId
+			return response
+		}
+		modifyAutoscalingRequestId = requestId
+		pool.Native.EnableAutoscaling = common.BoolPtr(false)
+	}
 	currentReplicas := nativeReplicas(pool)
 	beforeMachines, beforeMachinesRequestId, err := client.describeClusterMachines(nodePoolId)
 	if err != nil {
@@ -254,6 +266,7 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 				"region":                      client.region,
 				"createNodePoolRequestId":     createNodePoolRequestId,
 				"describeNodePoolRequestId":   describeRequestId,
+				"modifyAutoscalingRequestId":  modifyAutoscalingRequestId,
 				"describeMachinesBeforeReqId": beforeMachinesRequestId,
 				"describeMachinesLatestReqId": machineRequestId,
 				"scaleNodePoolRequestId":      scaleRequestId,
@@ -311,6 +324,7 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 			"region":                      client.region,
 			"createNodePoolRequestId":     createNodePoolRequestId,
 			"describeNodePoolRequestId":   describeRequestId,
+			"modifyAutoscalingRequestId":  modifyAutoscalingRequestId,
 			"describeMachinesBeforeReqId": beforeMachinesRequestId,
 			"describeMachinesReadyReqId":  machineRequestId,
 			"describeCvmRequestId":        cvmRequestId,
@@ -400,6 +414,24 @@ func (client *tencentSDKClient) describeClusterMachines(nodePoolId string) ([]*t
 		return nil, "", err
 	}
 	return describeResponse.Response.Machines, stringValue(describeResponse.Response.RequestId), nil
+}
+
+func nativeAutoscalingEnabled(pool *tke2022.NodePool) bool {
+	return pool != nil && pool.Native != nil && pool.Native.EnableAutoscaling != nil && *pool.Native.EnableAutoscaling
+}
+
+func (client *tencentSDKClient) disableNativeNodePoolAutoscaling(nodePoolId string) (string, error) {
+	modifyRequest := tke2022.NewModifyNodePoolRequest()
+	modifyRequest.ClusterId = common.StringPtr(client.clusterId)
+	modifyRequest.NodePoolId = common.StringPtr(nodePoolId)
+	modifyRequest.Native = &tke2022.UpdateNativeNodePoolParam{
+		EnableAutoscaling: common.BoolPtr(false),
+	}
+	modifyResponse, err := client.nativeTkeClient.ModifyNodePool(modifyRequest)
+	if err != nil {
+		return "", err
+	}
+	return stringValue(modifyResponse.Response.RequestId), nil
 }
 
 func isInvalidMachineFilterError(err error) bool {
@@ -658,7 +690,7 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		InstanceTypes:      []*string{common.StringPtr(request.Pool.InstanceType)},
 		SecurityGroupIds:   stringsToPtrs(splitCsv(env["TENCENT_CVM_SECURITY_GROUP_IDS"])),
 		AutoRepair:         common.BoolPtr(true),
-		EnableAutoscaling:  common.BoolPtr(true),
+		EnableAutoscaling:  common.BoolPtr(false),
 		Replicas:           common.Int64Ptr(0),
 		InternetAccessible: &tke2022.InternetAccessible{MaxBandwidthOut: common.Int64Ptr(0), ChargeType: common.StringPtr("TRAFFIC_POSTPAID_BY_HOUR")},
 		MachineType:        common.StringPtr("Native"),

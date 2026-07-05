@@ -285,6 +285,9 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if createRequest.Native.Replicas == nil || *createRequest.Native.Replicas != 0 {
 		t.Fatalf("node pool creation must not allocate a CVM immediately: %#v", createRequest.Native.Replicas)
 	}
+	if createRequest.Native.EnableAutoscaling == nil || *createRequest.Native.EnableAutoscaling {
+		t.Fatalf("Fabric-managed package node pools must disable TKE autoscaling: %#v", createRequest.Native.EnableAutoscaling)
+	}
 	if len(createRequest.Native.InstanceTypes) != 1 || *createRequest.Native.InstanceTypes[0] != "SA5.LARGE4" {
 		t.Fatalf("unexpected instance types: %#v", createRequest.Native.InstanceTypes)
 	}
@@ -307,11 +310,13 @@ type fakeNativeTkeAPI struct {
 	describeInstancesRequest []*tke2022.DescribeClusterInstancesRequest
 	describeMachinesRequest  []*tke2022.DescribeClusterMachinesRequest
 	describeNodePoolsRequest []*tke2022.DescribeNodePoolsRequest
+	modifyNodePoolRequest    *tke2022.ModifyNodePoolRequest
 	scaleNodePoolRequest     *tke2022.ScaleNodePoolRequest
 	deleteMachinesRequest    *tke2022.DeleteClusterMachinesRequest
 	nodePoolId               string
 	discoverNodePoolId       string
 	replicas                 int64
+	enableAutoscaling        bool
 	rejectMachinePoolFilter  bool
 	calls                    []string
 }
@@ -418,7 +423,8 @@ func (api *fakeNativeTkeAPI) DescribeNodePools(request *tke2022.DescribeNodePool
 					{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr("SA5.LARGE4")},
 				},
 				Native: &tke2022.NativeNodePoolInfo{
-					Replicas: common.Int64Ptr(api.replicas),
+					Replicas:          common.Int64Ptr(api.replicas),
+					EnableAutoscaling: common.BoolPtr(api.enableAutoscaling),
 				},
 			}},
 			TotalCount: common.Int64Ptr(1),
@@ -534,6 +540,19 @@ func (api *fakeNativeTkeAPI) ScaleNodePool(request *tke2022.ScaleNodePoolRequest
 	}, nil
 }
 
+func (api *fakeNativeTkeAPI) ModifyNodePool(request *tke2022.ModifyNodePoolRequest) (*tke2022.ModifyNodePoolResponse, error) {
+	api.calls = append(api.calls, "ModifyNodePool")
+	api.modifyNodePoolRequest = request
+	if request.Native != nil && request.Native.EnableAutoscaling != nil {
+		api.enableAutoscaling = *request.Native.EnableAutoscaling
+	}
+	return &tke2022.ModifyNodePoolResponse{
+		Response: &tke2022.ModifyNodePoolResponseParams{
+			RequestId: common.StringPtr("req-modify-pool"),
+		},
+	}, nil
+}
+
 func (api *fakeNativeTkeAPI) DeleteClusterMachines(request *tke2022.DeleteClusterMachinesRequest) (*tke2022.DeleteClusterMachinesResponse, error) {
 	api.calls = append(api.calls, "DeleteClusterMachines")
 	api.deleteMachinesRequest = request
@@ -542,6 +561,44 @@ func (api *fakeNativeTkeAPI) DeleteClusterMachines(request *tke2022.DeleteCluste
 			RequestId: common.StringPtr("req-delete-machine"),
 		},
 	}, nil
+}
+
+func TestTencentSDKClientCreateAllocationDisablesNodePoolAutoscalingBeforeExplicitScale(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, enableAutoscaling: true}
+	client := newFakeTencentSDKClient(tkeAPI)
+
+	response := client.CreateComputeAllocation(Request{
+		AccountId: "pi-alpha",
+		UserId:    "usr-alpha",
+		PackageId: "basic",
+		Pool: ComputePoolInput{
+			Id:           "pool-basic-2c4g",
+			InstanceType: "SA5.LARGE4",
+			NodePoolId:   "np-basic",
+		},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, map[string]string{})
+
+	if !response.Ok {
+		t.Fatalf("expected ok response: %#v", response)
+	}
+	if tkeAPI.modifyNodePoolRequest == nil {
+		t.Fatalf("expected ModifyNodePool before explicit ScaleNodePool")
+	}
+	if tkeAPI.modifyNodePoolRequest.Native == nil ||
+		tkeAPI.modifyNodePoolRequest.Native.EnableAutoscaling == nil ||
+		*tkeAPI.modifyNodePoolRequest.Native.EnableAutoscaling {
+		t.Fatalf("explicit Fabric allocation must disable TKE node pool autoscaling: %#v", tkeAPI.modifyNodePoolRequest)
+	}
+	expectedCalls := []string{"DescribeNodePools", "ModifyNodePool", "DescribeClusterMachines", "ScaleNodePool", "DescribeClusterMachines"}
+	if len(tkeAPI.calls) != len(expectedCalls) {
+		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
+	}
+	for index, expected := range expectedCalls {
+		if tkeAPI.calls[index] != expected {
+			t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
+		}
+	}
 }
 
 func TestTencentSDKClientCreateAllocationScalesExistingPackageNodePool(t *testing.T) {
