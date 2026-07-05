@@ -79,6 +79,38 @@ function resourceIsDestroyed(resource) {
   return !resource || resource.status === "destroyed" || resource.billingStatus === "stopped";
 }
 
+function suspendLegacyWorkspaceRuntime(workspace, computeAllocationId) {
+  workspace.state = "suspended";
+  workspace.runtimeStatus = "suspended";
+  workspace.currentComputeAllocationId = "";
+  workspace.computeAllocationId = "";
+  workspace.currentAttachmentId = "";
+  workspace.attachmentId = "";
+  workspace.updatedAt = now();
+  workspace.server = {
+    ...(workspace.server || {}),
+    status: "suspended",
+    billingStatus: "stopped",
+    id: computeAllocationId
+  };
+  workspace.docker = {
+    ...(workspace.docker || {}),
+    status: "unavailable"
+  };
+  workspace.runtime = {
+    ...(workspace.runtime || {}),
+    status: "suspended"
+  };
+}
+
+function legacyComputeCleanupEligible(compute) {
+  if (!compute) return false;
+  if (compute.status === "destroyed" || compute.billingStatus === "stopped") return false;
+  const machineName = String(compute.machineName || compute.providerData?.machineName || "").trim();
+  if (machineName) return false;
+  return compute.status === "destroying" || compute.status === "failed";
+}
+
 export class WorkspaceLifecycleService extends OplDomainService {
   async createWorkspace(input) {
     if (!input?.attachmentId) throw new Error("workspace_attachment_required");
@@ -286,15 +318,85 @@ export class WorkspaceLifecycleService extends OplDomainService {
     });
   }
 
-  async cleanupWorkspaceAccess({ accountId = "", workspaceIds = [], reason = "operator_cleanup" } = {}) {
+  async cleanupWorkspaceAccess({
+    accountId = "",
+    workspaceIds = [],
+    reason = "operator_cleanup",
+    legacyComputeAllocationIds = [],
+    cloudCleanupConfirmed = false
+  } = {}) {
     return this.store.update((state) => {
       state.computeAllocations ??= [];
       state.storageVolumes ??= [];
       state.storageAttachments ??= [];
       const targetWorkspaceIds = new Set((workspaceIds || []).filter(Boolean));
+      const targetLegacyComputeIds = new Set((legacyComputeAllocationIds || []).filter(Boolean));
       const storageById = new Map(state.storageVolumes.map((resource) => [resource.id, resource]));
       const cleaned = [];
       const skipped = [];
+      const legacyComputeCleaned = [];
+      const legacyComputeSkipped = [];
+
+      for (const computeAllocationId of targetLegacyComputeIds) {
+        const compute = state.computeAllocations.find((item) => item.id === computeAllocationId && (!accountId || item.ownerAccountId === accountId));
+        if (!compute) {
+          legacyComputeSkipped.push({ computeAllocationId, reason: "compute_allocation_not_found" });
+          continue;
+        }
+        if (!cloudCleanupConfirmed) {
+          legacyComputeSkipped.push({ computeAllocationId, reason: "cloud_cleanup_not_confirmed" });
+          continue;
+        }
+        if (!legacyComputeCleanupEligible(compute)) {
+          legacyComputeSkipped.push({ computeAllocationId, reason: "not_legacy_cleanup_eligible" });
+          continue;
+        }
+        ensureUserWallet(state, { accountId: compute.ownerAccountId, userId: compute.ownerUserId });
+        compute.status = "destroyed";
+        compute.billingStatus = "stopped";
+        compute.error = "";
+        compute.safeMessage = "";
+        compute.retryable = false;
+        compute.destroyedAt = now();
+        compute.updatedAt = now();
+        compute.attachedStorageIds = [];
+
+        for (const attachment of state.storageAttachments || []) {
+          if (attachment.ownerAccountId !== compute.ownerAccountId) continue;
+          if (attachment.computeAllocationId !== computeAllocationId) continue;
+          if (attachment.status !== "attached" && attachment.status !== "detaching") continue;
+          attachment.status = "detached";
+          attachment.detachedAt = now();
+          attachment.updatedAt = now();
+        }
+        for (const workspace of Object.values(state.workspaces || {})) {
+          if (workspace.ownerAccountId !== compute.ownerAccountId) continue;
+          if ((workspace.currentComputeAllocationId || workspace.computeAllocationId || "") !== computeAllocationId) continue;
+          suspendLegacyWorkspaceRuntime(workspace, computeAllocationId);
+        }
+        const sourceEventId = `legacy_compute_cleanup:${computeAllocationId}:${reason}`;
+        state.billingLedger.push(this.ledgerEntry({
+          state,
+          workspaceId: "resource",
+          accountId: compute.ownerAccountId,
+          type: "compute_legacy_cleaned",
+          amount: 0,
+          sourceEventId,
+          metadata: {
+            reason,
+            computeAllocationId,
+            cloudCleanupConfirmed: true,
+            providerResourceId: compute.providerResourceId || "",
+            nodeName: compute.nodeName || ""
+          }
+        }));
+        legacyComputeCleaned.push({
+          computeAllocationId,
+          accountId: compute.ownerAccountId,
+          status: compute.status,
+          billingStatus: compute.billingStatus
+        });
+      }
 
       for (const workspace of Object.values(state.workspaces || {})) {
         if (accountId && workspace.ownerAccountId !== accountId) continue;
@@ -354,6 +456,8 @@ export class WorkspaceLifecycleService extends OplDomainService {
       return {
         cleaned,
         skipped,
+        legacyComputeCleaned,
+        legacyComputeSkipped,
         activeResources: {
           compute: state.computeAllocations
             .filter((item) => (!accountId || item.ownerAccountId === accountId) && (activeStatus.has(item.status) || item.billingStatus === "running"))

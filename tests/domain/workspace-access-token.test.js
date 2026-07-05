@@ -181,3 +181,96 @@ test("operator cleanup retires active legacy Workspace entries without stable st
     /workspace_token_inactive/
   );
 });
+
+test("operator cleanup can stop legacy compute records after cloud machine cleanup is confirmed", async () => {
+  const service = createTestService();
+  await service.store.update((state) => {
+    state.computeAllocations = [{
+      id: "compute-legacy",
+      ownerAccountId: "pi-alpha",
+      ownerUserId: "usr-alpha",
+      packageId: "basic",
+      poolId: "pool-basic-2c4g",
+      nodePoolId: "np-basic",
+      status: "destroying",
+      billingStatus: "active",
+      providerResourceId: "node/np-basic-old",
+      nodeName: "np-basic-old",
+      machineName: "",
+      attachedStorageIds: [],
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:05:00.000Z"
+    }];
+    state.storageVolumes = [{
+      id: "storage-legacy",
+      ownerAccountId: "pi-alpha",
+      ownerUserId: "usr-alpha",
+      packageId: "basic",
+      status: "available",
+      billingStatus: "active",
+      attachmentIds: [],
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z"
+    }];
+    state.storageAttachments = [{
+      id: "attach-legacy",
+      ownerAccountId: "pi-alpha",
+      computeAllocationId: "compute-legacy",
+      storageId: "storage-legacy",
+      status: "detached",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:10:00.000Z"
+    }];
+    state.workspaces["ws-legacy-compute"] = {
+      id: "ws-legacy-compute",
+      ownerAccountId: "pi-alpha",
+      packageId: "basic",
+      name: "Legacy Compute URL",
+      slug: "legacy-compute-url",
+      url: "https://workspace.example.test/w/legacy-compute-url/?token=share_legacy_compute",
+      access: {
+        token: "share_legacy_compute",
+        tokenStatus: "active"
+      },
+      state: "running",
+      storageId: "storage-legacy",
+      currentComputeAllocationId: "compute-legacy",
+      currentAttachmentId: "attach-legacy",
+      runtimeStatus: "running",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:10:00.000Z"
+    };
+  });
+
+  const withoutConfirmation = await service.cleanupWorkspaceAccess({
+    accountId: "pi-alpha",
+    legacyComputeAllocationIds: ["compute-legacy"],
+    reason: "legacy_compute_cleanup"
+  });
+  assert.deepEqual(withoutConfirmation.legacyComputeCleaned, []);
+  assert.equal(withoutConfirmation.legacyComputeSkipped[0].reason, "cloud_cleanup_not_confirmed");
+
+  const cleanup = await service.cleanupWorkspaceAccess({
+    accountId: "pi-alpha",
+    legacyComputeAllocationIds: ["compute-legacy"],
+    cloudCleanupConfirmed: true,
+    reason: "legacy_compute_cleanup"
+  });
+
+  assert.deepEqual(cleanup.legacyComputeCleaned, [{
+    computeAllocationId: "compute-legacy",
+    accountId: "pi-alpha",
+    status: "destroyed",
+    billingStatus: "stopped"
+  }]);
+
+  const state = await service.getState("pi-alpha");
+  const compute = state.computeAllocations.find((item) => item.id === "compute-legacy");
+  const workspace = state.workspaces.find((item) => item.id === "ws-legacy-compute");
+  assert.equal(compute.status, "destroyed");
+  assert.equal(compute.billingStatus, "stopped");
+  assert.equal(workspace.state, "suspended");
+  assert.equal(workspace.access.tokenStatus, "active");
+  assert.equal(workspace.currentComputeAllocationId, "");
+  assert.ok(state.billingLedger.some((entry) => entry.type === "compute_legacy_cleaned"));
+});

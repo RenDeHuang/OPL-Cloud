@@ -445,11 +445,16 @@ test("Console residual cleanup workflow is API-scoped and gated by exact resourc
   assert.ok(workflow.on.workflow_dispatch.inputs.account_id);
   assert.ok(workflow.on.workflow_dispatch.inputs.compute_allocation_id);
   assert.ok(workflow.on.workflow_dispatch.inputs.storage_id);
+  assert.ok(workflow.on.workflow_dispatch.inputs.legacy_compute_allocation_id);
+  assert.ok(workflow.on.workflow_dispatch.inputs.cloud_cleanup_confirmed);
   assert.ok(workflow.on.workflow_dispatch.inputs.confirm_resource_id);
   assert.match(runs, /confirm_resource_id must equal the target resource id/);
+  assert.match(runs, /cloud_cleanup_confirmed must be true for legacy compute cleanup/);
   assert.match(runs, /\/api\/auth\/operator-login/);
   assert.match(runs, /\/api\/compute-allocations\/.*\/destroy/);
   assert.match(runs, /\/api\/storage-volumes\/destroy/);
+  assert.match(runs, /\/api\/operator\/cleanup-workspace-access/);
+  assert.match(runs, /legacyComputeAllocationIds/);
   assert.match(runs, /confirm:\s*true/);
   assert.match(runs, /status >= 400 && .*status < 500/, "cleanup must not retry deterministic 4xx API failures");
   assert.doesNotMatch(text, /kubectl .* delete /, "Console cleanup must not bypass provider and billing state through kubectl delete");
