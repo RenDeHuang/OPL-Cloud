@@ -301,6 +301,12 @@ async function requireFirstFileInput(page) {
 }
 
 async function selectDefaultWorkspaceAssistant(page) {
+  try {
+    await selectGuidWorkspaceAssistant(page);
+    return;
+  } catch {
+    // Fall through to generic selectors for older/non-guid workspace shells.
+  }
   let lastError = null;
   try {
     await page.getByRole("button", { name: /@Research|Research/i }).first().click({ timeout: 15_000 });
@@ -321,6 +327,36 @@ async function selectDefaultWorkspaceAssistant(page) {
   throw lastError || new Error("workspace_assistant_selection_failed");
 }
 
+async function selectGuidWorkspaceAssistant(page) {
+  if (typeof page.evaluate !== "function" || typeof page.waitForFunction !== "function") {
+    throw new Error("workspace_guid_dom_unavailable");
+  }
+  await page.evaluate(() => {
+    if (!window.location.hash.startsWith("#/guid")) window.location.hash = "#/guid";
+  });
+  await page.waitForFunction(() => {
+    const visible = (element) => {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    return Boolean(
+      visible(document.querySelector('[data-testid="preset-pill-mas"]')) &&
+      visible(document.querySelector('[data-testid="guid-input"] textarea, [data-testid="guid-input"]')) &&
+      visible(document.querySelector('[data-testid="guid-send-btn"]'))
+    );
+  }, {}, { timeout: 15_000 });
+  const selected = await page.evaluate(() => {
+    const card = document.querySelector('[data-testid="preset-pill-mas"]');
+    if (!card) return false;
+    card.click();
+    return true;
+  });
+  if (!selected) throw new Error("workspace_guid_assistant_missing");
+  await waitForWorkspaceAssistantSelection(page);
+}
+
 async function waitForWorkspaceAssistantSelection(page) {
   await page.waitForFunction(() => {
     const text = document.body?.innerText || "";
@@ -329,6 +365,12 @@ async function waitForWorkspaceAssistantSelection(page) {
 }
 
 async function clickSendControl(page) {
+  try {
+    await clickGuidSendControl(page);
+    return;
+  } catch {
+    // Fall through to generic controls for older/non-guid workspace shells.
+  }
   let lastError = null;
   try {
     await page.getByRole("button", { name: /发送|Send|提交|运行|Ask/i }).first().click({ timeout: 15_000 });
@@ -398,7 +440,27 @@ async function clickRightmostComposerButton(page) {
   if (!clicked) throw new Error("workspace_send_control_not_found");
 }
 
+async function clickGuidSendControl(page) {
+  if (typeof page.evaluate !== "function") throw new Error("workspace_guid_send_dom_unavailable");
+  const clicked = await page.evaluate(() => {
+    const sendButton = document.querySelector('[data-testid="guid-send-btn"]');
+    if (!sendButton) return false;
+    if (sendButton.disabled || sendButton.getAttribute("disabled") !== null || sendButton.getAttribute("aria-disabled") === "true") {
+      return false;
+    }
+    sendButton.click();
+    return true;
+  });
+  if (!clicked) throw new Error("workspace_guid_send_disabled");
+}
+
 async function fillWorkspacePrompt(page, prompt) {
+  try {
+    await fillGuidWorkspacePrompt(page, prompt);
+    return;
+  } catch {
+    // Fall through to generic composer selectors for older/non-guid workspace shells.
+  }
   let lastError = null;
   const roleTextbox = page.getByRole("textbox");
   const attempts = [];
@@ -420,6 +482,24 @@ async function fillWorkspacePrompt(page, prompt) {
     }
   }
   throw new Error(`workspace_prompt_fill_failed:${lastError?.message || "unknown"}`);
+}
+
+async function fillGuidWorkspacePrompt(page, prompt) {
+  if (typeof page.evaluate !== "function") throw new Error("workspace_guid_input_dom_unavailable");
+  const filled = await page.evaluate(({ prompt: expected }) => {
+    const input = document.querySelector('[data-testid="guid-input"] textarea, [data-testid="guid-input"]');
+    const sendButton = document.querySelector('[data-testid="guid-send-btn"]');
+    if (!input || !sendButton) return false;
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set ||
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    if (!nativeSetter) return false;
+    nativeSetter.call(input, expected);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return (input.value || "").includes(expected);
+  }, { prompt });
+  if (!filled) throw new Error("workspace_guid_prompt_fill_failed");
+  await waitForComposerPrompt(page, prompt);
 }
 
 async function waitForComposerPrompt(page, prompt) {
