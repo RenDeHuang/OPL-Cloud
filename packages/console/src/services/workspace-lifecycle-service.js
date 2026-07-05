@@ -336,6 +336,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
       const skipped = [];
       const legacyComputeCleaned = [];
       const legacyComputeSkipped = [];
+      const shouldSweepWorkspaceAccess = targetLegacyComputeIds.size === 0 || targetWorkspaceIds.size > 0;
 
       for (const computeAllocationId of targetLegacyComputeIds) {
         const compute = state.computeAllocations.find((item) => item.id === computeAllocationId && (!accountId || item.ownerAccountId === accountId));
@@ -398,7 +399,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
         });
       }
 
-      for (const workspace of Object.values(state.workspaces || {})) {
+      if (shouldSweepWorkspaceAccess) for (const workspace of Object.values(state.workspaces || {})) {
         if (accountId && workspace.ownerAccountId !== accountId) continue;
         if (targetWorkspaceIds.size && !targetWorkspaceIds.has(workspace.id)) continue;
         const tokenStatus = workspace.access?.tokenStatus || "unknown";

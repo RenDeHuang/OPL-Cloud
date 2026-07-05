@@ -274,3 +274,62 @@ test("operator cleanup can stop legacy compute records after cloud machine clean
   assert.equal(workspace.currentComputeAllocationId, "");
   assert.ok(state.billingLedger.some((entry) => entry.type === "compute_legacy_cleaned"));
 });
+
+test("operator cleanup for an exact legacy compute target does not sweep unrelated legacy Workspace entries", async () => {
+  const service = createTestService();
+  await service.store.update((state) => {
+    state.computeAllocations = [{
+      id: "compute-legacy",
+      ownerAccountId: "pi-alpha",
+      ownerUserId: "usr-alpha",
+      packageId: "basic",
+      poolId: "pool-basic-2c4g",
+      nodePoolId: "np-basic",
+      status: "destroying",
+      billingStatus: "active",
+      providerResourceId: "node/np-basic-old",
+      nodeName: "np-basic-old",
+      machineName: "",
+      attachedStorageIds: [],
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:05:00.000Z"
+    }];
+    state.workspaces["ws-unrelated-gpu-legacy"] = {
+      id: "ws-unrelated-gpu-legacy",
+      ownerAccountId: "pi-alpha",
+      packageId: "gpu",
+      name: "Unrelated Legacy URL",
+      slug: "unrelated-legacy-url",
+      url: "https://workspace.example.test/w/unrelated-legacy-url/?token=share_unrelated",
+      access: {
+        token: "share_unrelated",
+        tokenStatus: "active"
+      },
+      state: "running",
+      storageVolumeId: "storage-old",
+      currentComputeAllocationId: "",
+      currentAttachmentId: "",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z"
+    };
+  });
+
+  const cleanup = await service.cleanupWorkspaceAccess({
+    accountId: "pi-alpha",
+    legacyComputeAllocationIds: ["compute-legacy"],
+    cloudCleanupConfirmed: true,
+    reason: "legacy_compute_cleanup"
+  });
+
+  assert.deepEqual(cleanup.cleaned, []);
+  assert.deepEqual(cleanup.legacyComputeCleaned, [{
+    computeAllocationId: "compute-legacy",
+    accountId: "pi-alpha",
+    status: "destroyed",
+    billingStatus: "stopped"
+  }]);
+
+  const state = await service.getState("pi-alpha");
+  assert.equal(state.computeAllocations.find((item) => item.id === "compute-legacy").billingStatus, "stopped");
+  assert.equal(state.workspaces.find((item) => item.id === "ws-unrelated-gpu-legacy").access.tokenStatus, "active");
+});
