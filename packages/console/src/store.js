@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import pg from "pg";
 
 const { Pool } = pg;
+const STATE_UPDATE_LOCK_KEY = Object.freeze([1869, 5021]);
 
 export function emptyState() {
   return {
@@ -357,6 +358,7 @@ export class PostgresStore {
     const client = await this.checkoutClient();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock($1, $2)", STATE_UPDATE_LOCK_KEY);
       const nextState = await this.read(client);
       const result = await mutator(nextState);
       await this.write(nextState, client);

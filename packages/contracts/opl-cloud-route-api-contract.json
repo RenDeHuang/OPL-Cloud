@@ -738,7 +738,7 @@
         "POST /api/workspaces/reset-token",
         "POST /api/workspaces/delete-token"
       ],
-      "serviceBoundary": "WorkspaceEntryService",
+      "serviceBoundary": "WorkspaceLifecycleService",
       "dynamicFields": [
         "id",
         "ownerAccountId",
@@ -776,7 +776,7 @@
         "GET /api/state",
         "POST /api/workspaces"
       ],
-      "serviceBoundary": "WorkspaceEntryService",
+      "serviceBoundary": "WorkspaceLifecycleService",
       "dynamicFields": [
         "ownerAccountId",
         "workspaceName",
@@ -828,7 +828,7 @@
         "POST /api/workspaces/delete-token",
         "POST /api/workspaces/runtime-status"
       ],
-      "serviceBoundary": "WorkspaceEntryService",
+      "serviceBoundary": "WorkspaceLifecycleService",
       "dynamicFields": [
         "id",
         "ownerAccountId",
@@ -1323,7 +1323,7 @@
         "GET /api/operator/summary",
         "POST /api/operator/cleanup-workspace-access"
       ],
-      "serviceBoundary": "WorkspaceEntryService",
+      "serviceBoundary": "WorkspaceLifecycleService",
       "operationProtocol": {
         "mutation": true,
         "confirmation": "normal",

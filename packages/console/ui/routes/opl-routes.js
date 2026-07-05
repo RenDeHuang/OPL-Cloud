@@ -464,7 +464,7 @@ export const oplRoutes = Object.freeze([
     pageModule: "packages/console/ui/pages/workspaces/WorkspacesPage.jsx",
     apiClient: "packages/console/ui/api/workspaces-api.js",
     apiRoutes: ["GET /api/state", "POST /api/workspaces/reset-token", "POST /api/workspaces/delete-token"],
-    serviceBoundary: "WorkspaceEntryService",
+    serviceBoundary: "WorkspaceLifecycleService",
     dynamicFields: workspaceFields,
     capabilities: ["list", "read", "action"]
   }),
@@ -481,7 +481,7 @@ export const oplRoutes = Object.freeze([
     pageModule: "packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx",
     apiClient: "packages/console/ui/api/workspaces-api.js",
     apiRoutes: ["GET /api/state", "POST /api/workspaces"],
-    serviceBoundary: "WorkspaceEntryService",
+    serviceBoundary: "WorkspaceLifecycleService",
     dynamicFields: ["workspaceName", "attachmentId", "storageId", "currentComputeAllocationId", "currentAttachmentId", "url", "runtime.status"],
     capabilities: ["read", "write"],
     operationProtocol: workspaceCreateProtocol
@@ -504,7 +504,7 @@ export const oplRoutes = Object.freeze([
       "POST /api/workspaces/delete-token",
       "POST /api/workspaces/runtime-status"
     ],
-    serviceBoundary: "WorkspaceEntryService",
+    serviceBoundary: "WorkspaceLifecycleService",
     dynamicFields: workspaceFields,
     capabilities: ["detail", "read", "action", "evidence"],
     operationProtocol: destructiveMutationProtocol
@@ -776,7 +776,7 @@ export const oplRoutes = Object.freeze([
     pageModule: "packages/console/ui/pages/admin/AdminOverviewPage.jsx",
     apiClient: "packages/console/ui/api/console-read-api.js",
     apiRoutes: ["GET /api/management/state", "GET /api/operator/summary", "POST /api/operator/cleanup-workspace-access"],
-    serviceBoundary: "WorkspaceEntryService",
+    serviceBoundary: "WorkspaceLifecycleService",
     capabilities: ["read", "list", "action", "audit"],
     operationProtocol: destructiveMutationProtocol
   }),

@@ -942,7 +942,7 @@ export async function verifyProductionChain({
       path: "/api/workspaces",
       method: "POST",
       auth,
-      body: { accountId, workspaceName: `${effectiveWorkspaceName} replacement`, attachmentId: replacementAttachment.id }
+      body: { accountId, workspaceName: effectiveWorkspaceName, attachmentId: replacementAttachment.id }
     });
     assertWorkspaceShape(checks, replacementWorkspace, {
       compute: replacementCompute,

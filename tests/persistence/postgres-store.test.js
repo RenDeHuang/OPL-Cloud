@@ -34,7 +34,7 @@ function createFakePool() {
       const normalized = sql.trim().replace(/\s+/g, " ");
       statements.push({ sql: normalized, params });
 
-      if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK") {
+      if (normalized === "BEGIN" || normalized === "COMMIT" || normalized === "ROLLBACK" || normalized === "SELECT pg_advisory_xact_lock($1, $2)") {
         return { rows: [] };
       }
       if (normalized.startsWith("CREATE TABLE IF NOT EXISTS") || normalized.startsWith("ALTER TABLE") || normalized.startsWith("DO $$") || normalized.startsWith("DELETE FROM") || normalized.startsWith("CREATE UNIQUE INDEX IF NOT EXISTS") || normalized.startsWith("CREATE INDEX IF NOT EXISTS") || normalized.startsWith("DROP INDEX IF EXISTS")) {
@@ -515,6 +515,13 @@ test("PostgresStore update reads, mutates, and writes state transactionally", as
       .filter((sql) => sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK"),
     ["BEGIN", "COMMIT"]
   );
+  const statementSql = pool.statements.map((statement) => statement.sql);
+  const beginIndex = statementSql.indexOf("BEGIN");
+  const stateReadIndex = statementSql.findIndex((sql) => sql.startsWith("SELECT id, state FROM organizations"));
+  const advisoryLockIndex = statementSql.findIndex((sql) => sql === "SELECT pg_advisory_xact_lock($1, $2)");
+  assert.ok(advisoryLockIndex > beginIndex, "state updates must take the advisory lock inside the transaction");
+  assert.ok(advisoryLockIndex < stateReadIndex, "state updates must serialize before reading and rewriting tables");
+  assert.deepEqual(pool.statements[advisoryLockIndex].params, [1869, 5021]);
 });
 
 test("PostgresStore billing ledger event index excludes repeatable credit and hold entries without blocking repeated usage events", async () => {

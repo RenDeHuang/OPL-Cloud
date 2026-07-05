@@ -98,14 +98,10 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
   };
   const replacementWorkspace = {
     ...workspace,
-    id: "ws-tke-prod002",
     computeAllocationId: replacementCompute.id,
     attachmentId: replacementAttachment.id,
     server: { ...workspace.server, id: replacementCompute.providerResourceId },
-    docker: { ...workspace.docker, id: replacementCompute.providerResourceId, service: replacementCompute.runtime.service },
-    slug: "production-verification-lab-replacement",
-    url: "https://workspace.medopl.cn/w/ws-tke-prod002/?token=share_tke_prod_2",
-    access: { token: "share_tke_prod_2", tokenStatus: "active", requiresLogin: false }
+    docker: { ...workspace.docker, id: replacementCompute.providerResourceId, service: replacementCompute.runtime.service }
   };
   return { compute, storage, attachment, workspace, replacementCompute, replacementAttachment, replacementWorkspace };
 }
@@ -151,8 +147,8 @@ function chainResponses(chain) {
     },
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/write")}`]: { success: true, data: true },
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}`]: { success: true, data: persistenceText },
-    [`GET ${chain.replacementWorkspace.url}`]: "<html>one-person-lab-app</html>",
-    [`POST ${workspaceUrl(chain.replacementWorkspace.url, "/api/fs/read")}`]: { success: true, data: persistenceText },
+    [`GET ${chain.workspace.url}#2`]: "<html>one-person-lab-app</html>",
+    [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`]: { success: true, data: persistenceText },
     "POST /api/billing/request-usage": {
       id: "usage-request-prod001",
       workspaceId: chain.workspace.id,
@@ -411,8 +407,8 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "POST /api/storage-attachments#2",
     "POST /api/workspaces#2",
     "POST /api/workspaces/runtime-status#2",
-    `GET ${chain.replacementWorkspace.url}`,
-    `POST ${workspaceUrl(chain.replacementWorkspace.url, "/api/fs/read")}`,
+    `GET ${chain.workspace.url}#2`,
+    `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`,
     "POST /api/billing/request-usage",
     "POST /api/billing/resource-settlements",
     "GET /api/state?accountId=pi-prod",
@@ -436,7 +432,14 @@ test("production verifier exercises the public TKE resource provisioning chain",
     workspace: "/data"
   });
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments#2").body.storageId, chain.storage.id);
-  assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.replacementWorkspace.url, "/api/fs/read")}`).body, {
+  assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces#2").body, {
+    accountId: "pi-prod",
+    workspaceName: "Production Verification Lab",
+    attachmentId: chain.replacementAttachment.id
+  });
+  assert.equal(chain.replacementWorkspace.id, chain.workspace.id);
+  assert.equal(chain.replacementWorkspace.url, chain.workspace.url);
+  assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`).body, {
     path: "/data/opl-e2e-prod-run.txt",
     workspace: "/data"
   });
