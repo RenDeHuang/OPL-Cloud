@@ -25,14 +25,15 @@ test("TencentProvisionerClient invokes JSON stdin/stdout provisioner", async () 
       operationId: "op-test",
       poolId: input.pool.id,
       nodePoolId: input.pool.nodePoolId,
-      instanceId: "ins-created",
-      nodeName: "node-created",
+      instanceId: "ins-basic-2",
+      nodeName: "10.0.0.12",
       privateIp: "10.0.0.12",
       status: "running",
       providerData: {
         action: input.action,
         dryRun: String(input.dryRun),
-        accountId: input.accountId
+        accountId: input.accountId,
+        machineName: "node-basic-2"
       }
     })`);
     const client = new TencentProvisionerClient({
@@ -51,8 +52,8 @@ test("TencentProvisionerClient invokes JSON stdin/stdout provisioner", async () 
     });
 
     assert.equal(result.operationId, "op-test");
-    assert.equal(result.instanceId, "ins-created");
-    assert.equal(result.nodeName, "node-created");
+    assert.equal(result.instanceId, "ins-basic-2");
+    assert.equal(result.nodeName, "10.0.0.12");
     assert.equal(result.privateIp, "10.0.0.12");
     assert.equal(result.providerData.action, "create_compute_allocation");
     assert.equal(result.providerData.dryRun, "true");

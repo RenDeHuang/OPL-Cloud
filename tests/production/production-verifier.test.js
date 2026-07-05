@@ -663,6 +663,42 @@ test("production verifier retries TKE runtime status and Workspace URL until rea
   assert.equal(result.checks.find((check) => check.name === "workspace_url").attempts, 2);
 });
 
+test("production verifier reports failed runtime checks with ok state", async () => {
+  const chain = tkeChain();
+  const responses = chainResponses(chain);
+  responses["POST /api/workspaces/runtime-status"] = {
+    provider: "tencent-tke",
+    workspaceId: chain.workspace.id,
+    ready: false,
+    checks: [
+      { name: "deployment_ready", ok: false },
+      { name: "pvc_bound", ok: true },
+      { name: "service_endpoints_ready", ok: false }
+    ]
+  };
+
+  await assert.rejects(
+    verifyProductionChain({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      runId: "prod-run",
+      workspaceUrlAttempts: 1,
+      retryDelayMs: 0,
+      fetchImpl: keyedFetch({ responses })
+    }),
+    (error) => {
+      assert.equal(error.message, "workspace_runtime_status_failed");
+      assert.deepEqual(error.details?.failedChecks, ["deployment_ready", "service_endpoints_ready"]);
+      assert.deepEqual(error.details?.runtimeChecks, [
+        { name: "deployment_ready", ok: false },
+        { name: "pvc_bound", ok: true },
+        { name: "service_endpoints_ready", ok: false }
+      ]);
+      return true;
+    }
+  );
+});
+
 test("production verifier rejects localhost Workspace URLs and still cleans up resources", async () => {
   const requests = [];
   const chain = tkeChain({ workspaceUrl: "http://127.0.0.1:8791/workspaces/local?token=share_tke_prod" });

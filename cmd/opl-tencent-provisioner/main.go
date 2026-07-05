@@ -13,6 +13,7 @@ import (
 
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
+	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
 )
 
@@ -42,11 +43,12 @@ type ComputePoolInput struct {
 }
 
 type ComputeAllocationInput struct {
-	Id         string `json:"id,omitempty"`
-	InstanceId string `json:"instanceId,omitempty"`
-	NodeName   string `json:"nodeName,omitempty"`
-	PrivateIp  string `json:"privateIp,omitempty"`
-	PublicIp   string `json:"publicIp,omitempty"`
+	Id          string `json:"id,omitempty"`
+	InstanceId  string `json:"instanceId,omitempty"`
+	MachineName string `json:"machineName,omitempty"`
+	NodeName    string `json:"nodeName,omitempty"`
+	PrivateIp   string `json:"privateIp,omitempty"`
+	PublicIp    string `json:"publicIp,omitempty"`
 }
 
 type Response struct {
@@ -78,6 +80,7 @@ type tencentSDKClient struct {
 	region          string
 	clusterId       string
 	nativeTkeClient tkeNativeAPI
+	nativeCvmClient cvmNativeAPI
 }
 
 type tkeNativeAPI interface {
@@ -86,6 +89,10 @@ type tkeNativeAPI interface {
 	DescribeNodePools(request *tke2022.DescribeNodePoolsRequest) (*tke2022.DescribeNodePoolsResponse, error)
 	ScaleNodePool(request *tke2022.ScaleNodePoolRequest) (*tke2022.ScaleNodePoolResponse, error)
 	DeleteClusterMachines(request *tke2022.DeleteClusterMachinesRequest) (*tke2022.DeleteClusterMachinesResponse, error)
+}
+
+type cvmNativeAPI interface {
+	DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error)
 }
 
 func (unimplementedTencentClient) CreateComputeAllocation(_ Request, _ map[string]string) Response {
@@ -130,11 +137,23 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 			Retryable: false,
 		}
 	}
+	cvmProfile := profile.NewClientProfile()
+	cvmProfile.HttpProfile.Endpoint = "cvm.tencentcloudapi.com"
+	cvmClient, err := cvm2017.NewClient(credential, env["TENCENTCLOUD_REGION"], cvmProfile)
+	if err != nil {
+		return nil, &Response{
+			Ok:        false,
+			ErrorCode: "tencent_sdk_client_failed",
+			Message:   err.Error(),
+			Retryable: false,
+		}
+	}
 
 	return &tencentSDKClient{
 		region:          env["TENCENTCLOUD_REGION"],
 		clusterId:       env["TENCENT_DEPLOY_CLUSTER_ID"],
 		nativeTkeClient: tkeClient,
+		nativeCvmClient: cvmClient,
 	}, nil
 }
 
@@ -230,28 +249,48 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 			ProviderRequestId: firstNonEmpty(machineRequestId, scaleRequestId),
 			Retryable:         true,
 			ProviderData: map[string]string{
-				"clusterId":                    client.clusterId,
-				"region":                       client.region,
-				"createNodePoolRequestId":      createNodePoolRequestId,
-				"describeNodePoolRequestId":    describeRequestId,
-				"describeMachinesBeforeReqId":  beforeMachinesRequestId,
-				"describeMachinesLatestReqId":  machineRequestId,
-				"scaleNodePoolRequestId":       scaleRequestId,
-				"instanceType":                 request.Pool.InstanceType,
-				"replicasBefore":               fmt.Sprintf("%d", currentReplicas),
-				"replicasAfter":                fmt.Sprintf("%d", targetReplicas),
+				"clusterId":                   client.clusterId,
+				"region":                      client.region,
+				"createNodePoolRequestId":     createNodePoolRequestId,
+				"describeNodePoolRequestId":   describeRequestId,
+				"describeMachinesBeforeReqId": beforeMachinesRequestId,
+				"describeMachinesLatestReqId": machineRequestId,
+				"scaleNodePoolRequestId":      scaleRequestId,
+				"instanceType":                request.Pool.InstanceType,
+				"replicasBefore":              fmt.Sprintf("%d", currentReplicas),
+				"replicasAfter":               fmt.Sprintf("%d", targetReplicas),
 			},
 		}
 	}
-	nodeName := stringValue(machine.MachineName)
+	machineName := stringValue(machine.MachineName)
 	privateIp := stringValue(machine.LanIP)
+	cvmInstance, cvmRequestId, err := client.describeCvmInstanceByPrivateIp(privateIp)
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_cvm_instance_failed", err)
+		response.ProviderRequestId = firstNonEmpty(cvmRequestId, machineRequestId, scaleRequestId)
+		return response
+	}
+	instanceId := stringValue(cvmInstance.InstanceId)
+	if instanceId == "" {
+		return Response{
+			Ok:                false,
+			ErrorCode:         "compute_allocation_instance_identity_required",
+			Message:           "Tencent CVM did not return an instance id for this compute allocation.",
+			ProviderRequestId: firstNonEmpty(cvmRequestId, machineRequestId, scaleRequestId),
+			Retryable:         true,
+		}
+	}
+	publicIp := firstString(cvmInstance.PublicIpAddresses)
+	nodeName := kubernetesNodeName(machine)
 	return Response{
 		Ok:                true,
 		OperationId:       "op-create-compute-" + stableSuffix(request.AccountId, request.Allocation.Id, nodePoolId, fmt.Sprintf("%d", targetReplicas))[:12],
 		PoolId:            request.Pool.Id,
 		NodePoolId:        nodePoolId,
+		InstanceId:        instanceId,
 		NodeName:          nodeName,
 		PrivateIp:         privateIp,
+		PublicIp:          publicIp,
 		Status:            "running",
 		ProviderRequestId: scaleRequestId,
 		ProviderData: map[string]string{
@@ -261,12 +300,16 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 			"describeNodePoolRequestId":   describeRequestId,
 			"describeMachinesBeforeReqId": beforeMachinesRequestId,
 			"describeMachinesReadyReqId":  machineRequestId,
+			"describeCvmRequestId":        cvmRequestId,
 			"scaleNodePoolRequestId":      scaleRequestId,
 			"instanceType":                request.Pool.InstanceType,
 			"replicasBefore":              fmt.Sprintf("%d", currentReplicas),
 			"replicasAfter":               fmt.Sprintf("%d", targetReplicas),
+			"instanceId":                  instanceId,
+			"machineName":                 machineName,
 			"nodeName":                    nodeName,
 			"privateIp":                   privateIp,
+			"publicIp":                    publicIp,
 		},
 	}
 }
@@ -278,13 +321,13 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 	if strings.TrimSpace(request.Pool.NodePoolId) == "" {
 		return Response{Ok: false, ErrorCode: "node_pool_id_required", Message: "ComputePool nodePoolId is required.", Retryable: false}
 	}
-	if strings.TrimSpace(request.Allocation.NodeName) == "" {
-		return Response{Ok: false, ErrorCode: "compute_allocation_node_identity_required", Message: "ComputeAllocation nodeName is required to destroy a dedicated node.", Retryable: false}
+	if strings.TrimSpace(request.Allocation.MachineName) == "" {
+		return Response{Ok: false, ErrorCode: "compute_allocation_machine_identity_required", Message: "ComputeAllocation machineName is required to destroy a dedicated Tencent node.", Retryable: false}
 	}
 	providerRequestId := ""
 	deleteRequest := tke2022.NewDeleteClusterMachinesRequest()
 	deleteRequest.ClusterId = common.StringPtr(client.clusterId)
-	deleteRequest.MachineNames = []*string{common.StringPtr(request.Allocation.NodeName)}
+	deleteRequest.MachineNames = []*string{common.StringPtr(request.Allocation.MachineName)}
 	deleteRequest.EnableScaleDown = common.BoolPtr(true)
 	deleteRequest.InstanceDeleteMode = common.StringPtr("terminate")
 	deleteResponse, err := client.nativeTkeClient.DeleteClusterMachines(deleteRequest)
@@ -385,6 +428,43 @@ func selectNewReadyMachine(machines []*tke2022.Machine, beforeNames map[string]b
 		return machine
 	}
 	return nil
+}
+
+func kubernetesNodeName(machine *tke2022.Machine) string {
+	if machine == nil {
+		return ""
+	}
+	if lanIp := stringValue(machine.LanIP); lanIp != "" {
+		return lanIp
+	}
+	return stringValue(machine.MachineName)
+}
+
+func (client *tencentSDKClient) describeCvmInstanceByPrivateIp(privateIp string) (*cvm2017.Instance, string, error) {
+	if strings.TrimSpace(privateIp) == "" {
+		return nil, "", fmt.Errorf("private IP is required to resolve CVM instance identity")
+	}
+	if client == nil || client.nativeCvmClient == nil {
+		return nil, "", fmt.Errorf("Tencent CVM SDK client is missing")
+	}
+	describeRequest := cvm2017.NewDescribeInstancesRequest()
+	describeRequest.Filters = []*cvm2017.Filter{{
+		Name:   common.StringPtr("private-ip-address"),
+		Values: []*string{common.StringPtr(privateIp)},
+	}}
+	describeRequest.Limit = common.Int64Ptr(1)
+	describeResponse, err := client.nativeCvmClient.DescribeInstances(describeRequest)
+	if err != nil {
+		return nil, "", err
+	}
+	requestId := ""
+	if describeResponse != nil && describeResponse.Response != nil {
+		requestId = stringValue(describeResponse.Response.RequestId)
+		if len(describeResponse.Response.InstanceSet) > 0 {
+			return describeResponse.Response.InstanceSet[0], requestId, nil
+		}
+	}
+	return nil, requestId, fmt.Errorf("CVM instance not found for private IP %s", privateIp)
 }
 
 func (client *tencentSDKClient) describeNativeNodePool(nodePoolId string) (*tke2022.NodePool, string, error) {

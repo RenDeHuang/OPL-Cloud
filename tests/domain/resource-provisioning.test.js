@@ -200,12 +200,12 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   const service = createService({
     async createComputeAllocation({ computeAllocationId }) {
       return {
-        providerResourceId: "node/node-created",
+        providerResourceId: "node/10.0.0.12",
         operationId: "op-create-alpha",
         poolId: "pool-basic-2c4g",
         nodePoolId: "np-basic",
-        instanceId: "ins-created",
-        nodeName: "node-created",
+        instanceId: "ins-basic-2",
+        nodeName: "10.0.0.12",
         privateIp: "10.0.0.12",
         publicIp: "",
         status: "running",
@@ -213,7 +213,7 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
         spec: "2c4g",
         image: "ghcr.io/gaofeng21cn/one-person-lab-app:latest",
         providerRequestId: "req-scale",
-        providerData: { scaleNodePoolRequestId: "req-scale", nodeName: "node-created", privateIp: "10.0.0.12", computeAllocationId }
+        providerData: { scaleNodePoolRequestId: "req-scale", instanceId: "ins-basic-2", machineName: "node-basic-2", nodeName: "10.0.0.12", privateIp: "10.0.0.12", computeAllocationId }
       };
     }
   });
@@ -230,12 +230,12 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   const state = await service.getState("pi-alpha");
   const operation = state.runtimeOperations.find((item) => item.resourceId === compute.id);
 
-  assert.equal(compute.providerResourceId, "node/node-created");
+  assert.equal(compute.providerResourceId, "node/10.0.0.12");
   assert.equal(compute.operationId, "op-create-alpha");
   assert.equal(compute.poolId, "pool-basic-2c4g");
   assert.equal(compute.nodePoolId, "np-basic");
-  assert.equal(compute.instanceId, "ins-created");
-  assert.equal(compute.nodeName, "node-created");
+  assert.equal(compute.instanceId, "ins-basic-2");
+  assert.equal(compute.nodeName, "10.0.0.12");
   assert.equal(compute.privateIp, "10.0.0.12");
   assert.equal(compute.publicIp, "");
   assert.equal(compute.lastProviderSyncAt.length > 0, true);

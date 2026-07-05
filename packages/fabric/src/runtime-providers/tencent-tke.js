@@ -255,6 +255,7 @@ export class TencentTkeProvider {
         allocation: {
           id: compute.id || computeAllocation.id || "",
           instanceId,
+          machineName: compute.providerData?.machineName || compute.machineName || "",
           nodeName: compute.nodeName || ""
         }
       });

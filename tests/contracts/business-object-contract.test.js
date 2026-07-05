@@ -78,6 +78,8 @@ test("ComputeAllocation contract requires dedicated CVM or Kubernetes node ident
   assert.match(computeAllocation.boundary || "", /dedicated CVM/i);
   assert.deepEqual(computeAllocation.requiredProviderFields, [
     "nodePoolId",
+    "instanceId",
+    "machineName",
     "nodeName",
     "privateIp",
     "ownerAccountId",

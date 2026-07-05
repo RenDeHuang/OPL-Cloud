@@ -111,6 +111,8 @@
       "boundary": "Account-owned dedicated CVM or Kubernetes node allocation inside a package ComputePool; nodePoolId is the placement pool, not the compute resource identity.",
       "requiredProviderFields": [
         "nodePoolId",
+        "instanceId",
+        "machineName",
         "nodeName",
         "privateIp",
         "ownerAccountId",

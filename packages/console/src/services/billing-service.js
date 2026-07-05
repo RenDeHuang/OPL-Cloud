@@ -160,7 +160,7 @@ export class BillingService extends OplDomainService {
       for (const compute of computeAllocations) {
         const account = ensureAccount(state, compute.ownerAccountId);
         const packagePlan = this.getPackage(compute.packageId);
-        entries.push(...this.debitComputeResourceUsage({
+        entries.push(...this.debitComputeAllocationUsage({
           state,
           account,
           compute,
@@ -499,7 +499,7 @@ export class BillingService extends OplDomainService {
     }
   }
 
-  debitComputeResourceUsage({ state, account, compute, packagePlan, hours, sourceEventId }) {
+  debitComputeAllocationUsage({ state, account, compute, packagePlan, hours, sourceEventId }) {
     const existing = this.existingResourceSettlementEntries({
       state,
       accountId: compute.ownerAccountId,

@@ -456,13 +456,19 @@ function assertWorkspaceShape(checks, workspace, { compute, storage, attachment 
 }
 
 function assertRuntimeStatus(checks, runtimeStatus, name = "workspace_runtime_status") {
+  const runtimeChecks = (runtimeStatus?.checks || []).map((check) => ({
+    name: check?.name,
+    ok: check?.ok === true
+  }));
+  const failedChecks = runtimeChecks.filter((check) => !check.ok).map((check) => check.name);
   addCheck(checks, name, Boolean(
     runtimeStatus?.ready === true &&
     Array.isArray(runtimeStatus.checks) &&
     runtimeStatus.checks.length > 0 &&
     runtimeStatus.checks.every((check) => check.ok === true)
   ), {
-    runtimeChecks: (runtimeStatus?.checks || []).map((check) => check.name),
+    runtimeChecks,
+    failedChecks,
     attempts: runtimeStatus?.attempts
   });
 }

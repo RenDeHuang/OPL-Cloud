@@ -394,6 +394,9 @@ test("TKE production diagnostics workflow is read-only and matches the deploymen
   const contract = await readJson(deploymentContractPath);
   const workflow = await readWorkflow(contract.diagnosticsWorkflow.file);
   assertWorkflowContract(workflow, contract.diagnosticsWorkflow, contract);
+  const text = JSON.stringify(workflow);
+  assert.match(text, /app\.kubernetes\.io\/name=opl-compute-allocation/, "diagnostics must inspect current compute allocation pods");
+  assert.doesNotMatch(text, /app\.kubernetes\.io\/name=opl-workspace/, "diagnostics must not use retired workspace pod labels");
 });
 
 test("TKE diagnostics do not print account state or Workspace URL tokens", async () => {
