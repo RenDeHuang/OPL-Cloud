@@ -403,6 +403,203 @@ function fakeWorkspaceBrowserFactory(actions = [], { assistantSelectionTakesEffe
   };
 }
 
+function fakeGuidDomBrowserFactory(actions = []) {
+  const state = {
+    hash: "#/home",
+    bodyText: "Select an assistant to start a task\n@MAS\n@Research",
+    prompt: "",
+    fileName: "",
+    selected: false
+  };
+  class FakeTextArea {
+    get value() {
+      return state.prompt;
+    }
+    set value(next) {
+      state.prompt = String(next || "");
+    }
+    dispatchEvent(event) {
+      actions.push(["dispatchEvent", event.type]);
+      return true;
+    }
+    getBoundingClientRect() {
+      return { width: 360, height: 48, top: 300, bottom: 348, left: 32, right: 392 };
+    }
+  }
+  const textarea = new FakeTextArea();
+  const card = {
+    textContent: "@MAS",
+    click() {
+      actions.push(["domClick", "preset-pill-mas"]);
+      state.selected = true;
+      state.bodyText = state.bodyText.replace("Select an assistant to start a task", "MAS selected");
+    },
+    getBoundingClientRect() {
+      return { width: 120, height: 36, top: 120, bottom: 156, left: 32, right: 152 };
+    }
+  };
+  const sendButton = {
+    get disabled() {
+      return !state.selected || !state.prompt;
+    },
+    getAttribute(name) {
+      if (name === "disabled" && this.disabled) return "";
+      if (name === "data-testid") return "guid-send-btn";
+      return null;
+    },
+    click() {
+      actions.push(["domClick", "guid-send-btn"]);
+      if (this.disabled) return;
+      state.bodyText += `\n${state.prompt}\nassistant:${state.prompt.match(/OPL_BROWSER_E2E_[\w-]+/)?.[0] || "ok"}`;
+    },
+    getBoundingClientRect() {
+      return { width: 36, height: 36, top: 360, bottom: 396, left: 660, right: 696 };
+    }
+  };
+  const visibleStyle = { visibility: "visible", display: "block" };
+  function installDom() {
+    const previous = {
+      document: globalThis.document,
+      window: globalThis.window,
+      Event: globalThis.Event
+    };
+    globalThis.Event = class {
+      constructor(type) {
+        this.type = type;
+        this.bubbles = true;
+      }
+    };
+    globalThis.window = {
+      location: {
+        get hash() {
+          return state.hash;
+        },
+        set hash(next) {
+          actions.push(["setHash", next]);
+          state.hash = String(next);
+        }
+      },
+      HTMLTextAreaElement: FakeTextArea,
+      HTMLInputElement: class {},
+      getComputedStyle: () => visibleStyle
+    };
+    globalThis.document = {
+      body: {
+        get innerText() {
+          return [state.bodyText, state.fileName].filter(Boolean).join("\n");
+        }
+      },
+      querySelector(selector) {
+        actions.push(["querySelector", selector]);
+        if (selector.includes("preset-pill-mas")) return card;
+        if (selector.includes("guid-input")) return textarea;
+        if (selector.includes("guid-send-btn")) return sendButton;
+        return null;
+      },
+      querySelectorAll(selector) {
+        actions.push(["querySelectorAll", selector]);
+        if (selector.includes("textarea") || selector.includes("guid-input")) return [textarea];
+        if (selector.includes("button") || selector.includes("guid-send-btn")) return [sendButton];
+        return [];
+      }
+    };
+    return () => {
+      globalThis.document = previous.document;
+      globalThis.window = previous.window;
+      globalThis.Event = previous.Event;
+    };
+  }
+  const page = {
+    async goto(url) {
+      actions.push(["goto", url]);
+    },
+    locator(selector) {
+      actions.push(["locator", selector]);
+      return {
+        first() {
+          return this;
+        },
+        async count() {
+          return selector === 'input[type="file"]' ? 1 : 0;
+        },
+        async setInputFiles(filePath) {
+          actions.push(["setInputFiles", filePath]);
+          state.fileName = basename(filePath);
+        }
+      };
+    },
+    getByRole(role, options = {}) {
+      actions.push(["getByRole", role, String(options.name || "")]);
+      return {
+        first() {
+          return this;
+        },
+        last() {
+          return this;
+        },
+        async fill(value) {
+          actions.push(["roleFill", role, value]);
+          throw new Error("generic role textbox is not the active guid composer");
+        },
+        async click() {
+          actions.push(["roleClick", role, String(options.name || "")]);
+          throw new Error("guid page controls are data-testid only in this fixture");
+        }
+      };
+    },
+    getByText(text) {
+      actions.push(["getByText", String(text)]);
+      return {
+        first() {
+          return this;
+        },
+        async click() {
+          throw new Error("text click does not select the guid assistant in this fixture");
+        }
+      };
+    },
+    async evaluate(fn, arg) {
+      actions.push(["evaluate"]);
+      const restore = installDom();
+      try {
+        return fn(arg);
+      } finally {
+        restore();
+      }
+    },
+    async waitForFunction(fn, arg, options = {}) {
+      actions.push(["waitForFunction", arg, options]);
+      const restore = installDom();
+      try {
+        const result = fn(arg);
+        if (!result) throw new Error("Timeout exceeded.");
+        return result;
+      } finally {
+        restore();
+      }
+    },
+    async screenshot(options = {}) {
+      actions.push(["screenshot", options.path || ""]);
+    }
+  };
+  return {
+    chromium: {
+      async launch() {
+        actions.push(["launch"]);
+        return {
+          async newPage() {
+            actions.push(["newPage"]);
+            return page;
+          },
+          async close() {
+            actions.push(["close"]);
+          }
+        };
+      }
+    }
+  };
+}
+
 test("production verifier refuses localhost Console origins", async () => {
   await assert.rejects(
     verifyProductionChain({
@@ -697,6 +894,31 @@ test("production verifier fills the visible composer textbox before sending", as
   );
   assert.ok(actions.some((action) => action[0] === "fill" && action[3] === "last"));
   assert.ok(checks.some((check) => check.name === "workspace_browser_message_sent" && check.ok === true));
+});
+
+test("production verifier uses one-person-lab-app guid DOM contract for assistant send", async () => {
+  const checks = [];
+  const actions = [];
+
+  await verifyWorkspaceBrowserUi({
+    workspaceUrl: "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser",
+    runId: "browser-run",
+    checks,
+    browserFactory: fakeGuidDomBrowserFactory(actions),
+    screenshotDir: ""
+  });
+
+  assert.ok(actions.some((action) => action[0] === "setHash" && action[1] === "#/guid"));
+  assert.ok(actions.some((action) => action[0] === "domClick" && action[1] === "preset-pill-mas"));
+  assert.ok(actions.some((action) => action[0] === "dispatchEvent" && action[1] === "input"));
+  assert.ok(actions.some((action) => action[0] === "domClick" && action[1] === "guid-send-btn"));
+  assert.deepEqual(checks.map((check) => `${check.name}:${check.ok}`), [
+    "workspace_browser_opened:true",
+    "workspace_browser_file_uploaded:true",
+    "workspace_browser_file_read:true",
+    "workspace_browser_message_sent:true",
+    "workspace_browser_reply_seen:true"
+  ]);
 });
 
 test("production verifier runs optional browser UI checks after Workspace URL is ready", async () => {
