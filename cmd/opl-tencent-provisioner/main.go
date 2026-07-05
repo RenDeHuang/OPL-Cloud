@@ -353,6 +353,40 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 	if strings.TrimSpace(request.Allocation.MachineName) == "" {
 		return Response{Ok: false, ErrorCode: "compute_allocation_machine_identity_required", Message: "ComputeAllocation machineName is required to destroy a dedicated Tencent node.", Retryable: false}
 	}
+	describeRequestId := ""
+	modifyAutoscalingRequestId := ""
+	pool, requestId, err := client.describeNativeNodePool(request.Pool.NodePoolId)
+	if err != nil {
+		response := sdkErrorResponse("tencent_describe_node_pool_failed", err)
+		response.ProviderData = map[string]string{
+			"clusterId":   client.clusterId,
+			"region":      client.region,
+			"nodePoolId":  request.Pool.NodePoolId,
+			"machineName": request.Allocation.MachineName,
+			"nodeName":    request.Allocation.NodeName,
+			"instanceId":  request.Allocation.InstanceId,
+		}
+		return response
+	}
+	describeRequestId = requestId
+	if nativeAutoscalingEnabled(pool) {
+		requestId, err := client.disableNativeNodePoolAutoscaling(request.Pool.NodePoolId)
+		if err != nil {
+			response := sdkErrorResponse("tencent_disable_node_pool_autoscaling_failed", err)
+			response.ProviderRequestId = describeRequestId
+			response.ProviderData = map[string]string{
+				"clusterId":                 client.clusterId,
+				"region":                    client.region,
+				"nodePoolId":                request.Pool.NodePoolId,
+				"machineName":               request.Allocation.MachineName,
+				"nodeName":                  request.Allocation.NodeName,
+				"instanceId":                request.Allocation.InstanceId,
+				"describeNodePoolRequestId": describeRequestId,
+			}
+			return response
+		}
+		modifyAutoscalingRequestId = requestId
+	}
 	providerRequestId := ""
 	deleteRequest := tke2022.NewDeleteClusterMachinesRequest()
 	deleteRequest.ClusterId = common.StringPtr(client.clusterId)
@@ -363,15 +397,17 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 	if err != nil {
 		response := sdkErrorResponse("tencent_delete_cluster_machine_failed", err)
 		response.ProviderData = map[string]string{
-			"clusterId":    client.clusterId,
-			"region":       client.region,
-			"nodePoolId":   request.Pool.NodePoolId,
-			"machineName":  request.Allocation.MachineName,
-			"nodeName":     request.Allocation.NodeName,
-			"instanceId":   request.Allocation.InstanceId,
-			"deleteMethod": "DeleteClusterMachines",
-			"scaleDown":    "true",
-			"deleteMode":   "terminate",
+			"clusterId":                  client.clusterId,
+			"region":                     client.region,
+			"nodePoolId":                 request.Pool.NodePoolId,
+			"machineName":                request.Allocation.MachineName,
+			"nodeName":                   request.Allocation.NodeName,
+			"instanceId":                 request.Allocation.InstanceId,
+			"deleteMethod":               "DeleteClusterMachines",
+			"scaleDown":                  "true",
+			"deleteMode":                 "terminate",
+			"describeNodePoolRequestId":  describeRequestId,
+			"modifyAutoscalingRequestId": modifyAutoscalingRequestId,
 		}
 		return response
 	}
@@ -385,11 +421,13 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 		Status:            "destroyed",
 		ProviderRequestId: providerRequestId,
 		ProviderData: map[string]string{
-			"clusterId":    client.clusterId,
-			"region":       client.region,
-			"deleteMethod": "DeleteClusterMachines",
-			"scaleDown":    "true",
-			"deleteMode":   "terminate",
+			"clusterId":                  client.clusterId,
+			"region":                     client.region,
+			"deleteMethod":               "DeleteClusterMachines",
+			"scaleDown":                  "true",
+			"deleteMode":                 "terminate",
+			"describeNodePoolRequestId":  describeRequestId,
+			"modifyAutoscalingRequestId": modifyAutoscalingRequestId,
 		},
 	}
 }

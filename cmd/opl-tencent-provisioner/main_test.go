@@ -886,6 +886,43 @@ func TestTencentSDKClientDestroyAllocationDeletesNamedMachine(t *testing.T) {
 	}
 }
 
+func TestTencentSDKClientDestroyAllocationDisablesNodePoolAutoscalingBeforeDelete(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, enableAutoscaling: true}
+	client := newFakeTencentSDKClient(tkeAPI)
+
+	response := client.DestroyComputeAllocation(Request{
+		AccountId: "pi-alpha",
+		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", NodePoolId: "np-basic"},
+		Allocation: ComputeAllocationInput{
+			Id:          "compute-alpha",
+			InstanceId:  "ins-created",
+			NodeName:    "10.0.0.12",
+			MachineName: "node-basic-2",
+		},
+	}, map[string]string{})
+
+	if !response.Ok {
+		t.Fatalf("expected ok response: %#v", response)
+	}
+	if tkeAPI.modifyNodePoolRequest == nil {
+		t.Fatalf("expected ModifyNodePool before DeleteClusterMachines")
+	}
+	if tkeAPI.modifyNodePoolRequest.Native == nil ||
+		tkeAPI.modifyNodePoolRequest.Native.EnableAutoscaling == nil ||
+		*tkeAPI.modifyNodePoolRequest.Native.EnableAutoscaling {
+		t.Fatalf("destroy must disable autoscaling before scaledown delete: %#v", tkeAPI.modifyNodePoolRequest)
+	}
+	expectedCalls := []string{"DescribeNodePools", "ModifyNodePool", "DeleteClusterMachines"}
+	if len(tkeAPI.calls) != len(expectedCalls) {
+		t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
+	}
+	for index, expected := range expectedCalls {
+		if tkeAPI.calls[index] != expected {
+			t.Fatalf("unexpected call order: %#v", tkeAPI.calls)
+		}
+	}
+}
+
 func TestTencentSDKClientDestroyMachineAllocationAlwaysScalesDownAndTerminates(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
 	client := newFakeTencentSDKClient(tkeAPI)
