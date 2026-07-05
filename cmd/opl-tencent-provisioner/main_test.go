@@ -829,6 +829,31 @@ func TestTencentSDKClientDestroyAllocationDeletesNamedMachine(t *testing.T) {
 	}
 }
 
+func TestTencentSDKClientDestroyNativeAllocationOmitsCvmDeleteMode(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
+	client := newFakeTencentSDKClient(tkeAPI)
+
+	response := client.DestroyComputeAllocation(Request{
+		AccountId: "pi-alpha",
+		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", NodePoolId: "np-basic"},
+		Allocation: ComputeAllocationInput{
+			Id:          "compute-alpha",
+			NodeName:    "10.0.0.12",
+			MachineName: "np-basic-native",
+		},
+	}, map[string]string{})
+
+	if !response.Ok {
+		t.Fatalf("expected ok response: %#v", response)
+	}
+	if tkeAPI.deleteMachinesRequest == nil {
+		t.Fatalf("expected DeleteClusterMachines call")
+	}
+	if tkeAPI.deleteMachinesRequest.InstanceDeleteMode != nil {
+		t.Fatalf("native TKE machines must not force CVM delete mode: %#v", *tkeAPI.deleteMachinesRequest.InstanceDeleteMode)
+	}
+}
+
 func TestTencentSDKClientDestroyAllocationWithoutMachineNameFailsClosed(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2}
 	client := newFakeTencentSDKClient(tkeAPI)

@@ -344,10 +344,22 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 	deleteRequest.ClusterId = common.StringPtr(client.clusterId)
 	deleteRequest.MachineNames = []*string{common.StringPtr(request.Allocation.MachineName)}
 	deleteRequest.EnableScaleDown = common.BoolPtr(true)
-	deleteRequest.InstanceDeleteMode = common.StringPtr("terminate")
+	if strings.TrimSpace(request.Allocation.InstanceId) != "" {
+		deleteRequest.InstanceDeleteMode = common.StringPtr("terminate")
+	}
 	deleteResponse, err := client.nativeTkeClient.DeleteClusterMachines(deleteRequest)
 	if err != nil {
-		return sdkErrorResponse("tencent_delete_cluster_machine_failed", err)
+		response := sdkErrorResponse("tencent_delete_cluster_machine_failed", err)
+		response.ProviderData = map[string]string{
+			"clusterId":    client.clusterId,
+			"region":       client.region,
+			"nodePoolId":   request.Pool.NodePoolId,
+			"machineName":  request.Allocation.MachineName,
+			"nodeName":     request.Allocation.NodeName,
+			"instanceId":   request.Allocation.InstanceId,
+			"deleteMethod": "DeleteClusterMachines",
+		}
+		return response
 	}
 	providerRequestId = stringValue(deleteResponse.Response.RequestId)
 	return Response{

@@ -545,6 +545,51 @@ test("destroying compute with an active attachment suspends Workspace URL and re
   assert.equal(state.workspaces[0].currentAttachmentId, "");
 });
 
+test("destroy compute provider failure records failed operation and provider error", async () => {
+  const providerError = new Error("tencent_delete_cluster_machine_failed");
+  providerError.safeMessage = "InvalidParameter: unsupported instance delete mode";
+  providerError.providerRequestId = "req-delete-failed";
+  providerError.retryable = true;
+  const service = createService({
+    async destroyComputeAllocation() {
+      throw providerError;
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const compute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    name: "Failing destroy compute"
+  });
+  await provisionNextCompute(service);
+
+  await assert.rejects(
+    service.destroyComputeAllocation({
+      accountId: "pi-alpha",
+      computeAllocationId: compute.id,
+      confirm: true
+    }),
+    /tencent_delete_cluster_machine_failed/
+  );
+
+  const state = await service.getState("pi-alpha");
+  const failedCompute = state.computeAllocations.find((item) => item.id === compute.id);
+  assert.equal(failedCompute.status, "failed");
+  assert.equal(failedCompute.error, "tencent_delete_cluster_machine_failed");
+  assert.equal(failedCompute.safeMessage, "InvalidParameter: unsupported instance delete mode");
+  assert.equal(failedCompute.providerRequestId, "req-delete-failed");
+  const destroyOperation = state.runtimeOperations.find((operation) =>
+    operation.resourceId === compute.id &&
+    operation.operationType === "destroy_compute_allocation"
+  );
+  assert.ok(destroyOperation);
+  assert.equal(destroyOperation.status, "failed");
+  assert.equal(destroyOperation.error, "tencent_delete_cluster_machine_failed");
+  assert.equal(destroyOperation.safeMessage, "InvalidParameter: unsupported instance delete mode");
+  assert.equal(destroyOperation.providerRequestId, "req-delete-failed");
+});
+
 test("storage cannot attach across accounts", async () => {
   const service = createService();
 

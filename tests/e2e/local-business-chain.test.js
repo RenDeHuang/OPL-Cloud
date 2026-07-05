@@ -127,6 +127,7 @@ test("business chain keeps storage independent while dedicated compute is replac
       "storage_volume:create_storage_volume:completed",
       "compute_allocation:create_compute_allocation:completed",
       "storage_attachment:attach_storage:completed",
+      "compute_allocation:destroy_compute_allocation:completed",
       "compute_allocation:create_compute_allocation:completed",
       "storage_attachment:attach_storage:completed"
     ]

@@ -65,6 +65,13 @@ function providerRequestId(providerResult = {}) {
     "";
 }
 
+function latestRuntimeOperationForResource(operations = [], resourceId) {
+  for (let index = operations.length - 1; index >= 0; index -= 1) {
+    if (operations[index]?.resourceId === resourceId) return operations[index];
+  }
+  return null;
+}
+
 function providerNodeIdentity(providerCompute = {}) {
   return String(providerCompute.nodeName || providerCompute.providerData?.machineName || providerCompute.cvmInstanceId || providerCompute.instanceId || "").trim();
 }
@@ -390,17 +397,37 @@ export class ResourceProvisioningService extends OplDomainService {
     const compute = await this.store.update((state) => {
       ensureResourceCollections(state);
       const current = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
+      const operationId = resourceOperationId(accountId, computeAllocationId, "destroy_compute_allocation", state.runtimeOperations.length);
+      state.runtimeOperations.push({
+        id: operationId,
+        accountId,
+        workspaceId: "resource",
+        resourceType: "compute_allocation",
+        resourceId: computeAllocationId,
+        operationType: "destroy_compute_allocation",
+        status: "running",
+        attempts: 1,
+        createdAt: now(),
+        updatedAt: now()
+      });
+      current.operationId = operationId;
       current.status = "destroying";
       current.updatedAt = now();
       return clone(current);
     });
 
-    if (typeof this.runtimeProvider.destroyComputeAllocation === "function") {
-      await this.runtimeProvider.destroyComputeAllocation({ computeAllocation: compute });
+    try {
+      if (typeof this.runtimeProvider.destroyComputeAllocation === "function") {
+        await this.runtimeProvider.destroyComputeAllocation({ computeAllocation: compute });
+      }
+    } catch (error) {
+      await this.markResourceFailed({ collection: "computeAllocations", accountId, resourceId: computeAllocationId, error, auditType: "compute.destroy_failed" });
+      throw error;
     }
 
     return this.store.update((state) => {
       const current = findOwnedResource(state.computeAllocations, accountId, computeAllocationId, "compute_allocation_not_found");
+      const operation = latestRuntimeOperationForResource(state.runtimeOperations, computeAllocationId);
       ensureUserWallet(state, { accountId, userId: current.ownerUserId });
       this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "compute", resourceId: computeAllocationId, sourceEventId: "destroy_compute" });
       current.status = "destroyed";
@@ -449,6 +476,10 @@ export class ResourceProvisioningService extends OplDomainService {
         sourceEventId: "destroy_compute",
         metadata: { computeAllocationId }
       }), { computeAllocationId }));
+      if (operation) {
+        operation.status = "completed";
+        operation.updatedAt = now();
+      }
       return clone(current);
     });
   }
@@ -901,7 +932,7 @@ export class ResourceProvisioningService extends OplDomainService {
         resource.providerData = clone(error.providerData || resource.providerData || {});
         resource.updatedAt = now();
       }
-      const operation = state.runtimeOperations.find((item) => item.resourceId === resourceId);
+      const operation = latestRuntimeOperationForResource(state.runtimeOperations, resourceId);
       if (operation) {
         operation.status = "failed";
         operation.error = error.message;
