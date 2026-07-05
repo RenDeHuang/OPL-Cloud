@@ -852,6 +852,9 @@ func TestTencentSDKClientDestroyNativeAllocationOmitsCvmDeleteMode(t *testing.T)
 	if tkeAPI.deleteMachinesRequest.InstanceDeleteMode != nil {
 		t.Fatalf("native TKE machines must not force CVM delete mode: %#v", *tkeAPI.deleteMachinesRequest.InstanceDeleteMode)
 	}
+	if tkeAPI.deleteMachinesRequest.EnableScaleDown != nil {
+		t.Fatalf("native TKE machines must not force node pool scale down: %#v", *tkeAPI.deleteMachinesRequest.EnableScaleDown)
+	}
 }
 
 func TestTencentSDKClientDestroyAllocationWithoutMachineNameFailsClosed(t *testing.T) {
