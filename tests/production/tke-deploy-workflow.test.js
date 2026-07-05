@@ -95,6 +95,17 @@ test("TKE production deploy workflow matches the deployment contract", async () 
   assertWorkflowContract(workflow, contract.deployWorkflow, contract);
 });
 
+test("production verifier workflow defaults run id to GitHub run id", async () => {
+  const workflow = await readWorkflow(new URL("../../.github/workflows/verify-production-chain.yml", import.meta.url));
+  const currentJob = job(workflow, "verify");
+
+  assert.equal(
+    currentJob.env.OPL_VERIFY_RUN_ID,
+    "${{ inputs.run_id || github.run_id }}",
+    "empty optional run_id input must not disable verifier file proof ids"
+  );
+});
+
 test("TKE deploy can roll forward with an existing auth seed secret", async () => {
   const contract = await readJson(deploymentContractPath);
   const workflow = await readWorkflow(contract.deployWorkflow.file);
