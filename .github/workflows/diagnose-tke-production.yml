@@ -361,6 +361,8 @@ jobs:
             compute: compute ? {
               id: compute.id,
               status: compute.status,
+              error: compute.error || "",
+              safeMessage: compute.safeMessage || "",
               billingStatus: compute.billingStatus,
               provisioningStage: compute.provisioningStage,
               providerResourceId: compute.providerResourceId,
@@ -383,7 +385,10 @@ jobs:
                 instanceType: compute.providerData?.instanceType || "",
                 scaleNodePoolRequestId: compute.providerData?.scaleNodePoolRequestId || "",
                 describeMachinesReadyReqId: compute.providerData?.describeMachinesReadyReqId || "",
-                describeCvmRequestId: compute.providerData?.describeCvmRequestId || ""
+                describeCvmRequestId: compute.providerData?.describeCvmRequestId || "",
+                deleteMethod: compute.providerData?.deleteMethod || "",
+                clusterId: compute.providerData?.clusterId || "",
+                region: compute.providerData?.region || ""
               }
             } : null,
             runtimeOperations: runtimeOperations.map((operation) => ({
@@ -392,8 +397,18 @@ jobs:
               operationType: operation.operationType,
               status: operation.status,
               stage: operation.stage || operation.provisioningStage || "",
-              error: operation.error || operation.safeMessage || "",
+              error: operation.error || "",
+              safeMessage: operation.safeMessage || "",
               providerRequestId: operation.providerRequestId || "",
+              providerData: {
+                deleteMethod: operation.providerData?.deleteMethod || "",
+                machineName: operation.providerData?.machineName || "",
+                nodeName: operation.providerData?.nodeName || "",
+                nodePoolId: operation.providerData?.nodePoolId || "",
+                instanceId: operation.providerData?.instanceId || "",
+                clusterId: operation.providerData?.clusterId || "",
+                region: operation.providerData?.region || ""
+              },
               retryable: operation.retryable,
               createdAt: operation.createdAt,
               updatedAt: operation.updatedAt

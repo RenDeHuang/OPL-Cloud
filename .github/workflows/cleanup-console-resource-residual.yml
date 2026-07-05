@@ -152,10 +152,14 @@ jobs:
                 const payload = contentType.includes("application/json") ? await response.json() : await response.text();
                 if (!response.ok) {
                   const message = typeof payload === "string" ? payload : payload.error || JSON.stringify(payload);
-                  throw new Error(`${method}:${path}:${response.status}:${message}`);
+                  const error = new Error(`${method}:${path}:${response.status}:${message}`);
+                  error.status = response.status;
+                  error.payload = payload;
+                  throw error;
                 }
                 return { response, payload };
               } catch (error) {
+                if (error.status >= 400 && error.status < 500) throw error;
                 lastError = error;
                 await sleep(1000);
               }

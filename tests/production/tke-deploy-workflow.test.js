@@ -427,6 +427,8 @@ test("TKE diagnostics can print a redacted single-resource console state summary
   assert.match(text, /computeAllocationId/, "summary must identify the selected compute allocation");
   assert.match(text, /runtimeOperations/, "summary must include matching runtime operations");
   assert.match(text, /providerData/, "summary must include provider identity data needed for TKE debugging");
+  assert.match(text, /safeMessage/, "summary must include provider safeMessage for failed operations");
+  assert.match(text, /deleteMethod/, "summary must include provider delete evidence");
   assert.doesNotMatch(text, /console\.log\(payload\)/, "diagnostics must not print the full state payload");
   assert.doesNotMatch(text, /accessToken|tokenStatus/i, "diagnostics must not print workspace tokens");
   assert.doesNotMatch(text, /console\.log\([^)]*cookie/i, "diagnostics must not print session cookies");
@@ -447,6 +449,7 @@ test("Console residual cleanup workflow is API-scoped and gated by exact resourc
   assert.match(runs, /\/api\/compute-allocations\/.*\/destroy/);
   assert.match(runs, /\/api\/storage-volumes\/destroy/);
   assert.match(runs, /confirm:\s*true/);
+  assert.match(runs, /status >= 400 && .*status < 500/, "cleanup must not retry deterministic 4xx API failures");
   assert.doesNotMatch(text, /kubectl .* delete /, "Console cleanup must not bypass provider and billing state through kubectl delete");
   assert.doesNotMatch(runs, /console\.log\([^)]*cookie/i, "cleanup must not print session cookies");
   assert.doesNotMatch(runs, /console\.log\([^)]*operatorToken/i, "cleanup must not print operator tokens");
