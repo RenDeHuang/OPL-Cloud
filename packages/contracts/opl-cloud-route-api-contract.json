@@ -333,6 +333,9 @@
         "initialStatus": "provisioning",
         "readyStatus": "running",
         "pollRoute": "GET /api/compute-allocations/:id",
+        "pollQuery": [
+          "accountId"
+        ],
         "confirmation": "normal",
         "costImpact": "required",
         "operationTimeline": true,
@@ -396,6 +399,9 @@
         "mutation": true,
         "asyncProvisioning": true,
         "pollRoute": "GET /api/compute-allocations/:id",
+        "pollQuery": [
+          "accountId"
+        ],
         "confirmation": "normal",
         "destructive": true,
         "operationTimeline": true,

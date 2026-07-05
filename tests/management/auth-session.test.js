@@ -575,6 +575,66 @@ test("operator token can create an admin session for production verifier actions
   }
 });
 
+test("admin compute allocation detail GET scopes to the requested account query", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-operator-compute-detail-"));
+  const calls = [];
+  const appService = {
+    async computeAllocation(input) {
+      calls.push(input);
+      return {
+        id: input.computeAllocationId,
+        ownerAccountId: input.accountId,
+        status: "provisioning"
+      };
+    }
+  };
+  const auth = createAuthController({
+    env: { OPL_OPERATOR_SUMMARY_TOKEN: "operator-secret" },
+    usersPath: join(root, "users.json"),
+    seedUsers: [
+      {
+        id: "usr-admin",
+        email: "admin@example.com",
+        password: "secret-admin",
+        name: "Admin",
+        role: "admin",
+        accountId: "admin"
+      }
+    ]
+  });
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    auth,
+    operatorSummaryToken: "operator-secret"
+  }));
+  try {
+    const operatorLogin = await postJson(origin, "/api/auth/operator-login", {
+      operatorToken: "operator-secret"
+    });
+    assert.equal(operatorLogin.response.status, 200);
+
+    const response = await fetch(`${origin}/api/compute-allocations/compute-prod001?accountId=pi-production-verifier`, {
+      headers: {
+        cookie: cookieFrom(operatorLogin.response)
+      }
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.ownerAccountId, "pi-production-verifier");
+    assert.deepEqual(calls, [
+      {
+        accountId: "pi-production-verifier",
+        computeAllocationId: "compute-prod001",
+        userId: "usr-admin"
+      }
+    ]);
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("auth users seed into the control-plane store and survive controller recreation", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-store-auth-"));
   const store = new MemoryStore();

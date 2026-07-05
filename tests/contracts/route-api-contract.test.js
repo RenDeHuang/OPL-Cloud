@@ -235,6 +235,7 @@ test("resource route contract declares dynamic fields, billing fields, and visib
     "存储挂载中",
     "URL 可用"
   ]);
+  assert.deepEqual(computeDetail.operationProtocol.pollQuery, ["accountId"], "compute detail polling must preserve account scope");
   assert.ok(storageDetail.dynamicFields?.includes("providerResourceId"), "storage detail must expose provider storage handle");
   assert.ok(storageDetail.dynamicFields?.includes("billingStatus"), "storage detail must expose billing status");
 

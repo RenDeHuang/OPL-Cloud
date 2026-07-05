@@ -413,7 +413,7 @@ async function waitForComputeReady({
     current = await requestJson({
       fetchImpl,
       origin,
-      path: `/api/compute-allocations/${encodeURIComponent(current.id)}`,
+      path: `/api/compute-allocations/${encodeURIComponent(current.id)}?accountId=${encodeURIComponent(accountId)}`,
       auth
     });
   }

@@ -135,6 +135,8 @@ function chainResponses(chain) {
     "POST /api/billing/topups": { id: "pi-prod", balance: 1000, frozen: 0 },
     "POST /api/compute-allocations": chain.compute,
     "POST /api/compute-allocations#2": chain.replacementCompute,
+    [`GET /api/compute-allocations/${chain.compute.id}?accountId=pi-prod`]: chain.compute,
+    [`GET /api/compute-allocations/${chain.replacementCompute.id}?accountId=pi-prod`]: chain.replacementCompute,
     "POST /api/storage-volumes": chain.storage,
     "POST /api/storage-attachments": chain.attachment,
     "POST /api/storage-attachments#2": chain.replacementAttachment,
@@ -480,8 +482,8 @@ test("production verifier waits for async compute provisioning before mounting s
   };
   const responses = chainResponses(chain);
   responses["POST /api/compute-allocations"] = provisioningCompute;
-  responses[`GET /api/compute-allocations/${chain.compute.id}`] = provisioningCompute;
-  responses[`GET /api/compute-allocations/${chain.compute.id}#2`] = chain.compute;
+  responses[`GET /api/compute-allocations/${chain.compute.id}?accountId=pi-prod`] = provisioningCompute;
+  responses[`GET /api/compute-allocations/${chain.compute.id}?accountId=pi-prod#2`] = chain.compute;
 
   const result = await verifyProductionChain({
     origin: "https://console.oplcloud.cn",
@@ -495,8 +497,8 @@ test("production verifier waits for async compute provisioning before mounting s
   });
 
   const requestKeys = requests.map((request) => request.key);
-  const firstComputePoll = requestKeys.indexOf(`GET /api/compute-allocations/${chain.compute.id}`);
-  const secondComputePoll = requestKeys.indexOf(`GET /api/compute-allocations/${chain.compute.id}#2`);
+  const firstComputePoll = requestKeys.indexOf(`GET /api/compute-allocations/${chain.compute.id}?accountId=pi-prod`);
+  const secondComputePoll = requestKeys.indexOf(`GET /api/compute-allocations/${chain.compute.id}?accountId=pi-prod#2`);
   const storageCreate = requestKeys.indexOf("POST /api/storage-volumes");
   assert.equal(result.ok, true);
   assert.ok(firstComputePoll > requestKeys.indexOf("POST /api/compute-allocations"));
