@@ -590,6 +590,51 @@ test("destroy compute provider failure records failed operation and provider err
   assert.equal(destroyOperation.providerRequestId, "req-delete-failed");
 });
 
+test("successful compute destroy clears stale provider failure details", async () => {
+  const providerError = new Error("tencent_delete_cluster_machine_failed");
+  providerError.safeMessage = "InvalidParameter: unsupported instance delete mode";
+  providerError.providerRequestId = "req-delete-failed";
+  providerError.retryable = true;
+  let failDestroy = true;
+  const service = createService({
+    async destroyComputeAllocation() {
+      if (failDestroy) throw providerError;
+      return { status: "destroyed", billingStatus: "stopped" };
+    }
+  });
+
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 300, reason: "owner_credit" });
+  const compute = await service.createComputeAllocation({
+    accountId: "pi-alpha",
+    packageId: "basic",
+    name: "Retry destroy compute"
+  });
+  await provisionNextCompute(service);
+
+  await assert.rejects(
+    service.destroyComputeAllocation({
+      accountId: "pi-alpha",
+      computeAllocationId: compute.id,
+      confirm: true
+    }),
+    /tencent_delete_cluster_machine_failed/
+  );
+
+  failDestroy = false;
+  const destroyed = await service.destroyComputeAllocation({
+    accountId: "pi-alpha",
+    computeAllocationId: compute.id,
+    confirm: true
+  });
+
+  assert.equal(destroyed.status, "destroyed");
+  assert.equal(destroyed.billingStatus, "stopped");
+  assert.equal(destroyed.error, "");
+  assert.equal(destroyed.safeMessage, "");
+  assert.equal(destroyed.providerRequestId, "");
+  assert.equal(destroyed.retryable, false);
+});
+
 test("storage cannot attach across accounts", async () => {
   const service = createService();
 

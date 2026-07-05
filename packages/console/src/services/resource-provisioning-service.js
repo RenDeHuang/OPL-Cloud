@@ -432,6 +432,10 @@ export class ResourceProvisioningService extends OplDomainService {
       this.releaseHoldToLedger({ state, accountId, workspaceId: "resource", holdType: "compute", resourceId: computeAllocationId, sourceEventId: "destroy_compute" });
       current.status = "destroyed";
       current.billingStatus = "stopped";
+      current.error = "";
+      current.safeMessage = "";
+      current.providerRequestId = "";
+      current.retryable = false;
       current.destroyedAt = now();
       current.updatedAt = now();
       current.attachedStorageIds = [];
