@@ -103,12 +103,13 @@ function suspendLegacyWorkspaceRuntime(workspace, computeAllocationId) {
   };
 }
 
-function legacyComputeCleanupEligible(compute) {
+function legacyComputeCleanupEligible(compute, { hasRuntimeBindings = false } = {}) {
   if (!compute) return false;
   if (compute.status === "destroyed" || compute.billingStatus === "stopped") return false;
   const machineName = String(compute.machineName || compute.providerData?.machineName || "").trim();
   if (machineName) return false;
-  return compute.status === "destroying" || compute.status === "failed";
+  if (compute.status === "destroying" || compute.status === "failed") return true;
+  return compute.status === "running" && !hasRuntimeBindings;
 }
 
 export class WorkspaceLifecycleService extends OplDomainService {
@@ -348,7 +349,15 @@ export class WorkspaceLifecycleService extends OplDomainService {
           legacyComputeSkipped.push({ computeAllocationId, reason: "cloud_cleanup_not_confirmed" });
           continue;
         }
-        if (!legacyComputeCleanupEligible(compute)) {
+        const hasRuntimeBindings = (state.storageAttachments || []).some((attachment) =>
+          attachment.ownerAccountId === compute.ownerAccountId &&
+          attachment.computeAllocationId === computeAllocationId &&
+          ["attached", "attaching", "detaching"].includes(attachment.status)
+        ) || Object.values(state.workspaces || {}).some((workspace) =>
+          workspace.ownerAccountId === compute.ownerAccountId &&
+          (workspace.currentComputeAllocationId || workspace.computeAllocationId || "") === computeAllocationId
+        );
+        if (!legacyComputeCleanupEligible(compute, { hasRuntimeBindings })) {
           legacyComputeSkipped.push({ computeAllocationId, reason: "not_legacy_cleanup_eligible" });
           continue;
         }
