@@ -431,3 +431,23 @@ test("TKE diagnostics can print a redacted single-resource console state summary
   assert.doesNotMatch(text, /accessToken|tokenStatus/i, "diagnostics must not print workspace tokens");
   assert.doesNotMatch(text, /console\.log\([^)]*cookie/i, "diagnostics must not print session cookies");
 });
+
+test("Console residual cleanup workflow is API-scoped and gated by exact resource confirmation", async () => {
+  const workflow = await readWorkflow(".github/workflows/cleanup-console-resource-residual.yml");
+  const currentJob = job(workflow, "cleanup");
+  const text = JSON.stringify(workflow);
+  const runs = serializedRuns(currentJob);
+
+  assert.ok(workflow.on.workflow_dispatch.inputs.account_id);
+  assert.ok(workflow.on.workflow_dispatch.inputs.compute_allocation_id);
+  assert.ok(workflow.on.workflow_dispatch.inputs.storage_id);
+  assert.ok(workflow.on.workflow_dispatch.inputs.confirm_resource_id);
+  assert.match(runs, /confirm_resource_id must equal the target resource id/);
+  assert.match(runs, /\/api\/auth\/operator-login/);
+  assert.match(runs, /\/api\/compute-allocations\/.*\/destroy/);
+  assert.match(runs, /\/api\/storage-volumes\/destroy/);
+  assert.match(runs, /confirm:\s*true/);
+  assert.doesNotMatch(text, /kubectl .* delete /, "Console cleanup must not bypass provider and billing state through kubectl delete");
+  assert.doesNotMatch(runs, /console\.log\([^)]*cookie/i, "cleanup must not print session cookies");
+  assert.doesNotMatch(runs, /console\.log\([^)]*operatorToken/i, "cleanup must not print operator tokens");
+});
