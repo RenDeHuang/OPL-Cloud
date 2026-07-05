@@ -260,7 +260,8 @@ function fakeBrowserFactory(actions = [], { failWaitAt = 0 } = {}) {
       };
     },
     getByRole(role, options = {}) {
-      actions.push(["getByRole", role, String(options.name || "")]);
+      const roleName = String(options.name || "");
+      actions.push(["getByRole", role, roleName]);
       return {
         first() {
           return this;
@@ -269,7 +270,7 @@ function fakeBrowserFactory(actions = [], { failWaitAt = 0 } = {}) {
           actions.push(["fill", role, value]);
         },
         async click() {
-          actions.push(["click", role]);
+          actions.push(["click", role, roleName]);
         }
       };
     },
@@ -534,10 +535,13 @@ test("production verifier can exercise one-person-lab-app through a real browser
   assert.deepEqual(actions.filter(([name]) => ["goto", "setInputFiles", "fill", "click", "close"].includes(name)).map(([name]) => name), [
     "goto",
     "setInputFiles",
+    "click",
     "fill",
     "click",
     "close"
   ]);
+  const assistantClick = actions.find((action) => action[0] === "click" && /@Research/.test(action[2] || ""));
+  assert.ok(assistantClick, "browser verifier must select an assistant before sending the chat prompt");
 });
 
 test("production verifier runs optional browser UI checks after Workspace URL is ready", async () => {

@@ -300,6 +300,19 @@ async function requireFirstFileInput(page) {
   return input;
 }
 
+async function selectDefaultWorkspaceAssistant(page) {
+  try {
+    await page.getByRole("button", { name: /@Research|Research/i }).first().click({ timeout: 15_000 });
+    return;
+  } catch (error) {
+    if (typeof page.getByText === "function") {
+      await page.getByText(/@Research|Research/i).first().click({ timeout: 15_000 });
+      return;
+    }
+    throw error;
+  }
+}
+
 async function clickSendControl(page) {
   try {
     await page.getByRole("button", { name: /发送|Send|提交|运行|Ask/i }).first().click({ timeout: 15_000 });
@@ -379,6 +392,7 @@ export async function verifyWorkspaceBrowserUi({
       screenshotDir,
       runId,
       task: async () => {
+        await selectDefaultWorkspaceAssistant(page);
         await page.getByRole("textbox").first().fill(prompt);
         await clickSendControl(page);
       }
