@@ -1,10 +1,10 @@
 FROM golang:1.22-bookworm AS provisioner-build
 
-WORKDIR /src/cmd/opl-tencent-provisioner
-COPY cmd/opl-tencent-provisioner/go.mod cmd/opl-tencent-provisioner/go.sum ./
+WORKDIR /src/services/fabric
+COPY services/fabric/go.mod services/fabric/go.sum ./
 RUN go mod download
-COPY cmd/opl-tencent-provisioner ./
-RUN go build -o /out/opl-tencent-provisioner .
+COPY services/fabric ./
+RUN go build -o /out/opl-tencent-provisioner ./cmd/opl-tencent-provisioner
 
 FROM node:22-bookworm-slim AS build
 

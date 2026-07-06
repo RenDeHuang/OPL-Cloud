@@ -24,6 +24,6 @@ function run(command, args, cwd) {
 
 export async function buildTencentProvisioner({ binPath = defaultProvisionerBin } = {}) {
   await mkdir(dirname(binPath), { recursive: true });
-  await run("go", ["build", "-o", binPath, "."], join(root, "cmd", "opl-tencent-provisioner"));
+  await run("go", ["build", "-o", binPath, "./cmd/opl-tencent-provisioner"], join(root, "services", "fabric"));
   return binPath;
 }
