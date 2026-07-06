@@ -113,6 +113,16 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	if toleration["key"] != "tke.cloud.tencent.com/eni-ip-unavailable" || toleration["effect"] != "NoSchedule" {
 		t.Fatalf("workspace pod must tolerate TKE ENI readiness taint: %#v", toleration)
 	}
+	container := podSpec["containers"].([]any)[0].(map[string]any)
+	resources := container["resources"].(map[string]any)
+	requests := resources["requests"].(map[string]any)
+	limits := resources["limits"].(map[string]any)
+	if requests["cpu"] != "1" || requests["memory"] != "2Gi" {
+		t.Fatalf("workspace requests must leave room for node overhead: %#v", requests)
+	}
+	if limits["cpu"] != "2" || limits["memory"] != "4Gi" {
+		t.Fatalf("workspace limits must preserve the package shape: %#v", limits)
+	}
 }
 
 func TestOverviewHTTP(t *testing.T) {
