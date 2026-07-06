@@ -25,6 +25,11 @@ function createTestService() {
   });
 }
 
+function withoutWorkspaceToken(url) {
+  const parsed = new URL(url);
+  return `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}`;
+}
+
 async function createWorkspaceEntry(service, { accountId, workspaceName, packageId = "basic" }) {
   const storage = await service.createStorageVolume({ accountId, packageId, name: `${workspaceName} storage` });
   const compute = await service.createComputeAllocation({ accountId, packageId, name: `${workspaceName} compute` });
@@ -78,6 +83,40 @@ test("evidence ledger records inspectable Workspace receipts separately from bil
     "workspace_entry_created"
   ]);
   assert.equal(createReceipt.continuation.action, "open_workspace_url");
+  assert.equal(createReceipt.continuation.workspaceId, workspace.id);
+  assert.equal(createReceipt.continuation.tokenVersion, 1);
+  assert.equal(createReceipt.continuation.redactedUrl, withoutWorkspaceToken(workspace.url));
+  assert.equal(JSON.stringify(createReceipt).includes("token="), false);
+  assert.equal(JSON.stringify(createReceipt.continuation).includes(workspace.access.token), false);
+  assert.notEqual(createReceipt.continuation.redactedUrl, workspace.url);
+});
+
+test("workspace token reset evidence stores only redacted URL metadata", async () => {
+  const service = createTestService();
+  await service.manualTopUp({ accountId: "pi-alpha", amount: 250, reason: "owner_credit" });
+
+  const workspace = await createWorkspaceEntry(service, {
+    accountId: "pi-alpha",
+    workspaceName: "Reset Evidence Lab"
+  });
+  const resetWorkspace = await service.resetWorkspaceToken({
+    accountId: "pi-alpha",
+    workspaceId: workspace.id
+  });
+
+  const state = await service.getState("pi-alpha");
+  const resetReceipt = state.evidenceLedger.find((entry) => entry.type === "workspace.access_token_reset");
+  assert.ok(resetReceipt);
+  assert.deepEqual(resetReceipt.continuation, {
+    action: "open_workspace_url",
+    workspaceId: workspace.id,
+    tokenVersion: 2,
+    redactedUrl: withoutWorkspaceToken(resetWorkspace.url)
+  });
+  assert.equal(JSON.stringify(resetReceipt).includes("share_"), false);
+  assert.equal(JSON.stringify(resetReceipt).includes("token="), false);
+  assert.equal(JSON.stringify(resetReceipt).includes(resetWorkspace.access.token), false);
+  assert.notEqual(resetReceipt.continuation.redactedUrl, resetWorkspace.url);
 });
 
 test("evidence ledger helper appends deterministic receipt ids without using billing ledger sequence", () => {

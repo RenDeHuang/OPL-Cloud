@@ -232,6 +232,59 @@ test("readiness checks stay unauthenticated for Kubernetes probes", async () => 
   }
 });
 
+test("admin session can read operator summary without putting the operator token in the URL", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-operator-summary-"));
+  const calls = [];
+  const appService = {
+    async operatorSummary(input) {
+      calls.push(input);
+      return {
+        accountScope: input.accountId,
+        accounts: { total: 1 },
+        workspaces: { total: 0 },
+        notifications: { total: 0 },
+        runtimeOperations: { failed: 0 }
+      };
+    }
+  };
+  const auth = createAuthController({
+    usersPath: join(root, "users.json"),
+    seedUsers: [
+      {
+        id: "usr-admin",
+        email: "admin@example.com",
+        password: "secret-admin",
+        name: "Admin",
+        role: "admin",
+        accountId: "admin"
+      }
+    ]
+  });
+  const { origin, close } = await listen(createRequestHandler({
+    appService,
+    auth,
+    operatorSummaryToken: "operator-secret"
+  }));
+  try {
+    const adminLogin = await postJson(origin, "/api/auth/login", {
+      email: "admin@example.com",
+      password: "secret-admin"
+    });
+
+    const response = await fetch(`${origin}/api/operator/summary?accountId=pi-alpha`, {
+      headers: { cookie: cookieFrom(adminLogin.response) }
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.accountScope, "pi-alpha");
+    assert.deepEqual(calls, [{ accountId: "pi-alpha" }]);
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("PI sessions are account scoped and cannot top up balances", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-auth-scope-"));
   const calls = [];

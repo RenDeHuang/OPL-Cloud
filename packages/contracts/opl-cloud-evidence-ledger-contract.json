@@ -65,7 +65,35 @@
       "compute_debit",
       "storage_debit"
     ],
-    "continuation": "open_workspace_url"
+    "continuation": {
+      "action": "open_workspace_url",
+      "requiredFields": [
+        "workspaceId",
+        "tokenVersion",
+        "redactedUrl"
+      ],
+      "forbiddenContent": [
+        "token=",
+        "workspace.access.token",
+        "full workspace.url"
+      ]
+    }
+  },
+  "workspaceTokenResetReceipt": {
+    "type": "workspace.access_token_reset",
+    "continuation": {
+      "action": "open_workspace_url",
+      "requiredFields": [
+        "workspaceId",
+        "tokenVersion",
+        "redactedUrl"
+      ],
+      "forbiddenContent": [
+        "token=",
+        "workspace.access.token",
+        "full workspace.url"
+      ]
+    }
   },
   "taskEvidenceReceiptV1": {
     "api": {

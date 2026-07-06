@@ -19,6 +19,10 @@ import {
 } from "../shared/commercial-console.jsx";
 import { money } from "../shared/formatters.js";
 
+function manualTopUpIdempotencyKey() {
+  return `manual-topup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function AdminOverviewPage({ state, adminOps }) {
   const failed = adminOps.operator?.runtimeOperations?.failed ?? 0;
   return (
@@ -192,11 +196,26 @@ function CreateUserDrawer({ open, setOpen, form, session, runAction }) {
 }
 
 function TopUpDrawer({ open, setOpen, form, session, runAction }) {
+  const topUpOperationKey = React.useRef("");
+  React.useEffect(() => {
+    if (open && !topUpOperationKey.current) topUpOperationKey.current = manualTopUpIdempotencyKey();
+    if (!open) topUpOperationKey.current = "";
+  }, [open]);
   return (
     <Drawer title="用户钱包充值" open={open} onClose={() => setOpen(false)} width={420}>
       <Form form={form} layout="vertical" onFinish={async (values) => {
-        const toppedUp = await runAction(() => manualTopUp(values, session.csrfToken), "充值已记录");
-        if (toppedUp) setOpen(false);
+        if (!topUpOperationKey.current) topUpOperationKey.current = manualTopUpIdempotencyKey();
+        const toppedUp = await runAction(
+          () => manualTopUp({
+            ...values,
+            idempotencyKey: topUpOperationKey.current
+          }, session.csrfToken),
+          "充值已记录"
+        );
+        if (toppedUp) {
+          topUpOperationKey.current = "";
+          setOpen(false);
+        }
       }}>
         <Form.Item name="accountId" label="账号" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="amount" label="金额" rules={[{ required: true }]}><InputNumber min={1} className="fullWidth" /></Form.Item>
@@ -427,6 +446,16 @@ export function AdminE2EPage({ adminOps }) {
 
 export function AdminCleanupPage({ managementState, session, runAction }) {
   const activeWorkspaces = (managementState.workspaces || []).filter((workspace) => workspace.access?.tokenStatus === "active");
+  const storageById = new Map((managementState.storageVolumes || []).map((storage) => [storage.id, storage]));
+  const cleanupCandidateCount = activeWorkspaces.filter((workspace) => {
+    const storageId = String(workspace.storageId || "").trim();
+    const storage = storageId ? storageById.get(storageId) : null;
+    return !workspace.ownerAccountId ||
+      !storageId ||
+      !storage ||
+      storage.status === "destroyed" ||
+      storage.billingStatus === "stopped";
+  }).length;
   const destroyedCompute = (managementState.computeAllocations || []).filter((item) => item.status === "destroyed").length;
   const destroyedStorage = (managementState.storageVolumes || []).filter((item) => item.status === "destroyed").length;
   const detachedAttachments = (managementState.storageAttachments || []).filter((item) => item.status === "detached").length;
@@ -444,15 +473,17 @@ export function AdminCleanupPage({ managementState, session, runAction }) {
         title="访问 URL 清理"
         eyebrow="运营清理"
         actions={(
-          <Button
+          <OperationConfirmButton
+            label="清理全部无效 URL"
+            title="确认清理全部无效 URL"
+            description={`预计 ${cleanupCandidateCount} 个候选入口会被标记为不可用；只清理 URL 状态，不删除计算、存储或账本。`}
             danger
-            onClick={() => runAction(
+            disabled={cleanupCandidateCount === 0}
+            onConfirm={() => runAction(
               () => cleanupWorkspaceAccess({ reason: "operator_cleanup_all" }, session.csrfToken),
               "无效访问 URL 已清理"
             )}
-          >
-            清理全部无效 URL
-          </Button>
+          />
         )}
       >
         <CleanupResourceTable

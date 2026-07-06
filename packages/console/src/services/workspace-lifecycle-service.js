@@ -111,6 +111,24 @@ function legacyComputeCleanupEligible(compute, { hasRuntimeBindings = false } = 
   return compute.status === "running" && !hasRuntimeBindings;
 }
 
+function redactedWorkspaceUrl(url, workspaceId) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return workspaceId ? `/w/${workspaceId}` : "";
+  }
+}
+
+function workspaceUrlContinuation(workspace, action = "open_workspace_url") {
+  return {
+    action,
+    workspaceId: workspace.id,
+    tokenVersion: Number(workspace.access?.tokenVersion || 1),
+    redactedUrl: redactedWorkspaceUrl(workspace.url, workspace.id)
+  };
+}
+
 export class WorkspaceLifecycleService extends OplDomainService {
   async createWorkspace(input) {
     if (!input?.attachmentId) throw new Error("workspace_attachment_required");
@@ -125,6 +143,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
     let computeSnapshot = null;
     let storageSnapshot = null;
     let packagePlan = null;
+    let tokenVersion = 1;
 
     const reservation = await this.store.update((state) => {
       this.assertBillingReconciliationAllowsProvisioning(state);
@@ -152,6 +171,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
       workspaceId = makeId("ws", accountId, workspaceName, storage.id);
       const existing = state.workspaces[workspaceId];
       token = existing?.access?.token || makeToken(workspaceId);
+      tokenVersion = Number(existing?.access?.tokenVersion || 1);
       const operation = this.startRuntimeOperation({ state, accountId, workspaceId, operationType: "create_workspace" });
       attachmentSnapshot = clone(attachment);
       computeSnapshot = clone(compute);
@@ -215,6 +235,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
           mode: "long_lived_url_token",
           requiresLogin: false,
           token,
+          tokenVersion,
           tokenStatus: "active",
           rotationPolicy: "reset_or_delete_on_leak"
         },
@@ -233,6 +254,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
           mode: "long_lived_url_token",
           requiresLogin: false,
           token,
+          tokenVersion,
           tokenStatus: "active",
           rotationPolicy: "reset_or_delete_on_leak"
         },
@@ -270,10 +292,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
           entry.accountId === accountId &&
           (entry.computeAllocationId === compute.id || entry.storageId === storage.id || entry.attachmentId === attachment.id)
         ),
-        continuation: {
-          action: "open_workspace_url",
-          uri: workspace.url
-        }
+        continuation: workspaceUrlContinuation(workspace)
       });
       return clone(workspace);
     });
@@ -283,7 +302,9 @@ export class WorkspaceLifecycleService extends OplDomainService {
     return this.store.update((state) => {
       const workspace = latestWorkspaceForAccount(state, accountId, workspaceId);
       if (storageDestroyed(workspace)) throw new Error("workspace_storage_destroyed");
+      const tokenVersion = Number(workspace.access?.tokenVersion || 1) + 1;
       workspace.access.token = makeToken(workspaceId, `reset-${Date.now()}`);
+      workspace.access.tokenVersion = tokenVersion;
       workspace.access.tokenStatus = "active";
       workspace.url = this.runtimeProvider.workspaceUrl({
         workspaceId: workspace.id,
@@ -297,7 +318,7 @@ export class WorkspaceLifecycleService extends OplDomainService {
         type: "workspace.access_token_reset",
         accountId,
         workspace,
-        continuation: { action: "open_workspace_url", uri: workspace.url }
+        continuation: workspaceUrlContinuation(workspace)
       });
       return clone(workspace);
     });
