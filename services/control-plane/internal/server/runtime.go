@@ -777,9 +777,15 @@ func executeKubectl(ctx context.Context, args []string, stdin []byte) ([]byte, e
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
-	output, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		return output, fmt.Errorf("%s: %s", err, strings.TrimSpace(string(output)))
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = strings.TrimSpace(string(output))
+		}
+		return output, fmt.Errorf("%s: %s", err, message)
 	}
 	return output, nil
 }

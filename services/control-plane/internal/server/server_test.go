@@ -171,6 +171,29 @@ func TestRuntimeStatusRecoversWorkspaceResourcesFromKubernetesLabels(t *testing.
 	}
 }
 
+func TestExecuteKubectlKeepsStderrWarningsOutOfJSON(t *testing.T) {
+	binDir := t.TempDir()
+	kubectl := filepath.Join(binDir, "kubectl")
+	script := `#!/bin/sh
+printf 'Warning: endpoints is deprecated\n' >&2
+printf '{"kind":"List","items":[]}\n'
+`
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("OPL_K8S_NAMESPACE", "opl-cloud")
+
+	raw, err := executeKubectl(context.Background(), []string{"get", "endpoints/opl-compute-alpha", "-o", "json"}, nil)
+
+	if err != nil {
+		t.Fatalf("execute kubectl: %v", err)
+	}
+	if !json.Valid(raw) {
+		t.Fatalf("kubectl output must stay valid JSON, got %q", string(raw))
+	}
+}
+
 func TestOverviewHTTP(t *testing.T) {
 	server := NewServer(controlplane.NewService(nil, nil))
 	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
