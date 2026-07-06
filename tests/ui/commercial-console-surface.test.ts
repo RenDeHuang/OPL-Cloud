@@ -268,10 +268,65 @@ test("Admin money and cleanup operations require explicit operator safeguards", 
 
   assert.match(adminSource, /idempotencyKey/, "manual top-up UI must send a backend idempotency key");
   assert.match(adminSource, /manual-topup/, "manual top-up idempotency key must be operation scoped");
+  for (const signal of ["operatorUserId", "operatorAccountId", "ledgerEntryId", "walletTransactionId", "balanceBefore", "balanceAfter"]) {
+    assert.match(adminSource, new RegExp(signal), `manual top-up UI must expose ${signal}`);
+  }
+  assert.doesNotMatch(adminSource, /amount: 200|reason: "commercial top-up"/, "manual top-up must not prefill demo amount or generic reason");
   assert.match(adminSource, /cleanupCandidateCount/, "cleanup all UI must compute a candidate count before mutation");
   assert.match(adminSource, /OperationConfirmButton[\s\S]*清理全部无效 URL/, "cleanup all must use the shared confirmation button");
   assert.match(adminSource, /候选|预览|预计/, "cleanup all confirmation must show an operator preview/count");
   assert.doesNotMatch(adminSource, /<Button\s+danger[\s\S]{0,180}cleanupWorkspaceAccess\(\{ reason: "operator_cleanup_all"/, "cleanup all must not remain a direct danger button");
+});
+
+test("Admin commercial operations cover organizations, resource settlement, reconciliation, and spent metrics", async () => {
+  const adminSource = await source("apps/console-ui/src/pages/admin/AdminOverviewPage.tsx");
+  const billingApiSource = await source("apps/console-ui/src/api/billing-api.ts");
+  const readApiSource = await source("apps/console-ui/src/api/console-read-api.ts");
+  const routesSource = await source("apps/console-ui/src/routes/opl-routes.ts");
+
+  for (const signal of ["createOrganization", "addOrganizationMember"]) {
+    assert.match(readApiSource, new RegExp(signal), `management client must expose ${signal}`);
+    assert.match(adminSource, new RegExp(signal), `Admin UI must use ${signal}`);
+  }
+  for (const route of ["/api/organizations", "/api/organizations/members"]) {
+    assert.match(readApiSource, new RegExp(route.replaceAll("/", "\\/")), `management client must call ${route}`);
+  }
+  for (const signal of ["settleResourceBilling", "recordBillingReconciliation"]) {
+    assert.match(billingApiSource, new RegExp(signal), `billing client must expose ${signal}`);
+    assert.match(adminSource, new RegExp(signal), `Admin billing UI must use ${signal}`);
+  }
+  for (const route of ["/api/billing/resource-settlements", "/api/billing/reconciliation"]) {
+    assert.match(billingApiSource, new RegExp(route.replaceAll("/", "\\/")), `billing client must call ${route}`);
+  }
+  for (const route of ["POST /api/organizations", "POST /api/organizations/members", "POST /api/billing/resource-settlements", "POST /api/billing/reconciliation"]) {
+    assert.match(routesSource, new RegExp(route.replaceAll("/", "\\/")), `route contract must declare ${route}`);
+  }
+  for (const signal of ["totalSpent", "debited", "已消费金额", "最近对账", "阻塞原因"]) {
+    assert.match(adminSource, new RegExp(signal), `Admin UI must expose ${signal}`);
+  }
+});
+
+test("Admin resource and support views expose operator-grade lookup fields", async () => {
+  const adminSource = await source("apps/console-ui/src/pages/admin/AdminOverviewPage.tsx");
+
+  for (const signal of ["workspaceUrl", "ownerEmail", "attachmentId", "用户邮箱", "Workspace URL", "挂载 ID"]) {
+    assert.match(adminSource, new RegExp(signal), `Admin diagnostics must expose ${signal}`);
+  }
+  for (const signal of ["accountId", "userId", "workspaceId", "messages", "账号", "用户", "工作区", "反馈"]) {
+    assert.match(adminSource, new RegExp(signal), `Admin support table must expose ${signal}`);
+  }
+  assert.doesNotMatch(adminSource, /eyebrow="信号"/, "notifications must not be labeled as vague signals");
+  assert.match(adminSource, /释放冻结.*可用余额|可用余额.*释放冻结/s, "billing copy must explain released holds increase available balance without adding balance");
+});
+
+test("Admin workspace detail route is matched before generic admin overview", async () => {
+  const routeRegistrySource = await source("apps/console-ui/src/routes/route-registry.tsx");
+  const workspaceIndex = routeRegistrySource.indexOf('path.startsWith("/admin/workspaces/")');
+  const adminIndex = routeRegistrySource.indexOf('path.startsWith("/admin")');
+
+  assert.ok(workspaceIndex >= 0, "route registry must handle /admin/workspaces/:id");
+  assert.ok(adminIndex >= 0, "route registry must handle /admin overview");
+  assert.ok(workspaceIndex < adminIndex, "/admin/workspaces/:id must be checked before generic /admin");
 });
 
 test("Billing and Workspace pages explain commercial charging and URL lifecycle", async () => {

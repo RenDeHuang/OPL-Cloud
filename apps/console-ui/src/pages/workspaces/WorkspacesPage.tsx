@@ -1,5 +1,3 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import React from "react";
 import { Button, Typography } from "antd";
 import { Link as LinkIcon, Plus, RefreshCw, Settings2, Trash2, WalletCards } from "lucide-react";
@@ -14,6 +12,8 @@ import {
   StatusPill
 } from "../shared/commercial-console.tsx";
 import { available, money, statusColor, statusLabel } from "../shared/formatters.ts";
+
+type AnyRecord = Record<string, any>;
 
 function statusTone(value) {
   const color = statusColor(value);
@@ -31,7 +31,7 @@ function tokenFromUrl(url = "") {
   }
 }
 
-function workspaceCredential(workspace = {}) {
+function workspaceCredential(workspace: AnyRecord = {}) {
   const account = workspace.access?.account
     || workspace.access?.username
     || workspace.login?.username
@@ -50,7 +50,7 @@ function workspaceHourlyEstimate({ workspace, compute, storage }: any) {
   return computeHourly + storageHourly;
 }
 
-function workspaceChargeTotal(state = {}, workspaceId = "") {
+function workspaceChargeTotal(state: AnyRecord = {}, workspaceId = "") {
   return (state.resourceUsageLogs || [])
     .filter((item) => item.workspaceId === workspaceId)
     .reduce((sum, item) => sum + Math.abs(Number(item.amount || item.charge || 0)), 0);

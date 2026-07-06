@@ -7,3 +7,7 @@ export function manualTopUp(input, csrfToken) {
 export function recordBillingReconciliation(input, csrfToken) {
   return postJson("/api/billing/reconciliation", input, csrfToken);
 }
+
+export function settleResourceBilling(input, csrfToken) {
+  return postJson("/api/billing/resource-settlements", input, csrfToken);
+}

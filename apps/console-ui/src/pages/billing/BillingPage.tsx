@@ -1,5 +1,3 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import React from "react";
 import { Typography } from "antd";
 import {
@@ -11,6 +9,8 @@ import {
   TimelineList
 } from "../shared/commercial-console.tsx";
 import { available, money, usageQuantity } from "../shared/formatters.ts";
+
+type AnyRecord = Record<string, any>;
 
 function nextSettlementAt(now = new Date()) {
   const next = new Date(now);
@@ -33,7 +33,7 @@ function runningDuration(startedAt) {
   return `${hours} 小时 ${minutes} 分钟`;
 }
 
-function activeHourlyEstimate(state = {}) {
+function activeHourlyEstimate(state: AnyRecord = {}) {
   const computeHourly = (state.computeAllocations || [])
     .filter((item) => item.billingStatus === "active" && !["destroyed", "failed"].includes(item.status))
     .reduce((sum, item) => sum + Number(item.hourlyPrice || 0), 0);
@@ -43,7 +43,7 @@ function activeHourlyEstimate(state = {}) {
   return computeHourly + storageHourly;
 }
 
-function oldestActiveResourceStartedAt(state = {}) {
+function oldestActiveResourceStartedAt(state: AnyRecord = {}) {
   return [
     ...(state.computeAllocations || []),
     ...(state.storageVolumes || [])

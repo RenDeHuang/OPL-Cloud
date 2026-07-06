@@ -1,5 +1,3 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Form, message } from "antd";
 import {
@@ -18,7 +16,7 @@ export function useConsoleState({ isAdmin, path, csrfToken }: any) {
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [topUpForm] = Form.useForm();
   const [createPackageId, setCreatePackageId] = useState("basic");
-  const [pendingActions, setPendingActions] = useState(new Set());
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
   const pendingActionKeys = useRef<Set<string>>(new Set());
   const tickets = useTickets({ csrfToken, all: isAdmin && path.startsWith("/admin/support") });
 

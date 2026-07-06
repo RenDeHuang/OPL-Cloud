@@ -100,6 +100,16 @@ test("Console UI is a browser-only app with no persistence or cloud SDK markers"
   }
 });
 
+test("Console UI source is TypeScript-only with no ts-nocheck escape hatches", async () => {
+  const uiFiles = await files("apps/console-ui/src");
+  assert.ok(uiFiles.length > 0, "apps/console-ui/src must contain UI source files");
+
+  for (const file of uiFiles) {
+    assert.doesNotMatch(file, /\.(js|jsx)$/, `${file} must be migrated to TS/TSX`);
+    assert.doesNotMatch(await source(file), /@ts-nocheck|migrated JS/, `${file} must not keep migration type bypasses`);
+  }
+});
+
 test("retired Node Console API and store are not kept as a compatibility layer", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
 

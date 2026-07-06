@@ -1,5 +1,3 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import React from "react";
 import { Alert, Button, Empty, Form, Input, InputNumber, Select } from "antd";
 import { Cable, Database, Plus, Server, Trash2 } from "lucide-react";
@@ -30,6 +28,8 @@ import {
   WalletRiskPanel
 } from "../shared/commercial-console.tsx";
 import { available, money } from "../shared/formatters.ts";
+
+type AnyRecord = Record<string, any>;
 
 const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
 const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
@@ -74,7 +74,7 @@ function balanceAfterHold(wallet, holdAmount) {
   return Math.max(0, available(wallet) - Number(holdAmount || 0));
 }
 
-function workspaceForResource(state, resource = {}) {
+function workspaceForResource(state: AnyRecord, resource: AnyRecord = {}) {
   return (state.workspaces || []).find((workspace) =>
     workspace.computeAllocationId === resource.id ||
     workspace.storageId === resource.id ||
@@ -91,7 +91,7 @@ function billingStatusLabel(value) {
   }[value] || value || "等待中";
 }
 
-function supportContextPath(resource = {}, resourceType = "resource") {
+function supportContextPath(resource: AnyRecord = {}, resourceType = "resource") {
   const params = new URLSearchParams();
   params.set("category", "Workspace");
   params.set("priority", resource.safeMessage || resource.status === "failed" ? "high" : "normal");

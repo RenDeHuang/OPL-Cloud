@@ -1,6 +1,6 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import { defaultLaunchConfig, isFeatureEnabled } from "../config/launch-config.ts";
+
+type AnyRecord = Record<string, any>;
 
 const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
 const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
@@ -681,7 +681,7 @@ export const oplRoutes = Object.freeze([
     objectKind: "User",
     pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
     apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/management/state", "POST /api/users", "POST /api/users/disable", "POST /api/users/delete", "POST /api/billing/topups"],
+    apiRoutes: ["GET /api/management/state", "POST /api/organizations", "POST /api/organizations/members", "POST /api/users", "POST /api/users/disable", "POST /api/users/delete", "POST /api/billing/topups"],
     serviceBoundary: "ManagementModel",
     capabilities: ["list", "read", "action", "audit"]
   }),
@@ -697,7 +697,7 @@ export const oplRoutes = Object.freeze([
     objectKind: "Wallet",
     pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
     apiClient: "apps/console-ui/src/api/billing-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/billing/topups"],
+    apiRoutes: ["GET /api/state", "POST /api/billing/topups", "POST /api/billing/resource-settlements", "POST /api/billing/reconciliation"],
     serviceBoundary: "WalletService",
     capabilities: ["read", "list", "action", "audit"]
   }),
@@ -834,7 +834,7 @@ export const oplRoutes = Object.freeze([
   })
 ]);
 
-export const routesById = new Map(oplRoutes.map((route) => [route.id, route]));
+export const routesById = new Map<string, AnyRecord>(oplRoutes.map((route) => [route.id, route]));
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -849,7 +849,7 @@ export function normalizePath(pathname) {
   return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
 }
 
-export function routeTo(id, params = {}, options = {}) {
+export function routeTo(id, params: AnyRecord = {}, options: AnyRecord = {}) {
   const route = routesById.get(id);
   if (!route) throw new Error(`unknown route id: ${id}`);
   const actorRole = options.role;

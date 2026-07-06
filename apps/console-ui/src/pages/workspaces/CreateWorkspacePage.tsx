@@ -1,5 +1,3 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import React from "react";
 import { Alert, Button, Form, Input, Select } from "antd";
 import { Link as LinkIcon, Plus } from "lucide-react";
@@ -8,13 +6,15 @@ import { navigate, routeTo } from "../../consoleRoutes.ts";
 import { ConsoleSurface, InsightPanel, OperationTimeline, ResourceSplit, StatusPill } from "../shared/commercial-console.tsx";
 import { valueLabel } from "../shared/formatters.ts";
 
+type AnyRecord = Record<string, any>;
+
 const workspaceEntryStages = Object.freeze(["已提交", "生成 URL", "URL 可用"]);
 
 export function CreateWorkspacePage({ state, session, runAction }: any) {
   const attachments = (state.storageAttachments || []).filter((item) => item.status === "attached");
   const initialAttachmentId = attachments[0]?.id;
-  const computeById = new Map((state.computeAllocations || []).map((item) => [item.id, item]));
-  const storageById = new Map((state.storageVolumes || []).map((item) => [item.id, item]));
+  const computeById = new Map<string, AnyRecord>((state.computeAllocations || []).map((item) => [item.id, item]));
+  const storageById = new Map<string, AnyRecord>((state.storageVolumes || []).map((item) => [item.id, item]));
   const ready = attachments.length > 0;
   return (
     <ConsoleSurface title="创建工作区入口" eyebrow="入口" subtitle="从已挂载的计算和存储创建访问 URL" compact>

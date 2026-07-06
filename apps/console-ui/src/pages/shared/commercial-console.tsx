@@ -1,9 +1,9 @@
-// @ts-nocheck
-// ponytail: migrated JS first; replace with domain DTO types when these pages change behavior.
 import React from "react";
 import { PageContainer, ProTable } from "@ant-design/pro-components";
 import { Alert, Button, Empty, List, Popconfirm, Space, Tag, Typography } from "antd";
 import { available, money } from "./formatters.ts";
+
+type AnyRecord = Record<string, any>;
 
 function toneClass(tone = "neutral") {
   return ["good", "warn", "danger", "info"].includes(tone) ? tone : "neutral";
@@ -206,7 +206,7 @@ export function TimelineList({ items = [], emptyText = "暂无记录" }: any) {
     <List
       className="timelineList"
       dataSource={items}
-      renderItem={(item) => (
+      renderItem={(item: AnyRecord) => (
         <List.Item>
           <div className={`timelineDot ${toneClass(item.tone)}`} />
           <div className="timelineContent">
@@ -383,9 +383,9 @@ export function FailureRecoveryPanel({ resource, supportAction, cleanupAction }:
 }
 
 export function CleanupResourceTable({ workspaces = [], computeAllocations = [], storageVolumes = [], storageAttachments = [], onCleanup }: any) {
-  const computeById = new Map(computeAllocations.map((item) => [item.id, item]));
-  const storageById = new Map(storageVolumes.map((item) => [item.id, item]));
-  const attachmentById = new Map(storageAttachments.map((item) => [item.id, item]));
+  const computeById = new Map<string, AnyRecord>(computeAllocations.map((item) => [item.id, item]));
+  const storageById = new Map<string, AnyRecord>(storageVolumes.map((item) => [item.id, item]));
+  const attachmentById = new Map<string, AnyRecord>(storageAttachments.map((item) => [item.id, item]));
   const rows = workspaces
     .filter((workspace) => workspace.access?.tokenStatus === "active")
     .map((workspace) => {

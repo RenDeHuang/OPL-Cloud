@@ -237,14 +237,21 @@ function resourceLedgerEvidenceFromState(state, accountId = null) {
       ...ledgerEntries.map((entry) => entry.workspaceId).filter((workspaceId) => workspaceId && workspaceId !== "account" && workspaceId !== "resource"),
       ...walletTransactions.map((transaction) => transaction.workspaceId).filter((workspaceId) => workspaceId && workspaceId !== "account" && workspaceId !== "resource")
     ]);
+    const primaryWorkspace = workspaceIds.map((workspaceId) => state.workspaces?.[workspaceId]).find(Boolean) || {};
+    const ownerUserId = resource.ownerUserId || userIdForAccount(state, ownerAccountId);
+    const ownerUser = state.users?.[ownerUserId] || {};
+    const ownerAccount = accountSnapshotForState(state, ownerAccountId);
     rows.push({
       id: resourceId,
       resourceType,
       ownerAccountId,
-      ownerUserId: resource.ownerUserId || userIdForAccount(state, ownerAccountId),
+      ownerUserId,
+      ownerEmail: ownerUser.email || ownerAccount.email || "",
       computeAllocationId: resourceType === "compute" ? resourceId : "",
       storageId: resourceType === "storage" ? resourceId : "",
+      attachmentId: primaryWorkspace.currentAttachmentId || "",
       workspaceIds,
+      workspaceUrl: primaryWorkspace.url || "",
       ledgerEntryIds,
       walletTransactionIds: uniqueSorted(walletTransactions.map((transaction) => transaction.id)),
       nodePoolId: resource.nodePoolId || "",
@@ -494,6 +501,7 @@ export class ConsoleReadModelService extends OplDomainService {
       const accountIds = [...new Set(users.map((user) => user.accountId).filter(Boolean))];
       return {
         organization: null,
+        organizations: Object.values(state.organizations || {}).map(clone),
         users: users.map(publicWalletUser),
         memberships: (state.memberships || []).map(clone),
         accounts: accountIds.map((accountId) => accountSnapshotForState(state, accountId)),
@@ -601,7 +609,10 @@ export class ConsoleReadModelService extends OplDomainService {
       accounts: {
         total: accounts.length,
         frozen: money(accounts.reduce((sum, account) => sum + Number(account.frozen || 0), 0)),
-        balance: money(accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0))
+        balance: money(accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0)),
+        totalSpent: money((state.walletTransactions || [])
+          .filter((entry) => businessRecord(entry, accountId) && Number(entry.amount || 0) < 0)
+          .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0))
       },
       workspaces: {
         total: workspaces.length,
