@@ -55,16 +55,11 @@ test("Console imports Fabric and Ledger only through package boundary exports", 
   }
 });
 
-test("server routes and OPL Cloud facade follow the package boundary contract", async () => {
+test("legacy Node package boundary no longer requires API routes or facade delegates", async () => {
   const spec = await contract();
-  for (const file of [...spec.apiRouteModules, ...spec.consoleServiceModules]) {
-    await assertFile(file);
-  }
-
-  const facade = await source("packages/console/src/opl-cloud.js");
-  for (const delegate of spec.facadeDelegates) {
-    assert.match(facade, new RegExp(delegate));
-  }
+  assert.deepEqual(spec.apiRouteModules, []);
+  assert.deepEqual(spec.consoleServiceModules, []);
+  assert.deepEqual(spec.facadeDelegates, []);
 });
 
 test("target service boundaries assign persistence, cloud SDKs, and UI responsibilities", async () => {
@@ -103,4 +98,12 @@ test("Console UI is a browser-only app with no persistence or cloud SDK markers"
       assert.doesNotMatch(text, forbiddenMarkerPattern(marker), `${file} must not contain ${marker}`);
     }
   }
+});
+
+test("retired Node Console API and store are not kept as a compatibility layer", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
+
+  await assert.rejects(() => access(new URL("../../packages/console/api/server.js", import.meta.url)));
+  await assert.rejects(() => access(new URL("../../packages/console/src/store.js", import.meta.url)));
+  assert.doesNotMatch(packageJson.scripts.start, /node\s+packages\/console\/api\/server\.js/);
 });

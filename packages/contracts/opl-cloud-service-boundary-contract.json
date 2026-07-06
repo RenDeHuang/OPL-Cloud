@@ -3,6 +3,11 @@
   "owner": "OPL Platform Architecture",
   "purpose": "Target service ownership contract for splitting Console UI, Control Plane, Ledger, and Fabric.",
   "state": "current",
+  "machineBoundary": "Service ownership, persistence, cloud SDK ownership, migration, runtime marker, and evidence secret rules for Console UI, Control Plane, Ledger, and Fabric.",
+  "lifecycle": {
+    "type": "long_term_contract",
+    "removalCondition": "Replace only with a newer current service-boundary contract after all callers and deployments move to the new boundary."
+  },
   "services": {
     "consoleUi": {
       "path": "apps/console-ui",

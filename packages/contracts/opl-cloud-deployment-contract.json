@@ -249,14 +249,16 @@
     "requiredInstructions": [
       "FROM golang:1.22-bookworm AS provisioner-build",
       "go build -o /out/opl-tencent-provisioner ./cmd/opl-tencent-provisioner",
+      "go build -o /out/opl-control-plane ./cmd/control-plane",
       "npm ci --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
       "npm ci --omit=dev --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000",
       "npm run build",
       "kubectl",
       "COPY --from=provisioner-build /out/opl-tencent-provisioner /usr/local/bin/opl-tencent-provisioner",
+      "COPY --from=control-plane-build /out/opl-control-plane /usr/local/bin/opl-control-plane",
       "COPY packages ./packages",
-      "EXPOSE 8787",
-      "CMD [\"node\", \"packages/console/api/server.js\"]"
+      "EXPOSE 8080",
+      "CMD [\"/usr/local/bin/opl-control-plane\"]"
     ],
     "dockerignore": [
       "node_modules",

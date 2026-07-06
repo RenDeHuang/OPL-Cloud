@@ -10,7 +10,7 @@
     "staging:ui": "node tools/start-staging-local-ui.js",
     "staging:readiness": "node tools/staging-readiness.js",
     "staging:e2e": "node tools/staging-local-verifier.js",
-    "start": "node packages/console/api/server.js",
+    "start": "cd services/control-plane && go run ./cmd/control-plane",
     "test": "node --test \"tests/**/*.test.js\"",
     "build": "vite build",
     "verify:production": "node tools/production-verifier.js",

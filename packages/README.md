@@ -16,7 +16,7 @@ This directory is the current implementation boundary map. The repository deploy
 The repository still runs as one deployable OPL Console control-plane service:
 
 ```text
-packages/console/api/server.js
+services/control-plane/cmd/control-plane/main.go
 ```
 
 The service may call Fabric and Ledger package code directly for now. New work should keep imports pointed at package boundaries instead of recreating cross-cutting code inside `console`.

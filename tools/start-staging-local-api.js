@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,7 +25,8 @@ try {
 }
 
 loadedEnv.OPL_TENCENT_PROVISIONER_BIN ||= defaultProvisionerBin;
-loadedEnv.PORT ||= "8787";
+loadedEnv.PORT ||= "8080";
+loadedEnv.CONTROL_PLANE_ADDR ||= `:${loadedEnv.PORT}`;
 loadedEnv.OPL_PUBLIC_URL ||= `http://127.0.0.1:${loadedEnv.PORT}`;
 applyEnv(loadedEnv);
 
@@ -42,22 +43,20 @@ if (!envReport.ready) {
   process.exit(1);
 }
 
-const {
-  appStore,
-  createAuthController,
-  createRequestHandler,
-  createUpgradeHandler
-} = await import("../packages/console/api/server.js");
+console.log(`OPL Control Plane local-to-staging API listening on http://127.0.0.1:${process.env.PORT}`);
+console.log(`Env file: ${envFile}`);
+console.log(`Runtime provider: ${process.env.OPL_RUNTIME_PROVIDER}`);
+console.log(`Database: ${process.env.DATABASE_URL ? "staging PostgreSQL configured" : "missing"}`);
+console.log(`Provisioner: ${process.env.OPL_TENCENT_PROVISIONER_BIN}`);
+console.log(`Workspace domain: ${process.env.OPL_WORKSPACE_DOMAIN}`);
+console.log(`Repo: ${root}`);
 
-const auth = createAuthController({ env: process.env, store: appStore });
-const server = createServer(createRequestHandler({ auth }));
-server.on("upgrade", createUpgradeHandler());
-server.listen(Number(process.env.PORT), () => {
-  console.log(`OPL Console local-to-staging API listening on http://127.0.0.1:${process.env.PORT}`);
-  console.log(`Env file: ${envFile}`);
-  console.log(`Runtime provider: ${process.env.OPL_RUNTIME_PROVIDER}`);
-  console.log(`Database: ${process.env.DATABASE_URL ? "staging PostgreSQL configured" : "missing"}`);
-  console.log(`Provisioner: ${process.env.OPL_TENCENT_PROVISIONER_BIN}`);
-  console.log(`Workspace domain: ${process.env.OPL_WORKSPACE_DOMAIN}`);
-  console.log(`Repo: ${root}`);
+const child = spawn("go", ["run", "./cmd/control-plane"], {
+  cwd: join(root, "services", "control-plane"),
+  env: process.env,
+  stdio: "inherit"
+});
+
+child.on("exit", (code) => {
+  process.exit(code ?? 1);
 });
