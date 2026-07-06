@@ -109,10 +109,10 @@ unit/contract tests pass
 ## Pre-Commit Checklist
 
 ```bash
-node --test tests/contracts/route-api-contract.test.js
-node --test tests/domain/resource-provisioning.test.js
-node --test tests/providers/tencent-tke-provider.test.js tests/providers/tencent-provisioner-client.test.js
-node --test tests/ui/commercial-console-routes.test.js tests/ui/commercial-console-surface.test.js tests/ui/console-clickability-contract.test.js
+node --test tests/contracts/route-api-contract.test.ts
+node --test tests/domain/resource-provisioning.test.ts
+node --test tests/providers/tencent-tke-provider.test.ts tests/providers/tencent-provisioner-client.test.ts
+node --test tests/ui/commercial-console-routes.test.ts tests/ui/commercial-console-surface.test.ts tests/ui/console-clickability-contract.test.ts
 npm run build
 git diff --check
 ```

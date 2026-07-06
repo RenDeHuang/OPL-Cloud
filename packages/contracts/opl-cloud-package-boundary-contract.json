@@ -11,13 +11,13 @@
   "consoleImportRules": [
     {
       "package": "OPL Fabric",
-      "forbiddenImportPattern": "from\\s+[\"'][^\"']*fabric\\/src\\/(?!index\\.js)",
-      "allowedBoundary": "packages/fabric/src/index.js"
+      "forbiddenImportPattern": "from\\s+[\"'][^\"']*fabric\\/src\\/(?!index\\.ts)",
+      "allowedBoundary": "packages/fabric/src/index.ts"
     },
     {
       "package": "OPL Ledger",
-      "forbiddenImportPattern": "from\\s+[\"']\\.\\.\\/\\.\\.\\/ledger\\/src\\/(?!index\\.js)",
-      "allowedBoundary": "packages/ledger/src/index.js"
+      "forbiddenImportPattern": "from\\s+[\"']\\.\\.\\/\\.\\.\\/ledger\\/src\\/(?!index\\.ts)",
+      "allowedBoundary": "packages/ledger/src/index.ts"
     }
   ],
   "apiRouteModules": [],

@@ -69,4 +69,4 @@ jobs:
           node-version: "22"
 
       - name: Provision manual workspace
-        run: node tools/provision-manual-workspace.js
+        run: node tools/provision-manual-workspace.ts

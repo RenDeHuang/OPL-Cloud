@@ -6,17 +6,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "staging:local": "node tools/start-staging-local-api.js",
-    "staging:ui": "node tools/start-staging-local-ui.js",
-    "staging:readiness": "node tools/staging-readiness.js",
-    "staging:e2e": "node tools/staging-local-verifier.js",
+    "staging:local": "node tools/start-staging-local-api.ts",
+    "staging:ui": "node tools/start-staging-local-ui.ts",
+    "staging:readiness": "node tools/staging-readiness.ts",
+    "staging:e2e": "node tools/staging-local-verifier.ts",
     "start": "cd services/control-plane && go run ./cmd/control-plane",
-    "test": "node --test \"tests/**/*.test.js\"",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc -p apps/console-ui/tsconfig.json --noEmit",
     "build": "vite build",
-    "verify:production": "node tools/production-verifier.js",
-    "provision:manual-workspace": "node tools/provision-manual-workspace.js",
-    "reconcile:tencent": "node tools/reconcile-tencent-bills.js",
-    "validate:production-manifest": "node tools/validate-production-manifest.js"
+    "verify:production": "node tools/production-verifier.ts",
+    "provision:manual-workspace": "node tools/provision-manual-workspace.ts",
+    "reconcile:tencent": "node tools/reconcile-tencent-bills.ts",
+    "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
@@ -34,6 +35,8 @@
     "path-to-regexp": "^8.4.0"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "playwright": "^1.61.1",
     "yaml": "^2.9.0"
   }
