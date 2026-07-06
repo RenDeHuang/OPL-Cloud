@@ -128,6 +128,10 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	if limits["cpu"] != "2" || limits["memory"] != "4Gi" {
 		t.Fatalf("workspace limits must preserve the package shape: %#v", limits)
 	}
+	env := envMap(container["env"].([]any))
+	if env["WEBUI_AUTH"] != "False" || env["ENABLE_PERSISTENT_CONFIG"] != "False" {
+		t.Fatalf("workspace must disable app login through the runtime auth contract: %#v", env)
+	}
 }
 
 func TestRuntimeStatusRecoversWorkspaceResourcesFromKubernetesLabels(t *testing.T) {
@@ -192,6 +196,15 @@ printf '{"kind":"List","items":[]}\n'
 	if !json.Valid(raw) {
 		t.Fatalf("kubectl output must stay valid JSON, got %q", string(raw))
 	}
+}
+
+func envMap(entries []any) map[string]string {
+	values := map[string]string{}
+	for _, entry := range entries {
+		asMap, _ := entry.(map[string]any)
+		values[stringValue(asMap["name"])] = stringValue(asMap["value"])
+	}
+	return values
 }
 
 func TestOverviewHTTP(t *testing.T) {

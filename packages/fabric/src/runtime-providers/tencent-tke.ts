@@ -664,6 +664,8 @@ export class TencentTkeProvider {
                       { name: "AIONUI_DATA_DIR", value: "/data" },
                       { name: "OPL_PROJECTS_DIR", value: "/projects" },
                       { name: "ALLOW_REMOTE", value: "true" },
+                      { name: "WEBUI_AUTH", value: "False" },
+                      { name: "ENABLE_PERSISTENT_CONFIG", value: "False" },
                       { name: "OPL_WEBUI_AUTH_MODE", value: "none" },
                       { name: "AIONUI_WEBUI_AUTH_MODE", value: "none" },
                       { name: "HOME", value: "/data" },
