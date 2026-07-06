@@ -987,6 +987,45 @@ test("production verifier preserves Workspace gateway cookies after token cleanu
   ));
 });
 
+test("production verifier uses AionUI login token when Set-Cookie is unavailable", async () => {
+  const requests = [];
+  const actions = [];
+  const chain = tkeChain();
+  const baseFetch = keyedFetch({ responses: chainResponses(chain), requests });
+  const fetchImpl = async (url, options = {}) => {
+    const method = options.method || "GET";
+    if (method === "POST" && String(url).includes("/login")) {
+      requests.push({
+        key: `POST ${String(url)}`,
+        cookie: options.headers?.cookie || "",
+        body: options.body ? JSON.parse(options.body) : null
+      });
+      return jsonResponse({
+        success: true,
+        user: { id: "opl-webui-admin", username: "admin" },
+        token: "body-session-token"
+      });
+    }
+    return baseFetch(url, options);
+  };
+
+  const result = await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    workspaceName: "Production Verification Lab",
+    runId: "prod-run",
+    packageId: "basic",
+    browserE2E: true,
+    browserFactory: fakeBrowserFactory(actions),
+    fetchImpl
+  });
+
+  assert.ok(result.ok);
+  assert.ok(actions.find((action) => action[0] === "addCookies")?.[1].some((cookie) => (
+    cookie.name === "aionui-session" && cookie.value === "body-session-token"
+  )));
+});
+
 test("production verifier waits for async compute provisioning before mounting storage", async () => {
   const requests = [];
   const chain = tkeChain();

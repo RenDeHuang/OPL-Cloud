@@ -136,6 +136,13 @@ function cookieHeaderFromSetCookie(setCookie = "") {
     .join("; ");
 }
 
+function setCookieHeader(headers) {
+  if (!headers) return "";
+  const values = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : [];
+  if (values.length > 0) return values.join(",");
+  return headers.get?.("set-cookie") || "";
+}
+
 function mergeCookieHeaders(...cookies) {
   return cookies.map((cookie) => String(cookie || "").trim()).filter(Boolean).join("; ");
 }
@@ -179,7 +186,7 @@ async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
     body: { operatorToken }
   });
   return {
-    cookie: cookieHeaderFromSetCookie(response.headers?.get?.("set-cookie") || ""),
+    cookie: cookieHeaderFromSetCookie(setCookieHeader(response.headers)),
     csrf: response.headers?.get?.("x-opl-csrf-token") || payload?.csrfToken || ""
   };
 }
@@ -196,7 +203,7 @@ async function requestWorkspaceUrl({ fetchImpl, url, attempts, retryDelayMs }) {
     let cookie = "";
     let response = await fetchImpl(requestUrl, { method: "GET", redirect: "manual" });
     if (response.status >= 300 && response.status < 400 && response.headers?.get?.("location")) {
-      cookie = cookieHeaderFromSetCookie(response.headers?.get?.("set-cookie") || "");
+      cookie = cookieHeaderFromSetCookie(setCookieHeader(response.headers));
       requestUrl = new URL(response.headers.get("location"), requestUrl).toString();
       response = await fetchImpl(requestUrl, {
         method: "GET",
@@ -250,7 +257,8 @@ async function requestWorkspaceWebuiLogin({ fetchImpl, workspaceAuth, username =
     const message = typeof payload === "string" ? payload : payload.error || JSON.stringify(payload);
     throw new Error(`workspace_webui_login_failed:${response.status}:${message}`);
   }
-  const webuiCookie = cookieHeaderFromSetCookie(response.headers?.get?.("set-cookie") || "");
+  const webuiCookie = cookieHeaderFromSetCookie(setCookieHeader(response.headers)) ||
+    (typeof payload?.token === "string" ? `aionui-session=${payload.token}` : "");
   if (!webuiCookie) throw new Error("workspace_webui_login_cookie_missing");
   return {
     ...workspaceAuth,
