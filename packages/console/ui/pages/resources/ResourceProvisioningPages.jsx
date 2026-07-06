@@ -199,7 +199,7 @@ export function CreateComputeAllocationPage({ state, session, runAction }) {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ name: "分析计算资源", packageId: initialPackageId }}
+          initialValues={{ packageId: initialPackageId }}
           onFinish={async (values) => {
             const created = await runOperation(() => runAction(
               () => createComputeAllocation(values, session.csrfToken),
@@ -211,7 +211,7 @@ export function CreateComputeAllocationPage({ state, session, runAction }) {
           }}
         >
           <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入计算资源名称" }]}>
-            <Input placeholder="分析计算资源" />
+            <Input placeholder="输入计算资源名称" />
           </Form.Item>
           <Form.Item name="packageId" label="规格" rules={[{ required: true, message: "请选择规格" }]}>
             <Select
@@ -353,7 +353,6 @@ export function CreateStorageVolumePage({ state, session, runAction }) {
   const selectedPackageId = Form.useWatch("packageId", form) || initialPackageId;
   const selectedSizeGb = Form.useWatch("sizeGb", form) || availablePackages[0]?.diskGb || 10;
   const selectedPlan = availablePackages.find((plan) => plan.id === selectedPackageId) || availablePackages[0];
-  const initialStorageSize = availablePackages[0]?.diskGb || 10;
   const selectedStorageHold = storageHoldAmount(selectedPlan, selectedSizeGb);
   return (
     <ConsoleSurface title="开通存储资源" eyebrow="资源" subtitle="创建可独立保留的数据盘" compact>
@@ -361,7 +360,7 @@ export function CreateStorageVolumePage({ state, session, runAction }) {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ name: "实验数据盘", packageId: initialPackageId, sizeGb: availablePackages[0]?.diskGb || 10 }}
+          initialValues={{ packageId: initialPackageId, sizeGb: availablePackages[0]?.diskGb || 10 }}
           onFinish={async (values) => {
             const created = await runOperation(() => runAction(
               () => createStorageVolume(values, session.csrfToken),
@@ -372,7 +371,7 @@ export function CreateStorageVolumePage({ state, session, runAction }) {
           }}
         >
           <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入存储名称" }]}>
-            <Input placeholder="实验数据盘" />
+            <Input placeholder="输入存储资源名称" />
           </Form.Item>
           <Form.Item name="packageId" label="计费规格" rules={[{ required: true, message: "请选择计费规格" }]}>
             <Select

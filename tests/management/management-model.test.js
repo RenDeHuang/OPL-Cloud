@@ -418,3 +418,79 @@ test("operator summary includes safe production E2E records derived from existin
   ]);
   assert.equal(JSON.stringify(summary.productionE2E).includes("token"), false, "E2E summary must not expose URL tokens or secrets");
 });
+
+test("default business read models exclude production verifier records while preserving E2E evidence", async () => {
+  const service = createTestService();
+  await service.store.update((state) => {
+    state.users["usr-customer"] = {
+      id: "usr-customer",
+      email: "customer@example.com",
+      accountId: "acct-customer",
+      status: "active",
+      balance: 100,
+      frozen: 0,
+      holds: {},
+      totalRecharged: 100,
+      passwordHash: "scrypt:redacted"
+    };
+    state.users["usr-verifier"] = {
+      id: "usr-verifier",
+      email: "verifier@example.com",
+      accountId: "pi-production-verifier",
+      status: "active",
+      balance: 1000,
+      frozen: 0,
+      holds: {},
+      totalRecharged: 1000,
+      passwordHash: "scrypt:redacted"
+    };
+    state.workspaces["ws-customer"] = {
+      id: "ws-customer",
+      ownerAccountId: "acct-customer",
+      state: "running",
+      access: { tokenStatus: "active" }
+    };
+    state.workspaces["ws-verifier"] = {
+      id: "ws-verifier",
+      ownerAccountId: "pi-production-verifier",
+      state: "running",
+      access: { tokenStatus: "active" }
+    };
+    state.computeAllocations.push(
+      { id: "compute-customer", ownerAccountId: "acct-customer", status: "running" },
+      { id: "compute-verifier", ownerAccountId: "pi-production-verifier", status: "running" }
+    );
+    state.billingLedger.push({
+      id: "ledger-verifier-credit",
+      accountId: "pi-production-verifier",
+      workspaceId: "account",
+      type: "credit",
+      amount: 1000,
+      sourceEventId: "production_verification_credit:run-456",
+      createdAt: "2026-07-06T00:00:00.000Z"
+    });
+    state.billingLedger.push({
+      id: "ledger-verifier-request",
+      accountId: "pi-production-verifier",
+      workspaceId: "ws-verifier",
+      type: "request_debit",
+      amount: -0.01,
+      sourceEventId: "production_verification_request_usage:run-456",
+      createdAt: "2026-07-06T00:01:00.000Z"
+    });
+  });
+
+  const management = await service.managementState({});
+  const summary = await service.operatorSummary({});
+  const defaultOwnerState = await service.getState();
+
+  assert.deepEqual(management.users.map((user) => user.accountId), ["acct-customer"]);
+  assert.deepEqual(management.accounts.map((account) => account.id), ["acct-customer"]);
+  assert.deepEqual(management.workspaces.map((workspace) => workspace.id), ["ws-customer"]);
+  assert.deepEqual(management.computeAllocations.map((allocation) => allocation.id), ["compute-customer"]);
+  assert.equal(summary.accounts.total, 1);
+  assert.equal(summary.workspaces.total, 1);
+  assert.equal(summary.computeAllocations.total, 1);
+  assert.equal(summary.productionE2E.total, 1);
+  assert.equal(defaultOwnerState.account.id, "acct-customer");
+});

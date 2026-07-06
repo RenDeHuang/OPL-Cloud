@@ -21,6 +21,32 @@ import { billingPolicy } from "./pricing-service.js";
 import { latestBillingReconciliationReport, operatorNotificationInScope } from "./workspace-service.js";
 import { OplDomainService } from "./opl-domain-service.js";
 
+const INTERNAL_VERIFIER_ACCOUNT_IDS = new Set(["pi-production-verifier"]);
+
+function isInternalVerifierAccountId(accountId = "") {
+  return INTERNAL_VERIFIER_ACCOUNT_IDS.has(String(accountId || ""));
+}
+
+function recordAccountIds(record = {}) {
+  return [
+    record.accountId,
+    record.ownerAccountId,
+    record.targetAccountId
+  ].filter(Boolean);
+}
+
+function isInternalVerifierRecord(record = {}) {
+  return (
+    recordAccountIds(record).some(isInternalVerifierAccountId) ||
+    String(record.sourceEventId || "").startsWith("production_verification_")
+  );
+}
+
+function businessRecord(record, accountId = null) {
+  if (accountId) return recordAccountIds(record).includes(accountId);
+  return !isInternalVerifierRecord(record);
+}
+
 function computePoolsFromPackages(packages) {
   return packages.map((plan) => ({
     id: `pool-${plan.id}-${plan.server}`,
@@ -47,8 +73,8 @@ function publicResourceRecords(records = []) {
 }
 
 function defaultAccountIdForState(state) {
-  return Object.values(state.users || {}).find((user) => user.accountId)?.accountId
-    || Object.values(state.workspaces || {}).find((workspace) => workspace.ownerAccountId)?.ownerAccountId
+  return Object.values(state.users || {}).find((user) => user.accountId && !isInternalVerifierAccountId(user.accountId))?.accountId
+    || Object.values(state.workspaces || {}).find((workspace) => workspace.ownerAccountId && !isInternalVerifierAccountId(workspace.ownerAccountId))?.ownerAccountId
     || "local-account";
 }
 
@@ -139,6 +165,7 @@ function resourceAnomaliesFromState(state, accountId = null) {
   const anomalies = [];
   for (const workspace of Object.values(state.workspaces || {})) {
     if (accountId && workspace.ownerAccountId !== accountId) continue;
+    if (!accountId && isInternalVerifierAccountId(workspace.ownerAccountId)) continue;
     const compute = computeById.get(workspace.computeAllocationId);
     const storage = storageById.get(workspace.storageId);
     const attachment = attachmentById.get(workspace.attachmentId);
@@ -382,20 +409,21 @@ export class ConsoleReadModelService extends OplDomainService {
   async managementState({ organizationId } = {}) {
     const state = await this.store.read();
     if (!organizationId) {
-      const accountIds = [...new Set(Object.values(state.users || {}).map((user) => user.accountId).filter(Boolean))];
+      const users = Object.values(state.users || {}).filter((user) => businessRecord(user));
+      const accountIds = [...new Set(users.map((user) => user.accountId).filter(Boolean))];
       return {
         organization: null,
-        users: Object.values(state.users || {}).map(publicWalletUser),
+        users: users.map(publicWalletUser),
         memberships: (state.memberships || []).map(clone),
         accounts: accountIds.map((accountId) => accountSnapshotForState(state, accountId)),
         packages: this.packages(),
         computePools: computePoolsFromPackages(this.packages()),
-        workspaces: Object.values(state.workspaces || {}).map(clone),
-        computeAllocations: publicResourceRecords(state.computeAllocations || []),
-        storageVolumes: publicResourceRecords(state.storageVolumes || []),
-        storageAttachments: publicResourceRecords(state.storageAttachments || []),
-        walletTransactions: (state.walletTransactions || []).map(clone),
-        manualTopups: (state.manualTopups || []).map(clone)
+        workspaces: Object.values(state.workspaces || {}).filter((workspace) => businessRecord(workspace)).map(clone),
+        computeAllocations: publicResourceRecords((state.computeAllocations || []).filter((resource) => businessRecord(resource))),
+        storageVolumes: publicResourceRecords((state.storageVolumes || []).filter((resource) => businessRecord(resource))),
+        storageAttachments: publicResourceRecords((state.storageAttachments || []).filter((resource) => businessRecord(resource))),
+        walletTransactions: (state.walletTransactions || []).filter((entry) => businessRecord(entry)).map(clone),
+        manualTopups: (state.manualTopups || []).filter((entry) => businessRecord(entry)).map(clone)
       };
     }
     const organization = state.organizations?.[organizationId];
@@ -464,16 +492,19 @@ export class ConsoleReadModelService extends OplDomainService {
 
   async operatorSummary({ accountId = null } = {}) {
     const state = await this.store.read();
-    const workspaces = Object.values(state.workspaces).filter((workspace) => !accountId || workspace.ownerAccountId === accountId);
-    const notifications = (state.notifications || []).filter((event) => operatorNotificationInScope(event, accountId));
-    const runtimeOperations = state.runtimeOperations.filter((operation) => !accountId || operation.accountId === accountId);
+    const workspaces = Object.values(state.workspaces).filter((workspace) => businessRecord(workspace, accountId));
+    const notifications = (state.notifications || []).filter((event) =>
+      operatorNotificationInScope(event, accountId) &&
+      (accountId || !isInternalVerifierRecord(event))
+    );
+    const runtimeOperations = state.runtimeOperations.filter((operation) => businessRecord(operation, accountId));
     const accountIds = new Set([
-      ...Object.values(state.users || {}).map((user) => user.accountId).filter(Boolean)
+      ...Object.values(state.users || {}).filter((user) => businessRecord(user, accountId)).map((user) => user.accountId).filter(Boolean)
     ]);
     const accounts = [...accountIds]
       .filter((id) => !accountId || id === accountId)
       .map((id) => accountSnapshotForState(state, id));
-    const computeAllocations = (state.computeAllocations || []).filter((allocation) => !accountId || allocation.ownerAccountId === accountId);
+    const computeAllocations = (state.computeAllocations || []).filter((allocation) => businessRecord(allocation, accountId));
     const latestReconciliation = latestBillingReconciliationReport(state);
     const failedOperations = runtimeOperations.filter((operation) => operation.status === "failed");
     const attentionWorkspaces = workspaces.filter((workspace) =>

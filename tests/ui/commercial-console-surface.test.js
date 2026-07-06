@@ -133,6 +133,18 @@ test("resource provisioning pages call resource APIs instead of disabled placeho
   assert.doesNotMatch(resourceSource, /disabled: true/, "resource creation actions must not remain disabled placeholders");
 });
 
+test("create forms do not prefill demo-style resource names", async () => {
+  const resourceSource = await source("packages/console/ui/pages/resources/ResourceProvisioningPages.jsx");
+  const workspaceSource = await source("packages/console/ui/pages/workspaces/CreateWorkspacePage.jsx");
+
+  assert.doesNotMatch(resourceSource, /initialValues=\{\{ name:/, "resource creation forms must not prefill demo names");
+  assert.doesNotMatch(workspaceSource, /initialValues=\{\{ workspaceName:/, "Workspace creation must not prefill a demo name");
+  for (const demoCopy of ["实验工作区", "实验数据盘", "分析计算资源"]) {
+    assert.doesNotMatch(resourceSource, new RegExp(demoCopy), `resource forms must not show ${demoCopy}`);
+    assert.doesNotMatch(workspaceSource, new RegExp(demoCopy), `workspace forms must not show ${demoCopy}`);
+  }
+});
+
 test("resource provisioning failures preserve provider details in the visible result", async () => {
   const stateSource = await source("packages/console/ui/store/console-state.js");
   const apiSource = await source("packages/console/ui/api/console-api.js");

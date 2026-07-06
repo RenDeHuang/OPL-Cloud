@@ -56,7 +56,6 @@ test("runtime readiness includes Fabric resource catalog state", async () => {
   const readiness = await service.runtimeReadiness();
   assert.equal(readiness.ready, true);
   assert.deepEqual(readiness.resourceCatalog.workspacePackages.available, ["basic", "pro"]);
-  assert.deepEqual(readiness.resourceCatalog.workspacePackages.unavailable, [
-    { id: "gpu", reason: "gpu_node_pool_not_verified" }
-  ]);
+  assert.deepEqual(readiness.resourceCatalog.workspacePackages.unavailable, []);
+  assert.equal(readiness.resourceCatalog.workspacePackages.hiddenUnavailable, 1);
 });

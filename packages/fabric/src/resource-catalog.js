@@ -19,14 +19,16 @@ function packageCloudShape(env, packageId) {
 }
 
 function summarizeResources(items = []) {
+  const unavailable = items.filter((item) => !item.available);
+  const visibleUnavailable = unavailable.filter((item) => item.launchVisible !== false);
   return {
     available: items.filter((item) => item.available).map((item) => item.id),
-    unavailable: items
-      .filter((item) => !item.available)
+    unavailable: visibleUnavailable
       .map((item) => ({
         id: item.id,
         reason: item.unavailableReason || "not_available"
-      }))
+      })),
+    hiddenUnavailable: unavailable.length - visibleUnavailable.length
   };
 }
 
@@ -89,6 +91,7 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
         diskGb: 500,
         available: false,
         verified: false,
+        launchVisible: false,
         unavailableReason: "gpu_node_pool_not_verified",
         computeProfileId: "gpu-standard",
         ...commonRefs
@@ -105,6 +108,7 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
         gpu: 1,
         available: false,
         provider: "tencent-tke",
+        launchVisible: false,
         unavailableReason: "gpu_node_pool_not_verified"
       }
     ],
@@ -151,6 +155,7 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
         id: "opl-connect-registry",
         name: "OPL Connect Registry",
         available: false,
+        launchVisible: false,
         unavailableReason: "connector_registry_not_implemented_in_console_control_plane"
       }
     ],
@@ -159,6 +164,7 @@ export function defaultFabricResourceCatalog({ env = process.env } = {}) {
         id: "opl-agent-registry",
         name: "OPL Agent Registry",
         available: false,
+        launchVisible: false,
         unavailableReason: "agent_registry_not_implemented_in_console_control_plane"
       }
     ]

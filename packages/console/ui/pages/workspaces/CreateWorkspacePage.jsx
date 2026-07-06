@@ -20,7 +20,7 @@ export function CreateWorkspacePage({ state, session, runAction }) {
         <InsightPanel title="创建访问 URL" eyebrow="工作区入口">
           <Form
             layout="vertical"
-            initialValues={{ workspaceName: "实验工作区", attachmentId: initialAttachmentId }}
+            initialValues={{ attachmentId: initialAttachmentId }}
             onFinish={async (values) => {
               const created = await runAction(
                 () => createWorkspace({
@@ -33,7 +33,7 @@ export function CreateWorkspacePage({ state, session, runAction }) {
             }}
           >
             <Form.Item name="workspaceName" label="名称" rules={[{ required: true, message: "请输入工作区名称" }]}>
-              <Input placeholder="实验工作区" />
+              <Input placeholder="输入工作区名称" />
             </Form.Item>
             <Form.Item name="attachmentId" label="挂载关系" rules={[{ required: true, message: "请选择挂载关系" }]}>
               <Select

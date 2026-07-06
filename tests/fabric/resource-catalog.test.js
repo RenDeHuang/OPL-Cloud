@@ -66,9 +66,8 @@ test("Fabric catalog readiness summarizes available and unavailable resource cla
 
   assert.equal(readiness.ready, true);
   assert.deepEqual(readiness.workspacePackages.available, ["basic", "pro"]);
-  assert.deepEqual(readiness.workspacePackages.unavailable, [
-    { id: "gpu", reason: "gpu_node_pool_not_verified" }
-  ]);
+  assert.deepEqual(readiness.workspacePackages.unavailable, []);
+  assert.equal(readiness.workspacePackages.hiddenUnavailable, 1);
   assert.deepEqual(readiness.storageClasses.available, ["workspace-cbs"]);
   assert.deepEqual(readiness.workspaceImages.available, ["one-person-lab-app"]);
   assert.deepEqual(readiness.ingressDomains.available, ["workspace"]);
