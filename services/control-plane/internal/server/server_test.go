@@ -69,6 +69,10 @@ printf '{"ok":true,"operationId":"op-alpha","poolId":"pool-basic","nodePoolId":"
 	if body["provider"] != "tencent-tke" || body["nodeName"] == "" || body["instanceId"] == "" || body["billingStatus"] != "active" {
 		t.Fatalf("unexpected compute shape: %#v", body)
 	}
+	nodeSelector, _ := body["nodeSelector"].(map[string]any)
+	if nodeSelector["kubernetes.io/hostname"] != "machine-alpha" {
+		t.Fatalf("node selector = %#v, want machine-alpha", nodeSelector)
+	}
 }
 
 func TestOverviewHTTP(t *testing.T) {

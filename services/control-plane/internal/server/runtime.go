@@ -286,6 +286,7 @@ func (app *runtimeApp) finishComputeProvision(request provisionerRequest, id str
 		return
 	}
 	nodeName := firstNonEmpty(response.NodeName, response.ProviderData["nodeName"])
+	selectorNode := firstNonEmpty(response.ProviderData["machineName"], nodeName)
 	compute["providerResourceId"] = "node/" + nodeName
 	compute["poolId"] = firstNonEmpty(response.PoolID, stringValue(compute["poolId"]))
 	compute["nodePoolId"] = firstNonEmpty(response.NodePoolID, stringValue(compute["nodePoolId"]))
@@ -298,8 +299,8 @@ func (app *runtimeApp) finishComputeProvision(request provisionerRequest, id str
 	compute["operationId"] = response.OperationID
 	compute["providerRequestId"] = response.ProviderRequestID
 	compute["providerData"] = response.ProviderData
-	compute["runtime"] = map[string]any{"service": "service/" + stringValue(nested(compute, "runtime", "serviceName")), "serviceName": nested(compute, "runtime", "serviceName"), "nodeName": nodeName, "nodeSelector": map[string]any{"kubernetes.io/hostname": nodeName}}
-	compute["nodeSelector"] = map[string]any{"kubernetes.io/hostname": nodeName}
+	compute["runtime"] = map[string]any{"service": "service/" + stringValue(nested(compute, "runtime", "serviceName")), "serviceName": nested(compute, "runtime", "serviceName"), "nodeName": nodeName, "nodeSelector": map[string]any{"kubernetes.io/hostname": selectorNode}}
+	compute["nodeSelector"] = map[string]any{"kubernetes.io/hostname": selectorNode}
 	app.computes[id] = compute
 }
 
