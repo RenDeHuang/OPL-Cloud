@@ -2,6 +2,7 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { TencentProvisionerClient } from "../tencent-provisioner-client.ts";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -28,6 +29,7 @@ const WORKSPACE_CODEX_SECRET_KEYS = [
 ];
 const DEFAULT_WORKSPACE_READY_TIMEOUT_MS = 300000;
 const DEFAULT_WORKSPACE_READY_POLL_MS = 5000;
+const AIONUI_ADMIN_USERNAME = "admin";
 
 function compactId(value) {
   return String(value)
@@ -104,6 +106,16 @@ async function defaultCommandExists(command) {
 
 function b64(value) {
   return Buffer.from(String(value), "utf8").toString("base64");
+}
+
+function deriveAionUiAdminPassword(seed, workspaceId, token) {
+  const secret = String(seed || "").trim();
+  if (!secret) return "";
+  const digest = createHmac("sha256", secret)
+    .update(`${workspaceId}:${token}`)
+    .digest("base64url")
+    .slice(0, 24);
+  return `opl_${digest}Aa1!`;
 }
 
 function isKubernetesNotFound(error) {
@@ -665,14 +677,17 @@ export class TencentTkeProvider {
                       { name: "OPL_PROJECTS_DIR", value: "/projects" },
                       { name: "AIONUI_ALLOW_REMOTE", value: "true" },
                       { name: "ALLOW_REMOTE", value: "true" },
-                      { name: "WEBUI_AUTH", value: "False" },
-                      { name: "ENABLE_PERSISTENT_CONFIG", value: "False" },
-                      { name: "OPL_WEBUI_AUTH_MODE", value: "none" },
-                      { name: "AIONUI_WEBUI_AUTH_MODE", value: "none" },
                       { name: "HOME", value: "/data" },
                       { name: "OPL_WORKSPACE_ROOT", value: "/projects" },
                       { name: "CODEX_HOME", value: "/data/codex" }
                     ],
+                    lifecycle: {
+                      postStart: {
+                        exec: {
+                          command: ["node", "-e", aionUiPasswordBootstrapScript()]
+                        }
+                      }
+                    },
                     volumeMounts,
                     resources: workspaceContainerResources(packagePlan),
                     readinessProbe: {
@@ -721,6 +736,7 @@ export class TencentTkeProvider {
   }
 
   workspaceEntrySecretManifest({ computeName, workspaceId, workspaceName, ownerAccountId, packagePlan, token }) {
+    const webuiPassword = deriveAionUiAdminPassword(this.env.OPL_AIONUI_ADMIN_PASSWORD_SEED, workspaceId, token);
     return {
       apiVersion: "v1",
       kind: "Secret",
@@ -739,6 +755,10 @@ export class TencentTkeProvider {
         OPL_WORKSPACE_NAME: b64(workspaceName || ""),
         OPL_OWNER_ACCOUNT_ID: b64(ownerAccountId || ""),
         OPL_PACKAGE_ID: b64(packagePlan?.id || ""),
+        ...(webuiPassword ? {
+          OPL_AIONUI_ADMIN_USERNAME: b64(AIONUI_ADMIN_USERNAME),
+          OPL_AIONUI_ADMIN_PASSWORD: b64(webuiPassword)
+        } : {}),
         ...this.workspaceCodexSecretData()
       }
     };
@@ -780,6 +800,32 @@ export class TencentTkeProvider {
       resources: { requests: { storage: `${packagePlan.diskGb}Gi` } }
     };
   }
+}
+
+function aionUiPasswordBootstrapScript() {
+  return `
+const password = String(process.env.OPL_AIONUI_ADMIN_PASSWORD || "").trim();
+if (!password) process.exit(1);
+const body = JSON.stringify({ new_password: password });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let last = "";
+for (let attempt = 0; attempt < 90; attempt += 1) {
+  try {
+    const response = await fetch("http://127.0.0.1:3000/api/webui/change-password", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body
+    });
+    if (response.ok) process.exit(0);
+    last = response.status + ":" + await response.text();
+  } catch (error) {
+    last = error && error.message ? error.message : String(error);
+  }
+  await sleep(1000);
+}
+console.error("[opl] failed to set AionUI admin password: " + last);
+process.exit(1);
+`.trim();
 }
 
 function codexBootstrapScript() {

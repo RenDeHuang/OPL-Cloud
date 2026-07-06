@@ -167,6 +167,15 @@
                     }
                   },
                   {
+                    "name": "OPL_AIONUI_ADMIN_PASSWORD_SEED",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-aionui",
+                        "key": "OPL_AIONUI_ADMIN_PASSWORD_SEED"
+                      }
+                    }
+                  },
+                  {
                     "name": "OPL_CODEX_API_KEY",
                     "valueFrom": {
                       "secretKeyRef": {

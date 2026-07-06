@@ -9,6 +9,7 @@ import { TencentTkeProvider } from "../../packages/fabric/src/runtime-providers/
 const requiredEnv = {
   OPL_WORKSPACE_DOMAIN: "workspace.medopl.cn",
   OPL_WORKSPACE_IMAGE: "registry.example.com/opl/one-person-lab-app:2026-07-01",
+  OPL_AIONUI_ADMIN_PASSWORD_SEED: "workspace-secret-2026-very-long",
   OPL_K8S_NAMESPACE: "opl-cloud",
   OPL_INGRESS_CLASS: "qcloud",
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
@@ -234,7 +235,10 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
     assert.equal(entrySecret.kind, "Secret");
     assert.equal(entrySecret.metadata.name, "opl-compute-tke001-env");
     assert.equal(Buffer.from(entrySecret.data.OPL_SHARE_TOKEN, "base64").toString("utf8"), "share_resource_secret");
+    assert.equal(Buffer.from(entrySecret.data.OPL_AIONUI_ADMIN_USERNAME, "base64").toString("utf8"), "admin");
+    assert.match(Buffer.from(entrySecret.data.OPL_AIONUI_ADMIN_PASSWORD, "base64").toString("utf8"), /^opl_[A-Za-z0-9_-]{24}Aa1!$/);
     assert.equal(attachmentDeployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, "opl-storage-tke001-data");
+    assert.ok(attachmentDeployment.spec.template.spec.containers[0].lifecycle?.postStart?.exec?.command.join(" ").includes("/api/webui/change-password"));
     assert.deepEqual(attachmentContainer.volumeMounts.map((mount) => `${mount.mountPath}:${mount.subPath}`), [
       "/data:data",
       "/projects:projects"
@@ -249,10 +253,6 @@ test("Tencent TKE provider exposes split compute, storage, attachment, and Works
       OPL_PROJECTS_DIR: "/projects",
       AIONUI_ALLOW_REMOTE: "true",
       ALLOW_REMOTE: "true",
-      WEBUI_AUTH: "False",
-      ENABLE_PERSISTENT_CONFIG: "False",
-      OPL_WEBUI_AUTH_MODE: "none",
-      AIONUI_WEBUI_AUTH_MODE: "none",
       HOME: "/data",
       OPL_WORKSPACE_ROOT: "/projects",
       CODEX_HOME: "/data/codex"

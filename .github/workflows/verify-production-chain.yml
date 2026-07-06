@@ -60,6 +60,7 @@ jobs:
       OPL_VERIFY_RUN_ID: ${{ inputs.run_id || github.run_id }}
       OPL_VERIFY_BROWSER_E2E: "1"
       OPL_VERIFY_SCREENSHOT_DIR: "artifacts/production-browser-e2e"
+      OPL_AIONUI_ADMIN_PASSWORD_SEED: ${{ secrets.OPL_AIONUI_ADMIN_PASSWORD_SEED }}
 
     steps:
       - name: Checkout

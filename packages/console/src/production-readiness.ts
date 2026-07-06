@@ -10,6 +10,7 @@ const REQUIRED_COMMON_ENV = [
   "OPL_RUNTIME_PROVIDER",
   "OPL_WORKSPACE_IMAGE",
   "OPL_WORKSPACE_DOMAIN",
+  "OPL_AIONUI_ADMIN_PASSWORD_SEED",
   "DATABASE_URL"
 ];
 
@@ -73,6 +74,11 @@ function matchesOplAppContract(env) {
     String(env.OPL_WORKSPACE_DATA_DIR || "/data") === "/data" &&
     String(env.OPL_WORKSPACE_PROJECTS_DIR || "/projects") === "/projects"
   );
+}
+
+function hasAionUiAdminPasswordSeed(env) {
+  const seed = String(env.OPL_AIONUI_ADMIN_PASSWORD_SEED || "");
+  return seed.length >= 24 && !/(password|changeme|change-me|example|placeholder|seed)/i.test(seed);
 }
 
 function seedUsersFromJson(value) {
@@ -169,6 +175,7 @@ export async function productionReadiness({ env = process.env, commandExists = (
       "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must point to the configured TCR registry"
     ),
     check("opl_app_contract", matchesOplAppContract(env), "one-person-lab-app WebUI must expose port 3000 and persist /data plus /projects"),
+    check("aionui_admin_password_seed", hasAionUiAdminPasswordSeed(env), "AionUI WebUI login must use a strong per-Workspace password seed"),
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),
     check("auth_seed", hasProductionAuthSeed(env), "OPL_CONSOLE_USERS_JSON or explicit PI/Admin auth credentials are required for production"),

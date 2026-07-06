@@ -3,6 +3,7 @@
     "OPL_RUNTIME_PROVIDER": { "value": "tencent-tke" },
     "DATABASE_URL": { "secretRef": "opl-cloud/database-url" },
     "OPL_CONSOLE_USERS_JSON": { "secretRef": "opl-cloud/auth-users-json" },
+    "OPL_AIONUI_ADMIN_PASSWORD_SEED": { "secretRef": "opl-cloud/aionui-admin-password-seed" },
     "OPL_PUBLIC_URL": { "value": "https://cloud.medopl.cn" },
     "OPL_CONSOLE_DOMAIN": { "value": "cloud.medopl.cn" },
     "OPL_WORKSPACE_DOMAIN": { "value": "workspace.medopl.cn" },

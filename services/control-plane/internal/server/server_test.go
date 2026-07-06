@@ -3,12 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +96,7 @@ func TestTKENodeSelectorUsesTencentInstanceLabel(t *testing.T) {
 func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
 	t.Setenv("OPL_IMAGE_PULL_SECRET_NAME", "pull-secret")
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
 	compute := map[string]any{"id": "compute-alpha", "ownerAccountId": "acct-alpha", "packageId": "basic", "runtime": map[string]any{"nodeSelector": map[string]any{"cloud.tencent.com/node-instance-id": "np-basic-2"}}}
 	storage := map[string]any{"providerResourceId": "pvc/opl-storage-alpha-data"}
 	var manifest map[string]any
@@ -101,11 +104,23 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 		t.Fatalf("decode workspace manifest: %v", err)
 	}
 	var deployment map[string]any
+	var secret map[string]any
 	for _, item := range manifest["items"].([]any) {
 		candidate := item.(map[string]any)
 		if candidate["kind"] == "Deployment" {
 			deployment = candidate
 		}
+		if candidate["kind"] == "Secret" {
+			secret = candidate
+		}
+	}
+	secretData := secret["data"].(map[string]any)
+	passwordBytes, err := base64.StdEncoding.DecodeString(secretData["OPL_AIONUI_ADMIN_PASSWORD"].(string))
+	if err != nil {
+		t.Fatalf("decode webui password: %v", err)
+	}
+	if string(passwordBytes) != "opl_jngdohVMGgp2Kdvpg4f-OLuNAa1!" {
+		t.Fatalf("workspace must derive a per-workspace WebUI password, got %q", string(passwordBytes))
 	}
 	podSpec := nested(deployment, "spec", "template", "spec").(map[string]any)
 	if nested(deployment, "metadata", "labels", "oplcloud.cn/workspace-id") != "ws-alpha" {
@@ -129,8 +144,19 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 		t.Fatalf("workspace limits must preserve the package shape: %#v", limits)
 	}
 	env := envMap(container["env"].([]any))
-	if env["AIONUI_ALLOW_REMOTE"] != "true" || env["WEBUI_AUTH"] != "False" || env["ENABLE_PERSISTENT_CONFIG"] != "False" {
-		t.Fatalf("workspace must disable app login through the runtime auth contract: %#v", env)
+	for key := range env {
+		if strings.Contains(key, "AUTH_MODE") || strings.Contains(key, "PERSISTENT_CONFIG") || key == "WEBUI"+"_"+"AUTH" {
+			t.Fatalf("workspace must use AionUI login with managed credentials, not retired auth bypass env: %#v", env)
+		}
+	}
+	if env["AIONUI_ALLOW_REMOTE"] != "true" {
+		t.Fatalf("workspace must allow remote AionUI access: %#v", env)
+	}
+	lifecycle := container["lifecycle"].(map[string]any)
+	postStart := nested(lifecycle, "postStart", "exec").(map[string]any)
+	command := postStart["command"].([]any)
+	if !strings.Contains(strings.Join([]string{command[0].(string), command[1].(string), command[2].(string)}, " "), "/api/webui/change-password") {
+		t.Fatalf("workspace must set the managed WebUI password after startup: %#v", command)
 	}
 }
 

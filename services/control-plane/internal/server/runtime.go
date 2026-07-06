@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -704,16 +706,34 @@ func workspaceManifest(workspaceID string, workspaceName string, token string, s
 		"OPL_CODEX_API_KEY":          b64(os.Getenv("OPL_CODEX_API_KEY")),
 		"OPL_CODEX_PROVIDER_NAME":    b64(os.Getenv("OPL_CODEX_PROVIDER_NAME")),
 	}
+	if password := deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), workspaceID, token); password != "" {
+		secretData["OPL_AIONUI_ADMIN_USERNAME"] = b64("admin")
+		secretData["OPL_AIONUI_ADMIN_PASSWORD"] = b64(password)
+	}
 	for key, value := range secretData {
 		if value == "" {
 			delete(secretData, key)
 		}
 	}
-	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{
-		map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": map[string]any{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/workspace-id": workspaceID}}, "type": "Opaque", "data": secretData},
-		map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": labels}, "template": map[string]any{"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"automountServiceAccountToken": false, "hostNetwork": true, "dnsPolicy": "ClusterFirstWithHostNet", "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": nested(compute, "runtime", "nodeSelector"), "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}}, "initContainers": []any{map[string]any{"name": "bootstrap-codex-config", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": serviceName + "-env"}}}, "env": []any{map[string]any{"name": "CODEX_HOME", "value": "/data/codex"}}, "command": []string{"node", "-e"}, "args": []string{codexBootstrapScript()}, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": false, "capabilities": map[string]any{"drop": []string{"ALL"}}}}}, "containers": []any{map[string]any{"name": "workspace", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": serviceName + "-env"}}}, "env": []any{map[string]any{"name": "OPL_COMPUTE_ALLOCATION_ID", "value": compute["id"]}, map[string]any{"name": "OPL_OWNER_ACCOUNT_ID", "value": compute["ownerAccountId"]}, map[string]any{"name": "OPL_PACKAGE_ID", "value": plan.ID}, map[string]any{"name": "DATA_DIR", "value": "/data"}, map[string]any{"name": "AIONUI_DATA_DIR", "value": "/data"}, map[string]any{"name": "OPL_PROJECTS_DIR", "value": "/projects"}, map[string]any{"name": "AIONUI_ALLOW_REMOTE", "value": "true"}, map[string]any{"name": "ALLOW_REMOTE", "value": "true"}, map[string]any{"name": "WEBUI_AUTH", "value": "False"}, map[string]any{"name": "ENABLE_PERSISTENT_CONFIG", "value": "False"}, map[string]any{"name": "OPL_WEBUI_AUTH_MODE", "value": "none"}, map[string]any{"name": "AIONUI_WEBUI_AUTH_MODE", "value": "none"}, map[string]any{"name": "HOME", "value": "/data"}, map[string]any{"name": "OPL_WORKSPACE_ROOT", "value": "/projects"}, map[string]any{"name": "CODEX_HOME", "value": "/data/codex"}}, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}}}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}}}}}},
-		map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels}, "spec": map[string]any{"type": "ClusterIP", "selector": labels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}},
-	}})
+	workspaceEnv := []any{
+		map[string]any{"name": "OPL_COMPUTE_ALLOCATION_ID", "value": compute["id"]},
+		map[string]any{"name": "OPL_OWNER_ACCOUNT_ID", "value": compute["ownerAccountId"]},
+		map[string]any{"name": "OPL_PACKAGE_ID", "value": plan.ID},
+		map[string]any{"name": "DATA_DIR", "value": "/data"},
+		map[string]any{"name": "AIONUI_DATA_DIR", "value": "/data"},
+		map[string]any{"name": "OPL_PROJECTS_DIR", "value": "/projects"},
+		map[string]any{"name": "AIONUI_ALLOW_REMOTE", "value": "true"},
+		map[string]any{"name": "ALLOW_REMOTE", "value": "true"},
+		map[string]any{"name": "HOME", "value": "/data"},
+		map[string]any{"name": "OPL_WORKSPACE_ROOT", "value": "/projects"},
+		map[string]any{"name": "CODEX_HOME", "value": "/data/codex"},
+	}
+	initContainer := map[string]any{"name": "bootstrap-codex-config", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": serviceName + "-env"}}}, "env": []any{map[string]any{"name": "CODEX_HOME", "value": "/data/codex"}}, "command": []string{"node", "-e"}, "args": []string{codexBootstrapScript()}, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": false, "capabilities": map[string]any{"drop": []string{"ALL"}}}}
+	workspaceContainer := map[string]any{"name": "workspace", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": serviceName + "-env"}}}, "env": workspaceEnv, "lifecycle": map[string]any{"postStart": map[string]any{"exec": map[string]any{"command": []string{"node", "-e", aionUIPasswordBootstrapScript()}}}}, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}}
+	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": map[string]any{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/workspace-id": workspaceID}}, "type": "Opaque", "data": secretData}
+	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": labels}, "template": map[string]any{"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"automountServiceAccountToken": false, "hostNetwork": true, "dnsPolicy": "ClusterFirstWithHostNet", "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": nested(compute, "runtime", "nodeSelector"), "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}}, "initContainers": []any{initContainer}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}}}}}}
+	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels}, "spec": map[string]any{"type": "ClusterIP", "selector": labels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
+	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{secret, deployment, service}})
 }
 
 func workspaceResources(plan plan) map[string]any {
@@ -815,6 +835,44 @@ func b64(value string) string {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString([]byte(value))
+}
+
+func deriveAionUIAdminPassword(seed string, workspaceID string, token string) string {
+	secret := strings.TrimSpace(seed)
+	if secret == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(workspaceID + ":" + token))
+	digest := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if len(digest) > 24 {
+		digest = digest[:24]
+	}
+	return "opl_" + digest + "Aa1!"
+}
+
+func aionUIPasswordBootstrapScript() string {
+	return `const password = String(process.env.OPL_AIONUI_ADMIN_PASSWORD || "").trim();
+if (!password) process.exit(1);
+const body = JSON.stringify({ new_password: password });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let last = "";
+for (let attempt = 0; attempt < 90; attempt += 1) {
+  try {
+    const response = await fetch("http://127.0.0.1:3000/api/webui/change-password", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body
+    });
+    if (response.ok) process.exit(0);
+    last = response.status + ":" + await response.text();
+  } catch (error) {
+    last = error && error.message ? error.message : String(error);
+  }
+  await sleep(1000);
+}
+console.error("[opl] failed to set AionUI admin password: " + last);
+process.exit(1);`
 }
 
 func stableID(parts ...string) string {

@@ -293,17 +293,16 @@ AIONUI_ALLOW_REMOTE=true
 DATA_DIR=/data
 AIONUI_DATA_DIR=/data
 OPL_PROJECTS_DIR=/projects
-WEBUI_AUTH=False
-ENABLE_PERSISTENT_CONFIG=False
-OPL_WEBUI_AUTH_MODE=none
 HOME=/data
 OPL_WORKSPACE_ROOT=/projects
 CODEX_HOME=/data/codex
 ```
 
+OPL Cloud keeps AionUI login enabled. The control-plane derives a per-Workspace admin password from `OPL_AIONUI_ADMIN_PASSWORD_SEED`, stores it only in the Workspace Kubernetes Secret, and the container `postStart` hook sets it through AionUI's local WebUI password API before browser E2E continues.
+
 API keys and model credentials must not be injected through CLI arguments, environment variables, or Docker Compose. They are entered inside the WebUI after the Workspace URL is opened.
 
-No-auth mode is acceptable only because OPL Cloud owns the Workspace URL token boundary. Do not expose the container directly without the OPL Workspace URL/token gateway or another trusted proxy boundary.
+Do not expose the container directly without the OPL Workspace URL/token gateway or another trusted proxy boundary.
 
 ## Documentation And Development Lifecycle
 

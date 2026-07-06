@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +11,7 @@ const DEFAULT_WORKSPACE_URL_ATTEMPTS = 12;
 const DEFAULT_RETRY_DELAY_MS = 5000;
 const DEFAULT_MOUNT_PATH = "/data";
 const WORKSPACE_PERSISTENCE_ROOT = "/data";
+const DEFAULT_AIONUI_ADMIN_USERNAME = "admin";
 
 function defaultRunId() {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
@@ -155,6 +157,16 @@ function browserCookiesFromHeader(cookieHeader = "", url = "") {
       } : null;
     })
     .filter(Boolean);
+}
+
+function deriveAionUiAdminPassword(seed, workspaceId, token) {
+  const secret = String(seed || "").trim();
+  if (!secret || !workspaceId || !token) return "";
+  const digest = createHmac("sha256", secret)
+    .update(`${workspaceId}:${token}`)
+    .digest("base64url")
+    .slice(0, 24);
+  return `opl_${digest}Aa1!`;
 }
 
 async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
@@ -358,6 +370,21 @@ async function requireFirstFileInput(page) {
   const input = page.locator('input[type="file"]').first();
   if (await input.count() < 1) throw new Error("workspace_browser_file_input_missing");
   return input;
+}
+
+async function loginAionUiIfNeeded(page, { username = DEFAULT_AIONUI_ADMIN_USERNAME, password = "" } = {}) {
+  if (!password || typeof page.locator !== "function") return false;
+  const usernameInput = page.locator('input[name="username"], input#username, input[autocomplete="username"]').first();
+  if (await usernameInput.count() < 1) return false;
+  const passwordInput = page.locator('input[name="password"], input#password, input[type="password"], input[autocomplete="current-password"]').first();
+  if (await passwordInput.count() < 1) throw new Error("workspace_browser_webui_password_input_missing");
+  await usernameInput.fill(username);
+  await passwordInput.fill(password);
+  await page.getByRole("button", { name: /Sign In|登录|登入|Log in/i }).first().click({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    return !document.querySelector('input[name="password"], input#password, input[type="password"], input[autocomplete="current-password"]');
+  }, {}, { timeout: 30_000 });
+  return true;
 }
 
 async function selectDefaultWorkspaceAssistant(page) {
@@ -615,6 +642,18 @@ export async function verifyWorkspaceBrowserUi({
       runId,
       successDetails: { url: workspaceUrl },
       task: () => page.goto(workspaceAuth?.url || workspaceUrl, { waitUntil: "networkidle", timeout: 120_000 })
+    });
+    await runBrowserCheck({
+      page,
+      checks,
+      name: "workspace_browser_webui_login",
+      screenshotDir,
+      runId,
+      recordSuccess: Boolean(workspaceAuth?.webuiPassword),
+      task: () => loginAionUiIfNeeded(page, {
+        username: workspaceAuth?.webuiUsername,
+        password: workspaceAuth?.webuiPassword
+      })
     });
 
     const fixture = await writeBrowserUploadFixture({ runId });
@@ -1133,6 +1172,12 @@ export async function verifyProductionChain({
         fetchImpl,
         workspaceAuth: workspaceUrlResult
       });
+      workspaceBrowserAuth.webuiUsername = DEFAULT_AIONUI_ADMIN_USERNAME;
+      workspaceBrowserAuth.webuiPassword = deriveAionUiAdminPassword(
+        process.env.OPL_AIONUI_ADMIN_PASSWORD_SEED,
+        workspace.id,
+        workspace.access?.token || ""
+      );
       await verifyWorkspaceBrowserUi({
         workspaceUrl: workspace.url,
         workspaceAuth: workspaceBrowserAuth,

@@ -10,6 +10,7 @@ const tkeProductionEnv = {
   OPL_RUNTIME_PROVIDER: "tencent-tke",
   OPL_CLOUD_IMAGE: "registry.example.com/opl/opl-cloud:2026-07-01",
   OPL_WORKSPACE_IMAGE: "registry.example.com/opl/one-person-lab-app:2026-07-01",
+  OPL_AIONUI_ADMIN_PASSWORD_SEED: "workspace-secret-2026-very-long",
   OPL_WORKSPACE_WEBUI_PORT: "3000",
   OPL_WORKSPACE_DATA_DIR: "/data",
   OPL_WORKSPACE_PROJECTS_DIR: "/projects",
@@ -67,6 +68,7 @@ test("productionReadiness passes only when the TKE production runtime, images, p
     "runtime_provider:true",
     "registry_images:true",
     "opl_app_contract:true",
+    "aionui_admin_password_seed:true",
     "workspace_domain:true",
     "database_url:true",
     "auth_seed:true",
@@ -74,6 +76,19 @@ test("productionReadiness passes only when the TKE production runtime, images, p
     "live_mutation_guard:true",
     "tools:true"
   ]);
+});
+
+test("productionReadiness requires the AionUI admin password seed for managed WebUI login", async () => {
+  const { OPL_AIONUI_ADMIN_PASSWORD_SEED, ...envWithoutWebuiPasswordSeed } = tkeProductionEnv;
+
+  const report = await productionReadiness({
+    env: envWithoutWebuiPasswordSeed,
+    commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.missingEnv.includes("OPL_AIONUI_ADMIN_PASSWORD_SEED"));
+  assert.ok(report.failedChecks.includes("aionui_admin_password_seed"));
 });
 
 test("productionReadiness reports only TKE-specific blockers", async () => {

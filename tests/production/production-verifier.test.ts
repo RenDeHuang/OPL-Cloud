@@ -463,6 +463,96 @@ function fakeWorkspaceBrowserFactory(actions = [], { assistantSelectionTakesEffe
   };
 }
 
+function fakeAionUiLoginBrowserFactory(actions = []) {
+  const state = { loggedIn: false, username: "", password: "" };
+  const page = {
+    async goto(url) {
+      actions.push(["goto", url]);
+    },
+    locator(selector) {
+      actions.push(["locator", selector]);
+      return {
+        first() {
+          return this;
+        },
+        last() {
+          return this;
+        },
+        async count() {
+          if (selector.includes('input[type="file"]')) return state.loggedIn ? 1 : 0;
+          if (/username|autocomplete="username"/i.test(selector)) return state.loggedIn ? 0 : 1;
+          if (/password|autocomplete="current-password"/i.test(selector)) return state.loggedIn ? 0 : 1;
+          return 0;
+        },
+        async fill(value) {
+          actions.push(["fillLocator", selector, value]);
+          if (/username|autocomplete="username"/i.test(selector)) state.username = value;
+          if (/password|autocomplete="current-password"/i.test(selector)) state.password = value;
+        },
+        async setInputFiles(filePath) {
+          actions.push(["setInputFiles", filePath]);
+        }
+      };
+    },
+    getByRole(role, options = {}) {
+      const roleName = String(options.name || "");
+      actions.push(["getByRole", role, roleName]);
+      return {
+        first() {
+          return this;
+        },
+        last() {
+          return this;
+        },
+        async fill(value) {
+          actions.push(["fill", role, value]);
+        },
+        async click() {
+          actions.push(["click", role, roleName]);
+          if (/Sign In|登录|登入/i.test(roleName) && state.username === "admin" && state.password === "ManagedWebuiPass2026!") {
+            state.loggedIn = true;
+          }
+        }
+      };
+    },
+    async waitForFunction(fn, arg, options = {}) {
+      actions.push(["waitForFunction", arg, options]);
+      return fn ? true : true;
+    },
+    async screenshot(options = {}) {
+      actions.push(["screenshot", options.path || ""]);
+    }
+  };
+  return {
+    chromium: {
+      async launch() {
+        actions.push(["launch"]);
+        return {
+          async newContext() {
+            actions.push(["newContext"]);
+            return {
+              async addCookies(cookies) {
+                actions.push(["addCookies", cookies]);
+              },
+              async newPage() {
+                actions.push(["newPage"]);
+                return page;
+              }
+            };
+          },
+          async newPage() {
+            actions.push(["newPage"]);
+            return page;
+          },
+          async close() {
+            actions.push(["close"]);
+          }
+        };
+      }
+    }
+  };
+}
+
 function fakeGuidDomBrowserFactory(actions = []) {
   const state = {
     hash: "#/home",
@@ -950,6 +1040,30 @@ test("production verifier primes browser workspace auth before opening one-perso
   assert.deepEqual(actions.filter(([name]) => name === "goto").map(([, url]) => url), [
     "https://workspace.medopl.cn/w/ws-browser001/"
   ]);
+});
+
+test("production verifier logs into AionUI before probing the workspace file input", async () => {
+  const checks = [];
+  const actions = [];
+
+  await verifyWorkspaceBrowserUi({
+    workspaceUrl: "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser",
+    workspaceAuth: {
+      url: "https://workspace.medopl.cn/w/ws-browser001/",
+      cookie: "opl_ws_active=ws-browser001; opl_ws_ws-browser001=share_browser",
+      webuiUsername: "admin",
+      webuiPassword: "ManagedWebuiPass2026!"
+    },
+    runId: "browser-run",
+    checks,
+    browserFactory: fakeAionUiLoginBrowserFactory(actions),
+    screenshotDir: ""
+  });
+
+  assert.ok(actions.some((action) => action[0] === "fillLocator" && /username/i.test(action[1]) && action[2] === "admin"));
+  assert.ok(actions.some((action) => action[0] === "fillLocator" && /password/i.test(action[1]) && action[2] === "ManagedWebuiPass2026!"));
+  assert.ok(actions.findIndex((action) => action[0] === "click" && /Sign In/i.test(action[2])) < actions.findIndex((action) => action[0] === "setInputFiles"));
+  assert.ok(checks.some((check) => check.name === "workspace_browser_webui_login" && check.ok === true));
 });
 
 test("production verifier fails message submission when assistant selection does not enter task mode", async () => {
