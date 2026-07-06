@@ -156,8 +156,8 @@ export function WorkspacesPage({ state, wallet, runAction, session }) {
                   actions={[
                     { label: "详情", icon: <Settings2 size={14} />, onClick: () => navigate(routeTo("workspace.detail", { id: row.id })) },
                     { label: "打开", icon: <LinkIcon size={14} />, disabled: row.access?.tokenStatus !== "active", onClick: () => window.open(row.url, "_blank", "noopener,noreferrer") },
-                    { label: "重置", icon: <RefreshCw size={14} />, disabled: row.access?.tokenStatus !== "active", onClick: () => runAction(() => resetWorkspaceToken({ workspaceId: row.id }, session.csrfToken), "URL 已重置") },
-                    { label: "停用", danger: true, icon: <Trash2 size={14} />, disabled: row.access?.tokenStatus !== "active", onClick: () => runAction(() => deleteWorkspaceToken({ workspaceId: row.id }, session.csrfToken), "URL 已停用") }
+                    { label: "重置", icon: <RefreshCw size={14} />, disabled: row.access?.tokenStatus !== "active", onClick: () => runAction(() => resetWorkspaceToken({ workspaceId: row.id }, session.csrfToken), "URL 已重置", { actionKey: `workspace-reset-${row.id}` }) },
+                    { label: "停用", danger: true, icon: <Trash2 size={14} />, disabled: row.access?.tokenStatus !== "active", onClick: () => runAction(() => deleteWorkspaceToken({ workspaceId: row.id }, session.csrfToken), "URL 已停用", { actionKey: `workspace-delete-${row.id}` }) }
                   ]}
                 />
               )

@@ -121,7 +121,8 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
                     disabled={row.status !== "active"}
                     onConfirm={() => runAction(
                       () => disableUser({ userId: row.id, reason: "admin_disabled" }, session.csrfToken),
-                      "用户已禁用"
+                      "用户已禁用",
+                      { actionKey: `admin-disable-${row.id}` }
                     )}
                   />,
                   <OperationConfirmButton
@@ -133,7 +134,8 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
                     disabled={row.status === "deleted"}
                     onConfirm={() => runAction(
                       () => deleteUser({ userId: row.id, reason: "admin_deleted" }, session.csrfToken),
-                      "用户已删除"
+                      "用户已删除",
+                      { actionKey: `admin-delete-${row.id}` }
                     )}
                   />
                 ]} />
@@ -210,7 +212,8 @@ function TopUpDrawer({ open, setOpen, form, session, runAction }) {
             ...values,
             idempotencyKey: topUpOperationKey.current
           }, session.csrfToken),
-          "充值已记录"
+          "充值已记录",
+          { actionKey: "admin-manual-topup" }
         );
         if (toppedUp) {
           topUpOperationKey.current = "";
@@ -481,7 +484,8 @@ export function AdminCleanupPage({ managementState, session, runAction }) {
             disabled={cleanupCandidateCount === 0}
             onConfirm={() => runAction(
               () => cleanupWorkspaceAccess({ reason: "operator_cleanup_all" }, session.csrfToken),
-              "无效访问 URL 已清理"
+              "无效访问 URL 已清理",
+              { actionKey: "admin-cleanup-workspace-access" }
             )}
           />
         )}
@@ -493,7 +497,8 @@ export function AdminCleanupPage({ managementState, session, runAction }) {
           storageAttachments={managementState.storageAttachments || []}
           onCleanup={(row) => runAction(
             () => cleanupWorkspaceAccess({ workspaceIds: [row.id], reason: "operator_cleanup_single" }, session.csrfToken),
-            "访问 URL 已清理"
+            "访问 URL 已清理",
+            { actionKey: `admin-cleanup-workspace-${row.id}` }
           )}
         />
       </InsightPanel>
