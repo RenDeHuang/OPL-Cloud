@@ -134,6 +134,10 @@ function cookieHeaderFromSetCookie(setCookie = "") {
     .join("; ");
 }
 
+function mergeCookieHeaders(...cookies) {
+  return cookies.map((cookie) => String(cookie || "").trim()).filter(Boolean).join("; ");
+}
+
 function browserCookiesFromHeader(cookieHeader = "", url = "") {
   const parsed = new URL(url);
   return String(cookieHeader)
@@ -217,6 +221,24 @@ async function requestWorkspaceJson({ fetchImpl, workspaceUrl, path, method = "G
     throw new Error(`workspace_api_failed:${method}:${path}:${response.status}:${message}`);
   }
   return payload;
+}
+
+async function requestWorkspaceBrowserAuth({ fetchImpl, workspaceAuth }) {
+  const response = await fetchImpl(workspaceApiUrl(workspaceAuth.url, "/api/auth/user"), {
+    method: "GET",
+    headers: workspaceAuth.cookie ? { cookie: workspaceAuth.cookie } : undefined
+  });
+  const payload = await readResponse(response);
+  if (!response.ok) {
+    const message = typeof payload === "string" ? payload : payload.error || JSON.stringify(payload);
+    throw new Error(`workspace_browser_auth_failed:${response.status}:${message}`);
+  }
+  const webuiCookie = cookieHeaderFromSetCookie(response.headers?.get?.("set-cookie") || "");
+  if (!webuiCookie) throw new Error("workspace_browser_auth_cookie_missing");
+  return {
+    ...workspaceAuth,
+    cookie: mergeCookieHeaders(workspaceAuth.cookie, webuiCookie)
+  };
 }
 
 function runtimePayloadData(payload) {
@@ -592,12 +614,7 @@ export async function verifyWorkspaceBrowserUi({
       screenshotDir,
       runId,
       successDetails: { url: workspaceUrl },
-      task: async () => {
-        if (workspaceAuth) {
-          await page.goto(workspaceApiUrl(workspaceAuth.url || workspaceUrl, "/api/auth/user"), { waitUntil: "networkidle", timeout: 120_000 });
-        }
-        await page.goto(workspaceAuth?.url || workspaceUrl, { waitUntil: "networkidle", timeout: 120_000 });
-      }
+      task: () => page.goto(workspaceAuth?.url || workspaceUrl, { waitUntil: "networkidle", timeout: 120_000 })
     });
 
     const fixture = await writeBrowserUploadFixture({ runId });
@@ -1112,9 +1129,13 @@ export async function verifyProductionChain({
     });
     addCheck(checks, "workspace_url", true, { url: workspace.url, attempts: workspaceUrlResult.attempts });
     if (browserE2E) {
+      const workspaceBrowserAuth = await requestWorkspaceBrowserAuth({
+        fetchImpl,
+        workspaceAuth: workspaceUrlResult
+      });
       await verifyWorkspaceBrowserUi({
         workspaceUrl: workspace.url,
-        workspaceAuth: workspaceUrlResult,
+        workspaceAuth: workspaceBrowserAuth,
         runId,
         checks,
         browserFactory,

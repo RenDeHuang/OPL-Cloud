@@ -222,11 +222,17 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
       csrf: options.headers?.["x-opl-csrf-token"] || "",
       body: options.body ? JSON.parse(options.body) : null
     });
-    const payload = responses[key] ?? responses[key.replace(/#1$/, "")];
+    const payload = responses[key] ?? responses[key.replace(/#\d+$/, "")];
     if (typeof payload === "string") return htmlResponse(payload);
     if (payload) {
       if (key === "POST /api/auth/operator-login" && responseHeaders) return jsonResponse(payload, 200, responseHeaders);
-      return jsonResponse(payload, statusByKey[key] || statusByKey[key.replace(/#1$/, "")] || 200);
+      if (String(key).includes("/api/auth/user")) {
+        return jsonResponse(payload, 200, new Headers({
+          "content-type": "application/json",
+          "set-cookie": "opl_webui_session=browser-session; Path=/; HttpOnly"
+        }));
+      }
+      return jsonResponse(payload, statusByKey[key] || statusByKey[key.replace(/#\d+$/, "")] || 200);
     }
     throw new Error(`unexpected_request:${key}`);
   };
@@ -263,8 +269,14 @@ function workspaceCookieGatewayFetch({ responses, requests = [] }) {
     requestCounts.set(key, count);
     key = count === 1 ? key : `${key}#${count}`;
     requests.push({ key, cookie: requestCookie, redirect: options.redirect || "" });
-    const payload = responses[key] ?? responses[key.replace(/#1$/, "")];
+    const payload = responses[key] ?? responses[key.replace(/#\d+$/, "")];
     if (typeof payload === "string") return htmlResponse(payload);
+    if (payload && String(key).includes("/api/auth/user")) {
+      return jsonResponse(payload, 200, new Headers({
+        "content-type": "application/json",
+        "set-cookie": "opl_webui_session=browser-session; Path=/; HttpOnly"
+      }));
+    }
     if (payload) return jsonResponse(payload);
     throw new Error(`unexpected_request:${key}`);
   };
@@ -936,7 +948,6 @@ test("production verifier primes browser workspace auth before opening one-perso
     { name: "opl_ws_ws-browser001", value: "share_browser", domain: "workspace.medopl.cn", path: "/", secure: true }
   ]);
   assert.deepEqual(actions.filter(([name]) => name === "goto").map(([, url]) => url), [
-    "https://workspace.medopl.cn/w/ws-browser001/api/auth/user",
     "https://workspace.medopl.cn/w/ws-browser001/"
   ]);
 });
@@ -1045,10 +1056,10 @@ test("production verifier runs optional browser UI checks after Workspace URL is
     "workspace_browser_message_sent:true",
     "workspace_browser_reply_seen:true"
   ]);
-  assert.deepEqual(actions.filter(([name]) => name === "goto").map(([, url]) => url), [
-    workspaceUrl(chain.workspace.url, "/api/auth/user"),
-    chain.workspace.url
-  ]);
+  assert.deepEqual(actions.filter(([name]) => name === "goto").map(([, url]) => url), [chain.workspace.url]);
+  assert.ok(actions.find((action) => action[0] === "addCookies")?.[1].some((cookie) => (
+    cookie.name === "opl_webui_session" && cookie.value === "browser-session"
+  )));
 });
 
 test("production verifier reports browser failure stage with resources, checks, and screenshot", async () => {
