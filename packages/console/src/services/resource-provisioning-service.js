@@ -6,13 +6,12 @@ import {
   ensureUserWallet
 } from "./wallet-service.js";
 import {
-  computeHourlyBase,
+  computePriceSnapshot,
   hourlyStorageAmount,
   packageHoldAmount,
   pricedComputeHourly,
   pricedStorageGbMonth,
-  pricingMarkup,
-  storageGbMonthBase
+  storagePriceSnapshot
 } from "./pricing-service.js";
 import { OplDomainService } from "./opl-domain-service.js";
 
@@ -220,10 +219,11 @@ export class ResourceProvisioningService extends OplDomainService {
         holdType: "compute",
         metadata: {
           computeAllocationId: allocationId,
+          ownerAccountId: accountId,
+          ownerUserId: account.id,
           packageId,
           holdDays: 7,
-          baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
-          markup: pricingMarkup(this.pricing)
+          ...computePriceSnapshot({ packagePlan, pricing: this.pricing })
         }
       }), { computeAllocationId: allocationId });
       state.billingLedger.push(ledger);
@@ -531,11 +531,12 @@ export class ResourceProvisioningService extends OplDomainService {
         holdType: "storage",
         metadata: {
           storageId,
+          ownerAccountId: accountId,
+          ownerUserId: account.id,
           packageId,
           sizeGb: normalizedSizeGb,
           holdDays: 7,
-          baseGbMonth: storageGbMonthBase(this.pricing),
-          markup: pricingMarkup(this.pricing)
+          ...storagePriceSnapshot({ pricing: this.pricing, sizeGb: normalizedSizeGb })
         }
       }), { storageId });
       state.billingLedger.push(ledger);

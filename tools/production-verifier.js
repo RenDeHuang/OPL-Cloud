@@ -10,7 +10,6 @@ const DEFAULT_WORKSPACE_URL_ATTEMPTS = 12;
 const DEFAULT_RETRY_DELAY_MS = 5000;
 const DEFAULT_MOUNT_PATH = "/data";
 const WORKSPACE_PERSISTENCE_ROOT = "/data";
-const DEFAULT_REQUEST_USAGE_AMOUNT = 0.42;
 
 function defaultRunId() {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
@@ -773,15 +772,6 @@ function assertRuntimeStatus(checks, runtimeStatus, name = "workspace_runtime_st
   });
 }
 
-function assertRequestUsage(checks, usage, workspace) {
-  addCheck(checks, "request_usage_recorded", Boolean(
-    usage?.id &&
-    usage?.accountId === workspace?.ownerAccountId &&
-    usage?.workspaceId === workspace?.id &&
-    usage?.requestId
-  ), { usageId: usage?.id });
-}
-
 function assertResourceBillingSettlement(checks, settlement, { accountId, compute, storage }) {
   const entries = settlement?.entries || [];
   const hasComputeDebit = entries.some((entry) =>
@@ -800,10 +790,9 @@ function assertResourceBillingSettlement(checks, settlement, { accountId, comput
   });
 }
 
-function assertLedgerAndUsage(checks, state, { accountId, compute, storage, attachment, workspace, requestUsage }) {
+function assertLedgerAndUsage(checks, state, { accountId, compute, storage, attachment }) {
   const ledger = state?.billingLedger || [];
   const resourceUsage = state?.resourceUsageLogs || [];
-  const requestUsageLogs = state?.requestUsageLogs || [];
   const walletTransactions = state?.walletTransactions || [];
 
   const hasComputeLedger = ledger.some((entry) =>
@@ -817,11 +806,6 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     entry.type === "storage_debit"
   );
   const hasAttachmentLedger = ledger.some((entry) => entry.accountId === accountId && entry.attachmentId === attachment?.id);
-  const hasRequestLedger = ledger.some((entry) =>
-    entry.accountId === accountId &&
-    entry.workspaceId === workspace?.id &&
-    entry.type === "request_debit"
-  );
   const hasComputeUsage = resourceUsage.some((entry) =>
     entry.accountId === accountId &&
     entry.computeAllocationId === compute?.id &&
@@ -833,11 +817,6 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     entry.resourceType === "storage"
   );
   const hasAttachmentUsage = resourceUsage.some((entry) => entry.accountId === accountId && entry.attachmentId === attachment?.id);
-  const hasRequestUsage = requestUsageLogs.some((entry) =>
-    entry.accountId === accountId &&
-    entry.workspaceId === workspace?.id &&
-    (entry.id === requestUsage?.id || entry.requestId === requestUsage?.requestId)
-  );
   const hasComputeWalletTransaction = walletTransactions.some((entry) =>
     entry.accountId === accountId &&
     entry.metadata?.computeAllocationId === compute?.id &&
@@ -848,23 +827,15 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     entry.metadata?.storageId === storage?.id &&
     entry.type === "storage_debit"
   );
-  const hasRequestWalletTransaction = walletTransactions.some((entry) =>
-    entry.accountId === accountId &&
-    entry.workspaceId === workspace?.id &&
-    entry.type === "request_debit"
-  );
   const missingChecks = [
     [hasComputeLedger, "compute_ledger"],
     [hasStorageLedger, "storage_ledger"],
     [hasAttachmentLedger, "attachment_ledger"],
-    [hasRequestLedger, "request_ledger"],
     [hasComputeUsage, "compute_usage"],
     [hasStorageUsage, "storage_usage"],
     [hasAttachmentUsage, "attachment_usage"],
-    [hasRequestUsage, "request_usage"],
     [hasComputeWalletTransaction, "compute_wallet_transaction"],
-    [hasStorageWalletTransaction, "storage_wallet_transaction"],
-    [hasRequestWalletTransaction, "request_wallet_transaction"]
+    [hasStorageWalletTransaction, "storage_wallet_transaction"]
   ].filter(([ok]) => !ok).map(([, name]) => name);
 
   addCheck(checks, "ledger_and_usage_verified", Boolean(
@@ -872,14 +843,11 @@ function assertLedgerAndUsage(checks, state, { accountId, compute, storage, atta
     hasComputeLedger &&
     hasStorageLedger &&
     hasAttachmentLedger &&
-    hasRequestLedger &&
     hasComputeUsage &&
     hasStorageUsage &&
     hasAttachmentUsage &&
-    hasRequestUsage &&
     hasComputeWalletTransaction &&
-    hasStorageWalletTransaction &&
-    hasRequestWalletTransaction
+    hasStorageWalletTransaction
   ), { missingChecks });
 }
 
@@ -987,8 +955,6 @@ export async function verifyProductionChain({
   assertConsoleOrigin(normalizedOrigin, { allowPrivateConsoleOrigin });
   const effectiveWorkspaceName = workspaceName || `${DEFAULT_WORKSPACE_NAME} ${runId}`;
   const creditSourceEventId = `production_verification_credit:${runId}`;
-  const requestUsageSourceEventId = `production_verification_request_usage:${runId}`;
-  const requestId = `production-verification-request:${runId}`;
   const computeName = `${effectiveWorkspaceName} compute ${runId}`;
   const storageName = `${effectiveWorkspaceName} storage ${runId}`;
   let compute = null;
@@ -1201,26 +1167,6 @@ export async function verifyProductionChain({
       fileProof
     });
 
-    const requestUsage = await requestJson({
-      fetchImpl,
-      origin: normalizedOrigin,
-      path: "/api/billing/request-usage",
-      method: "POST",
-      auth,
-      body: {
-        accountId,
-        workspaceId: workspace.id,
-        requestId,
-        provider: "sub2api",
-        model: "production-verification",
-        inputTokens: 1,
-        outputTokens: 1,
-        amount: DEFAULT_REQUEST_USAGE_AMOUNT,
-        sourceEventId: requestUsageSourceEventId
-      }
-    });
-    assertRequestUsage(checks, requestUsage, workspace);
-
     const resourceSettlement = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
@@ -1249,9 +1195,7 @@ export async function verifyProductionChain({
       accountId,
       compute: replacementCompute,
       storage,
-      attachment: firstAttachmentForLedger || attachment,
-      workspace,
-      requestUsage
+      attachment: firstAttachmentForLedger || attachment
     });
 
     const cleanupErrors = await cleanupVerificationResources({

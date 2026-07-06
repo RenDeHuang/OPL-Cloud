@@ -8,7 +8,6 @@ import {
   packageHoldAmount,
   pricedComputeHourly,
   pricedStorageGbMonth,
-  pricingMarkup,
   storageHoldAmount
 } from "./services/pricing-service.js";
 import { BillingService } from "./services/billing-service.js";
@@ -55,8 +54,8 @@ export class OplCloudService {
         currency: "CNY",
         computeHourly: pricedComputeHourly({ packagePlan: plan, pricing: this.pricing }),
         storageGbMonth: pricedStorageGbMonth(this.pricing),
-        markup: pricingMarkup(this.pricing),
-        source: "tencent_price_catalog"
+        priceBasis: this.pricing.priceBasis || "opl_user_price_catalog",
+        source: "opl_user_price_catalog"
       }
     }));
   }
@@ -165,10 +164,6 @@ export class OplCloudService {
     return this.billing.billingLedger(...args);
   }
 
-  async recordRequestUsage(...args) {
-    return this.billing.recordRequestUsage(...args);
-  }
-
   async recordTaskEvidenceReceipt(...args) {
     return this.ledgerEvidence.recordTaskEvidenceReceipt(...args);
   }
@@ -179,6 +174,14 @@ export class OplCloudService {
 
   async recordBillingReconciliation(...args) {
     return this.billing.recordBillingReconciliation(...args);
+  }
+
+  async aggregateResourceUsage(...args) {
+    return this.billing.aggregateResourceUsage(...args);
+  }
+
+  async archiveResourceUsageLogs(...args) {
+    return this.billing.archiveResourceUsageLogs(...args);
   }
 
   async resolveWorkspaceAccess(...args) {

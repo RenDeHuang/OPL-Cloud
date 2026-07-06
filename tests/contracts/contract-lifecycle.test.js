@@ -30,7 +30,7 @@ test("all active OPL Cloud contracts declare lifecycle metadata and backlog file
   for (const file of await contractFiles()) {
     const contract = await readContract(file);
 
-    assert.equal(contract.schemaVersion, 1, `${file} schemaVersion`);
+    assert.equal(Number.isInteger(contract.schemaVersion) && contract.schemaVersion >= 1, true, `${file} schemaVersion`);
     assert.ok(contract.owner, `${file} owner`);
     assert.ok(contract.purpose, `${file} purpose`);
     assert.ok(["current", "backlog"].includes(contract.state), `${file} state`);

@@ -34,10 +34,10 @@
     "packages/console/src/services/core-utils.js",
     "packages/console/src/services/wallet-service.js",
     "packages/console/src/services/pricing-service.js",
-    "packages/console/src/services/usage-billing-service.js",
     "packages/console/src/services/workspace-service.js",
     "packages/console/src/services/workspace-lifecycle-service.js",
     "packages/console/src/services/billing-service.js",
+    "packages/console/src/services/resource-provisioning-service.js",
     "packages/console/src/services/ledger-evidence-service.js",
     "packages/console/src/services/console-read-model-service.js",
     "packages/console/src/services/runtime-operation-service.js"
@@ -45,6 +45,7 @@
   "facadeDelegates": [
     "WorkspaceLifecycleService",
     "BillingService",
+    "ResourceProvisioningService",
     "LedgerEvidenceService",
     "ConsoleReadModelService",
     "RuntimeOperationService"

@@ -1,4 +1,4 @@
-export function buildBillingRoutes({ appService, body, requireAdmin, session, scopedWorkspaceInput }) {
+export function buildBillingRoutes({ appService, body, requireAdmin, session }) {
   return {
     "POST /api/billing/topups": () => {
       requireAdmin();
@@ -10,7 +10,6 @@ export function buildBillingRoutes({ appService, body, requireAdmin, session, sc
         }
         : body);
     },
-    "POST /api/billing/request-usage": () => appService.recordRequestUsage(scopedWorkspaceInput(body)),
     "POST /api/billing/resource-settlements": () => {
       requireAdmin();
       return appService.settleResourceBilling(body);

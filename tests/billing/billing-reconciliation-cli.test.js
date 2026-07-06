@@ -30,7 +30,7 @@ test("Tencent reconciliation CLI writes JSON to stdout and returns non-zero on m
     assert.equal(code, 1);
     assert.equal(report.ok, false);
     assert.equal(report.guard.blockNewWorkspaces, true);
-    assert.equal(report.mismatches[0].serverDelta, -1.5);
+    assert.equal(report.mismatches[0].serverDelta, 0.5);
     assert.equal(stderr, "tencent_bill_reconciliation_failed\n");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -43,8 +43,8 @@ test("Tencent reconciliation CLI can normalize raw Tencent export rows before re
   const tencentPath = join(root, "tencent-raw.json");
   try {
     await writeFile(ledgerPath, JSON.stringify([
-      { workspaceId: "ws-alpha", type: "compute_debit", amount: -12, currency: "CNY" },
-      { workspaceId: "ws-alpha", type: "storage_debit", amount: -2.4, currency: "CNY" }
+      { workspaceId: "ws-alpha", type: "compute_debit", amount: -10, currency: "CNY" },
+      { workspaceId: "ws-alpha", type: "storage_debit", amount: -2, currency: "CNY" }
     ]));
     await writeFile(tencentPath, JSON.stringify({
       rows: [
@@ -66,12 +66,12 @@ test("Tencent reconciliation CLI can normalize raw Tencent export rows before re
     assert.equal(report.ok, true);
     assert.equal(report.guard.blockNewWorkspaces, false);
     assert.deepEqual(report.totals, {
-      ledgerServer: 12,
-      ledgerStorage: 2.4,
+      ledgerServer: 10,
+      ledgerStorage: 2,
       tencentServer: 10,
       tencentStorage: 2,
-      expectedServer: 12,
-      expectedStorage: 2.4,
+      expectedServer: 10,
+      expectedStorage: 2,
       serverDelta: 0,
       storageDelta: 0
     });
@@ -111,8 +111,8 @@ test("Tencent reconciliation CLI can read the OPL ledger from a deployed Console
           status: 200,
           json: async () => ({
             billingLedger: [
-              { workspaceId: "ws-alpha", type: "compute_debit", amount: -12, currency: "CNY" },
-              { workspaceId: "ws-alpha", type: "storage_debit", amount: -2.4, currency: "CNY" }
+              { workspaceId: "ws-alpha", type: "compute_debit", amount: -10, currency: "CNY" },
+              { workspaceId: "ws-alpha", type: "storage_debit", amount: -2, currency: "CNY" }
             ]
           })
         };

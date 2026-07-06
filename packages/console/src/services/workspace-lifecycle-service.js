@@ -2,7 +2,6 @@
 import { resolveWorkspaceOwner } from "../management-model.js";
 import { clone, makeId, makeToken, now } from "./core-utils.js";
 import { ensureUserWallet } from "./wallet-service.js";
-import { pricingMarkup } from "./pricing-service.js";
 import {
   latestWorkspaceForAccount,
   storageDestroyed,
@@ -200,7 +199,9 @@ export class WorkspaceLifecycleService extends OplDomainService {
       const compute = resourceForAccount(state.computeAllocations, accountId, attachment.computeAllocationId, "compute_allocation_not_found");
       const storage = resourceForAccount(state.storageVolumes, accountId, attachment.storageId, "storage_volume_not_found");
       const runtimeSnapshot = workspaceRuntimeSnapshot({ workspaceId, entry, compute, storage, attachment });
-      runtimeSnapshot.billing.priceMarkup = pricingMarkup(this.pricing);
+      runtimeSnapshot.billing.priceBasis = this.pricing.priceBasis || "opl_user_price_catalog";
+      runtimeSnapshot.billing.computeHourly = compute.hourlyPrice;
+      runtimeSnapshot.billing.storageGbMonth = storage.gbMonthPrice;
       const existing = state.workspaces[workspaceId];
       const workspace = existing || {
         id: workspaceId,

@@ -83,8 +83,7 @@ async function pricingContractValues() {
     env: {
       [contract.env.basicComputeHourly]: String(contract.computeHourly.basic),
       [contract.env.proComputeHourly]: String(contract.computeHourly.pro),
-      [contract.env.storageGbMonth]: String(contract.storageGbMonth),
-      [contract.env.markup]: String(contract.markup)
+      [contract.env.storageGbMonth]: String(contract.storageGbMonth)
     }
   };
 }
@@ -138,7 +137,15 @@ test("TKE production deploy workflow defaults to the versioned pricing contract"
   for (const [key, value] of Object.entries(env)) {
     assert.ok(String(currentJob.env[key]).includes(`'${value}'`), `${key} default should match pricing contract`);
   }
+  assert.equal(Object.hasOwn(currentJob.env, "OPL_BILLING_MARKUP"), false);
   assert.equal(Object.hasOwn(currentJob.env, "OPL_GPU_COMPUTE_HOURLY_CNY"), false);
+});
+
+test("production Pro package maps 8c16g to the real 8C16G Tencent instance type", async () => {
+  const source = await readFile(".github/workflows/deploy-tke-production.yml", "utf8");
+
+  assert.match(source, /OPL_PRO_COMPUTE_INSTANCE_TYPE:[^\n]*SA5\.2XLARGE16/);
+  assert.doesNotMatch(source, /OPL_PRO_COMPUTE_INSTANCE_TYPE:[^\n]*SA5\.LARGE16/);
 });
 
 test("TKE production deploy workflow passes package compute pool bindings to the manifest", async () => {
@@ -197,7 +204,6 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
       OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
       OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot",
-      OPL_BILLING_MARKUP: env.OPL_BILLING_MARKUP,
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,
       OPL_PRO_COMPUTE_HOURLY_CNY: env.OPL_PRO_COMPUTE_HOURLY_CNY,
       OPL_STORAGE_GB_MONTH_CNY: env.OPL_STORAGE_GB_MONTH_CNY,
@@ -205,7 +211,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
       OPL_RESOURCE_BILLING_INTERVAL_MS: "3600000",
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
       OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-package",
-      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.2XLARGE16",
       OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-package",
       OPL_CODEX_MODEL: "gpt-5.5",
       OPL_CODEX_REASONING_EFFORT: "xhigh",
@@ -243,14 +249,14 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
   assert.equal(config.metadata.namespace, "opl-cloud");
   assert.equal(config.data.OPL_CLOUD_IMAGE, "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test");
   assert.equal(config.data.OPL_WORKSPACE_IMAGE, "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest");
-  assert.equal(config.data.OPL_BILLING_MARKUP, env.OPL_BILLING_MARKUP);
+  assert.equal(config.data.OPL_BILLING_MARKUP, undefined);
   assert.equal(config.data.OPL_BASIC_COMPUTE_HOURLY_CNY, env.OPL_BASIC_COMPUTE_HOURLY_CNY);
   assert.equal(config.data.OPL_PRO_COMPUTE_HOURLY_CNY, env.OPL_PRO_COMPUTE_HOURLY_CNY);
   assert.equal(config.data.OPL_GPU_COMPUTE_HOURLY_CNY, undefined);
   assert.equal(config.data.OPL_STORAGE_GB_MONTH_CNY, env.OPL_STORAGE_GB_MONTH_CNY);
   assert.equal(config.data.OPL_BASIC_COMPUTE_INSTANCE_TYPE, "SA5.MEDIUM4");
   assert.equal(config.data.OPL_BASIC_COMPUTE_NODE_POOL_ID, "np-basic-package");
-  assert.equal(config.data.OPL_PRO_COMPUTE_INSTANCE_TYPE, "SA5.LARGE16");
+  assert.equal(config.data.OPL_PRO_COMPUTE_INSTANCE_TYPE, "SA5.2XLARGE16");
   assert.equal(config.data.OPL_PRO_COMPUTE_NODE_POOL_ID, "np-pro-package");
   assert.equal(config.data.OPL_CODEX_MODEL, "gpt-5.5");
   assert.equal(config.data.OPL_CODEX_REASONING_EFFORT, "xhigh");
@@ -305,14 +311,13 @@ test("TKE manifest renderer allows package node pool ids to be discovered at run
       OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
       OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
-      OPL_BILLING_MARKUP: env.OPL_BILLING_MARKUP,
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,
       OPL_PRO_COMPUTE_HOURLY_CNY: env.OPL_PRO_COMPUTE_HOURLY_CNY,
       OPL_STORAGE_GB_MONTH_CNY: env.OPL_STORAGE_GB_MONTH_CNY,
       OPL_RESOURCE_BILLING_WORKER_ENABLED: "1",
       OPL_RESOURCE_BILLING_INTERVAL_MS: "3600000",
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
-      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.2XLARGE16",
       OPL_CODEX_MODEL: "gpt-5.5",
       OPL_CODEX_REASONING_EFFORT: "xhigh",
       OPL_CODEX_BASE_URL: "https://gflabtoken.cn/v1",
@@ -356,7 +361,6 @@ test("TKE manifest renderer can skip the shared Ingress during deploy so Workspa
       OPL_WORKSPACE_STORAGE_CLASS: "cbs",
       OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
       OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: "cbs-snapshot",
-      OPL_BILLING_MARKUP: env.OPL_BILLING_MARKUP,
       OPL_BASIC_COMPUTE_HOURLY_CNY: env.OPL_BASIC_COMPUTE_HOURLY_CNY,
       OPL_PRO_COMPUTE_HOURLY_CNY: env.OPL_PRO_COMPUTE_HOURLY_CNY,
       OPL_STORAGE_GB_MONTH_CNY: env.OPL_STORAGE_GB_MONTH_CNY,
@@ -364,7 +368,7 @@ test("TKE manifest renderer can skip the shared Ingress during deploy so Workspa
       OPL_RESOURCE_BILLING_INTERVAL_MS: "3600000",
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
       OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-package",
-      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.2XLARGE16",
       OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-package",
       OPL_CODEX_MODEL: "gpt-5.5",
       OPL_CODEX_REASONING_EFFORT: "xhigh",

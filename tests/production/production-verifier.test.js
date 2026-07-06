@@ -150,13 +150,6 @@ function chainResponses(chain) {
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}`]: { success: true, data: persistenceText },
     [`GET ${chain.workspace.url}#2`]: "<html>one-person-lab-app</html>",
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`]: { success: true, data: persistenceText },
-    "POST /api/billing/request-usage": {
-      id: "usage-request-prod001",
-      workspaceId: chain.workspace.id,
-      accountId: "pi-prod",
-      requestId: "production-verification-request",
-      amount: 0.42
-    },
     "POST /api/billing/resource-settlements": {
       entries: [
         { id: "ledger-compute-debit", accountId: "pi-prod", computeAllocationId: chain.replacementCompute.id, type: "compute_debit" },
@@ -170,8 +163,7 @@ function chainResponses(chain) {
         { id: "ledger-storage", accountId: "pi-prod", storageId: chain.storage.id, type: "storage_hold" },
         { id: "ledger-attach", accountId: "pi-prod", attachmentId: chain.attachment.id, type: "storage_attached" },
         { id: "ledger-compute-debit", accountId: "pi-prod", computeAllocationId: chain.replacementCompute.id, type: "compute_debit" },
-        { id: "ledger-storage-debit", accountId: "pi-prod", storageId: chain.storage.id, type: "storage_debit" },
-        { id: "ledger-request", accountId: "pi-prod", workspaceId: chain.workspace.id, type: "request_debit" }
+        { id: "ledger-storage-debit", accountId: "pi-prod", storageId: chain.storage.id, type: "storage_debit" }
       ],
       resourceUsageLogs: [
         { id: "usage-compute", accountId: "pi-prod", computeAllocationId: chain.compute.id },
@@ -180,13 +172,9 @@ function chainResponses(chain) {
         { id: "usage-compute-debit", accountId: "pi-prod", computeAllocationId: chain.replacementCompute.id, resourceType: "compute" },
         { id: "usage-storage-debit", accountId: "pi-prod", storageId: chain.storage.id, resourceType: "storage" }
       ],
-      requestUsageLogs: [
-        { id: "usage-request-prod001", accountId: "pi-prod", workspaceId: chain.workspace.id, requestId: "production-verification-request" }
-      ],
       walletTransactions: [
         { id: "wallet-compute-debit", accountId: "pi-prod", metadata: { computeAllocationId: chain.replacementCompute.id }, type: "compute_debit" },
-        { id: "wallet-storage-debit", accountId: "pi-prod", metadata: { storageId: chain.storage.id }, type: "storage_debit" },
-        { id: "wallet-request-debit", accountId: "pi-prod", workspaceId: chain.workspace.id, type: "request_debit" }
+        { id: "wallet-storage-debit", accountId: "pi-prod", metadata: { storageId: chain.storage.id }, type: "storage_debit" }
       ]
     },
     "POST /api/storage-attachments/detach": { ...chain.attachment, status: "detached" },
@@ -708,7 +696,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "POST /api/workspaces/runtime-status#2",
     `GET ${chain.workspace.url}#2`,
     `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`,
-    "POST /api/billing/request-usage",
     "POST /api/billing/resource-settlements",
     "GET /api/state?accountId=pi-prod",
     "POST /api/storage-attachments/detach#2",
@@ -764,7 +751,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "replacement_workspace_runtime_status:true",
     "replacement_workspace_url:true",
     "workspace_persisted_file_read:true",
-    "request_usage_recorded:true",
     "resource_billing_settled:true",
     "ledger_and_usage_verified:true",
     "verification_storage_detached:true",
@@ -1057,8 +1043,7 @@ test("production verifier reports safe ledger mismatch details", async () => {
       assert.equal(error.message, "ledger_and_usage_verified_failed");
       assert.deepEqual(error.details?.missingChecks, [
         "compute_wallet_transaction",
-        "storage_wallet_transaction",
-        "request_wallet_transaction"
+        "storage_wallet_transaction"
       ]);
       return true;
     }

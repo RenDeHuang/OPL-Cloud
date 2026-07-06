@@ -67,7 +67,7 @@ export async function runReconciliationCli({
   const report = createBillingReconciliationReport({
     ledgerEntries,
     tencentBills,
-    markup: args.markup === undefined ? 0.2 : Number(args.markup),
+    providerCostCoverageRatio: args["provider-cost-coverage-ratio"] === undefined ? 1 : Number(args["provider-cost-coverage-ratio"]),
     tolerance: args.tolerance === undefined ? 0.01 : Number(args.tolerance)
   });
 

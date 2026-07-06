@@ -45,7 +45,7 @@ export function OverviewPage({ state, wallet, tickets }) {
     <ConsoleSurface
       title="概览"
       eyebrow="OPL Console"
-      subtitle="钱包账单、OPL Workspace、网关请求、工单"
+      subtitle="钱包账单、OPL Workspace、资源交付、工单"
       extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建工作区入口</Button>}
     >
       <MetricStrip
@@ -53,7 +53,7 @@ export function OverviewPage({ state, wallet, tickets }) {
           { label: "可用余额", value: money(usable), caption: `${money(wallet.frozen)} 已冻结`, icon: <WalletCards size={16} />, tone: usable > 0 ? "good" : "warn" },
           { label: "工作区入口", value: state.workspaces.length, caption: `${computeRunning} 个计算运行中`, icon: <Server size={16} />, tone: computeRunning ? "good" : "neutral" },
           { label: "存储资源", value: storageAvailable, caption: "可保留数据盘", icon: <HardDrive size={16} />, tone: storageAvailable ? "info" : "neutral" },
-          { label: "Gateway 请求", value: state.requestUsageLogs?.length || 0, caption: "gflabtoken.cn", icon: <LinkIcon size={16} />, tone: "info" },
+          { label: "外部入口", value: "已配置", caption: "one-person-lab-cloud", icon: <LinkIcon size={16} />, tone: "info" },
           { label: "工单", value: activeTickets, caption: `共 ${tickets.tickets.length} 个`, icon: <Headphones size={16} />, tone: activeTickets ? "warn" : "neutral" },
           { label: "告警", value: needsAttention, caption: "用户可见", icon: <AlertTriangle size={16} />, tone: needsAttention ? "danger" : "good" }
         ]}

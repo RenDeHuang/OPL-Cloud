@@ -132,9 +132,9 @@ export function normalizeTencentBillRows(rows = []) {
   return normalized;
 }
 
-function summarizeWorkspace(row, { markup, tolerance }) {
-  const expectedServer = money(row.tencentServer * (1 + markup));
-  const expectedStorage = money(row.tencentStorage * (1 + markup));
+function summarizeWorkspace(row, { providerCostCoverageRatio, tolerance }) {
+  const expectedServer = money(row.tencentServer * providerCostCoverageRatio);
+  const expectedStorage = money(row.tencentStorage * providerCostCoverageRatio);
   const serverDelta = money(row.ledgerServer - expectedServer);
   const storageDelta = money(row.ledgerStorage - expectedStorage);
   return {
@@ -150,7 +150,7 @@ function summarizeWorkspace(row, { markup, tolerance }) {
 export function reconcileTencentBills({
   ledgerEntries = [],
   tencentBills = [],
-  markup = 0.2,
+  providerCostCoverageRatio = 1,
   tolerance = 0.01
 } = {}) {
   const currency = assertSingleCurrency([...ledgerEntries, ...tencentBills]);
@@ -160,7 +160,7 @@ export function reconcileTencentBills({
   for (const bill of tencentBills) addTencentBill(workspaces, bill);
 
   const rows = [...workspaces.values()]
-    .map((row) => summarizeWorkspace(row, { markup, tolerance }))
+    .map((row) => summarizeWorkspace(row, { providerCostCoverageRatio, tolerance }))
     .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
 
   const totals = rows.reduce((acc, row) => ({
@@ -197,7 +197,7 @@ export function reconcileTencentBills({
   return {
     ok: mismatches.length === 0,
     currency,
-    markup,
+    providerCostCoverageRatio,
     tolerance,
     totals,
     workspaces: rows,
@@ -263,7 +263,7 @@ export function billingReconciliationGuard({
 export function createBillingReconciliationReport({
   ledgerEntries = [],
   tencentBills = [],
-  markup = 0.2,
+  providerCostCoverageRatio = 1,
   tolerance = 0.01,
   generatedAt = nowIso(),
   maxAgeHours = 30
@@ -272,7 +272,7 @@ export function createBillingReconciliationReport({
     ...reconcileTencentBills({
       ledgerEntries,
       tencentBills,
-      markup,
+      providerCostCoverageRatio,
       tolerance
     }),
     generatedAt

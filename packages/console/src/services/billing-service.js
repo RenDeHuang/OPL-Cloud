@@ -9,23 +9,19 @@ import {
   appendWalletTransaction,
   chargeAccount,
   chargeResourceAccount,
-  debitAvailableBalance,
   ensureAccount,
   ensureBillingCollections,
-  ensureUserWallet,
   releaseHold,
   releaseResourceHold
 } from "./wallet-service.js";
-import { incrementRequestQuota, requestUsageFingerprint } from "./usage-billing-service.js";
 import {
   billableHours,
-  computeHourlyBase,
+  computePriceSnapshot,
   hourlyComputeAmount,
   hourlyStorageAmount,
   pricedComputeHourly,
-  pricingMarkup,
   storageGbHourPrice,
-  storageGbMonthBase
+  storagePriceSnapshot
 } from "./pricing-service.js";
 import { latestBillingReconciliationReport, latestWorkspaceForAccount } from "./workspace-service.js";
 import { OplDomainService } from "./opl-domain-service.js";
@@ -35,6 +31,60 @@ function addResourceIds(target, { computeAllocationId = "", storageId = "", atta
   if (storageId) target.storageId = storageId;
   if (attachmentId) target.attachmentId = attachmentId;
   return target;
+}
+
+function bucketIso(timestamp, granularity) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setUTCMinutes(granularity === "day" ? 0 : 0, 0, 0);
+  if (granularity === "day") date.setUTCHours(0, 0, 0, 0);
+  return date.toISOString();
+}
+
+function usageGroupKey(log, bucket) {
+  return [bucket, log.accountId || "", log.workspaceId || "", log.resourceType || ""].join("|");
+}
+
+function aggregateUsageRows(logs, granularity, sourceEventId) {
+  const rows = new Map();
+  for (const log of logs) {
+    const bucket = bucketIso(log.createdAt, granularity);
+    if (!bucket) continue;
+    const key = usageGroupKey(log, bucket);
+    const existing = rows.get(key) || {
+      id: `usage-${granularity === "day" ? "daily" : "hourly"}-${log.accountId || "account"}-${log.workspaceId || "workspace"}-${log.resourceType || "resource"}-${bucket}`,
+      bucket,
+      accountId: log.accountId || "",
+      workspaceId: log.workspaceId || "",
+      resourceType: log.resourceType || "",
+      quantity: 0,
+      amount: 0,
+      currency: log.currency || "CNY",
+      sourceEventId,
+      sourceLogIds: [],
+      computeAllocationIds: [],
+      storageIds: [],
+      attachmentIds: [],
+      createdAt: now()
+    };
+    existing.quantity = money(Number(existing.quantity || 0) + Number(log.quantity || 0));
+    existing.amount = money(Number(existing.amount || 0) + Number(log.amount || 0));
+    existing.sourceLogIds.push(log.id);
+    if (log.computeAllocationId && !existing.computeAllocationIds.includes(log.computeAllocationId)) existing.computeAllocationIds.push(log.computeAllocationId);
+    if (log.storageId && !existing.storageIds.includes(log.storageId)) existing.storageIds.push(log.storageId);
+    if (log.attachmentId && !existing.attachmentIds.includes(log.attachmentId)) existing.attachmentIds.push(log.attachmentId);
+    rows.set(key, existing);
+  }
+  return [...rows.values()];
+}
+
+function upsertUsageAggregate(collection, row) {
+  const existingIndex = collection.findIndex((item) => item.id === row.id);
+  if (existingIndex >= 0) {
+    collection[existingIndex] = row;
+  } else {
+    collection.push(row);
+  }
 }
 
 export class BillingService extends OplDomainService {
@@ -202,154 +252,6 @@ export class BillingService extends OplDomainService {
     return state.billingLedger.filter((entry) => entry.accountId === accountId).map(clone);
   }
 
-  async recordRequestUsage({
-    accountId = "",
-    userId = "",
-    workspaceId,
-    requestId,
-    provider,
-    model,
-    inputTokens = 0,
-    outputTokens = 0,
-    amount = 0,
-    sourceEventId = ""
-  }) {
-    if (!workspaceId) throw new Error("workspace_required");
-    if (!requestId) throw new Error("request_required");
-    return this.store.update((state) => {
-      ensureBillingCollections(state);
-      const workspace = accountId
-        ? latestWorkspaceForAccount(state, accountId, workspaceId)
-        : state.workspaces[workspaceId];
-      if (!workspace) throw new Error("workspace_not_found");
-      const resolvedAccountId = accountId || workspace.ownerAccountId;
-      const eventId = sourceEventId || `gateway_request:${requestId}`;
-      const requestedAmount = money(Math.max(0, Number(amount || 0)));
-      const normalizedInputTokens = Number(inputTokens || 0);
-      const normalizedOutputTokens = Number(outputTokens || 0);
-      const fingerprint = requestUsageFingerprint({
-        provider,
-        model,
-        inputTokens: normalizedInputTokens,
-        outputTokens: normalizedOutputTokens,
-        requestedAmount,
-        sourceEventId: eventId
-      });
-      const existing = state.requestUsageLogs.find((log) =>
-        log.workspaceId === workspaceId &&
-        (log.sourceEventId === eventId || log.requestId === requestId)
-      );
-      const existingDedup = state.requestUsageDedup.find((dedup) =>
-        dedup.workspaceId === workspaceId &&
-        (dedup.sourceEventId === eventId || dedup.requestId === requestId)
-      );
-      const existingFingerprint = existing?.requestFingerprint || existingDedup?.requestFingerprint;
-      if (existingFingerprint && existingFingerprint !== fingerprint) {
-        throw new Error("request_usage_fingerprint_conflict");
-      }
-      if (existing) return clone(existing);
-      if (existingDedup?.usageLogId) {
-        const existingLog = state.requestUsageLogs.find((log) => log.id === existingDedup.usageLogId);
-        if (existingLog) return clone(existingLog);
-      }
-
-      const user = ensureUserWallet(state, {
-        accountId: resolvedAccountId,
-        userId: userId || workspace.ownerUserId || workspace.owner?.userId
-      });
-      const quota = incrementRequestQuota(user, 1);
-      const balanceBefore = money(Number(user.balance || 0));
-      const frozenBefore = money(Number(user.frozen || 0));
-      const charged = debitAvailableBalance(user, requestedAmount);
-      const logId = makeId("usage-request", resolvedAccountId, workspaceId, requestId, eventId, String(state.requestUsageLogs.length));
-      let ledgerEntry = null;
-      if (charged > 0) {
-        ledgerEntry = this.ledgerEntry({ state,
-          workspaceId,
-          accountId: resolvedAccountId,
-          type: "request_debit",
-          amount: -charged,
-          sourceEventId: eventId,
-          metadata: {
-            requestId,
-            provider,
-            model,
-            inputTokens: normalizedInputTokens,
-            outputTokens: normalizedOutputTokens,
-            requestedAmount,
-            fundingSource: "available_balance",
-            requestFingerprint: fingerprint,
-            usageLogId: logId
-          }
-        });
-        state.billingLedger.push(ledgerEntry);
-      }
-      const log = {
-        id: logId,
-        userId: user.id,
-        accountId: resolvedAccountId,
-        workspaceId,
-        requestId,
-        provider,
-        model,
-        inputTokens: normalizedInputTokens,
-        outputTokens: normalizedOutputTokens,
-        amount: charged,
-        requestedAmount,
-        unpaid: money(requestedAmount - charged),
-        currency: "CNY",
-        sourceEventId: eventId,
-        requestFingerprint: fingerprint,
-        ...(ledgerEntry ? { ledgerEntryId: ledgerEntry.id } : {}),
-        ...(quota ? { quota } : {}),
-        createdAt: now()
-      };
-      state.requestUsageLogs.push(log);
-      if (charged > 0) {
-        appendWalletTransaction(state, {
-          user,
-          accountId: resolvedAccountId,
-          workspaceId,
-          type: "request_debit",
-          amount: -charged,
-          sourceEventId: eventId,
-          ledgerEntryId: ledgerEntry.id,
-          usageLogId: log.id,
-          fundingSource: "available_balance",
-          balanceBefore,
-          balanceAfter: user.balance,
-          frozenBefore,
-          frozenAfter: user.frozen,
-          metadata: {
-            requestId,
-            provider,
-            model,
-            requestFingerprint: fingerprint
-          }
-        });
-      }
-      const dedup = {
-        id: makeId("dedup", resolvedAccountId, workspaceId, eventId, requestId),
-        userId: user.id,
-        accountId: resolvedAccountId,
-        workspaceId,
-        requestId,
-        sourceEventId: eventId,
-        requestFingerprint: fingerprint,
-        usageLogId: log.id,
-        createdAt: now()
-      };
-      state.requestUsageDedup.push(dedup);
-      state.audit.push(this.auditEvent({
-        accountId: resolvedAccountId,
-        workspaceId,
-        type: "billing.request_usage_recorded",
-        sourceEventId: eventId
-      }));
-      return clone(log);
-    });
-  }
-
   async recordBillingReconciliation({ report, source = "manual" }) {
     if (!report || typeof report !== "object") throw new Error("billing_reconciliation_report_required");
     return this.store.update((state) => {
@@ -514,11 +416,19 @@ export class BillingService extends OplDomainService {
     const entries = [];
     const metadata = {
       computeAllocationId: compute.id,
+      ownerAccountId: compute.ownerAccountId,
+      ownerUserId: compute.ownerUserId || account.id,
+      workspaceIds: compute.workspaceIds || [],
+      nodePoolId: compute.nodePoolId || "",
+      cvmInstanceId: compute.cvmInstanceId || compute.instanceId || "",
+      machineName: compute.machineName || "",
+      nodeName: compute.nodeName || "",
+      privateIp: compute.privateIp || "",
+      publicIp: compute.publicIp || "",
       requestedHours: hours,
-      baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
-      markup: pricingMarkup(this.pricing),
       balanceBefore,
-      frozenBefore
+      frozenBefore,
+      ...computePriceSnapshot({ packagePlan, pricing: this.pricing })
     };
     this.appendDebitEntries({
       state,
@@ -566,12 +476,16 @@ export class BillingService extends OplDomainService {
     const entries = [];
     const metadata = {
       storageId: storage.id,
+      ownerAccountId: storage.ownerAccountId,
+      ownerUserId: storage.ownerUserId || account.id,
+      workspaceIds: storage.workspaceIds || [],
+      providerResourceId: storage.providerResourceId || "",
+      storageClassId: storage.storageClassId || "",
       requestedHours: hours,
-      diskGb: storage.sizeGb,
-      baseGbMonth: storageGbMonthBase(this.pricing),
-      markup: pricingMarkup(this.pricing),
+      sizeGb: storage.sizeGb,
       balanceBefore,
-      frozenBefore
+      frozenBefore,
+      ...storagePriceSnapshot({ pricing: this.pricing, sizeGb: storage.sizeGb })
     };
     this.appendDebitEntries({
       state,
@@ -647,6 +561,64 @@ export class BillingService extends OplDomainService {
     return log;
   }
 
+  async aggregateResourceUsage({ olderThan, sourceEventId = "resource_usage_rollup" } = {}) {
+    if (!olderThan) throw new Error("usage_rollup_cutoff_required");
+    return this.store.update((state) => {
+      ensureBillingCollections(state);
+      const cutoff = new Date(olderThan).getTime();
+      if (Number.isNaN(cutoff)) throw new Error("usage_rollup_cutoff_invalid");
+      const logs = (state.resourceUsageLogs || []).filter((log) =>
+        new Date(log.createdAt || 0).getTime() < cutoff
+      );
+      const hourlyRows = aggregateUsageRows(logs, "hour", sourceEventId);
+      const dailyRows = aggregateUsageRows(logs, "day", sourceEventId);
+      for (const row of hourlyRows) upsertUsageAggregate(state.resourceUsageHourly, row);
+      for (const row of dailyRows) upsertUsageAggregate(state.resourceUsageDaily, row);
+      return {
+        sourceLogCount: logs.length,
+        hourlyRows: hourlyRows.length,
+        dailyRows: dailyRows.length
+      };
+    });
+  }
+
+  async archiveResourceUsageLogs({ olderThan, limit = 10000, sourceEventId = "resource_usage_archive" } = {}) {
+    if (!olderThan) throw new Error("usage_archive_cutoff_required");
+    return this.store.update((state) => {
+      ensureBillingCollections(state);
+      const cutoff = new Date(olderThan).getTime();
+      if (Number.isNaN(cutoff)) throw new Error("usage_archive_cutoff_invalid");
+      const candidates = (state.resourceUsageLogs || [])
+        .filter((log) => new Date(log.createdAt || 0).getTime() < cutoff)
+        .slice(0, Math.max(0, Number(limit || 0)));
+      const archivedIds = new Set(candidates.map((log) => log.id));
+      const archiveId = `usage-archive-${sourceEventId}`;
+      const existing = state.resourceUsageArchive.find((entry) => entry.id === archiveId);
+      if (!existing && candidates.length > 0) {
+        state.resourceUsageArchive.push({
+          id: archiveId,
+          sourceEventId,
+          archivedLogCount: candidates.length,
+          logs: candidates.map(clone),
+          createdAt: now()
+        });
+        state.resourceUsageCleanupTasks.push({
+          id: `usage-cleanup-${sourceEventId}`,
+          type: "resource_usage_archive",
+          sourceEventId,
+          archivedLogCount: candidates.length,
+          createdAt: now()
+        });
+        state.resourceUsageLogs = state.resourceUsageLogs.filter((log) => !archivedIds.has(log.id));
+      }
+      return {
+        archivedLogCount: candidates.length,
+        remainingLogCount: state.resourceUsageLogs.length,
+        archiveId
+      };
+    });
+  }
+
   debitWorkspaceUsage({ state, account, workspace, packagePlan, hours, sourceEventId, billableHours: billedHours = billableHours(hours) }) {
     const entries = [];
     const workspaceId = workspace.id;
@@ -657,8 +629,16 @@ export class BillingService extends OplDomainService {
       const charge = chargeAccount(account, "compute", requestedAmount);
       const metadata = {
         requestedHours: billedHours,
-        baseHourly: computeHourlyBase({ packagePlan, pricing: this.pricing }),
-        markup: pricingMarkup(this.pricing)
+        ownerAccountId: accountId,
+        ownerUserId: account.id,
+        computeAllocationId: workspace.computeAllocationId || "",
+        workspaceIds: [workspaceId],
+        nodePoolId: workspace.server?.nodePoolId || "",
+        cvmInstanceId: workspace.server?.cvmInstanceId || workspace.server?.instanceId || "",
+        nodeName: workspace.server?.nodeName || "",
+        privateIp: workspace.server?.privateIp || "",
+        publicIp: workspace.server?.publicIp || "",
+        ...computePriceSnapshot({ packagePlan, pricing: this.pricing })
       };
       this.appendDebitEntries({
         state,
@@ -704,9 +684,12 @@ export class BillingService extends OplDomainService {
       const charge = chargeAccount(account, "storage", requestedStorageAmount);
       const metadata = {
         requestedHours: billedHours,
-        diskGb: packagePlan.diskGb,
-        baseGbMonth: storageGbMonthBase(this.pricing),
-        markup: pricingMarkup(this.pricing)
+        ownerAccountId: accountId,
+        ownerUserId: account.id,
+        storageId: workspace.storageId || "",
+        workspaceIds: [workspaceId],
+        sizeGb: packagePlan.diskGb,
+        ...storagePriceSnapshot({ pricing: this.pricing, sizeGb: packagePlan.diskGb })
       };
       this.appendDebitEntries({
         state,

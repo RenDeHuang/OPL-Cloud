@@ -10,8 +10,7 @@ const TEST_PRICING = {
     basic: 1,
     pro: 4
   },
-  diskGbMonth: 0.2,
-  markup: 0.2
+  diskGbMonth: 0.2
 };
 
 function createService() {
@@ -48,7 +47,7 @@ test("Console blocks new resource provisioning while billing reconciliation guar
     report: {
       ok: false,
       generatedAt: "2026-07-02T00:00:00.000Z",
-      mismatches: [{ workspaceId: "ws-alpha", serverDelta: -1.5, storageDelta: 0 }]
+      mismatches: [{ workspaceId: "ws-alpha", serverDelta: 0.5, storageDelta: 0 }]
     }
   });
 

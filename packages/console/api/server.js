@@ -24,12 +24,38 @@ function numberFromEnv(name, fallback) {
 }
 
 export const productionPricingDefaults = {
+  priceBasis: "opl_user_price_catalog",
+  providerCostBasis: "internal_estimate_only",
+  currency: "CNY",
   computeHourly: {
-    basic: 0.39,
-    pro: 3.09
+    basic: 0.468,
+    pro: 1.38
   },
-  storageGbMonth: 0.36,
-  markup: 0.2
+  storageGbMonth: 0.432,
+  providerCostEstimate: {
+    currency: "CNY",
+    source: "tencent_public_price_snapshot",
+    sourceRegion: "na-siliconvalley",
+    billingUse: "internal_reconciliation_only",
+    computeHourly: {
+      basic: {
+        instanceType: "SA5.MEDIUM4",
+        vcpu: 2,
+        memoryGb: 4,
+        estimatedHourly: 0.27
+      },
+      pro: {
+        instanceType: "SA5.2XLARGE16",
+        vcpu: 8,
+        memoryGb: 16,
+        estimatedHourly: 1.15
+      }
+    },
+    storageGbMonth: {
+      storageClass: "premium_cbs",
+      estimatedGbMonth: 0.34
+    }
+  }
 };
 
 export function createStoreFromEnv(env = process.env) {
@@ -46,12 +72,15 @@ export const service = createOplCloud({
     rootDir: join(root, ".runtime", "workspaces")
   }),
   pricing: {
+    priceBasis: productionPricingDefaults.priceBasis,
+    providerCostBasis: productionPricingDefaults.providerCostBasis,
+    currency: productionPricingDefaults.currency,
     computeHourly: {
       basic: numberFromEnv("OPL_BASIC_COMPUTE_HOURLY_CNY", productionPricingDefaults.computeHourly.basic),
       pro: numberFromEnv("OPL_PRO_COMPUTE_HOURLY_CNY", productionPricingDefaults.computeHourly.pro)
     },
     storageGbMonth: numberFromEnv("OPL_STORAGE_GB_MONTH_CNY", productionPricingDefaults.storageGbMonth),
-    markup: numberFromEnv("OPL_BILLING_MARKUP", productionPricingDefaults.markup)
+    providerCostEstimate: productionPricingDefaults.providerCostEstimate
   },
   productionReadiness: () => productionReadiness({ env: process.env })
 });

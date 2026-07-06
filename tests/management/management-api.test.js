@@ -329,19 +329,8 @@ test("resource billing worker stays disabled outside production unless explicitl
   assert.equal(scheduled, false);
 });
 
-test("request usage API routes gateway usage into billing service", async () => {
-  const calls = [];
-  const appService = {
-    async recordRequestUsage(input) {
-      calls.push(["recordRequestUsage", input]);
-      return {
-        id: "usage-request-1",
-        userId: "usr-pi-alpha",
-        accountId: "pi-alpha",
-        ...input
-      };
-    }
-  };
+test("request usage API is not exposed by OPL Cloud", async () => {
+  const appService = {};
   const { origin, close } = await listen(createRequestHandler({ appService }));
   try {
     const usage = await postJson(origin, "/api/billing/request-usage", {
@@ -356,21 +345,8 @@ test("request usage API routes gateway usage into billing service", async () => 
       sourceEventId: "gateway_req_alpha"
     });
 
-    assert.equal(usage.response.status, 200);
-    assert.equal(usage.payload.id, "usage-request-1");
-    assert.deepEqual(calls, [
-      ["recordRequestUsage", {
-        accountId: "pi-alpha",
-        workspaceId: "ws-alpha",
-        requestId: "req-alpha",
-        provider: "openai",
-        model: "gpt-5",
-        inputTokens: 1000,
-        outputTokens: 500,
-        amount: 0.25,
-        sourceEventId: "gateway_req_alpha"
-      }]
-    ]);
+    assert.equal(usage.response.status, 404);
+    assert.equal(usage.payload.error, "route_not_found");
   } finally {
     await close();
   }

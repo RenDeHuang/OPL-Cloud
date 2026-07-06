@@ -47,10 +47,7 @@ function workspaceCredential(workspace = {}) {
 }
 
 function workspaceChargeTotal(state = {}, workspaceId = "") {
-  return [
-    ...(state.resourceUsageLogs || []),
-    ...(state.requestUsageLogs || [])
-  ]
+  return (state.resourceUsageLogs || [])
     .filter((item) => item.workspaceId === workspaceId)
     .reduce((sum, item) => sum + Math.abs(Number(item.amount || item.charge || 0)), 0);
 }

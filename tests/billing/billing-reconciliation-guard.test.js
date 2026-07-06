@@ -6,7 +6,7 @@ import {
   createBillingReconciliationReport
 } from "../../packages/ledger/src/billing-reconciliation.js";
 
-test("billing reconciliation report blocks new provisioning when OPL debits do not cover Tencent cost plus markup", () => {
+test("billing reconciliation report blocks new provisioning when OPL debits do not cover provider cost evidence", () => {
   const report = createBillingReconciliationReport({
     generatedAt: "2026-07-02T00:00:00.000Z",
     ledgerEntries: [
@@ -14,8 +14,7 @@ test("billing reconciliation report blocks new provisioning when OPL debits do n
     ],
     tencentBills: [
       { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY" }
-    ],
-    markup: 0.2
+    ]
   });
 
   assert.equal(report.ok, false);

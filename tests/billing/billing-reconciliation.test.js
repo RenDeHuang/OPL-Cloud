@@ -3,16 +3,15 @@ import test from "node:test";
 
 import { normalizeTencentBillRows, reconcileTencentBills } from "../../packages/ledger/src/billing-reconciliation.js";
 
-test("reconciles OPL ledger debits against Tencent bill totals plus platform markup", () => {
+test("reconciles OPL resource debits against internal provider cost evidence", () => {
   const report = reconcileTencentBills({
-    markup: 0.2,
     tolerance: 0.01,
     ledgerEntries: [
-      { workspaceId: "ws-alpha", type: "compute_debit", amount: -12, currency: "CNY" },
-      { workspaceId: "ws-alpha", type: "storage_debit", amount: -2.4, currency: "CNY" },
+      { workspaceId: "ws-alpha", type: "compute_debit", amount: -10, currency: "CNY" },
+      { workspaceId: "ws-alpha", type: "storage_debit", amount: -2, currency: "CNY" },
       { workspaceId: "ws-alpha", type: "credit", amount: 50, currency: "CNY" },
-      { workspaceId: "ws-beta", type: "compute_debit", amount: -24, currency: "CNY" },
-      { workspaceId: "ws-beta", type: "storage_debit", amount: -4.8, currency: "CNY" }
+      { workspaceId: "ws-beta", type: "compute_debit", amount: -20, currency: "CNY" },
+      { workspaceId: "ws-beta", type: "storage_debit", amount: -4, currency: "CNY" }
     ],
     tencentBills: [
       { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY" },
@@ -25,12 +24,12 @@ test("reconciles OPL ledger debits against Tencent bill totals plus platform mar
   assert.equal(report.ok, true);
   assert.equal(report.currency, "CNY");
   assert.deepEqual(report.totals, {
-    ledgerServer: 36,
-    ledgerStorage: 7.2,
+    ledgerServer: 30,
+    ledgerStorage: 6,
     tencentServer: 30,
     tencentStorage: 6,
-    expectedServer: 36,
-    expectedStorage: 7.2,
+    expectedServer: 30,
+    expectedStorage: 6,
     serverDelta: 0,
     storageDelta: 0
   });
@@ -47,7 +46,6 @@ test("reconciles OPL ledger debits against Tencent bill totals plus platform mar
 
 test("reports mismatches without treating credits or lifecycle entries as billable resource usage", () => {
   const report = reconcileTencentBills({
-    markup: 0.2,
     tolerance: 0.01,
     ledgerEntries: [
       { workspaceId: "ws-alpha", type: "compute_debit", amount: -10.5, currency: "CNY" },
@@ -62,16 +60,16 @@ test("reports mismatches without treating credits or lifecycle entries as billab
   });
 
   assert.equal(report.ok, false);
-  assert.equal(report.totals.serverDelta, -1.5);
+  assert.equal(report.totals.serverDelta, 0.5);
   assert.deepEqual(report.mismatches, [
     {
       workspaceId: "ws-alpha",
-      serverDelta: -1.5,
-      storageDelta: 0,
+      serverDelta: 0.5,
+      storageDelta: 0.4,
       ledgerServer: 10.5,
-      expectedServer: 12,
+      expectedServer: 10,
       ledgerStorage: 2.4,
-      expectedStorage: 2.4
+      expectedStorage: 2
     }
   ]);
 });

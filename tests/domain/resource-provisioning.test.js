@@ -6,12 +6,11 @@ import { MemoryStore } from "../../packages/console/src/store.js";
 import { createFakeRuntimeProvider } from "../helpers/fake-runtime-provider.js";
 
 const TEST_PRICING = {
-  serverHourly: {
+  computeHourly: {
     basic: 1,
     pro: 4
   },
-  diskGbMonth: 0.2,
-  markup: 0.2
+  storageGbMonth: 0.2
 };
 
 function createService(runtimeProviderOverrides = {}) {
@@ -243,13 +242,13 @@ test("compute allocation persists provisioner ownership, pricing, hold, and oper
   assert.equal(compute.privateIp, "10.0.0.12");
   assert.equal(compute.publicIp, "");
   assert.equal(compute.lastProviderSyncAt.length > 0, true);
-  assert.equal(compute.hourlyPrice, 1.2);
-  assert.equal(compute.holdAmount, 201.6);
+  assert.equal(compute.hourlyPrice, 1);
+  assert.equal(compute.holdAmount, 168);
   assert.deepEqual(compute.balanceImpact, {
     balanceBefore: 300,
     frozenBefore: 0,
-    frozenAfter: 201.6,
-    availableAfter: 98.4
+    frozenAfter: 168,
+    availableAfter: 132
   });
   assert.ok(operation, "expected a resource operation row");
   assert.equal(operation.operationType, "create_compute_allocation");

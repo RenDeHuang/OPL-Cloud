@@ -20,10 +20,12 @@ function createFakePool() {
     storage_volumes: [],
     storage_attachments: [],
     resource_usage_logs: [],
-    request_usage_logs: [],
+    resource_usage_hourly: [],
+    resource_usage_daily: [],
+    resource_usage_archive: [],
+    resource_usage_cleanup_tasks: [],
     wallet_transactions: [],
-    manual_topups: [],
-    request_usage_dedup: []
+    manual_topups: []
   };
   const statements = [];
 
@@ -56,10 +58,12 @@ function createFakePool() {
         tables.storage_volumes = [];
         tables.storage_attachments = [];
         tables.resource_usage_logs = [];
-        tables.request_usage_logs = [];
+        tables.resource_usage_hourly = [];
+        tables.resource_usage_daily = [];
+        tables.resource_usage_archive = [];
+        tables.resource_usage_cleanup_tasks = [];
         tables.wallet_transactions = [];
         tables.manual_topups = [];
-        tables.request_usage_dedup = [];
         return { rows: [] };
       }
       if (normalized.startsWith("SELECT id, state FROM organizations")) {
@@ -107,17 +111,23 @@ function createFakePool() {
       if (normalized.startsWith("SELECT state FROM resource_usage_logs")) {
         return { rows: tables.resource_usage_logs.map((state) => ({ state })) };
       }
-      if (normalized.startsWith("SELECT state FROM request_usage_logs")) {
-        return { rows: tables.request_usage_logs.map((state) => ({ state })) };
+      if (normalized.startsWith("SELECT state FROM resource_usage_hourly")) {
+        return { rows: tables.resource_usage_hourly.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM resource_usage_daily")) {
+        return { rows: tables.resource_usage_daily.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM resource_usage_archive")) {
+        return { rows: tables.resource_usage_archive.map((state) => ({ state })) };
+      }
+      if (normalized.startsWith("SELECT state FROM resource_usage_cleanup_tasks")) {
+        return { rows: tables.resource_usage_cleanup_tasks.map((state) => ({ state })) };
       }
       if (normalized.startsWith("SELECT state FROM wallet_transactions")) {
         return { rows: tables.wallet_transactions.map((state) => ({ state })) };
       }
       if (normalized.startsWith("SELECT state FROM manual_topups")) {
         return { rows: tables.manual_topups.map((state) => ({ state })) };
-      }
-      if (normalized.startsWith("SELECT state FROM request_usage_dedup")) {
-        return { rows: tables.request_usage_dedup.map((state) => ({ state })) };
       }
       if (normalized.startsWith("INSERT INTO organizations")) {
         tables.organizations.set(params[0], params[1]);
@@ -179,8 +189,20 @@ function createFakePool() {
         tables.resource_usage_logs.push(params[5]);
         return { rows: [] };
       }
-      if (normalized.startsWith("INSERT INTO request_usage_logs")) {
-        tables.request_usage_logs.push(params[5]);
+      if (normalized.startsWith("INSERT INTO resource_usage_hourly")) {
+        tables.resource_usage_hourly.push(params[6]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO resource_usage_daily")) {
+        tables.resource_usage_daily.push(params[6]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO resource_usage_archive")) {
+        tables.resource_usage_archive.push(params[4]);
+        return { rows: [] };
+      }
+      if (normalized.startsWith("INSERT INTO resource_usage_cleanup_tasks")) {
+        tables.resource_usage_cleanup_tasks.push(params[4]);
         return { rows: [] };
       }
       if (normalized.startsWith("INSERT INTO wallet_transactions")) {
@@ -189,10 +211,6 @@ function createFakePool() {
       }
       if (normalized.startsWith("INSERT INTO manual_topups")) {
         tables.manual_topups.push(params[4]);
-        return { rows: [] };
-      }
-      if (normalized.startsWith("INSERT INTO request_usage_dedup")) {
-        tables.request_usage_dedup.push(params[6]);
         return { rows: [] };
       }
       throw new Error(`unexpected_sql:${normalized}`);
@@ -352,21 +370,55 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         createdAt: "2026-07-01T03:00:00.000Z"
       }
     ],
-    requestUsageLogs: [
+    resourceUsageHourly: [
       {
-        id: "usage-request-1",
-        userId: "usr-ada",
+        id: "usage-hourly-1",
+        bucket: "2026-07-01T03:00:00.000Z",
         accountId: "pi-alpha",
         workspaceId: "ws-alpha",
-        requestId: "req-1",
-        provider: "openai",
-        model: "gpt-5",
-        inputTokens: 100,
-        outputTokens: 20,
-        amount: 0.1,
-        currency: "CNY",
-        sourceEventId: "gateway_req_1",
-        createdAt: "2026-07-01T03:01:00.000Z"
+        resourceType: "compute",
+        quantity: 1,
+        amount: 1.2,
+        sourceLogIds: ["usage-resource-1"],
+        createdAt: "2026-07-01T04:00:00.000Z"
+      }
+    ],
+    resourceUsageDaily: [
+      {
+        id: "usage-daily-1",
+        bucket: "2026-07-01T00:00:00.000Z",
+        accountId: "pi-alpha",
+        workspaceId: "ws-alpha",
+        resourceType: "compute",
+        quantity: 1,
+        amount: 1.2,
+        sourceLogIds: ["usage-resource-1"],
+        createdAt: "2026-07-01T04:00:00.000Z"
+      }
+    ],
+    resourceUsageArchive: [
+      {
+        id: "usage-archive-1",
+        sourceEventId: "archive-1",
+        archivedLogCount: 1,
+        logs: [
+          {
+            id: "usage-resource-archived",
+            accountId: "pi-alpha",
+            workspaceId: "ws-alpha",
+            resourceType: "compute"
+          }
+        ],
+        createdAt: "2026-07-02T00:00:00.000Z"
+      }
+    ],
+    resourceUsageCleanupTasks: [
+      {
+        id: "usage-cleanup-1",
+        type: "resource_usage_archive",
+        sourceEventId: "archive-1",
+        archivedLogCount: 1,
+        createdAt: "2026-07-02T00:00:00.000Z"
       }
     ],
     walletTransactions: [
@@ -375,15 +427,14 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         userId: "usr-ada",
         accountId: "pi-alpha",
         workspaceId: "ws-alpha",
-        type: "request_debit",
-        amount: -0.1,
+        type: "compute_debit",
+        amount: -1.2,
         currency: "CNY",
         balanceBefore: 200,
-        balanceAfter: 199.9,
+        balanceAfter: 198.8,
         frozenBefore: 0,
         frozenAfter: 0,
-        sourceEventId: "gateway_req_1",
-        usageLogId: "usage-request-1",
+        sourceEventId: "billing_tick_1",
         ledgerEntryId: "ledger-2",
         fundingSource: "available_balance",
         createdAt: "2026-07-01T03:01:00.000Z"
@@ -405,19 +456,6 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
         ledgerEntryId: "ledger-1",
         walletTransactionId: "wallet-tx-0",
         createdAt: "2026-07-01T00:00:00.000Z"
-      }
-    ],
-    requestUsageDedup: [
-      {
-        id: "dedup-1",
-        userId: "usr-ada",
-        accountId: "pi-alpha",
-        workspaceId: "ws-alpha",
-        requestId: "req-1",
-        sourceEventId: "gateway_req_1",
-        requestFingerprint: "fingerprint-1",
-        usageLogId: "usage-request-1",
-        createdAt: "2026-07-01T03:01:00.000Z"
       }
     ]
   };
@@ -443,13 +481,19 @@ test("PostgresStore persists OPL Cloud state into control-plane tables", async (
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS storage_volumes")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS storage_attachments")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_logs")));
-  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_logs")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_hourly")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_daily")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_archive")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS resource_usage_cleanup_tasks")));
+  assert.equal(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_logs")), false);
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS wallet_transactions")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS manual_topups")));
-  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_dedup")));
-  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx")));
-  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx")));
+  assert.equal(pool.statements.some((statement) => statement.sql.includes("CREATE TABLE IF NOT EXISTS request_usage_dedup")), false);
+  assert.equal(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx")), false);
+  assert.equal(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx")), false);
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_workspace_resource_source_idx")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_hourly_bucket_resource_idx")));
+  assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_daily_bucket_resource_idx")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("DROP INDEX IF EXISTS billing_ledger_dedup_idx")));
   assert.ok(pool.statements.some((statement) => statement.sql.includes("CREATE INDEX IF NOT EXISTS billing_ledger_event_lookup_idx")));
 });
@@ -475,10 +519,7 @@ test("PostgresStore schema setup upgrades existing commercial tables in place", 
     alterStatements.some((sql) => sql.includes("ALTER TABLE compute_allocations ADD COLUMN IF NOT EXISTS account_id")),
     "existing compute allocation tables must gain account_id before writes"
   );
-  assert.ok(
-    alterStatements.some((sql) => sql.includes("ALTER TABLE request_usage_dedup ADD COLUMN IF NOT EXISTS request_fingerprint")),
-    "existing request dedup tables must gain request_fingerprint before writes"
-  );
+  assert.equal(alterStatements.some((sql) => sql.includes("ALTER TABLE request_usage_dedup")), false);
   assert.ok(
     pool.statements.some((statement) => statement.sql.includes("ALTER TABLE storage_attachments ALTER COLUMN compute_id DROP NOT NULL")),
     "existing storage_attachments tables must stop requiring retired compute_id before current writes"
@@ -535,7 +576,8 @@ test("PostgresStore billing ledger event index excludes repeatable credit and ho
   )?.sql || "";
   assert.match(indexStatement, /WHERE/);
   assert.match(indexStatement, /state->>'sourceEventId'/);
-  assert.match(indexStatement, /state->>'type'\) IN \('compute_debit', 'storage_debit', 'compute_hold_exhausted', 'request_debit'\)/);
+  assert.match(indexStatement, /state->>'type'\) IN \('compute_debit', 'storage_debit', 'compute_hold_exhausted'\)/);
+  assert.doesNotMatch(indexStatement, /request_debit/);
   assert.doesNotMatch(indexStatement, /CREATE UNIQUE INDEX/);
   assert.doesNotMatch(indexStatement, /credit/);
   assert.doesNotMatch(indexStatement, /'compute_hold'/);

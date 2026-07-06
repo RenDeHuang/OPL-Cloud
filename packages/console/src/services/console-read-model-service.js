@@ -99,12 +99,12 @@ function productionE2EFromState(state) {
 
   for (const entry of state.billingLedger || []) {
     const sourceEventId = String(entry.sourceEventId || "");
-    const match = sourceEventId.match(/^production_verification_(credit|request_usage):(.+)$/);
+    const match = sourceEventId.match(/^production_verification_(credit|resource_settlement):(.+)$/);
     if (!match) continue;
     const run = ensureRun(match[2]);
     run.accountId ||= entry.accountId || "";
     run.workspaceId ||= entry.workspaceId && entry.workspaceId !== "account" ? entry.workspaceId : "";
-    run.checks.add(match[1] === "credit" ? "credit" : "request_usage");
+    run.checks.add(match[1] === "credit" ? "credit" : "resource_settlement");
     touch(run, entry.createdAt);
   }
 
@@ -136,7 +136,7 @@ function productionE2EFromState(state) {
   }
 
   for (const run of runs.values()) {
-    if (run.checks.has("credit") && run.checks.has("request_usage")) run.status = run.status === "failed" ? "failed" : "passed";
+    if (run.checks.has("credit") && run.checks.has("resource_settlement")) run.status = run.status === "failed" ? "failed" : "passed";
   }
 
   const recent = [...runs.values()]
@@ -180,6 +180,87 @@ function resourceAnomaliesFromState(state, accountId = null) {
     }
   }
   return anomalies.slice(0, 12);
+}
+
+function uniqueSorted(values = []) {
+  return [...new Set(values.filter(Boolean))].sort();
+}
+
+function ledgerMatchesResource(entry = {}, resourceType, resourceId) {
+  const metadata = entry.metadata || {};
+  if (resourceType === "compute") {
+    return entry.computeAllocationId === resourceId || metadata.computeAllocationId === resourceId;
+  }
+  return entry.storageId === resourceId || metadata.storageId === resourceId;
+}
+
+function walletMatchesResource(transaction = {}, resourceType, resourceId, ledgerEntryIds = []) {
+  const metadata = transaction.metadata || {};
+  if (ledgerEntryIds.includes(transaction.ledgerEntryId)) return true;
+  if (resourceType === "compute") {
+    return transaction.computeAllocationId === resourceId || metadata.computeAllocationId === resourceId;
+  }
+  return transaction.storageId === resourceId || metadata.storageId === resourceId;
+}
+
+function resourceWorkspaceIds(state, resourceType, resource = {}) {
+  const explicit = Array.isArray(resource.workspaceIds) ? resource.workspaceIds : [];
+  const fromWorkspaces = Object.values(state.workspaces || {})
+    .filter((workspace) => {
+      if (resourceType === "compute") {
+        return workspace.currentComputeAllocationId === resource.id || workspace.computeAllocationId === resource.id;
+      }
+      return workspace.storageId === resource.id;
+    })
+    .map((workspace) => workspace.id);
+  return uniqueSorted([...explicit, ...fromWorkspaces]);
+}
+
+function resourceLedgerEvidenceFromState(state, accountId = null) {
+  const rows = [];
+  const resources = [
+    ...(state.computeAllocations || []).map((resource) => ({ resourceType: "compute", resource })),
+    ...(state.storageVolumes || []).map((resource) => ({ resourceType: "storage", resource }))
+  ];
+  for (const { resourceType, resource } of resources) {
+    if (!businessRecord(resource, accountId)) continue;
+    const resourceId = resource.id;
+    const ownerAccountId = resource.ownerAccountId || resource.accountId || "";
+    if (accountId && ownerAccountId !== accountId) continue;
+    const ledgerEntries = (state.billingLedger || []).filter((entry) => ledgerMatchesResource(entry, resourceType, resourceId));
+    const ledgerEntryIds = uniqueSorted(ledgerEntries.map((entry) => entry.id));
+    const walletTransactions = (state.walletTransactions || []).filter((transaction) =>
+      walletMatchesResource(transaction, resourceType, resourceId, ledgerEntryIds)
+    );
+    const workspaceIds = uniqueSorted([
+      ...resourceWorkspaceIds(state, resourceType, resource),
+      ...ledgerEntries.map((entry) => entry.workspaceId).filter((workspaceId) => workspaceId && workspaceId !== "account" && workspaceId !== "resource"),
+      ...walletTransactions.map((transaction) => transaction.workspaceId).filter((workspaceId) => workspaceId && workspaceId !== "account" && workspaceId !== "resource")
+    ]);
+    rows.push({
+      id: resourceId,
+      resourceType,
+      ownerAccountId,
+      ownerUserId: resource.ownerUserId || userIdForAccount(state, ownerAccountId),
+      computeAllocationId: resourceType === "compute" ? resourceId : "",
+      storageId: resourceType === "storage" ? resourceId : "",
+      workspaceIds,
+      ledgerEntryIds,
+      walletTransactionIds: uniqueSorted(walletTransactions.map((transaction) => transaction.id)),
+      nodePoolId: resource.nodePoolId || "",
+      cvmInstanceId: resource.cvmInstanceId || resource.instanceId || "",
+      nodeName: resource.nodeName || resource.machineName || "",
+      privateIp: resource.privateIp || "",
+      publicIp: resource.publicIp || "",
+      providerResourceId: resource.providerResourceId || "",
+      storageProviderId: resourceType === "storage" ? resource.providerResourceId || "" : "",
+      billingStatus: resource.billingStatus || "",
+      status: resource.status || "",
+      providerRequestId: resource.providerRequestId || resource.operationId || "",
+      issue: resource.safeMessage || resource.error || resource.failureReason || "暂无失败"
+    });
+  }
+  return rows;
 }
 
 export class ConsoleReadModelService extends OplDomainService {
@@ -422,6 +503,7 @@ export class ConsoleReadModelService extends OplDomainService {
         computeAllocations: publicResourceRecords((state.computeAllocations || []).filter((resource) => businessRecord(resource))),
         storageVolumes: publicResourceRecords((state.storageVolumes || []).filter((resource) => businessRecord(resource))),
         storageAttachments: publicResourceRecords((state.storageAttachments || []).filter((resource) => businessRecord(resource))),
+        resourceLedgerEvidence: resourceLedgerEvidenceFromState(state),
         walletTransactions: (state.walletTransactions || []).filter((entry) => businessRecord(entry)).map(clone),
         manualTopups: (state.manualTopups || []).filter((entry) => businessRecord(entry)).map(clone)
       };
@@ -471,10 +553,8 @@ export class ConsoleReadModelService extends OplDomainService {
       workspaces: Object.values(state.workspaces).filter((workspace) => workspace.ownerAccountId === resolvedAccountId).map(clone),
       billingLedger: state.billingLedger.filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       resourceUsageLogs: (state.resourceUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
-      requestUsageLogs: (state.requestUsageLogs || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       walletTransactions: (state.walletTransactions || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       manualTopups: (state.manualTopups || []).filter((entry) => entry.targetAccountId === resolvedAccountId).map(clone),
-      requestUsageDedup: (state.requestUsageDedup || []).filter((entry) => entry.accountId === resolvedAccountId).map(clone),
       billingReconciliation: {
         latestReport: clone(latestBillingReconciliationReport(state)),
         guard: clone(latestBillingReconciliationReport(state)?.guard || {
@@ -572,6 +652,10 @@ export class ConsoleReadModelService extends OplDomainService {
         updatedAt: operation.updatedAt
       })),
       resourceAnomalies: resourceAnomaliesFromState(state, accountId),
+      resourceLedgerEvidence: {
+        total: resourceLedgerEvidenceFromState(state, accountId).length,
+        recent: resourceLedgerEvidenceFromState(state, accountId).slice(-10)
+      },
       productionE2E: productionE2EFromState(state),
       billingReconciliation: {
         reports: state.billingReconciliationReports?.length || 0,

@@ -55,8 +55,7 @@ test("price catalog defaults stay aligned with the versioned pricing contract", 
   const expected = {
     [contract.env.basicComputeHourly]: String(contract.computeHourly.basic),
     [contract.env.proComputeHourly]: String(contract.computeHourly.pro),
-    [contract.env.storageGbMonth]: String(contract.storageGbMonth),
-    [contract.env.markup]: String(contract.markup)
+    [contract.env.storageGbMonth]: String(contract.storageGbMonth)
   };
   const template = await readFile("deploy/tke/opl-cloud-production.env.example", "utf8");
   const localExample = await readFile(".env.example", "utf8");
@@ -66,9 +65,24 @@ test("price catalog defaults stay aligned with the versioned pricing contract", 
     assert.equal(envValue(localExample, key), value, `${key} should match the local env example and pricing contract`);
   }
 
-  assert.deepEqual(productionPricingDefaults, {
-    computeHourly: contract.computeHourly,
-    storageGbMonth: contract.storageGbMonth,
-    markup: contract.markup
-  });
+  assert.equal(productionPricingDefaults.priceBasis, contract.priceBasis);
+  assert.equal(productionPricingDefaults.providerCostBasis, contract.providerCostBasis);
+  assert.deepEqual(productionPricingDefaults.computeHourly, contract.computeHourly);
+  assert.equal(productionPricingDefaults.storageGbMonth, contract.storageGbMonth);
+});
+
+test("pricing contract is an OPL user price catalog, not a Tencent markup formula", async () => {
+  const contract = JSON.parse(await readFile(pricingContractPath, "utf8"));
+
+  assert.equal(contract.priceBasis, "opl_user_price_catalog");
+  assert.equal(contract.currency, "CNY");
+  assert.equal(contract.computeHourly.basic, 0.468);
+  assert.equal(contract.computeHourly.pro, 1.38);
+  assert.equal(contract.storageGbMonth, 0.432);
+  assert.equal(contract.providerCostBasis, "internal_estimate_only");
+  assert.equal(contract.providerCostEstimate.computeHourly.basic.instanceType, "SA5.MEDIUM4");
+  assert.equal(contract.providerCostEstimate.computeHourly.pro.instanceType, "SA5.2XLARGE16");
+  assert.equal(contract.providerCostEstimate.storageGbMonth.storageClass, "premium_cbs");
+  assert.equal(contract.markup, undefined);
+  assert.equal(contract.env.markup, undefined);
 });

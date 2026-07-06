@@ -1,15 +1,16 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Ledger",
-  "purpose": "Commercial billing ledger, wallet transaction, usage debit, hold, top-up, and reconciliation policy.",
+  "purpose": "Commercial resource leasing ledger, wallet transaction, resource usage debit, hold, top-up, and reconciliation policy.",
   "state": "current",
-  "machineBoundary": "Ledger entries, wallet transactions, manual top-up audits, resource usage logs, request usage logs, and billing reconciliation guards.",
+  "machineBoundary": "Ledger entries, wallet transactions, manual top-up audits, resource usage logs, resource usage rollups, and billing reconciliation guards. Request-level product billing is owned outside OPL Cloud.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
   "billingUnit": "hour",
-  "markup": 0.2,
+  "priceBasis": "opl_user_price_catalog",
+  "providerCostBasis": "internal_estimate_only",
   "ledgerEntryTypes": [
     "credit",
     "compute_hold",
@@ -21,7 +22,6 @@
     "compute_hold_exhausted",
     "token_reset",
     "token_deleted",
-    "request_debit",
     "wallet_transaction",
     "manual_topup"
   ],
@@ -51,9 +51,33 @@
     "unpaidComputeOperationAllowed": false,
     "unpaidStorageOperationAllowed": false
   },
+  "ledgerEvidencePolicy": {
+    "priceSnapshotFields": [
+      "priceBasis",
+      "userPrice",
+      "providerCostEstimate"
+    ],
+    "resourceOwnerFields": [
+      "ownerAccountId",
+      "ownerUserId",
+      "computeAllocationId",
+      "storageId",
+      "attachmentId",
+      "workspaceIds",
+      "nodePoolId",
+      "cvmInstanceId",
+      "nodeName",
+      "privateIp",
+      "publicIp"
+    ],
+    "rules": [
+      "Customer debits use final OPL user prices only.",
+      "Provider cost estimates are stored for internal reconciliation and never as the user billing formula.",
+      "Every resource hold, debit, release, and destroy evidence entry must be attributable to an owner and resource identity."
+    ]
+  },
   "tencentBillReconciliation": {
     "command": "npm run reconcile:tencent -- --ledger <ledger.json> --tencent <tencent-bills.json>",
-    "markup": 0.2,
     "defaultToleranceCny": 0.01,
     "ledgerUsageTypes": [
       "compute_debit",

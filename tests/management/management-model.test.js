@@ -110,7 +110,7 @@ test("Console management model links users, organizations, memberships, billing 
   ]);
   assert.equal(management.billingAccount.id, "org-lab");
   assert.equal(management.billingAccount.balance, 250);
-  assert.equal(management.billingAccount.frozen, 202.16);
+  assert.equal(management.billingAccount.frozen, 168.4667);
   assert.deepEqual(management.packages.map((plan) => plan.id), ["basic", "pro"]);
   assert.deepEqual(management.workspaces.map((item) => item.id), [workspace.id]);
 });
@@ -384,12 +384,12 @@ test("operator summary includes safe production E2E records derived from existin
       createdAt: "2026-07-05T00:00:00.000Z"
     });
     state.billingLedger.push({
-      id: "ledger-request",
+      id: "ledger-resource-settlement",
       accountId: "pi-production-verifier",
       workspaceId: "ws-prod",
-      type: "request_debit",
-      amount: -0.01,
-      sourceEventId: "production_verification_request_usage:run-123",
+      type: "compute_debit",
+      amount: -0.468,
+      sourceEventId: "production_verification_resource_settlement:run-123",
       createdAt: "2026-07-05T00:05:00.000Z"
     });
     state.runtimeOperations.push({
@@ -412,7 +412,7 @@ test("operator summary includes safe production E2E records derived from existin
       accountId: "pi-production-verifier",
       workspaceId: "ws-prod",
       status: "passed",
-      checks: ["credit", "request_usage", "runtime_operation"],
+      checks: ["credit", "resource_settlement", "runtime_operation"],
       lastSeenAt: "2026-07-05T00:05:00.000Z"
     }
   ]);
@@ -470,12 +470,12 @@ test("default business read models exclude production verifier records while pre
       createdAt: "2026-07-06T00:00:00.000Z"
     });
     state.billingLedger.push({
-      id: "ledger-verifier-request",
+      id: "ledger-verifier-resource-settlement",
       accountId: "pi-production-verifier",
       workspaceId: "ws-verifier",
-      type: "request_debit",
-      amount: -0.01,
-      sourceEventId: "production_verification_request_usage:run-456",
+      type: "compute_debit",
+      amount: -0.468,
+      sourceEventId: "production_verification_resource_settlement:run-456",
       createdAt: "2026-07-06T00:01:00.000Z"
     });
   });
@@ -493,4 +493,148 @@ test("default business read models exclude production verifier records while pre
   assert.equal(summary.computeAllocations.total, 1);
   assert.equal(summary.productionE2E.total, 1);
   assert.equal(defaultOwnerState.account.id, "acct-customer");
+});
+
+test("admin management state exposes owner-bound resource ledger evidence", async () => {
+  const service = createTestService();
+
+  await service.store.update((state) => {
+    state.users["usr-owner"] = {
+      id: "usr-owner",
+      email: "owner@example.com",
+      accountId: "acct-owner",
+      status: "active",
+      balance: 500,
+      frozen: 0,
+      holds: {},
+      totalRecharged: 500,
+      passwordHash: "scrypt:redacted"
+    };
+    state.computeAllocations.push({
+      id: "compute-owned",
+      ownerAccountId: "acct-owner",
+      ownerUserId: "usr-owner",
+      status: "running",
+      billingStatus: "active",
+      packageId: "basic",
+      nodePoolId: "np-basic",
+      cvmInstanceId: "ins-owned",
+      nodeName: "node-owned",
+      privateIp: "10.0.0.8",
+      workspaceIds: ["ws-owned"]
+    });
+    state.storageVolumes.push({
+      id: "storage-owned",
+      ownerAccountId: "acct-owner",
+      ownerUserId: "usr-owner",
+      status: "attached",
+      billingStatus: "active",
+      packageId: "basic",
+      providerResourceId: "pvc-owned",
+      workspaceIds: ["ws-owned"]
+    });
+    state.storageAttachments.push({
+      id: "attach-owned",
+      ownerAccountId: "acct-owner",
+      computeAllocationId: "compute-owned",
+      storageId: "storage-owned",
+      status: "attached"
+    });
+    state.workspaces["ws-owned"] = {
+      id: "ws-owned",
+      ownerAccountId: "acct-owner",
+      ownerUserId: "usr-owner",
+      storageId: "storage-owned",
+      currentComputeAllocationId: "compute-owned",
+      currentAttachmentId: "attach-owned",
+      state: "running"
+    };
+    state.billingLedger.push(
+      {
+        id: "ledger-compute-hold",
+        accountId: "acct-owner",
+        userId: "usr-owner",
+        workspaceId: "ws-owned",
+        type: "compute_hold",
+        amount: 168,
+        computeAllocationId: "compute-owned",
+        sourceEventId: "create_compute"
+      },
+      {
+        id: "ledger-storage-hold",
+        accountId: "acct-owner",
+        userId: "usr-owner",
+        workspaceId: "ws-owned",
+        type: "storage_hold",
+        amount: 0.47,
+        storageId: "storage-owned",
+        sourceEventId: "create_storage"
+      }
+    );
+    state.walletTransactions.push(
+      {
+        id: "wallet-compute-hold",
+        accountId: "acct-owner",
+        userId: "usr-owner",
+        workspaceId: "ws-owned",
+        type: "compute_hold",
+        amount: 0,
+        ledgerEntryId: "ledger-compute-hold",
+        metadata: { computeAllocationId: "compute-owned" }
+      },
+      {
+        id: "wallet-storage-hold",
+        accountId: "acct-owner",
+        userId: "usr-owner",
+        workspaceId: "ws-owned",
+        type: "storage_hold",
+        amount: 0,
+        ledgerEntryId: "ledger-storage-hold",
+        metadata: { storageId: "storage-owned" }
+      }
+    );
+  });
+
+  const management = await service.managementState({});
+  const summary = await service.operatorSummary({});
+
+  assert.deepEqual(management.resourceLedgerEvidence.map((row) => ({
+    resourceType: row.resourceType,
+    ownerAccountId: row.ownerAccountId,
+    ownerUserId: row.ownerUserId,
+    computeAllocationId: row.computeAllocationId,
+    storageId: row.storageId,
+    workspaceIds: row.workspaceIds,
+    ledgerEntryIds: row.ledgerEntryIds,
+    walletTransactionIds: row.walletTransactionIds,
+    cvmInstanceId: row.cvmInstanceId,
+    nodeName: row.nodeName
+  })), [
+    {
+      resourceType: "compute",
+      ownerAccountId: "acct-owner",
+      ownerUserId: "usr-owner",
+      computeAllocationId: "compute-owned",
+      storageId: "",
+      workspaceIds: ["ws-owned"],
+      ledgerEntryIds: ["ledger-compute-hold"],
+      walletTransactionIds: ["wallet-compute-hold"],
+      cvmInstanceId: "ins-owned",
+      nodeName: "node-owned"
+    },
+    {
+      resourceType: "storage",
+      ownerAccountId: "acct-owner",
+      ownerUserId: "usr-owner",
+      computeAllocationId: "",
+      storageId: "storage-owned",
+      workspaceIds: ["ws-owned"],
+      ledgerEntryIds: ["ledger-storage-hold"],
+      walletTransactionIds: ["wallet-storage-hold"],
+      cvmInstanceId: "",
+      nodeName: ""
+    }
+  ]);
+  assert.equal(summary.resourceLedgerEvidence.total, 2);
+  assert.deepEqual(summary.resourceLedgerEvidence.recent.map((row) => row.id), ["compute-owned", "storage-owned"]);
 });

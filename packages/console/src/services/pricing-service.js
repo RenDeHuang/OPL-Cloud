@@ -4,24 +4,66 @@ export function storageHoldAmount({ packagePlan, pricing }) {
   return packageHoldAmount({ packagePlan, pricing }).storage;
 }
 
-export function pricingMarkup(pricing) {
-  return pricing.markup ?? 0.2;
+export function userComputeHourly({ packagePlan, pricing }) {
+  return money(pricing.computeHourly?.[packagePlan.id] ?? pricing.serverHourly?.[packagePlan.id] ?? 0);
 }
 
-export function computeHourlyBase({ packagePlan, pricing }) {
-  return pricing.computeHourly?.[packagePlan.id] ?? pricing.serverHourly?.[packagePlan.id] ?? 0;
+export function userStorageGbMonth(pricing) {
+  return money(pricing.storageGbMonth ?? pricing.diskGbMonth ?? 0);
 }
 
-export function storageGbMonthBase(pricing) {
-  return pricing.storageGbMonth ?? pricing.diskGbMonth ?? 0.2;
+export function providerCostEstimate({ packagePlan, pricing }) {
+  const planEstimate = pricing.providerCostEstimate?.computeHourly?.[packagePlan.id] || {};
+  return {
+    billingUse: pricing.providerCostEstimate?.billingUse || "internal_reconciliation_only",
+    source: pricing.providerCostEstimate?.source || "",
+    sourceRegion: pricing.providerCostEstimate?.sourceRegion || "",
+    instanceType: planEstimate.instanceType || packagePlan.instanceType || "",
+    estimatedHourly: money(Number(planEstimate.estimatedHourly || 0))
+  };
+}
+
+export function providerStorageCostEstimate(pricing) {
+  const estimate = pricing.providerCostEstimate?.storageGbMonth || {};
+  return {
+    billingUse: pricing.providerCostEstimate?.billingUse || "internal_reconciliation_only",
+    source: pricing.providerCostEstimate?.source || "",
+    sourceRegion: pricing.providerCostEstimate?.sourceRegion || "",
+    storageClass: estimate.storageClass || "",
+    estimatedGbMonth: money(Number(estimate.estimatedGbMonth || 0))
+  };
+}
+
+export function computePriceSnapshot({ packagePlan, pricing }) {
+  return {
+    priceBasis: pricing.priceBasis || "opl_user_price_catalog",
+    userPrice: {
+      computeHourly: userComputeHourly({ packagePlan, pricing }),
+      currency: pricing.currency || "CNY"
+    },
+    providerCostEstimate: providerCostEstimate({ packagePlan, pricing })
+  };
+}
+
+export function storagePriceSnapshot({ pricing, sizeGb }) {
+  return {
+    priceBasis: pricing.priceBasis || "opl_user_price_catalog",
+    userPrice: {
+      storageGbMonth: userStorageGbMonth(pricing),
+      storageGbHour: storageGbHourPrice(pricing),
+      sizeGb,
+      currency: pricing.currency || "CNY"
+    },
+    providerCostEstimate: providerStorageCostEstimate(pricing)
+  };
 }
 
 export function pricedComputeHourly({ packagePlan, pricing }) {
-  return money(computeHourlyBase({ packagePlan, pricing }) * (1 + pricingMarkup(pricing)));
+  return userComputeHourly({ packagePlan, pricing });
 }
 
 export function pricedStorageGbMonth(pricing) {
-  return money(storageGbMonthBase(pricing) * (1 + pricingMarkup(pricing)));
+  return userStorageGbMonth(pricing);
 }
 
 export function packageHoldAmount({ packagePlan, pricing }) {
@@ -35,19 +77,15 @@ export function packageHoldAmount({ packagePlan, pricing }) {
 }
 
 export function hourlyStorageAmount({ packagePlan, pricing, hours }) {
-  const gbMonth = storageGbMonthBase(pricing);
-  const markup = pricingMarkup(pricing);
-  return money((packagePlan.diskGb * gbMonth * (1 + markup) / 30 / 24) * hours);
+  return money((packagePlan.diskGb * userStorageGbMonth(pricing) / 30 / 24) * hours);
 }
 
 export function storageGbHourPrice(pricing) {
-  return money(storageGbMonthBase(pricing) * (1 + pricingMarkup(pricing)) / 30 / 24);
+  return money(userStorageGbMonth(pricing) / 30 / 24);
 }
 
 export function hourlyComputeAmount({ packagePlan, pricing, hours }) {
-  const hourly = computeHourlyBase({ packagePlan, pricing });
-  const markup = pricingMarkup(pricing);
-  return money(hourly * (1 + markup) * hours);
+  return money(userComputeHourly({ packagePlan, pricing }) * hours);
 }
 
 export function billableHours(hours) {
@@ -59,7 +97,8 @@ export function billableHours(hours) {
 export function billingPolicy(pricing) {
   return {
     currency: "CNY",
-    markup: pricingMarkup(pricing),
+    priceBasis: pricing.priceBasis || "opl_user_price_catalog",
+    providerCostBasis: pricing.providerCostBasis || "internal_estimate_only",
     prepaidHoldDays: 7,
     minimumBillableHours: 1,
     billingCadence: "hourly",

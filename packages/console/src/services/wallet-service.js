@@ -2,10 +2,12 @@ import { clone, makeId, money, now } from "./core-utils.js";
 
 export function ensureBillingCollections(state) {
   state.resourceUsageLogs ??= [];
-  state.requestUsageLogs ??= [];
+  state.resourceUsageHourly ??= [];
+  state.resourceUsageDaily ??= [];
+  state.resourceUsageArchive ??= [];
+  state.resourceUsageCleanupTasks ??= [];
   state.walletTransactions ??= [];
   state.manualTopups ??= [];
-  state.requestUsageDedup ??= [];
 }
 
 export function userIdForAccount(state, accountId) {

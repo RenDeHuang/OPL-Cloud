@@ -78,7 +78,7 @@ test("Fabric resource catalog maps product packages to Tencent instance types an
     env: {
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: "SA5.MEDIUM4",
       OPL_BASIC_COMPUTE_NODE_POOL_ID: "np-basic-2c4g",
-      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.LARGE16",
+      OPL_PRO_COMPUTE_INSTANCE_TYPE: "SA5.2XLARGE16",
       OPL_PRO_COMPUTE_NODE_POOL_ID: "np-pro-8c16g"
     }
   });
@@ -98,7 +98,7 @@ test("Fabric resource catalog maps product packages to Tencent instance types an
     {
       id: "pro",
       server: "8c16g",
-      instanceType: "SA5.LARGE16",
+      instanceType: "SA5.2XLARGE16",
       nodePoolId: "np-pro-8c16g"
     },
     {

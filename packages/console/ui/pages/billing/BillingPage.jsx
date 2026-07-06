@@ -55,10 +55,8 @@ function oldestActiveResourceStartedAt(state = {}) {
 export function BillingPage({ state, wallet }) {
   const billingPolicy = state.billingPolicy || {};
   const resourceUsage = state.resourceUsageLogs || [];
-  const requestUsage = state.requestUsageLogs || [];
   const recent = [
-    ...resourceUsage.map((item) => ({ ...item, billingType: item.resourceType === "compute" ? "计算" : "存储" })),
-    ...requestUsage.map((item) => ({ ...item, billingType: "请求", quantity: 1, unit: "request" }))
+    ...resourceUsage.map((item) => ({ ...item, billingType: item.resourceType === "compute" ? "计算" : "存储" }))
   ].slice(-12).reverse();
   const usable = available(wallet);
   const frozen = Number(wallet.frozen || 0);
@@ -105,7 +103,6 @@ export function BillingPage({ state, wallet }) {
               { label: "存储", value: `${usageQuantity(resourceUsage, "storage").toFixed(1)} GB-小时`, meta: "存储资源用量", status: "保留", tone: "good" },
               { label: "运行时长", value: runningDuration(activeStartedAt), meta: `下次结算 ${nextBillingTime}`, status: "按小时", tone: activeStartedAt ? "info" : "neutral" },
               { label: "预计每小时", value: money(hourlyEstimate), meta: "当前活跃资源", status: "预估", tone: hourlyEstimate > 0 ? "warn" : "neutral" },
-              { label: "网关", value: requestUsage.length, meta: "请求用量记录", status: "计量", tone: "info" },
               { label: "充值记录", value: state.manualTopups?.length || 0, meta: "人工充值证据", status: "已审计", tone: "good" }
             ]}
           />
@@ -115,7 +112,7 @@ export function BillingPage({ state, wallet }) {
           <ResourceSplit
             items={[
               { label: "计算/存储", value: "预付冻结", meta: `${billingPolicy.holdDays || 7} 天 · 销毁后释放未用冻结`, status: "冻结", tone: "warn" },
-              { label: "请求扣费", value: "按请求扣费", meta: "sub2api 请求写入钱包流水", status: "计量", tone: "info" },
+              { label: "扣费依据", value: billingPolicy.priceBasis || "OPL 价格表", meta: "计算和存储按资源租赁结算", status: "资源账本", tone: "info" },
               { label: "对账", value: state.billingReconciliation?.guard?.status || "无需对账", meta: state.billingReconciliation?.guard?.reason || "对账保护", status: "保护", tone: state.billingReconciliation?.guard?.blockNewWorkspaces ? "danger" : "good" }
             ]}
           />

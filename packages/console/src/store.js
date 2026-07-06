@@ -22,10 +22,12 @@ export function emptyState() {
     storageVolumes: [],
     storageAttachments: [],
     resourceUsageLogs: [],
-    requestUsageLogs: [],
+    resourceUsageHourly: [],
+    resourceUsageDaily: [],
+    resourceUsageArchive: [],
+    resourceUsageCleanupTasks: [],
     walletTransactions: [],
-    manualTopups: [],
-    requestUsageDedup: []
+    manualTopups: []
   };
 }
 
@@ -118,10 +120,12 @@ export class PostgresStore {
       storageVolumes,
       storageAttachments,
       resourceUsageLogs,
-      requestUsageLogs,
+      resourceUsageHourly,
+      resourceUsageDaily,
+      resourceUsageArchive,
+      resourceUsageCleanupTasks,
       walletTransactions,
-      manualTopups,
-      requestUsageDedup
+      manualTopups
     ] = await Promise.all([
       client.query("SELECT id, state FROM organizations ORDER BY id"),
       client.query("SELECT id, state FROM users ORDER BY id"),
@@ -138,10 +142,12 @@ export class PostgresStore {
       client.query("SELECT state FROM storage_volumes ORDER BY created_at, id"),
       client.query("SELECT state FROM storage_attachments ORDER BY created_at, id"),
       client.query("SELECT state FROM resource_usage_logs ORDER BY created_at, id"),
-      client.query("SELECT state FROM request_usage_logs ORDER BY created_at, id"),
+      client.query("SELECT state FROM resource_usage_hourly ORDER BY bucket, id"),
+      client.query("SELECT state FROM resource_usage_daily ORDER BY bucket, id"),
+      client.query("SELECT state FROM resource_usage_archive ORDER BY created_at, id"),
+      client.query("SELECT state FROM resource_usage_cleanup_tasks ORDER BY created_at, id"),
       client.query("SELECT state FROM wallet_transactions ORDER BY created_at, id"),
-      client.query("SELECT state FROM manual_topups ORDER BY created_at, id"),
-      client.query("SELECT state FROM request_usage_dedup ORDER BY created_at, id")
+      client.query("SELECT state FROM manual_topups ORDER BY created_at, id")
     ]);
 
     for (const row of organizations.rows) state.organizations[row.id] = row.state;
@@ -159,16 +165,18 @@ export class PostgresStore {
     state.storageVolumes = storageVolumes.rows.map((row) => row.state);
     state.storageAttachments = storageAttachments.rows.map((row) => row.state);
     state.resourceUsageLogs = resourceUsageLogs.rows.map((row) => row.state);
-    state.requestUsageLogs = requestUsageLogs.rows.map((row) => row.state);
+    state.resourceUsageHourly = resourceUsageHourly.rows.map((row) => row.state);
+    state.resourceUsageDaily = resourceUsageDaily.rows.map((row) => row.state);
+    state.resourceUsageArchive = resourceUsageArchive.rows.map((row) => row.state);
+    state.resourceUsageCleanupTasks = resourceUsageCleanupTasks.rows.map((row) => row.state);
     state.walletTransactions = walletTransactions.rows.map((row) => row.state);
     state.manualTopups = manualTopups.rows.map((row) => row.state);
-    state.requestUsageDedup = requestUsageDedup.rows.map((row) => row.state);
     return currentState(state);
   }
 
   async write(nextState, client = this.pool) {
     await this.ensureSchema(client);
-    await client.query("TRUNCATE organizations, users, memberships, workspaces, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, compute_allocations, storage_volumes, storage_attachments, resource_usage_logs, request_usage_logs, wallet_transactions, manual_topups, request_usage_dedup");
+    await client.query("TRUNCATE organizations, users, memberships, workspaces, billing_reconciliation_reports, support_tickets, evidence_ledger, billing_ledger, audit_events, notifications, runtime_operations, compute_allocations, storage_volumes, storage_attachments, resource_usage_logs, resource_usage_hourly, resource_usage_daily, resource_usage_archive, resource_usage_cleanup_tasks, wallet_transactions, manual_topups");
 
     for (const organization of Object.values(nextState.organizations || {})) {
       await client.query(
@@ -306,15 +314,46 @@ export class PostgresStore {
         usage.createdAt || new Date().toISOString()
       ]);
     }
-    for (const usage of nextState.requestUsageLogs || []) {
-      await client.query("INSERT INTO request_usage_logs (id, user_id, account_id, workspace_id, request_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+    for (const usage of nextState.resourceUsageHourly || []) {
+      await client.query("INSERT INTO resource_usage_hourly (id, account_id, workspace_id, resource_type, bucket, source_event_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [
         usage.id,
-        usage.userId,
         usage.accountId,
         usage.workspaceId,
-        usage.requestId,
+        usage.resourceType,
+        usage.bucket,
+        usage.sourceEventId || "",
         usage,
         usage.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const usage of nextState.resourceUsageDaily || []) {
+      await client.query("INSERT INTO resource_usage_daily (id, account_id, workspace_id, resource_type, bucket, source_event_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [
+        usage.id,
+        usage.accountId,
+        usage.workspaceId,
+        usage.resourceType,
+        usage.bucket,
+        usage.sourceEventId || "",
+        usage,
+        usage.createdAt || new Date().toISOString()
+      ]);
+    }
+    for (const archive of nextState.resourceUsageArchive || []) {
+      await client.query("INSERT INTO resource_usage_archive (id, source_event_id, archived_log_count, created_at, state) VALUES ($1, $2, $3, $4, $5)", [
+        archive.id,
+        archive.sourceEventId || "",
+        archive.archivedLogCount || archive.logs?.length || 0,
+        archive.createdAt || new Date().toISOString(),
+        archive
+      ]);
+    }
+    for (const task of nextState.resourceUsageCleanupTasks || []) {
+      await client.query("INSERT INTO resource_usage_cleanup_tasks (id, task_type, source_event_id, created_at, state) VALUES ($1, $2, $3, $4, $5)", [
+        task.id,
+        task.type || "",
+        task.sourceEventId || "",
+        task.createdAt || new Date().toISOString(),
+        task
       ]);
     }
     for (const transaction of nextState.walletTransactions || []) {
@@ -337,18 +376,6 @@ export class PostgresStore {
         topup.targetAccountId,
         topup,
         topup.createdAt || new Date().toISOString()
-      ]);
-    }
-    for (const dedup of nextState.requestUsageDedup || []) {
-      await client.query("INSERT INTO request_usage_dedup (id, workspace_id, source_event_id, request_id, request_fingerprint, usage_log_id, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [
-        dedup.id,
-        dedup.workspaceId,
-        dedup.sourceEventId,
-        dedup.requestId,
-        dedup.requestFingerprint,
-        dedup.usageLogId,
-        dedup,
-        dedup.createdAt || new Date().toISOString()
       ]);
     }
     return this.read(client);
@@ -521,12 +548,43 @@ export class PostgresStore {
       )
     `);
     await client.query(`
-      CREATE TABLE IF NOT EXISTS request_usage_logs (
+      CREATE TABLE IF NOT EXISTS resource_usage_hourly (
         id text PRIMARY KEY,
-        user_id text NOT NULL,
         account_id text NOT NULL,
         workspace_id text NOT NULL,
-        request_id text NOT NULL,
+        resource_type text NOT NULL,
+        bucket timestamptz NOT NULL,
+        source_event_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS resource_usage_daily (
+        id text PRIMARY KEY,
+        account_id text NOT NULL,
+        workspace_id text NOT NULL,
+        resource_type text NOT NULL,
+        bucket timestamptz NOT NULL,
+        source_event_id text NOT NULL,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS resource_usage_archive (
+        id text PRIMARY KEY,
+        source_event_id text NOT NULL,
+        archived_log_count integer NOT NULL DEFAULT 0,
+        state jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS resource_usage_cleanup_tasks (
+        id text PRIMARY KEY,
+        task_type text NOT NULL,
+        source_event_id text NOT NULL,
         state jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now()
       )
@@ -553,24 +611,12 @@ export class PostgresStore {
         created_at timestamptz NOT NULL DEFAULT now()
       )
     `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS request_usage_dedup (
-        id text PRIMARY KEY,
-        workspace_id text NOT NULL,
-        source_event_id text NOT NULL,
-        request_id text NOT NULL,
-        request_fingerprint text NOT NULL,
-        usage_log_id text NOT NULL,
-        state jsonb NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
     await this.ensureCurrentColumns(client);
     await this.dropRetiredColumnRequirements(client);
     await this.pruneRetiredRows(client);
-    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_logs_workspace_request_idx ON request_usage_logs (workspace_id, request_id)");
-    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS request_usage_dedup_workspace_source_idx ON request_usage_dedup (workspace_id, source_event_id)");
     await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_logs_workspace_resource_source_idx ON resource_usage_logs (workspace_id, resource_type, ((state->>'sourceEventId')))");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_hourly_bucket_resource_idx ON resource_usage_hourly (bucket, account_id, workspace_id, resource_type)");
+    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS resource_usage_daily_bucket_resource_idx ON resource_usage_daily (bucket, account_id, workspace_id, resource_type)");
     await client.query("DROP INDEX IF EXISTS billing_ledger_dedup_idx");
     await client.query(`
       CREATE INDEX IF NOT EXISTS billing_ledger_event_lookup_idx
@@ -584,7 +630,7 @@ export class PostgresStore {
       WHERE
         state->>'sourceEventId' IS NOT NULL
         AND state->>'sourceEventId' <> ''
-        AND (state->>'type') IN ('compute_debit', 'storage_debit', 'compute_hold_exhausted', 'request_debit')
+        AND (state->>'type') IN ('compute_debit', 'storage_debit', 'compute_hold_exhausted')
     `);
     this.initialized = true;
   }
@@ -659,11 +705,30 @@ export class PostgresStore {
         resource_type: "text NOT NULL DEFAULT ''",
         created_at: "timestamptz NOT NULL DEFAULT now()"
       },
-      request_usage_logs: {
-        user_id: "text NOT NULL DEFAULT ''",
+      resource_usage_hourly: {
         account_id: "text NOT NULL DEFAULT ''",
         workspace_id: "text NOT NULL DEFAULT ''",
-        request_id: "text NOT NULL DEFAULT ''",
+        resource_type: "text NOT NULL DEFAULT ''",
+        bucket: "timestamptz NOT NULL DEFAULT now()",
+        source_event_id: "text NOT NULL DEFAULT ''",
+        created_at: "timestamptz NOT NULL DEFAULT now()"
+      },
+      resource_usage_daily: {
+        account_id: "text NOT NULL DEFAULT ''",
+        workspace_id: "text NOT NULL DEFAULT ''",
+        resource_type: "text NOT NULL DEFAULT ''",
+        bucket: "timestamptz NOT NULL DEFAULT now()",
+        source_event_id: "text NOT NULL DEFAULT ''",
+        created_at: "timestamptz NOT NULL DEFAULT now()"
+      },
+      resource_usage_archive: {
+        source_event_id: "text NOT NULL DEFAULT ''",
+        archived_log_count: "integer NOT NULL DEFAULT 0",
+        created_at: "timestamptz NOT NULL DEFAULT now()"
+      },
+      resource_usage_cleanup_tasks: {
+        task_type: "text NOT NULL DEFAULT ''",
+        source_event_id: "text NOT NULL DEFAULT ''",
         created_at: "timestamptz NOT NULL DEFAULT now()"
       },
       wallet_transactions: {
@@ -680,14 +745,6 @@ export class PostgresStore {
         target_account_id: "text NOT NULL DEFAULT ''",
         created_at: "timestamptz NOT NULL DEFAULT now()"
       },
-      request_usage_dedup: {
-        workspace_id: "text NOT NULL DEFAULT ''",
-        source_event_id: "text NOT NULL DEFAULT ''",
-        request_id: "text NOT NULL DEFAULT ''",
-        request_fingerprint: "text NOT NULL DEFAULT ''",
-        usage_log_id: "text NOT NULL DEFAULT ''",
-        created_at: "timestamptz NOT NULL DEFAULT now()"
-      }
     };
 
     for (const [table, columns] of Object.entries(migrations)) {

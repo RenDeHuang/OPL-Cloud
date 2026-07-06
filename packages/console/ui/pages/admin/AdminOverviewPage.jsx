@@ -324,11 +324,18 @@ function adminResourceEvidenceRows(state = {}) {
       id: workspace.id,
       workspaceId: workspace.id,
       accountId: workspace.ownerAccountId,
+      ownerAccountId: workspace.ownerAccountId,
+      ownerUserId: workspace.ownerUserId || "",
+      workspaceIds: [workspace.id],
       computeId: workspace.currentComputeAllocationId || compute?.id || "",
+      computeAllocationId: workspace.currentComputeAllocationId || compute?.id || "",
       cvmInstanceId: compute?.cvmInstanceId || compute?.providerResourceId || compute?.nodeName || compute?.machineName || "",
+      nodeName: compute?.nodeName || compute?.machineName || "",
       storageId: workspace.storageId || storage?.id || "",
       storageProviderId: storage?.providerResourceId || "",
       attachmentId: workspace.currentAttachmentId || attachment?.id || "",
+      ledgerEntryIds: [],
+      walletTransactionIds: [],
       status: workspace.state || workspace.runtime?.status || "unknown",
       issue: issue.safeMessage || issue.error || issue.failureReason || "暂无失败",
       providerRequestId: issue.providerRequestId || issue.operationId || ""
@@ -339,7 +346,8 @@ function adminResourceEvidenceRows(state = {}) {
 export function AdminDiagnosticsPage({ managementState, adminOps }) {
   const failedOperations = adminOps.operator?.failedOperations || adminOps.operator?.runtimeOperations?.recentFailed || [];
   const resourceAnomalies = adminOps.operator?.resourceAnomalies || [];
-  const resourceEvidence = adminResourceEvidenceRows(managementState);
+  const resourceLedgerEvidence = managementState.resourceLedgerEvidence || [];
+  const resourceEvidence = resourceLedgerEvidence.length ? resourceLedgerEvidence : adminResourceEvidenceRows(managementState);
   return (
     <ConsoleSurface title="线上诊断" eyebrow="管理" subtitle="只读检查、失败操作、资源异常">
       {adminOps.error && <Alert type="error" showIcon message={adminOps.error} />}
@@ -385,15 +393,19 @@ export function AdminDiagnosticsPage({ managementState, adminOps }) {
           data={resourceEvidence}
           emptyText="暂无资源归属证据"
           tableLayout="fixed"
-          scroll={{ x: 1180 }}
+          scroll={{ x: 1680 }}
           columns={[
-            { title: "Workspace", dataIndex: "workspaceId", width: 170, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value}</Typography.Text> },
-            { title: "账号", dataIndex: "accountId", width: 150, ellipsis: true },
+            { title: "资源", dataIndex: "resourceType", width: 90, ellipsis: true },
+            { title: "Workspace", dataIndex: "workspaceIds", width: 190, ellipsis: true, render: (value, row) => <Typography.Text copyable className="inlineCode">{(value || [row.workspaceId]).filter(Boolean).join(", ") || "-"}</Typography.Text> },
+            { title: "Owner", dataIndex: "ownerAccountId", width: 150, ellipsis: true, render: (value, row) => value || row.accountId || "-" },
+            { title: "User", dataIndex: "ownerUserId", width: 150, ellipsis: true },
             { title: "CVM / 节点", dataIndex: "cvmInstanceId", width: 190, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value || "-"}</Typography.Text> },
-            { title: "计算 ID", dataIndex: "computeId", width: 170, ellipsis: true },
+            { title: "Node", dataIndex: "nodeName", width: 170, ellipsis: true },
+            { title: "计算 ID", dataIndex: "computeAllocationId", width: 170, ellipsis: true, render: (value, row) => value || row.computeId || "-" },
             { title: "存储 ID", dataIndex: "storageId", width: 170, ellipsis: true },
             { title: "存储 provider", dataIndex: "storageProviderId", width: 190, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value || "-"}</Typography.Text> },
-            { title: "挂载", dataIndex: "attachmentId", width: 170, ellipsis: true },
+            { title: "账本", dataIndex: "ledgerEntryIds", width: 190, ellipsis: true, render: (value) => (value || []).join(", ") || "-" },
+            { title: "钱包流水", dataIndex: "walletTransactionIds", width: 190, ellipsis: true, render: (value) => (value || []).join(", ") || "-" },
             { title: "状态", dataIndex: "status", width: 95, render: (value) => <StatusPill label={value} tone={value === "failed" ? "danger" : "info"} /> },
             { title: "问题依据", dataIndex: "issue", width: 190, ellipsis: true },
             { title: "请求/操作", dataIndex: "providerRequestId", width: 170, ellipsis: true }

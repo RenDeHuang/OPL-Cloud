@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, stable Workspace URL subjects, package-level compute pools, account-owned compute allocations, independent storage volumes, runtime attachments, request usage billing, support, and admin operations.",
+  "currentSlice": "Business-chain closure for wallet, stable Workspace URL subjects, package-level compute pools, account-owned compute allocations, independent storage volumes, runtime attachments, resource usage ledger, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",

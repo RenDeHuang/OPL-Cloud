@@ -253,8 +253,9 @@ test("Billing and Workspace pages explain commercial charging and URL lifecycle"
   const listSource = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");
   const detailSource = await source("packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx");
 
-  assert.match(billingSource, /计费规则|billingPolicy/, "billing page must explain holds, release, and request debit policy");
-  assert.match(billingSource, /request_debit|请求扣费/, "billing page must expose request debit evidence");
+  assert.match(billingSource, /计费规则|billingPolicy/, "billing page must explain holds, release, and resource debit policy");
+  assert.doesNotMatch(billingSource, /request_debit|请求扣费|token|tokens|model pricing/i, "OPL Cloud billing must not expose request-level charging");
+  assert.match(billingSource, /compute_debit|storage_debit|资源扣费|存储扣费|resourceUsageLogs/, "billing page must expose resource debit evidence");
   for (const signal of ["activeHourlyEstimate", "nextSettlementAt", "runningDuration", "下次结算", "运行时长", "预计每小时"]) {
     assert.match(billingSource, new RegExp(signal), `billing page must show ${signal}`);
   }
@@ -378,6 +379,26 @@ test("Admin diagnostics and E2E records are read-only operator surfaces", async 
     adminSource.indexOf("export function AdminCleanupPage")
   );
   assert.doesNotMatch(diagnosticsSlice, /OPL_CODEX_API_KEY|workspace\.url|access\?\.token/i, "Admin diagnostics UI must not render runtime secrets or Workspace access URLs");
+});
+
+test("Admin diagnostics exposes resource ledger evidence chain without operator guesswork", async () => {
+  const adminSource = await source("packages/console/ui/pages/admin/AdminOverviewPage.jsx");
+  const readModelSource = await source("packages/console/src/services/console-read-model-service.js");
+
+  for (const signal of [
+    "resourceLedgerEvidence",
+    "ledgerEntryIds",
+    "walletTransactionIds",
+    "ownerAccountId",
+    "ownerUserId",
+    "cvmInstanceId",
+    "nodeName",
+    "storageId",
+    "workspaceIds"
+  ]) {
+    assert.match(adminSource, new RegExp(signal), `Admin diagnostics must render ${signal}`);
+    assert.match(readModelSource, new RegExp(signal), `Console read model must produce ${signal}`);
+  }
 });
 
 test("Workspace detail links to first-class resources and excludes retired compute lifecycle controls", async () => {

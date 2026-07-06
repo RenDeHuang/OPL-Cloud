@@ -1,28 +1,54 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Console",
-  "purpose": "Versioned commercial pricing defaults consumed by local and Tencent TKE production environments.",
+  "purpose": "Versioned OPL user price catalog consumed by local and Tencent TKE production environments.",
   "state": "current",
-  "machineBoundary": "Default compute hourly price, storage GB-month price, markup, currency, and environment variable mapping.",
+  "priceBasis": "opl_user_price_catalog",
+  "providerCostBasis": "internal_estimate_only",
+  "machineBoundary": "Final user-facing compute hourly price and storage GB-month price. Provider costs are internal evidence only and never part of the billing formula.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current pricing contract and matching migration notes."
   },
-  "catalogVersion": "2026-07-02-tencent-na-siliconvalley-cpu-v1",
+  "catalogVersion": "2026-07-06-opl-user-resource-v1",
   "currency": "CNY",
-  "markup": 0.2,
   "computeHourly": {
-    "basic": 0.39,
-    "pro": 3.09
+    "basic": 0.468,
+    "pro": 1.38
   },
-  "storageGbMonth": 0.36,
+  "storageGbMonth": 0.432,
+  "providerCostEstimate": {
+    "currency": "CNY",
+    "source": "tencent_public_price_snapshot",
+    "sourceRegion": "na-siliconvalley",
+    "billingUse": "internal_reconciliation_only",
+    "computeHourly": {
+      "basic": {
+        "instanceType": "SA5.MEDIUM4",
+        "vcpu": 2,
+        "memoryGb": 4,
+        "estimatedHourly": 0.27
+      },
+      "pro": {
+        "instanceType": "SA5.2XLARGE16",
+        "vcpu": 8,
+        "memoryGb": 16,
+        "estimatedHourly": 1.15
+      }
+    },
+    "storageGbMonth": {
+      "storageClass": "premium_cbs",
+      "estimatedGbMonth": 0.34
+    }
+  },
   "env": {
     "basicComputeHourly": "OPL_BASIC_COMPUTE_HOURLY_CNY",
     "proComputeHourly": "OPL_PRO_COMPUTE_HOURLY_CNY",
-    "storageGbMonth": "OPL_STORAGE_GB_MONTH_CNY",
-    "markup": "OPL_BILLING_MARKUP"
+    "storageGbMonth": "OPL_STORAGE_GB_MONTH_CNY"
   },
   "rules": [
+    "OPL user prices are final billing prices, not dynamic Tencent cost formulas.",
+    "Provider cost estimates are internal reconciliation evidence and must not change customer debits.",
     "GPU pricing is not part of the current production catalog.",
     "Environment templates and runtime defaults must use this catalog version until a newer contract replaces it."
   ]
