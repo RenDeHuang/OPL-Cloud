@@ -109,6 +109,21 @@ test("create Workspace flow is a single commercial submit action", async () => {
   assert.match(stateSource, /return false/, "runAction must report failed actions");
 });
 
+test("shared runAction suppresses duplicate submissions by action key", async () => {
+  const stateSource = await source("packages/console/ui/store/console-state.js");
+  const workspaceListSource = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");
+  const workspaceDetailSource = await source("packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx");
+  const adminSource = await source("packages/console/ui/pages/admin/AdminOverviewPage.jsx");
+
+  assert.match(stateSource, /pendingActions/, "runAction must track pending action keys");
+  assert.match(stateSource, /actionKey/, "runAction must accept an action key");
+  assert.match(stateSource, /current\.has\(actionKey\)/, "runAction must suppress duplicate action keys");
+  assert.match(workspaceListSource, /actionKey: `workspace-reset-\$\{row\.id\}`/, "Workspace list reset must key duplicate suppression by Workspace");
+  assert.match(workspaceListSource, /actionKey: `workspace-delete-\$\{row\.id\}`/, "Workspace list delete must key duplicate suppression by Workspace");
+  assert.match(workspaceDetailSource, /actionKey: `workspace-reset-\$\{selected\.id\}`/, "Workspace detail reset must key duplicate suppression by Workspace");
+  assert.match(adminSource, /actionKey: "admin-manual-topup"/, "manual top-up must suppress duplicate submit");
+});
+
 test("Workspace UI treats URL as stable storage subject with current runtime pointer", async () => {
   const listSource = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");
   const detailSource = await source("packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx");

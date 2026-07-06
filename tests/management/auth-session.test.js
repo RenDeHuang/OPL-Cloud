@@ -162,6 +162,49 @@ test("commercial Console login creates a session and logout invalidates it", asy
   }
 });
 
+test("login failures are rate limited by remote address and email", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-rate-limit-"));
+  const appService = {
+    async getState(accountId) {
+      return { account: { id: accountId }, workspaces: [], packages: [], billingLedger: [], audit: [], notifications: [] };
+    }
+  };
+  const auth = createAuthController({
+    usersPath: join(root, "users.json"),
+    seedUsers: [
+      {
+        id: "usr-pi",
+        email: "pi@example.com",
+        password: "secret-pi",
+        name: "Lab Owner",
+        role: "pi",
+        accountId: "pi-alpha"
+      }
+    ]
+  });
+  const { origin, close } = await listen(createRequestHandler({ appService, auth }));
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failed = await postJson(origin, "/api/auth/login", {
+        email: "pi@example.com",
+        password: `wrong-${attempt}`
+      });
+      assert.equal(failed.response.status, 401);
+      assert.equal(failed.payload.error, "invalid_credentials");
+    }
+
+    const limited = await postJson(origin, "/api/auth/login", {
+      email: "pi@example.com",
+      password: "wrong-locked"
+    });
+    assert.equal(limited.response.status, 429);
+    assert.equal(limited.payload.error, "too_many_attempts");
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("health check stays unauthenticated for Kubernetes probes", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-auth-health-"));
   const appService = {
@@ -721,6 +764,46 @@ test("operator token can create an admin session for production verifier actions
         operatorAccountId: "admin"
       }]
     ]);
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("operator token login failures are rate limited without storing raw token keys", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-auth-operator-rate-limit-"));
+  const auth = createAuthController({
+    usersPath: join(root, "users.json"),
+    seedUsers: [
+      {
+        id: "usr-admin",
+        email: "admin@example.com",
+        password: "secret-admin",
+        name: "Admin",
+        role: "admin",
+        accountId: "admin"
+      }
+    ]
+  });
+  const { origin, close } = await listen(createRequestHandler({
+    appService: {},
+    auth,
+    operatorSummaryToken: "operator-secret"
+  }));
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failed = await postJson(origin, "/api/auth/operator-login", {
+        operatorToken: `wrong-token-${attempt}`
+      });
+      assert.equal(failed.response.status, 403);
+      assert.equal(failed.payload.error, "operator_token_invalid");
+    }
+
+    const limited = await postJson(origin, "/api/auth/operator-login", {
+      operatorToken: "wrong-token-locked"
+    });
+    assert.equal(limited.response.status, 429);
+    assert.equal(limited.payload.error, "too_many_attempts");
   } finally {
     await close();
     await rm(root, { recursive: true, force: true });

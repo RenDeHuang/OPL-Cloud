@@ -105,7 +105,7 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
     });
     const workspace = await appService.createWorkspace({
       accountId: "pi-route",
-      workspaceName: "Route Lab",
+      workspaceName: "<script>alert(1)</script> Route Lab",
       attachmentId: attachment.id
     });
 
@@ -115,7 +115,8 @@ test("workspace URL route validates token and returns OPL Workspace entry page",
     const validResponse = await fetch(`${origin}/workspaces/${workspace.slug}?token=${workspace.access.token}`);
     const html = await validResponse.text();
     assert.equal(validResponse.status, 200);
-    assert.match(html, /Route Lab/);
+    assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt; Route Lab/);
+    assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
     assert.match(html, /OPL Workspace/);
     assert.match(html, /TKE\/CVM runtime/);
     assert.doesNotMatch(html, /Local Docker|docker-compose/);
@@ -128,7 +129,7 @@ test("workspace gateway validates URL token, sets scoped cookies, and proxies We
   const upstreamRequests = [];
   const upstream = await listen((request, response) => {
     upstreamRequests.push({ url: request.url, cookie: request.headers.cookie || "" });
-    if (request.url === "/") {
+    if (request.url === "/" || request.url === "/?room=alpha") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end('<!doctype html><script type="module" src="./assets/app.js"></script>');
       return;
@@ -175,17 +176,22 @@ test("workspace gateway validates URL token, sets scoped cookies, and proxies We
     const blockedAsset = await fetch(`${origin}/w/ws-gateway001/assets/app.js`);
     assert.equal(blockedAsset.status, 403);
 
-    const redirect = await fetch(`${origin}/w/ws-gateway001?token=share_gateway`, { redirect: "manual" });
+    const redirect = await fetch(`${origin}/w/ws-gateway001?token=share_gateway&room=alpha`, { redirect: "manual" });
     const cookie = cookieHeaderFrom(redirect);
-    assert.equal(redirect.status, 308);
-    assert.equal(redirect.headers.get("location"), "/w/ws-gateway001/?token=share_gateway");
+    assert.equal(redirect.status, 302);
+    assert.equal(redirect.headers.get("location"), "/w/ws-gateway001/?room=alpha");
+    assert.equal(redirect.headers.get("cache-control"), "no-store");
+    assert.equal(redirect.headers.get("referrer-policy"), "no-referrer");
     assert.match(cookie, /opl_ws_active=ws-gateway001/);
     assert.match(cookie, /opl_ws_ws-gateway001=share_gateway/);
 
-    const htmlResponse = await fetch(`${origin}/w/ws-gateway001/?token=share_gateway`);
+    const htmlResponse = await fetch(`${origin}/w/ws-gateway001/?room=alpha`, {
+      headers: { cookie }
+    });
     const html = await htmlResponse.text();
     assert.equal(htmlResponse.status, 200);
     assert.match(html, /assets\/app\.js/);
+    assert.equal(upstreamRequests.at(-1).url, "/?room=alpha");
 
     const assetResponse = await fetch(`${origin}/w/ws-gateway001/assets/app.js`, {
       headers: { cookie, "accept-encoding": "identity" }
@@ -218,7 +224,7 @@ test("workspace gateway validates URL token, sets scoped cookies, and proxies We
       "app_theme=dark"
     ]);
     assert.deepEqual(upstreamRequests, [
-      { url: "/", cookie: "" },
+      { url: "/?room=alpha", cookie: "" },
       { url: "/assets/app.js", cookie: "" },
       { url: "/assets/app.js", cookie: "" },
       { url: "/api/chat?model=gpt", cookie: "app_session=runtime" }
@@ -245,7 +251,10 @@ test("workspace gateway shows productized unavailable page when runtime fetch fa
   };
   const { origin, close } = await listen(createRequestHandler({ appService }));
   try {
-    const response = await fetch(`${origin}/w/ws-released001/?token=share_released`);
+    const redirect = await fetch(`${origin}/w/ws-released001/?token=share_released`, { redirect: "manual" });
+    const response = await fetch(`${origin}${redirect.headers.get("location")}`, {
+      headers: { cookie: cookieHeaderFrom(redirect) }
+    });
     const html = await response.text();
 
     assert.equal(response.status, 502);

@@ -30,6 +30,15 @@ async function postJson(origin, path, body) {
   return { response, payload: await response.json() };
 }
 
+async function postRaw(origin, path, body) {
+  const response = await fetch(`${origin}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body
+  });
+  return { response, payload: await response.json() };
+}
+
 test("management API exposes organization, user, membership, and management state endpoints", async () => {
   const calls = [];
   const appService = {
@@ -196,6 +205,49 @@ test("resource mutation errors expose safe provider details without raw provider
       requestId: "req-denied",
       retryable: false
     });
+  } finally {
+    await close();
+  }
+});
+
+test("API JSON requests fail closed when the body is too large", async () => {
+  let called = false;
+  const appService = {
+    async createUser() {
+      called = true;
+      return { id: "usr-large" };
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const oversizedBody = `{"payload":"${"x".repeat(1024 * 1024 + 1)}"}`;
+    const failed = await postRaw(origin, "/api/users", oversizedBody);
+
+    assert.equal(failed.response.status, 413);
+    assert.equal(failed.payload.error, "payload_too_large");
+    assert.equal(called, false);
+  } finally {
+    await close();
+  }
+});
+
+test("API errors do not echo raw internal messages unless marked safe", async () => {
+  const appService = {
+    async createUser() {
+      throw new Error("database password leaked at /tmp/secret");
+    }
+  };
+  const { origin, close } = await listen(createRequestHandler({ appService }));
+  try {
+    const failed = await postJson(origin, "/api/users", {
+      userId: "usr-leak",
+      email: "leak@example.com"
+    });
+
+    assert.equal(failed.response.status, 400);
+    assert.equal(failed.payload.error, "internal_error");
+    assert.equal(JSON.stringify(failed.payload).includes("database password"), false);
+    assert.equal(JSON.stringify(failed.payload).includes("/tmp/secret"), false);
   } finally {
     await close();
   }

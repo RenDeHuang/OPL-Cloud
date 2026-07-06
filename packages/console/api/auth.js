@@ -8,6 +8,8 @@ const root = fileURLToPath(new URL("../../..", import.meta.url));
 const defaultUsersPath = join(root, ".runtime", "opl-console-users.json");
 const sessionCookieName = "opl_console_session";
 const defaultSessionTtlMs = 24 * 60 * 60 * 1000;
+const authFailureWindowMs = 10 * 60 * 1000;
+const authFailureLimit = 5;
 function authError(status, message) {
   const error = new Error(message);
   error.status = status;
@@ -66,6 +68,11 @@ function parseCookies(header = "") {
       cookies[decodeURIComponent(part.slice(0, index))] = decodeURIComponent(part.slice(index + 1));
       return cookies;
     }, {});
+}
+
+function remoteAddress(request) {
+  const forwardedFor = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwardedFor || request.socket?.remoteAddress || "unknown";
 }
 
 function secureCookieFor(request, env) {
@@ -162,7 +169,35 @@ export function createAuthController({
   store = null
 } = {}) {
   const sessions = new Map();
+  // ponytail: in-memory throttle matches in-memory sessions; move both to shared storage before multi-replica auth.
+  const authFailures = new Map();
   let cachedUsers = null;
+
+  function failureKey(request, scope) {
+    return `${remoteAddress(request)}:${scope}`;
+  }
+
+  function checkFailures(key) {
+    const current = authFailures.get(key);
+    if (!current || current.expiresAt <= Date.now()) {
+      authFailures.delete(key);
+      return;
+    }
+    if (current.count >= authFailureLimit) throw authError(429, "too_many_attempts");
+  }
+
+  function recordFailure(key) {
+    const current = authFailures.get(key);
+    const expiresAt = Date.now() + authFailureWindowMs;
+    authFailures.set(key, {
+      count: current && current.expiresAt > Date.now() ? current.count + 1 : 1,
+      expiresAt
+    });
+  }
+
+  function clearFailures(key) {
+    authFailures.delete(key);
+  }
 
   async function loadStoreUsers() {
     const state = await store.read();
@@ -230,9 +265,16 @@ export function createAuthController({
 
   return {
     async login({ email, password }, { request, response }) {
+      const normalizedEmail = normalizeEmail(email);
+      const throttleKey = failureKey(request, `login:${normalizedEmail}`);
+      checkFailures(throttleKey);
       const users = await loadUsers();
-      const user = users.find((item) => item.email === normalizeEmail(email) && isLoginEnabled(item));
-      if (!user || !await verifyPassword(password, user.passwordHash)) throw authError(401, "invalid_credentials");
+      const user = users.find((item) => item.email === normalizedEmail && isLoginEnabled(item));
+      if (!user || !await verifyPassword(password, user.passwordHash)) {
+        recordFailure(throttleKey);
+        throw authError(401, "invalid_credentials");
+      }
+      clearFailures(throttleKey);
       const sessionId = randomToken();
       const csrfToken = randomToken(24);
       sessions.set(sessionId, {
@@ -246,11 +288,17 @@ export function createAuthController({
     },
 
     async operatorLogin({ operatorToken }, { request, response, expectedToken }) {
+      const throttleKey = failureKey(request, "operator-login");
+      checkFailures(throttleKey);
       if (!expectedToken) throw authError(403, "operator_token_not_configured");
-      if (!operatorToken || operatorToken !== expectedToken) throw authError(403, "operator_token_invalid");
+      if (!operatorToken || operatorToken !== expectedToken) {
+        recordFailure(throttleKey);
+        throw authError(403, "operator_token_invalid");
+      }
       const users = await loadUsers();
       const admin = users.find((item) => item.role === "admin" && isLoginEnabled(item));
       if (!admin) throw authError(403, "operator_admin_user_required");
+      clearFailures(throttleKey);
       const sessionId = randomToken();
       const csrfToken = randomToken(24);
       sessions.set(sessionId, {

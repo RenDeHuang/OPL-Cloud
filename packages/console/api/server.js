@@ -92,6 +92,7 @@ const publicApiRoutes = new Set([
   "GET /api/production/readiness"
 ]);
 const activeWorkspaceCookieName = "opl_ws_active";
+const maxJsonBodyBytes = 1024 * 1024;
 const hopByHopHeaders = new Set([
   "connection",
   "keep-alive",
@@ -109,9 +110,13 @@ function sendJson(response, status, payload) {
 }
 
 function errorPayload(error) {
+  const message = String(error.message || "");
+  const publicError = error.status || error.safeMessage || error.providerRequestId || /^[a-z][a-z0-9_:-]*$/.test(message)
+    ? message
+    : "internal_error";
   return {
     ok: false,
-    error: error.message,
+    error: publicError,
     ...(error.safeMessage ? { safeMessage: error.safeMessage } : {}),
     ...(error.providerRequestId || typeof error.retryable === "boolean" ? {
       provider: {
@@ -167,7 +172,16 @@ function workspaceUnavailableHtml({
 
 async function readJson(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.byteLength;
+    if (size > maxJsonBodyBytes) {
+      const error = new Error("payload_too_large");
+      error.status = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw.trim() ? JSON.parse(raw) : {};
 }
@@ -211,12 +225,13 @@ async function handleWorkspaceUrl(request, response, pathname, searchParams, app
       return response.end();
     }
     const runtimeTarget = workspace.docker?.localUrl || workspace.docker?.composePath || "运行时目标待生成";
+    const workspaceName = escapeHtml(workspace.name);
     return sendHtml(response, isRunning ? 200 : 409, `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${workspace.name} - OPL Workspace</title>
+    <title>${workspaceName} - OPL Workspace</title>
     <style>
       body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #111827; }
       main { max-width: 760px; margin: 8vh auto; padding: 32px; background: #fff; border: 1px solid #d9dee7; border-radius: 8px; }
@@ -230,20 +245,20 @@ async function handleWorkspaceUrl(request, response, pathname, searchParams, app
   </head>
   <body>
     <main>
-      <h1>${workspace.name}</h1>
+      <h1>${workspaceName}</h1>
       <p>此 URL 令牌有效。TKE/CVM runtime 已绑定下方计算、存储和 one-person-lab-app 服务，入口通过 Workspace 网关路由。</p>
       <dl>
-        <dt>状态</dt><dd>${statusText(workspace.state)}</dd>
-        <dt>计算</dt><dd>${statusText(workspace.server.status)}</dd>
-        <dt>运行容器</dt><dd>${statusText(workspace.docker.status)}</dd>
-        <dt>存储</dt><dd>${statusText(workspace.disk.status)} / ${workspace.disk.mountPath}</dd>
-        <dt>运行时</dt><dd><code>${runtimeTarget}</code></dd>
+        <dt>状态</dt><dd>${escapeHtml(statusText(workspace.state))}</dd>
+        <dt>计算</dt><dd>${escapeHtml(statusText(workspace.server.status))}</dd>
+        <dt>运行容器</dt><dd>${escapeHtml(statusText(workspace.docker.status))}</dd>
+        <dt>存储</dt><dd>${escapeHtml(statusText(workspace.disk.status))} / ${escapeHtml(workspace.disk.mountPath)}</dd>
+        <dt>运行时</dt><dd><code>${escapeHtml(runtimeTarget)}</code></dd>
       </dl>
     </main>
   </body>
 </html>`);
   } catch (error) {
-    return sendHtml(response, 403, `<!doctype html><title>OPL Workspace 不可用</title><h1>OPL Workspace 不可用</h1><p>${workspaceErrorText(error.message)}</p>`);
+    return sendHtml(response, 403, `<!doctype html><title>OPL Workspace 不可用</title><h1>OPL Workspace 不可用</h1><p>${escapeHtml(workspaceErrorText(error.message))}</p>`);
   }
 }
 
@@ -553,6 +568,16 @@ async function handleWorkspaceGateway(request, response, url, appService) {
 
   const setCookie = queryToken ? workspaceAccessCookies({ workspaceId, token: queryToken }) : null;
   const isWorkspaceEntryPath = url.pathname.startsWith("/w/") && parts.length === 2;
+  if ((request.method === "GET" || request.method === "HEAD") && queryToken) {
+    const cleanPath = isWorkspaceEntryPath && !url.pathname.endsWith("/") ? `${url.pathname}/` : url.pathname;
+    response.writeHead(302, {
+      location: `${cleanPath}${cleanWorkspaceSearch(url.searchParams)}`,
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "set-cookie": setCookie
+    });
+    return response.end();
+  }
   if ((request.method === "GET" || request.method === "HEAD") && isWorkspaceEntryPath && !url.pathname.endsWith("/")) {
     response.writeHead(308, {
       location: `${url.pathname}/${url.search}`,

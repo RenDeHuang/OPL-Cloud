@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Form, message } from "antd";
 import {
   getConsoleState,
@@ -16,6 +16,8 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [topUpForm] = Form.useForm();
   const [createPackageId, setCreatePackageId] = useState("basic");
+  const [pendingActions, setPendingActions] = useState(new Set());
+  const pendingActionKeys = useRef(new Set());
   const tickets = useTickets({ csrfToken, all: isAdmin && path.startsWith("/admin/support") });
 
   async function refresh() {
@@ -41,7 +43,21 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
     }
   }
 
-  async function runAction(action, success = "Done", { returnFailure = false } = {}) {
+  async function runAction(action, success = "Done", { returnFailure = false, actionKey = "" } = {}) {
+    if (actionKey && pendingActionKeys.current.has(actionKey)) {
+      if (returnFailure) {
+        return {
+          ok: false,
+          status: "pending",
+          failureReason: "操作正在进行"
+        };
+      }
+      return false;
+    }
+    if (actionKey) {
+      pendingActionKeys.current.add(actionKey);
+      setPendingActions(new Set(pendingActionKeys.current));
+    }
     try {
       const result = await action();
       await refresh();
@@ -65,6 +81,11 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
         };
       }
       return false;
+    } finally {
+      if (actionKey) {
+        pendingActionKeys.current.delete(actionKey);
+        setPendingActions(new Set(pendingActionKeys.current));
+      }
     }
   }
 
@@ -120,6 +141,7 @@ export function useConsoleState({ isAdmin, path, csrfToken }) {
     topUpOpen,
     setTopUpOpen,
     topUpForm,
+    pendingActions,
     runAction,
     refresh,
     refreshAdminOps
