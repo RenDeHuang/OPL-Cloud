@@ -311,9 +311,35 @@ export function AdminRuntimePage({ adminOps }) {
   );
 }
 
-export function AdminDiagnosticsPage({ adminOps }) {
+function adminResourceEvidenceRows(state = {}) {
+  const computeById = new Map((state.computeAllocations || []).map((item) => [item.id, item]));
+  const storageById = new Map((state.storageVolumes || []).map((item) => [item.id, item]));
+  const attachmentById = new Map((state.storageAttachments || []).map((item) => [item.id, item]));
+  return (state.workspaces || []).map((workspace) => {
+    const compute = computeById.get(workspace.currentComputeAllocationId);
+    const storage = storageById.get(workspace.storageId);
+    const attachment = attachmentById.get(workspace.currentAttachmentId);
+    const issue = [compute, storage, attachment, workspace].find((item) => item?.safeMessage || item?.error || item?.failureReason || item?.providerRequestId || item?.operationId) || {};
+    return {
+      id: workspace.id,
+      workspaceId: workspace.id,
+      accountId: workspace.ownerAccountId,
+      computeId: workspace.currentComputeAllocationId || compute?.id || "",
+      cvmInstanceId: compute?.cvmInstanceId || compute?.providerResourceId || compute?.nodeName || compute?.machineName || "",
+      storageId: workspace.storageId || storage?.id || "",
+      storageProviderId: storage?.providerResourceId || "",
+      attachmentId: workspace.currentAttachmentId || attachment?.id || "",
+      status: workspace.state || workspace.runtime?.status || "unknown",
+      issue: issue.safeMessage || issue.error || issue.failureReason || "暂无失败",
+      providerRequestId: issue.providerRequestId || issue.operationId || ""
+    };
+  });
+}
+
+export function AdminDiagnosticsPage({ managementState, adminOps }) {
   const failedOperations = adminOps.operator?.failedOperations || adminOps.operator?.runtimeOperations?.recentFailed || [];
   const resourceAnomalies = adminOps.operator?.resourceAnomalies || [];
+  const resourceEvidence = adminResourceEvidenceRows(managementState);
   return (
     <ConsoleSurface title="线上诊断" eyebrow="管理" subtitle="只读检查、失败操作、资源异常">
       {adminOps.error && <Alert type="error" showIcon message={adminOps.error} />}
@@ -350,6 +376,27 @@ export function AdminDiagnosticsPage({ adminOps }) {
             { title: "账号", dataIndex: "accountId", ellipsis: true },
             { title: "工作区", dataIndex: "workspaceId", ellipsis: true },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value} tone="danger" /> }
+          ]}
+        />
+      </InsightPanel>
+      <InsightPanel title="资源归属证据" eyebrow="Owner、CVM、存储">
+        <ObjectTable
+          rowKey="id"
+          data={resourceEvidence}
+          emptyText="暂无资源归属证据"
+          tableLayout="fixed"
+          scroll={{ x: 1180 }}
+          columns={[
+            { title: "Workspace", dataIndex: "workspaceId", width: 170, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value}</Typography.Text> },
+            { title: "账号", dataIndex: "accountId", width: 150, ellipsis: true },
+            { title: "CVM / 节点", dataIndex: "cvmInstanceId", width: 190, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value || "-"}</Typography.Text> },
+            { title: "计算 ID", dataIndex: "computeId", width: 170, ellipsis: true },
+            { title: "存储 ID", dataIndex: "storageId", width: 170, ellipsis: true },
+            { title: "存储 provider", dataIndex: "storageProviderId", width: 190, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value || "-"}</Typography.Text> },
+            { title: "挂载", dataIndex: "attachmentId", width: 170, ellipsis: true },
+            { title: "状态", dataIndex: "status", width: 95, render: (value) => <StatusPill label={value} tone={value === "failed" ? "danger" : "info"} /> },
+            { title: "问题依据", dataIndex: "issue", width: 190, ellipsis: true },
+            { title: "请求/操作", dataIndex: "providerRequestId", width: 170, ellipsis: true }
           ]}
         />
       </InsightPanel>

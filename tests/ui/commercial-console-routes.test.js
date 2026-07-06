@@ -74,16 +74,8 @@ test("commercial Console route contract covers current public, auth, owner, and 
 test("Lab Owner menu is commercial and excludes operator surfaces", () => {
   assert.deepEqual(ownerMenuRoutes.map((route) => route.label), [
     "概览",
-    "计算资源",
-    "存储资源",
-    "挂载关系",
-    "资源关系",
-    "工作区入口",
-    "网关",
-    "账单",
-    "账号与实验室",
-    "工单",
-    "提醒"
+    "工作区",
+    "配置"
   ]);
 
   for (const route of ownerMenuRoutes) {
@@ -93,6 +85,39 @@ test("Lab Owner menu is commercial and excludes operator surfaces", () => {
     assert.notEqual(route.requiresAdmin, true);
     assert.equal(route.adminMenu, undefined);
     assert.ok(routesById.has(route.id), `${route.id} must exist in route registry`);
+  }
+});
+
+test("runtime owner menu mirrors the active route contract", async () => {
+  const contract = await readContract();
+  const contractOwnerMenu = allContractRoutes(contract)
+    .filter((route) => route.area === "console" && route.role === "lab_owner" && route.menu === true)
+    .map((route) => route.id);
+  const runtimeOwnerMenu = ownerMenuRoutes.map((route) => route.id);
+
+  assert.deepEqual(runtimeOwnerMenu, contractOwnerMenu);
+  assert.deepEqual(ownerMenuRoutes.map((route) => route.label), [
+    "概览",
+    "工作区",
+    "配置"
+  ]);
+
+  for (const id of [
+    "compute-allocations.list",
+    "storage.list",
+    "attachment.list",
+    "resources.relationships",
+    "gateway.external",
+    "billing.overview",
+    "support.list",
+    "alerts.list"
+  ]) {
+    assert.equal(routesById.get(id)?.hiddenInMenu, true, `${id} must stay second-level in runtime routes`);
+    assert.equal(
+      allContractRoutes(contract).find((route) => route.id === id)?.hiddenInMenu,
+      true,
+      `${id} must stay second-level in route contract`
+    );
   }
 });
 

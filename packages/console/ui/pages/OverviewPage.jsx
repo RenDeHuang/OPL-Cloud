@@ -45,7 +45,7 @@ export function OverviewPage({ state, wallet, tickets }) {
     <ConsoleSurface
       title="概览"
       eyebrow="OPL Console"
-      subtitle="钱包、工作区入口、网关请求、工单"
+      subtitle="钱包账单、OPL Workspace、网关请求、工单"
       extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建工作区入口</Button>}
     >
       <MetricStrip
@@ -61,11 +61,11 @@ export function OverviewPage({ state, wallet, tickets }) {
 
       <div className="consoleGrid">
         <InsightPanel
-          title="业务链"
-          eyebrow="业务闭环"
+          title="账单与工作区"
+          eyebrow="概览"
           actions={<ActionGroup actions={[
-            { label: "工作区入口", type: "primary", icon: <Plus size={15} />, onClick: () => navigate(routeTo("workspace.create")) },
-            { label: "钱包", icon: <WalletCards size={15} />, onClick: () => navigate(routeTo("billing.wallet")) },
+            { label: "新建工作区", type: "primary", icon: <Plus size={15} />, onClick: () => navigate(routeTo("workspace.create")) },
+            { label: "账单", icon: <WalletCards size={15} />, onClick: () => navigate(routeTo("billing.overview")) },
             { label: "工单", icon: <Headphones size={15} />, onClick: () => navigate(routeTo("support.create")) }
           ]} />}
         >

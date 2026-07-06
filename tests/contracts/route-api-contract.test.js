@@ -270,6 +270,7 @@ test("resource route contract declares dynamic fields, billing fields, and visib
   ], "workspace create stages must describe URL entry creation");
   assert.deepEqual(computeDetail.operationProtocol.pollQuery, ["accountId"], "compute detail polling must preserve account scope");
   assert.ok(storageDetail.dynamicFields?.includes("providerResourceId"), "storage detail must expose provider storage handle");
+  assert.ok(storageDetail.dynamicFields?.includes("ownerAccountId"), "storage detail must expose the owning account");
   assert.ok(storageDetail.dynamicFields?.includes("hourlyEstimate"), "storage detail must expose the storage hourly estimate field");
   assert.ok(storageDetail.dynamicFields?.includes("billingStatus"), "storage detail must expose billing status");
 
