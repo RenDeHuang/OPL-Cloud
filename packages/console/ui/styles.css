@@ -364,7 +364,7 @@ button.primary {
 
 .metricStrip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 
@@ -574,6 +574,40 @@ button.primary {
   width: 100%;
 }
 
+.resourceSplit + .actionGroup {
+  margin-top: 12px;
+}
+
+.workspaceNameCell,
+.credentialStack {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.workspaceNameCell .ant-btn {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 22px;
+  padding: 0;
+  white-space: normal;
+  text-align: left;
+}
+
+.credentialStack span {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.credentialCell {
+  max-width: 240px;
+}
+
+.workspaceTable .credentialCell {
+  width: 100%;
+}
+
 .timelineList .ant-list-item {
   justify-content: flex-start;
   border-block-end: 1px solid #eef1f6 !important;
@@ -622,6 +656,10 @@ button.primary {
 .objectTable .ant-table-wrapper,
 .objectTable .ant-table {
   border-radius: 8px;
+}
+
+.workspaceTable .ant-table table {
+  table-layout: fixed !important;
 }
 
 .inlineCode {

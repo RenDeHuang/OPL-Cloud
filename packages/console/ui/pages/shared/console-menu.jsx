@@ -12,6 +12,7 @@ import {
   KeyRound,
   Layers,
   Server,
+  Settings2,
   ShieldCheck,
   UserRound,
   WalletCards
@@ -24,7 +25,7 @@ function menuIcon(path) {
     "/console/workspaces": <Server size={17} />,
     "/console/gateway": <KeyRound size={17} />,
     "/console/billing": <WalletCards size={17} />,
-    "/console/account": <UserRound size={17} />,
+    "/console/account": <Settings2 size={17} />,
     "/console/support": <Headphones size={17} />,
     "/console/alerts": <Bell size={17} />,
     "/admin/overview": <Gauge size={17} />,

@@ -116,9 +116,9 @@ test("Workspace UI treats URL as stable storage subject with current runtime poi
   const cleanupSource = await source("packages/console/ui/pages/shared/commercial-console.jsx");
 
   assert.match(listSource, /currentComputeAllocationId/, "Workspace list must show current compute pointer");
-  assert.match(listSource, /当前计算/, "Workspace list must label current compute");
+  assert.match(listSource, /workspaceHourlyEstimate/, "Workspace list must use current resource pointers for per-Workspace billing");
   assert.match(detailSource, /currentAttachmentId/, "Workspace detail must show current attachment pointer");
-  assert.match(detailSource, /稳定 URL、持久存储、当前运行时指针/, "Workspace detail must state stable Workspace model");
+  assert.match(detailSource, /Workspace 即 UI 子账号/, "Workspace detail must state the simplified UI subaccount model");
   assert.match(routeSource, /currentComputeAllocationId/, "runtime route registry must expose current compute pointer");
   assert.match(routeSource, /currentAttachmentId/, "runtime route registry must expose current attachment pointer");
   assert.doesNotMatch(cleanupSource, /!compute \|\| compute\.status === "destroyed"/, "cleanup must not invalidate stable URL only because compute is suspended");
@@ -246,8 +246,11 @@ test("Billing and Workspace pages explain commercial charging and URL lifecycle"
   for (const signal of ["activeHourlyEstimate", "nextSettlementAt", "runningDuration", "下次结算", "运行时长", "预计每小时"]) {
     assert.match(billingSource, new RegExp(signal), `billing page must show ${signal}`);
   }
-  for (const signal of ["ownerAccountId", "nodeName", "cvmInstanceId", "currentAttachmentId", "拥有账号", "独占节点", "当前挂载"]) {
-    assert.match(listSource, new RegExp(signal), `Workspace list must expose first-screen maintenance signal ${signal}`);
+  for (const signal of ["workspaceCredential", "workspaceChargeTotal", "workspaceHourlyEstimate", "URL、账号、密码", "按 Workspace 汇总", "密码", "归属"]) {
+    assert.match(listSource, new RegExp(signal), `Workspace list must expose first-screen credential and billing signal ${signal}`);
+  }
+  for (const signal of ["currentAttachmentId", "二级资源", "当前挂载", "归属账号", "运维归因证据", "URL owner", "CVM ID", "存储 provider ID", "问题依据"]) {
+    assert.match(detailSource, new RegExp(signal), `Workspace detail must retain secondary resource signal ${signal}`);
   }
   assert.match(detailSource, /WorkspaceLifecyclePanel/, "Workspace detail must expose URL/resource lifecycle state");
   assert.match(detailSource, /tokenStatus/, "Workspace detail must show token lifecycle status");
@@ -332,7 +335,8 @@ test("resource pages expose relationship map, wallet risk, support context, and 
   assert.match(resourceSource, /WalletRiskPanel/, "resource creation pages must show balance risk before paid mutations");
   assert.match(resourceSource, /DataRetentionPolicyPanel/, "resource details must show compute/storage retention policy");
   assert.match(resourceSource, /supportContextPath/, "failed resource support links must carry operation and resource context");
-  assert.match(workspaceSource, /ResourceRelationshipGraph/, "Workspace list must show account-to-entry resource relationship");
+  assert.match(workspaceSource, /workspaceCredential/, "Workspace list must lead with URL/account/password credentials");
+  assert.match(workspaceSource, /workspaceChargeTotal/, "Workspace list must lead with per-Workspace billing");
   assert.match(detailSource, /DataRetentionPolicyPanel/, "Workspace detail must show data retention policy");
   assert.match(supportSource, /URLSearchParams/, "support form must accept failure context from resource pages");
   assert.match(supportSource, /operationId|resourceId/, "support form must carry operationId/resourceId into the ticket description");
@@ -352,6 +356,11 @@ test("Admin diagnostics and E2E records are read-only operator surfaces", async 
   assert.match(adminSource, /AdminDiagnosticsPage/, "Admin diagnostics page must exist");
   assert.match(adminSource, /ProductionE2EPanel/, "Admin E2E page must use safe E2E panel");
   assert.match(adminSource, /failedOperations|resourceAnomalies|productionE2E/, "Admin diagnostics must show failed operations, resource anomalies, and E2E records");
+  assert.match(adminSource, /adminResourceEvidenceRows/, "Admin diagnostics must derive resource ownership evidence from management state");
+  assert.match(adminSource, /AdminDiagnosticsPage\(\{ managementState, adminOps \}\)/, "Admin diagnostics resource evidence must use managementState, not the admin account state");
+  for (const signal of ["资源归属证据", "CVM / 节点", "存储 provider", "providerRequestId", "ownerAccountId"]) {
+    assert.match(adminSource, new RegExp(signal.replace("/", "\\/")), `Admin diagnostics must expose ${signal}`);
+  }
   const diagnosticsSlice = adminSource.slice(
     adminSource.indexOf("export function AdminDiagnosticsPage"),
     adminSource.indexOf("export function AdminCleanupPage")
@@ -363,13 +372,13 @@ test("Workspace detail links to first-class resources and excludes retired compu
   const listSource = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");
   const detailSource = await source("packages/console/ui/pages/workspaces/WorkspaceDetailPage.jsx");
 
-  assert.match(listSource, /资源/, "Workspace list must expose a resource-management entry");
-  assert.match(listSource, /routeTo\("workspace.detail"/, "Workspace list resource entry must route to Workspace detail");
+  assert.match(listSource, /详情/, "Workspace list must expose a secondary detail entry");
+  assert.match(listSource, /routeTo\("workspace.detail"/, "Workspace list detail entry must route to Workspace detail");
   assert.match(detailSource, /routeTo\("compute-allocations.detail"/, "detail must link to the attached ComputeAllocation");
   assert.match(detailSource, /routeTo\("storage.detail"/, "detail must link to the attached StorageVolume");
   assert.match(detailSource, /routeTo\("attachment.detail"/, "detail must link to the StorageAttachment");
   assert.match(detailSource, /ownerAccountId/, "detail must show the owner account for maintenance handoff");
-  assert.match(detailSource, /拥有账号/, "detail must label the owner account in Chinese");
+  assert.match(detailSource, /归属账号/, "detail must label the owner account in Chinese");
 });
 
 test("active UI and docs describe the ComputeAllocation, StorageVolume, attachment, and URL-entry chain", async () => {
