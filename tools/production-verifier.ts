@@ -221,7 +221,9 @@ async function requestWorkspaceUrl({ fetchImpl, url, attempts, retryDelayMs }) {
 function workspaceApiUrl(workspaceUrl, path) {
   const parsed = new URL(workspaceUrl);
   const normalizedPath = String(path || "").replace(/^\//, "");
-  parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/${normalizedPath}`;
+  parsed.pathname = `/${normalizedPath}`;
+  parsed.search = "";
+  parsed.hash = "";
   return parsed.toString();
 }
 

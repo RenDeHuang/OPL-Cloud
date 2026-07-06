@@ -279,9 +279,11 @@ function workspaceCookieGatewayFetch({ responses, requests = [] }) {
       return htmlResponse("<!doctype html><p>OPL Workspace 访问令牌无效。</p>", 403);
     }
 
-    const tokenUrl = new URL(String(url));
-    tokenUrl.searchParams.set("token", token);
-    let key = `${method} ${tokenUrl.toString()}`;
+    const keyUrl = new URL(String(url));
+    if (method === "GET" && keyUrl.pathname.startsWith("/w/") && !keyUrl.searchParams.has("token")) {
+      keyUrl.searchParams.set("token", token);
+    }
+    let key = `${method} ${keyUrl.toString()}`;
     const count = (requestCounts.get(key) || 0) + 1;
     requestCounts.set(key, count);
     key = count === 1 ? key : `${key}#${count}`;
@@ -307,7 +309,9 @@ function workspaceCookieGatewayFetch({ responses, requests = [] }) {
 
 function workspaceUrl(baseUrl, path) {
   const parsed = new URL(baseUrl);
-  parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+  parsed.pathname = `/${path.replace(/^\//, "")}`;
+  parsed.search = "";
+  parsed.hash = "";
   return parsed.toString();
 }
 
