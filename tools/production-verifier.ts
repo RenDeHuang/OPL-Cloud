@@ -454,7 +454,36 @@ async function selectDefaultWorkspaceAssistant(page) {
       }
     }
   }
+  try {
+    await selectAnyVisibleWorkspaceAssistant(page);
+    await waitForWorkspaceAssistantSelection(page);
+    return;
+  } catch (error) {
+    lastError = error;
+  }
   throw lastError || new Error("workspace_assistant_selection_failed");
+}
+
+async function selectAnyVisibleWorkspaceAssistant(page) {
+  if (typeof page.evaluate !== "function") throw new Error("workspace_assistant_dom_unavailable");
+  const selected = await page.evaluate(() => {
+    const visible = (element) => {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const blocked = /Select an assistant|File\(|New Chat|Search|Scheduled Tasks|Runtime|Settings|Logout/i;
+    const target = Array.from(document.querySelectorAll("button, [role='button'], div, li"))
+      .filter(visible)
+      .find((element) => {
+        const text = (element.textContent || "").trim();
+        return /^@[A-Za-z0-9][\s\S]{1,80}/.test(text) && !blocked.test(text);
+      });
+    if (!target) return false;
+    target.click();
+    return true;
+  });
+  if (!selected) throw new Error("workspace_assistant_card_not_found");
 }
 
 async function selectGuidWorkspaceAssistant(page) {

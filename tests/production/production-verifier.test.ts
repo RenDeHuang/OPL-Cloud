@@ -398,9 +398,16 @@ function fakeBrowserFactory(actions = [], { failWaitAt = 0 } = {}) {
   };
 }
 
-function fakeWorkspaceBrowserFactory(actions = [], { assistantSelectionTakesEffect = true, firstTextboxIsNotComposer = false } = {}) {
+function fakeWorkspaceBrowserFactory(actions = [], {
+  assistantSelectionTakesEffect = true,
+  firstTextboxIsNotComposer = false,
+  assistantLabels = ["@Research", "@Grants", "@PPT"],
+  domAssistantSelection = false,
+  assistantReplies = false,
+  roleAssistantSelection = true
+} = {}) {
   const state = {
-    bodyText: "Select an assistant to start a task\n@Research\n@Grants\n@PPT",
+    bodyText: `Select an assistant to start a task\n${assistantLabels.join("\n")}`,
     prompt: ""
   };
   const page = {
@@ -443,11 +450,12 @@ function fakeWorkspaceBrowserFactory(actions = [], { assistantSelectionTakesEffe
         },
         async click() {
           actions.push(["click", role, roleName]);
-          if (/Research/i.test(roleName) && assistantSelectionTakesEffect) {
+          if (roleAssistantSelection && /Research/i.test(roleName) && assistantSelectionTakesEffect) {
             state.bodyText = state.bodyText.replace("Select an assistant to start a task", "Research assistant selected");
           }
           if (/发送|Send|提交|运行|Ask/i.test(roleName) && !/Select an assistant to start a task/i.test(state.bodyText)) {
             state.bodyText += `\n${state.prompt}`;
+            if (assistantReplies) state.bodyText += `\nassistant reply: ${state.prompt.replace("请只回复：", "")}`;
           }
         }
       };
@@ -480,6 +488,37 @@ function fakeWorkspaceBrowserFactory(actions = [], { assistantSelectionTakesEffe
       actions.push(["screenshot", options.path || ""]);
     }
   };
+  if (domAssistantSelection) {
+    page.evaluate = async (fn, arg) => {
+      actions.push(["evaluate", arg || null]);
+      const previousDocument = globalThis.document;
+      const previousWindow = globalThis.window;
+      const elements = assistantLabels.map((label, index) => ({
+        textContent: label,
+        innerText: label,
+        getBoundingClientRect: () => ({ width: 220, height: 78, top: 450 + index * 88, bottom: 528 + index * 88, left: 390, right: 610 }),
+        getAttribute: () => "",
+        click() {
+          actions.push(["domAssistantClick", label]);
+          if (assistantSelectionTakesEffect) state.bodyText = state.bodyText.replace("Select an assistant to start a task", `${label} selected`);
+        }
+      }));
+      globalThis.document = {
+        body: { innerText: state.bodyText },
+        querySelector: () => null,
+        querySelectorAll: () => elements
+      };
+      globalThis.window = {
+        getComputedStyle: () => ({ visibility: "visible", display: "block" })
+      };
+      try {
+        return fn(arg);
+      } finally {
+        globalThis.document = previousDocument;
+        globalThis.window = previousWindow;
+      }
+    };
+  }
   return {
     chromium: {
       async launch() {
@@ -1152,6 +1191,27 @@ test("production verifier can exercise one-person-lab-app through a real browser
   ]);
   const assistantClick = actions.find((action) => action[0] === "click" && /@Research/.test(action[2] || ""));
   assert.ok(assistantClick, "browser verifier must select an assistant before sending the chat prompt");
+});
+
+test("production verifier can select the current visible production assistant card", async () => {
+  const checks = [];
+  const actions = [];
+
+  await verifyWorkspaceBrowserUi({
+    workspaceUrl: "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser",
+    runId: "browser-run",
+    checks,
+    browserFactory: fakeWorkspaceBrowserFactory(actions, {
+      assistantLabels: ["@Med Auto Science", "@Med Auto Grant", "@RedCube AI"],
+      domAssistantSelection: true,
+      assistantReplies: true,
+      roleAssistantSelection: false
+    }),
+    screenshotDir: ""
+  });
+
+  assert.ok(actions.some((action) => action[0] === "domAssistantClick" && action[1] === "@Med Auto Science"));
+  assert.ok(checks.some((check) => check.name === "workspace_browser_message_sent" && check.ok === true));
 });
 
 test("production verifier primes browser workspace auth before opening one-person-lab-app", async () => {
