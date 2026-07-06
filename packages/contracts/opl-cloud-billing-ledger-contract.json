@@ -132,5 +132,20 @@
       "billingLedger"
     ],
     "compatibilityMirrorsAllowed": false
+  },
+  "manualTopUpPolicy": {
+    "api": "POST /api/billing/topups",
+    "requiredClientField": "idempotencyKey",
+    "sourceEventIdWhenKeyProvided": "manual_topup:<idempotencyKey>",
+    "replayBehavior": "Same idempotencyKey with the same accountId and amount returns the existing account snapshot and must not append billingLedger, walletTransactions, or manualTopups.",
+    "conflictBehavior": "Same idempotencyKey with a different accountId or amount fails closed.",
+    "operatorEvidenceFields": [
+      "idempotencyKey",
+      "sourceEventId",
+      "operatorUserId",
+      "operatorAccountId",
+      "targetAccountId",
+      "amount"
+    ]
   }
 }

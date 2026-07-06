@@ -248,6 +248,17 @@ test("Admin cleanup route exposes orphan URL cleanup without redesigning the Con
   assert.match(apiSource, /"\/api\/operator\/cleanup-workspace-access"/, "cleanup API client must call the operator cleanup route");
 });
 
+test("Admin money and cleanup operations require explicit operator safeguards", async () => {
+  const adminSource = await source("packages/console/ui/pages/admin/AdminOverviewPage.jsx");
+
+  assert.match(adminSource, /idempotencyKey/, "manual top-up UI must send a backend idempotency key");
+  assert.match(adminSource, /manual-topup/, "manual top-up idempotency key must be operation scoped");
+  assert.match(adminSource, /cleanupCandidateCount/, "cleanup all UI must compute a candidate count before mutation");
+  assert.match(adminSource, /OperationConfirmButton[\s\S]*清理全部无效 URL/, "cleanup all must use the shared confirmation button");
+  assert.match(adminSource, /候选|预览|预计/, "cleanup all confirmation must show an operator preview/count");
+  assert.doesNotMatch(adminSource, /<Button\s+danger[\s\S]{0,180}cleanupWorkspaceAccess\(\{ reason: "operator_cleanup_all"/, "cleanup all must not remain a direct danger button");
+});
+
 test("Billing and Workspace pages explain commercial charging and URL lifecycle", async () => {
   const billingSource = await source("packages/console/ui/pages/billing/BillingPage.jsx");
   const listSource = await source("packages/console/ui/pages/workspaces/WorkspacesPage.jsx");

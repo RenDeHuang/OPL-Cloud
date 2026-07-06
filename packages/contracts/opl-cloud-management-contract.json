@@ -93,5 +93,23 @@
     "manualTopUp": "POST /api/billing/topups",
     "supportTickets": "GET /api/support/tickets",
     "createSupportTicket": "POST /api/support/tickets"
+  },
+  "operatorAuthPolicy": {
+    "operatorSummary": "GET /api/operator/summary",
+    "machineTokenTransport": "x-opl-operator-token header only",
+    "queryTokenAllowed": false,
+    "adminSessionAllowed": true
+  },
+  "adminMutationSafety": {
+    "manualTopUp": {
+      "requiresClientIdempotencyKey": true,
+      "replayMustNotDoubleCredit": true
+    },
+    "cleanupWorkspaceAccessAll": {
+      "api": "POST /api/operator/cleanup-workspace-access",
+      "requiresConfirmation": true,
+      "requiresCandidatePreviewCount": true,
+      "deletesCloudResources": false
+    }
   }
 }

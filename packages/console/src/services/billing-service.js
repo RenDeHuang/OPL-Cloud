@@ -88,7 +88,7 @@ function upsertUsageAggregate(collection, row) {
 }
 
 export class BillingService extends OplDomainService {
-  async manualTopUp({ accountId, amount, reason, operatorUserId = "", operatorAccountId = "" }) {
+  async manualTopUp({ accountId, amount, reason, idempotencyKey = "", sourceEventId = "", operatorUserId = "", operatorAccountId = "" }) {
     if (!accountId) throw new Error("account_required");
     const credit = Number(amount);
     if (!Number.isFinite(credit) || credit <= 0) throw new Error("positive_credit_required");
@@ -96,7 +96,22 @@ export class BillingService extends OplDomainService {
     return this.store.update((state) => {
       ensureBillingCollections(state);
       const account = ensureAccount(state, accountId);
-      const sourceEventId = reason || "owner_credit";
+      const operationKey = String(idempotencyKey || sourceEventId || "").trim();
+      const generatedKey = operationKey || makeId("manual-topup-key", accountId, String(credit), reason || "owner_credit", String(state.manualTopups.length), now());
+      const ledgerSourceEventId = operationKey ? `manual_topup:${operationKey}` : (reason || "owner_credit");
+      const existingTopup = (state.manualTopups || []).find((topup) =>
+        (operationKey && topup.idempotencyKey === operationKey) ||
+        (operationKey && topup.sourceEventId === `manual_topup:${operationKey}`)
+      );
+      if (existingTopup) {
+        if (
+          existingTopup.targetAccountId !== accountId ||
+          money(Number(existingTopup.amount || 0)) !== money(credit)
+        ) {
+          throw new Error("manual_topup_idempotency_conflict");
+        }
+        return accountSnapshotForState(state, accountId);
+      }
       const balanceBefore = money(Number(account.balance || 0));
       const frozenBefore = money(Number(account.frozen || 0));
       account.balance = money(account.balance + credit);
@@ -106,8 +121,9 @@ export class BillingService extends OplDomainService {
         accountId,
         type: "credit",
         amount: credit,
-        sourceEventId,
+        sourceEventId: ledgerSourceEventId,
         metadata: {
+          idempotencyKey: generatedKey,
           operatorUserId,
           operatorAccountId
         }
@@ -118,26 +134,29 @@ export class BillingService extends OplDomainService {
         accountId,
         type: "credit",
         amount: credit,
-        sourceEventId,
+        sourceEventId: ledgerSourceEventId,
         ledgerEntryId: entry.id,
         balanceBefore,
         balanceAfter: account.balance,
         frozenBefore,
         frozenAfter: account.frozen,
         metadata: {
+          idempotencyKey: generatedKey,
           operatorUserId,
           operatorAccountId
         }
       });
       const topup = {
-        id: makeId("manual-topup", account.id, accountId, sourceEventId, String(state.manualTopups.length)),
+        id: makeId("manual-topup", account.id, accountId, ledgerSourceEventId),
+        idempotencyKey: generatedKey,
+        sourceEventId: ledgerSourceEventId,
         operatorUserId,
         operatorAccountId,
         targetUserId: account.id,
         targetAccountId: accountId,
         amount: money(credit),
         currency: "CNY",
-        reason: sourceEventId,
+        reason: reason || sourceEventId || "owner_credit",
         status: "completed",
         balanceBefore,
         balanceAfter: money(Number(account.balance || 0)),

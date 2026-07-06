@@ -7,7 +7,7 @@ export function buildAdminRoutes({ appService, request, operatorSummaryToken, re
     },
     "GET /api/operator/summary": async () => {
       const url = new URL(request.url, "http://localhost");
-      const providedToken = request.headers["x-opl-operator-token"] || url.searchParams.get("operatorToken") || "";
+      const providedToken = request.headers["x-opl-operator-token"] || "";
       if (!isAdminSession) {
         if (!operatorSummaryToken) {
           const error = new Error("operator_summary_token_not_configured");

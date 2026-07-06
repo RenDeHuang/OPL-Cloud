@@ -178,6 +178,50 @@ test("manual top-up writes wallet transaction and top-up audit records", async (
   assert.equal(persisted.audit.some((entry) => entry.type === "account.credit_granted"), true);
 });
 
+test("manual top-up replays with the same idempotency key return the original receipt without double crediting", async () => {
+  const service = createTestService({
+    name: "manual-topup-idempotency-provider"
+  });
+
+  const first = await service.manualTopUp({
+    accountId: "pi-alpha",
+    amount: 250,
+    reason: "owner_credit",
+    idempotencyKey: "admin-topup-pi-alpha-001",
+    operatorUserId: "usr-admin",
+    operatorAccountId: "admin"
+  });
+  const replay = await service.manualTopUp({
+    accountId: "pi-alpha",
+    amount: 250,
+    reason: "owner_credit",
+    idempotencyKey: "admin-topup-pi-alpha-001",
+    operatorUserId: "usr-admin",
+    operatorAccountId: "admin"
+  });
+
+  const persisted = await service.store.read();
+  assert.equal(first.balance, 250);
+  assert.deepEqual(replay, first);
+  assert.equal(persisted.manualTopups.length, 1);
+  assert.equal(persisted.walletTransactions.length, 1);
+  assert.equal(persisted.billingLedger.filter((entry) => entry.type === "credit").length, 1);
+  assert.equal(persisted.manualTopups[0].idempotencyKey, "admin-topup-pi-alpha-001");
+  assert.equal(persisted.manualTopups[0].sourceEventId, "manual_topup:admin-topup-pi-alpha-001");
+
+  await assert.rejects(
+    () => service.manualTopUp({
+      accountId: "pi-alpha",
+      amount: 300,
+      reason: "owner_credit",
+      idempotencyKey: "admin-topup-pi-alpha-001",
+      operatorUserId: "usr-admin",
+      operatorAccountId: "admin"
+    }),
+    /manual_topup_idempotency_conflict/
+  );
+});
+
 test("opening compute and storage freezes seven days of prepaid hold before creating the Workspace URL", async () => {
   const service = createTestService({ name: "billing-provider" });
 

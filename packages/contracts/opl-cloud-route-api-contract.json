@@ -41,6 +41,7 @@
     "Active route contract contains only current commercial truth; future, reserved, and prune candidates live in route backlog.",
     "Every enabled route has a stable route id used by menus, actions, and routeTo().",
     "Lab Owner routes expose business outcomes; Admin routes expose operator evidence and operations.",
+    "Operator summary machine token is accepted only through x-opl-operator-token; query-string operatorToken is forbidden.",
     "Do not add compatibility routes for retired APIs; move active callers to the current route and delete the old route."
   ],
   "publicRoutes": [
@@ -1330,6 +1331,7 @@
       "operationProtocol": {
         "mutation": true,
         "confirmation": "normal",
+        "candidatePreviewCount": true,
         "destructive": true,
         "operationTimeline": true,
         "failureVisible": true

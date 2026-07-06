@@ -552,6 +552,9 @@ test("operator summary route returns notification and failed operation aggregate
     const blockedResponse = await fetch(`${origin}/api/operator/summary?accountId=pi-route`);
     assert.equal(blockedResponse.status, 403);
 
+    const queryTokenResponse = await fetch(`${origin}/api/operator/summary?accountId=pi-route&operatorToken=operator-test-token`);
+    assert.equal(queryTokenResponse.status, 403);
+
     const response = await fetch(`${origin}/api/operator/summary?accountId=pi-route`, {
       headers: { "x-opl-operator-token": "operator-test-token" }
     });
