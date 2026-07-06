@@ -326,6 +326,18 @@ function fakeBrowserFactory(actions = [], { failWaitAt = 0 } = {}) {
       async launch() {
         actions.push(["launch"]);
         return {
+          async newContext() {
+            actions.push(["newContext"]);
+            return {
+              async addCookies(cookies) {
+                actions.push(["addCookies", cookies]);
+              },
+              async newPage() {
+                actions.push(["newPage"]);
+                return page;
+              }
+            };
+          },
           async newPage() {
             actions.push(["newPage"]);
             return page;
@@ -902,6 +914,33 @@ test("production verifier can exercise one-person-lab-app through a real browser
   assert.ok(assistantClick, "browser verifier must select an assistant before sending the chat prompt");
 });
 
+test("production verifier primes browser workspace auth before opening one-person-lab-app", async () => {
+  const checks = [];
+  const actions = [];
+  const workspaceUrlValue = "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser";
+
+  await verifyWorkspaceBrowserUi({
+    workspaceUrl: workspaceUrlValue,
+    workspaceAuth: {
+      url: "https://workspace.medopl.cn/w/ws-browser001/",
+      cookie: "opl_ws_active=ws-browser001; opl_ws_ws-browser001=share_browser"
+    },
+    runId: "browser-run",
+    checks,
+    browserFactory: fakeBrowserFactory(actions),
+    screenshotDir: ""
+  });
+
+  assert.deepEqual(actions.find((action) => action[0] === "addCookies")?.[1], [
+    { name: "opl_ws_active", value: "ws-browser001", domain: "workspace.medopl.cn", path: "/", secure: true },
+    { name: "opl_ws_ws-browser001", value: "share_browser", domain: "workspace.medopl.cn", path: "/", secure: true }
+  ]);
+  assert.deepEqual(actions.filter(([name]) => name === "goto").map(([, url]) => url), [
+    "https://workspace.medopl.cn/w/ws-browser001/api/auth/user",
+    "https://workspace.medopl.cn/w/ws-browser001/"
+  ]);
+});
+
 test("production verifier fails message submission when assistant selection does not enter task mode", async () => {
   const checks = [];
   const actions = [];
@@ -1006,7 +1045,10 @@ test("production verifier runs optional browser UI checks after Workspace URL is
     "workspace_browser_message_sent:true",
     "workspace_browser_reply_seen:true"
   ]);
-  assert.equal(actions.find((action) => action[0] === "goto")?.[1], chain.workspace.url);
+  assert.deepEqual(actions.filter(([name]) => name === "goto").map(([, url]) => url), [
+    workspaceUrl(chain.workspace.url, "/api/auth/user"),
+    chain.workspace.url
+  ]);
 });
 
 test("production verifier reports browser failure stage with resources, checks, and screenshot", async () => {

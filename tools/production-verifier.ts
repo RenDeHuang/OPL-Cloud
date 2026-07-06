@@ -134,6 +134,25 @@ function cookieHeaderFromSetCookie(setCookie = "") {
     .join("; ");
 }
 
+function browserCookiesFromHeader(cookieHeader = "", url = "") {
+  const parsed = new URL(url);
+  return String(cookieHeader)
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const index = entry.indexOf("=");
+      return index > 0 ? {
+        name: entry.slice(0, index),
+        value: entry.slice(index + 1),
+        domain: parsed.hostname,
+        path: "/",
+        secure: parsed.protocol === "https:"
+      } : null;
+    })
+    .filter(Boolean);
+}
+
 async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
   if (!operatorToken) return null;
   const { payload, response } = await requestJsonWithResponse({
@@ -545,6 +564,7 @@ async function waitForSubmittedPrompt(page, prompt) {
 
 export async function verifyWorkspaceBrowserUi({
   workspaceUrl,
+  workspaceAuth = null,
   runId,
   checks,
   browserFactory = null,
@@ -557,7 +577,14 @@ export async function verifyWorkspaceBrowserUi({
   if (!factory?.chromium?.launch) throw new Error("playwright_chromium_required");
   const browser = await factory.chromium.launch(launchOptions);
   try {
-    const page = await browser.newPage();
+    let page;
+    if (workspaceAuth?.cookie && browser.newContext) {
+      const context = await browser.newContext();
+      await context.addCookies(browserCookiesFromHeader(workspaceAuth.cookie, workspaceAuth.url || workspaceUrl));
+      page = await context.newPage();
+    } else {
+      page = await browser.newPage();
+    }
     await runBrowserCheck({
       page,
       checks,
@@ -565,7 +592,12 @@ export async function verifyWorkspaceBrowserUi({
       screenshotDir,
       runId,
       successDetails: { url: workspaceUrl },
-      task: () => page.goto(workspaceUrl, { waitUntil: "networkidle", timeout: 120_000 })
+      task: async () => {
+        if (workspaceAuth) {
+          await page.goto(workspaceApiUrl(workspaceAuth.url || workspaceUrl, "/api/auth/user"), { waitUntil: "networkidle", timeout: 120_000 });
+        }
+        await page.goto(workspaceAuth?.url || workspaceUrl, { waitUntil: "networkidle", timeout: 120_000 });
+      }
     });
 
     const fixture = await writeBrowserUploadFixture({ runId });
@@ -1082,6 +1114,7 @@ export async function verifyProductionChain({
     if (browserE2E) {
       await verifyWorkspaceBrowserUi({
         workspaceUrl: workspace.url,
+        workspaceAuth: workspaceUrlResult,
         runId,
         checks,
         browserFactory,
