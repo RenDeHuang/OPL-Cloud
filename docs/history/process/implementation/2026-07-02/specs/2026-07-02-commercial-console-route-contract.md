@@ -187,7 +187,7 @@ Manual top-up execution
 - Use lazy-loaded route components.
 - Route metadata must include role visibility, menu visibility, and feature-gate intent.
 - Workspaces must make URL copy/open/reset/delete visible as row or detail actions.
-- Create Workspace must use a stepped confirmation flow with package, price, seven-day hold, and balance sufficiency.
+- Create compute/storage must use confirmation with package, price, seven-day hold, and balance sufficiency; Create Workspace validates an attached compute/storage pair and generates the URL entry.
 - Billing must explain wallet, holds, usage, and recent charges without dumping raw Ledger data.
 - Manual top-up is executed from `Users -> User detail -> Wallet`; top-up records are viewed from Billing Ops.
 - Support tickets must support list, new ticket, and detail views.

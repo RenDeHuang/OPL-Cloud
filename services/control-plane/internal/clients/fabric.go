@@ -21,6 +21,7 @@ type FabricClient interface {
 }
 
 type ComputeAllocationInput struct {
+	ID          string `json:"id,omitempty"`
 	AccountID   string `json:"accountId"`
 	WorkspaceID string `json:"workspaceId"`
 	PackageID   string `json:"packageId"`
@@ -45,9 +46,13 @@ type ComputeAllocation struct {
 	PrivateIP          string `json:"privateIp,omitempty"`
 	PublicIP           string `json:"publicIp,omitempty"`
 	BillingStatus      string `json:"billingStatus,omitempty"`
+	HoldID             string `json:"holdId,omitempty"`
+	HoldAmountCents    int64  `json:"holdAmountCents,omitempty"`
+	Wallet             Wallet `json:"wallet,omitempty"`
 }
 
 type StorageVolumeInput struct {
+	ID          string `json:"id,omitempty"`
 	AccountID   string `json:"accountId"`
 	WorkspaceID string `json:"workspaceId"`
 	SizeGB      int    `json:"sizeGb"`
@@ -64,6 +69,9 @@ type StorageVolume struct {
 	SizeGB             int    `json:"sizeGb,omitempty"`
 	StorageClass       string `json:"storageClass,omitempty"`
 	BillingStatus      string `json:"billingStatus,omitempty"`
+	HoldID             string `json:"holdId,omitempty"`
+	HoldAmountCents    int64  `json:"holdAmountCents,omitempty"`
+	Wallet             Wallet `json:"wallet,omitempty"`
 }
 
 type StorageAttachmentInput struct {

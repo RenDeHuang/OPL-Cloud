@@ -62,7 +62,7 @@ func TestHoldAndEvidenceHTTP(t *testing.T) {
 		t.Fatalf("topup status = %d, want %d: %s", topupRec.Code, http.StatusCreated, topupRec.Body.String())
 	}
 
-	hold := httptest.NewRequest(http.MethodPost, "/ledger/holds", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","amountCents":1000,"currency":"CNY"}`))
+	hold := httptest.NewRequest(http.MethodPost, "/ledger/holds", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":1000,"currency":"CNY"}`))
 	hold.Header.Set("Idempotency-Key", "http-hold-once")
 	holdRec := httptest.NewRecorder()
 	server.ServeHTTP(holdRec, hold)
@@ -73,7 +73,7 @@ func TestHoldAndEvidenceHTTP(t *testing.T) {
 	if err := json.NewDecoder(holdRec.Body).Decode(&holdBody); err != nil {
 		t.Fatalf("decode hold: %v", err)
 	}
-	if holdBody["accountId"] != "acct-alpha" || holdBody["workspaceId"] != "ws-alpha" || holdBody["status"] != "held" {
+	if holdBody["accountId"] != "acct-alpha" || holdBody["workspaceId"] != "ws-alpha" || holdBody["resourceType"] != "compute" || holdBody["resourceId"] != "compute-alpha" || holdBody["status"] != "held" {
 		t.Fatalf("unexpected hold body: %#v", holdBody)
 	}
 
@@ -103,7 +103,7 @@ func TestReleaseHoldHTTP(t *testing.T) {
 		t.Fatalf("topup status = %d, want %d: %s", topupRec.Code, http.StatusCreated, topupRec.Body.String())
 	}
 
-	hold := httptest.NewRequest(http.MethodPost, "/ledger/holds", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","amountCents":1000,"currency":"CNY"}`))
+	hold := httptest.NewRequest(http.MethodPost, "/ledger/holds", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":1000,"currency":"CNY"}`))
 	hold.Header.Set("Idempotency-Key", "http-release-hold")
 	holdRec := httptest.NewRecorder()
 	server.ServeHTTP(holdRec, hold)

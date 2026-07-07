@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -46,15 +47,17 @@ type ReconciliationInput struct {
 }
 
 type ComputeAllocationInput struct {
-	AccountID   string `json:"accountId"`
-	WorkspaceID string `json:"workspaceId"`
-	PackageID   string `json:"packageId"`
+	AccountID       string `json:"accountId"`
+	WorkspaceID     string `json:"workspaceId"`
+	PackageID       string `json:"packageId"`
+	HoldAmountCents int64  `json:"holdAmountCents"`
 }
 
 type StorageVolumeInput struct {
-	AccountID   string `json:"accountId"`
-	WorkspaceID string `json:"workspaceId"`
-	SizeGB      int    `json:"sizeGb"`
+	AccountID       string `json:"accountId"`
+	WorkspaceID     string `json:"workspaceId"`
+	SizeGB          int    `json:"sizeGb"`
+	HoldAmountCents int64  `json:"holdAmountCents"`
 }
 
 type StorageAttachmentInput struct {
@@ -101,7 +104,23 @@ func (s *Service) RuntimeReadiness(ctx context.Context) (map[string]any, error) 
 }
 
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (clients.ComputeAllocation, error) {
-	return s.fabric.CreateComputeAllocation(ctx, clients.ComputeAllocationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID}, idempotencyKey)
+	if input.HoldAmountCents <= 0 {
+		return clients.ComputeAllocation{}, fmt.Errorf("compute_hold_amount_required")
+	}
+	resourceID := resourceID("ca")
+	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: resourceID, AmountCents: input.HoldAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
+	if err != nil {
+		return clients.ComputeAllocation{}, err
+	}
+	allocation, err := s.fabric.CreateComputeAllocation(ctx, clients.ComputeAllocationInput{ID: resourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID}, idempotencyKey)
+	if err != nil {
+		_, releaseErr := s.ledger.ReleaseHold(ctx, clients.HoldReleaseInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: resourceID, HoldID: hold.ID, AmountCents: hold.AmountCents, Currency: "CNY", Reason: "compute_create_failed"}, idempotencyKey+":hold-release")
+		return clients.ComputeAllocation{}, errors.Join(err, releaseErr)
+	}
+	allocation.HoldID = hold.ID
+	allocation.HoldAmountCents = hold.AmountCents
+	allocation.Wallet = hold.Wallet
+	return allocation, nil
 }
 
 func (s *Service) GetComputeAllocation(ctx context.Context, id string) (clients.ComputeAllocation, error) {
@@ -113,7 +132,23 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, id string, idemp
 }
 
 func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (clients.StorageVolume, error) {
-	return s.fabric.CreateStorageVolume(ctx, clients.StorageVolumeInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB}, idempotencyKey)
+	if input.HoldAmountCents <= 0 {
+		return clients.StorageVolume{}, fmt.Errorf("storage_hold_amount_required")
+	}
+	resourceID := resourceID("vol")
+	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: resourceID, AmountCents: input.HoldAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
+	if err != nil {
+		return clients.StorageVolume{}, err
+	}
+	volume, err := s.fabric.CreateStorageVolume(ctx, clients.StorageVolumeInput{ID: resourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB}, idempotencyKey)
+	if err != nil {
+		_, releaseErr := s.ledger.ReleaseHold(ctx, clients.HoldReleaseInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: resourceID, HoldID: hold.ID, AmountCents: hold.AmountCents, Currency: "CNY", Reason: "storage_create_failed"}, idempotencyKey+":hold-release")
+		return clients.StorageVolume{}, errors.Join(err, releaseErr)
+	}
+	volume.HoldID = hold.ID
+	volume.HoldAmountCents = hold.AmountCents
+	volume.Wallet = hold.Wallet
+	return volume, nil
 }
 
 func (s *Service) DestroyStorageVolume(ctx context.Context, id string, idempotencyKey string) (clients.StorageVolume, error) {
@@ -133,10 +168,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInpu
 		return domain.WorkspaceProjection{}, fmt.Errorf("attached_compute_storage_required")
 	}
 	workspaceID := fmt.Sprintf("ws_%d", time.Now().UTC().UnixNano())
-	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: workspaceID, AmountCents: 1000, Currency: "CNY"}, idempotencyKey+":hold")
-	if err != nil {
-		return domain.WorkspaceProjection{}, err
-	}
 	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ImageID: "one-person-lab-app"}, idempotencyKey+":runtime")
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
@@ -155,7 +186,6 @@ func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInpu
 		Provider:           "tencent-tke",
 		URL:                runtime.URL,
 		Status:             "running",
-		HoldID:             hold.ID,
 		ComputeID:          input.ComputeID,
 		VolumeID:           input.VolumeID,
 		AttachmentID:       input.AttachmentID,
@@ -163,4 +193,8 @@ func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInpu
 		RuntimeServiceName: runtime.ServiceName,
 		EvidenceID:         evidence.ID,
 	}, nil
+}
+
+func resourceID(prefix string) string {
+	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
 }

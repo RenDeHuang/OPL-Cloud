@@ -68,7 +68,7 @@ func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	if _, err := store.ManualTopUp(ctx, ManualTopUpInput{AccountID: "acct-alpha", AmountCents: 2000, Currency: "CNY", OperatorUserID: "usr-admin", IdempotencyKey: "topup-release"}); err != nil {
 		t.Fatalf("topup failed: %v", err)
 	}
-	hold, err := store.CreateHold(ctx, HoldInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", AmountCents: 1000, Currency: "CNY", IdempotencyKey: "hold-release"})
+	hold, err := store.CreateHold(ctx, HoldInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", AmountCents: 1000, Currency: "CNY", IdempotencyKey: "hold-release"})
 	if err != nil {
 		t.Fatalf("hold failed: %v", err)
 	}
@@ -104,5 +104,13 @@ func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	_, err = store.ReleaseHold(ctx, releaseInput)
 	if !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("expected idempotency conflict, got %v", err)
+	}
+}
+
+func TestCreateHoldRequiresResourceIdentity(t *testing.T) {
+	store := NewMemoryStore()
+	_, err := store.CreateHold(context.Background(), HoldInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", AmountCents: 1000, Currency: "CNY", IdempotencyKey: "hold-missing-resource"})
+	if !errors.Is(err, ErrInvalidHoldInput) {
+		t.Fatalf("expected invalid hold input, got %v", err)
 	}
 }

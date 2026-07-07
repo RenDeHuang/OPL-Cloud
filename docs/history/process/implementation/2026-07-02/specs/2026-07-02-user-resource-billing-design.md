@@ -235,7 +235,7 @@ Admin page should show:
 1. Existing local accounts still log in.
 2. Existing account balances migrate to user wallets.
 3. Admin manual recharge increases `users[userId].balance`, `users[userId].totalRecharged`, and writes a ledger credit.
-4. Workspace creation checks the user wallet and freezes compute/storage holds.
+4. Compute/storage creation checks the user wallet and freezes resource holds before cloud mutation.
 5. Hourly settlement writes compute/storage resource usage logs and matching debit ledger entries.
 6. Stopped compute stops compute usage but keeps storage usage.
 7. Request usage endpoint writes request usage logs and debits the user wallet idempotently.

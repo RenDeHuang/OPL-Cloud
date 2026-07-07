@@ -62,7 +62,7 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	if workspace["accountId"] != "acct-alpha" || workspace["ownerId"] != "usr-owner" || workspace["url"] != "https://workspace.medopl.cn/w/ws-from-fabric/" {
 		t.Fatalf("workspace did not come from service boundary: %#v", workspace)
 	}
-	if workspace["holdId"] != "hold-from-ledger" || workspace["computeAllocationId"] != "compute-from-fabric" || workspace["storageId"] != "volume-from-fabric" || workspace["attachmentId"] != "attachment-from-fabric" || workspace["evidenceId"] != "evidence-from-ledger" {
+	if workspace["computeAllocationId"] != "compute-from-fabric" || workspace["storageId"] != "volume-from-fabric" || workspace["attachmentId"] != "attachment-from-fabric" || workspace["evidenceId"] != "evidence-from-ledger" {
 		t.Fatalf("workspace missing ledger/fabric evidence: %#v", workspace)
 	}
 	if access, ok := workspace["access"].(map[string]any); !ok || access["tokenStatus"] != "active" {
@@ -119,7 +119,7 @@ func (fakeLedgerClient) ManualTopUp(_ context.Context, input clients.ManualTopUp
 }
 
 func (fakeLedgerClient) CreateHold(_ context.Context, input clients.HoldInput, _ string) (clients.HoldResult, error) {
-	return clients.HoldResult{ID: "hold-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents}, nil
+	return clients.HoldResult{ID: "hold-from-ledger", AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents, Currency: "CNY"}}, nil
 }
 
 func (fakeLedgerClient) ReleaseHold(_ context.Context, input clients.HoldReleaseInput, _ string) (clients.HoldReleaseResult, error) {
@@ -158,7 +158,7 @@ func (f *fakeFabricClient) record(call string) {
 
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: "compute-from-fabric", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", BillingStatus: "active", ServiceName: "opl-compute-from-fabric"}, nil
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", BillingStatus: "active", ServiceName: "opl-compute-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) GetComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
@@ -173,7 +173,7 @@ func (f *fakeFabricClient) DestroyComputeAllocation(_ context.Context, id string
 
 func (f *fakeFabricClient) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage")
-	return clients.StorageVolume{ID: "volume-from-fabric", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "pvc/volume-from-fabric-data", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs", BillingStatus: "active"}, nil
+	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "pvc/volume-from-fabric-data", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs", BillingStatus: "active"}, nil
 }
 
 func (f *fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ string) (clients.StorageVolume, error) {
@@ -250,13 +250,13 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["id"] != "compute-from-fabric" || body["providerRequestId"] != "compute-request-from-fabric" {
+	if stringValue(body["id"]) == "" || body["providerRequestId"] != "compute-request-from-fabric" || body["holdId"] != "hold-from-ledger" {
 		t.Fatalf("compute allocation did not come from Fabric: %#v", body)
 	}
 	if body["provider"] != "tencent-tke" || body["billingStatus"] != "active" || body["nodeName"] != "node-from-fabric" || body["instanceId"] != "ins-from-fabric" {
 		t.Fatalf("compute allocation missing route contract fields: %#v", body)
 	}
-	getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-from-fabric", nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(body["id"]), nil)
 	getRec := httptest.NewRecorder()
 	server.ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {

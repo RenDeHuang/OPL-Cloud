@@ -174,7 +174,7 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
 	now := time.Now().UTC()
 	sizeGB := int(math.Max(float64(input.SizeGB), 1))
-	id := fabricID("vol", input.WorkspaceID, now)
+	id := firstNonEmpty(input.ID, fabricID("vol", input.WorkspaceID, now))
 	name := k8sName(id)
 	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, pvcManifest(name, id, input.AccountID, sizeGB)); err != nil {
 		return StorageVolume{}, err

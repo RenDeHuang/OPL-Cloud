@@ -106,11 +106,12 @@ The default creation flow is:
 
 ```text
 PI signs in to OPL Console
--> Create OPL Workspace
--> Choose compute and storage package
--> Confirm hourly billing and 7-day compute plus storage pre-freeze
+-> Open ComputeAllocation and StorageVolume
+-> Confirm hourly billing and seven-day resource holds
 -> OPL Cloud creates the ComputeAllocation
 -> OPL Cloud creates the persistent workspace storage volume
+-> Attach storage to compute
+-> Create OPL Workspace URL entry
 -> OPL Cloud deploys the configured RuntimeTemplate image
 -> OPL Cloud mounts persistent storage into the runtime
 -> OPL Cloud configures the workspace URL
@@ -186,9 +187,9 @@ OPL Console must show:
 
 Compute and storage must not enter unpaid operation.
 
-Before opening or resuming a Workspace, OPL Cloud freezes enough balance to cover 7 days of compute and persistent storage.
+Before creating a ComputeAllocation or StorageVolume, OPL Cloud freezes enough balance to cover seven days of that resource. Workspace creation validates already held compute/storage resources and does not create an additional Workspace hold.
 
-If there is not enough balance for the 7-day prepaid hold, the Workspace cannot be opened or resumed.
+If there is not enough balance for the resource prepaid hold, that compute or storage resource cannot be opened.
 
 Hourly debits charge available balance first. If available balance is exhausted, OPL Cloud notifies the operator and starts consuming the relevant frozen hold.
 

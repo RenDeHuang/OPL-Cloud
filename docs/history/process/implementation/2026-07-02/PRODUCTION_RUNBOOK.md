@@ -117,7 +117,7 @@ Use a dedicated verification account. If the verifier reports `cleanupErrors`, i
 11. Restart runtime compute and confirm the Workspace URL/token still works.
 12. Destroy runtime compute and confirm storage is retained and still billable.
 13. Recreate the runtime from retained storage and confirm the same Workspace URL/token works.
-14. Confirm Workspace opening created `compute_hold`, `storage_hold`, `compute_debit`, and `storage_debit` ledger entries.
+14. Confirm compute and storage opening created `compute_hold` and `storage_hold`; confirm settlement created `compute_debit` and `storage_debit`.
 15. Run one billing settlement and confirm OPL Ledger records internal `compute_debit` and `storage_debit` entries.
 16. Run `npm run verify:production` against the deployed OPL Console and keep the stdout or stderr JSON result in the deployment record, not in git.
 17. Run `npm run reconcile:tencent -- --console-origin https://<console-domain> --account <pi-account-id> --tencent <tencent-bills.json>` so the OPL ledger is read from the deployed Console. Add `--tencent-format raw` for exported Tencent rows carrying a `workspace_id` tag. Use `--ledger <ledger.json>` only for an offline saved OPL ledger export. Keep the stdout result in the deployment record, not in git.

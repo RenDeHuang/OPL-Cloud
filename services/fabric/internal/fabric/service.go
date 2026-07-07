@@ -119,6 +119,9 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	if err != nil {
 		return volume, err
 	}
+	if input.ID != "" {
+		volume.ID = input.ID
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.volumes[volume.ID] = volume

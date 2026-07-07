@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -195,9 +196,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 	mux.HandleFunc("POST /api/compute-allocations", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		compute, err := service.CreateComputeAllocation(r.Context(), controlplane.ComputeAllocationInput{
-			AccountID:   stringField(input, "accountId", "acct-local"),
-			WorkspaceID: stringField(input, "workspaceId", ""),
-			PackageID:   stringField(input, "packageId", "basic"),
+			AccountID:       stringField(input, "accountId", "acct-local"),
+			WorkspaceID:     stringField(input, "workspaceId", ""),
+			PackageID:       stringField(input, "packageId", "basic"),
+			HoldAmountCents: computeHoldAmountCents(stringField(input, "packageId", "basic")),
 		}, mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
@@ -241,9 +243,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 	mux.HandleFunc("POST /api/storage-volumes", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		storage, err := service.CreateStorageVolume(r.Context(), controlplane.StorageVolumeInput{
-			AccountID:   stringField(input, "accountId", "acct-local"),
-			WorkspaceID: stringField(input, "workspaceId", ""),
-			SizeGB:      int(numberField(input, "sizeGb", 10)),
+			AccountID:       stringField(input, "accountId", "acct-local"),
+			WorkspaceID:     stringField(input, "workspaceId", ""),
+			SizeGB:          int(numberField(input, "sizeGb", 10)),
+			HoldAmountCents: storageHoldAmountCents(stringField(input, "packageId", "basic"), numberField(input, "sizeGb", 10)),
 		}, mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
@@ -392,6 +395,9 @@ func computeResponse(row map[string]any) map[string]any {
 	row["status"] = firstNonEmpty(stringValue(row["status"]), "running")
 	row["billingStatus"] = billingStatusFor(row)
 	row["cvmInstanceId"] = firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"]))
+	if holdCents := numberField(row, "holdAmountCents", 0); holdCents > 0 {
+		row["holdAmount"] = holdCents / 100
+	}
 	if serviceName := stringValue(row["serviceName"]); serviceName != "" {
 		row["runtime"] = map[string]any{"serviceName": serviceName, "service": "service/" + serviceName}
 	}
@@ -409,6 +415,9 @@ func storageResponse(row map[string]any) map[string]any {
 	}
 	row["status"] = firstNonEmpty(stringValue(row["status"]), "available")
 	row["billingStatus"] = billingStatusFor(row)
+	if holdCents := numberField(row, "holdAmountCents", 0); holdCents > 0 {
+		row["holdAmount"] = holdCents / 100
+	}
 	if numberField(row, "sizeGb", 0) == 0 {
 		row["sizeGb"] = 10
 	}
@@ -482,6 +491,36 @@ func settlementAmountCents(input map[string]any) int64 {
 	}
 	hours := numberField(input, "hours", 1)
 	return int64(hours * 100)
+}
+
+func computeHoldAmountCents(packageID string) int64 {
+	plan := packageByID(packageID)
+	return cents(priceField(plan, "computeHourly") * 24 * 7)
+}
+
+func storageHoldAmountCents(packageID string, sizeGB float64) int64 {
+	plan := packageByID(packageID)
+	return cents(priceField(plan, "storageGbMonth") * sizeGB / 30 * 7)
+}
+
+func packageByID(packageID string) map[string]any {
+	for _, plan := range packageList() {
+		row, _ := plan.(map[string]any)
+		if stringValue(row["id"]) == packageID {
+			return row
+		}
+	}
+	first, _ := packageList()[0].(map[string]any)
+	return first
+}
+
+func cents(amount float64) int64 {
+	return int64(math.Round(amount * 100))
+}
+
+func priceField(plan map[string]any, key string) float64 {
+	price, _ := plan["price"].(map[string]any)
+	return numberField(price, key, 0)
 }
 
 func settlementResponse(result clients.ResourceSettlementResult) map[string]any {

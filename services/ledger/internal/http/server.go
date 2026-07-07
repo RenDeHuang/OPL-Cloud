@@ -58,6 +58,10 @@ func NewServer(store ledger.Store) http.Handler {
 			writeError(w, http.StatusPaymentRequired, err.Error())
 			return
 		}
+		if errors.Is(err, ledger.ErrInvalidHoldInput) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "hold failed")
 			return

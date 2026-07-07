@@ -139,7 +139,6 @@ func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspacePro
 		"state":                      workspace.Status,
 		"status":                     workspace.Status,
 		"url":                        workspace.URL,
-		"holdId":                     workspace.HoldID,
 		"computeAllocationId":        workspace.ComputeID,
 		"currentComputeAllocationId": workspace.ComputeID,
 		"storageId":                  workspace.VolumeID,
@@ -156,7 +155,9 @@ func (app *runtimeApp) rememberCompute(allocation any) {
 	if row, ok := allocation.(map[string]any); ok {
 		app.mu.Lock()
 		defer app.mu.Unlock()
+		accountID := stringValue(row["accountId"])
 		app.computes[stringValue(row["id"])] = row
+		app.rememberHoldLocked(accountID, "compute", stringValue(row["id"]), row)
 	}
 }
 
@@ -164,8 +165,27 @@ func (app *runtimeApp) rememberStorage(volume any) {
 	if row, ok := volume.(map[string]any); ok {
 		app.mu.Lock()
 		defer app.mu.Unlock()
+		accountID := stringValue(row["accountId"])
 		app.storages[stringValue(row["id"])] = row
+		app.rememberHoldLocked(accountID, "storage", stringValue(row["id"]), row)
 	}
+}
+
+func (app *runtimeApp) rememberHoldLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
+	holdID := stringValue(row["holdId"])
+	if accountID == "" || holdID == "" {
+		return
+	}
+	if wallet, ok := row["wallet"].(map[string]any); ok {
+		app.wallets[accountID] = walletProjection(walletFromMap(wallet))
+	}
+	ledger := map[string]any{"id": holdID, "accountId": accountID, "type": resourceType + "_hold", "resourceId": resourceID, "amountCents": int64(numberField(row, "holdAmountCents", 0))}
+	if resourceType == "storage" {
+		ledger["storageId"] = resourceID
+	} else {
+		ledger["computeAllocationId"] = resourceID
+	}
+	app.ledger = append(app.ledger, ledger)
 }
 
 func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) {
@@ -467,6 +487,17 @@ func walletProjection(wallet clients.Wallet) map[string]any {
 		"totalSpent":      float64(wallet.TotalSpentCents) / 100,
 		"totalSpentCents": wallet.TotalSpentCents,
 		"currency":        wallet.Currency,
+	}
+}
+
+func walletFromMap(row map[string]any) clients.Wallet {
+	return clients.Wallet{
+		AccountID:       stringValue(row["accountId"]),
+		BalanceCents:    int64(numberField(row, "balanceCents", 0)),
+		FrozenCents:     int64(numberField(row, "frozenCents", 0)),
+		AvailableCents:  int64(numberField(row, "availableCents", 0)),
+		TotalSpentCents: int64(numberField(row, "totalSpentCents", 0)),
+		Currency:        firstNonEmpty(stringValue(row["currency"]), "CNY"),
 	}
 }
 

@@ -9,7 +9,6 @@ type WorkspaceProjection struct {
 	Provider           string `json:"provider"`
 	URL                string `json:"url"`
 	Status             string `json:"status"`
-	HoldID             string `json:"holdId"`
 	ComputeID          string `json:"computeAllocationId"`
 	VolumeID           string `json:"storageId"`
 	AttachmentID       string `json:"attachmentId"`

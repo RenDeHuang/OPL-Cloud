@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 	  id TEXT PRIMARY KEY,
 	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
 	  workspace_id TEXT NOT NULL,
+	  resource_type TEXT NOT NULL,
+	  resource_id TEXT NOT NULL,
 	  amount_cents BIGINT NOT NULL,
 	  currency TEXT NOT NULL,
 	  status TEXT NOT NULL,
@@ -82,10 +84,16 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 
 	ALTER TABLE holds ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 	ALTER TABLE holds ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	ALTER TABLE holds ADD COLUMN IF NOT EXISTS resource_type TEXT;
+	ALTER TABLE holds ADD COLUMN IF NOT EXISTS resource_id TEXT;
 	UPDATE holds SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
 	UPDATE holds SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
+	UPDATE holds SET resource_type = 'migrated' WHERE resource_type IS NULL;
+	UPDATE holds SET resource_id = workspace_id WHERE resource_id IS NULL;
 	ALTER TABLE holds ALTER COLUMN idempotency_key SET NOT NULL;
 	ALTER TABLE holds ALTER COLUMN request_hash SET NOT NULL;
+	ALTER TABLE holds ALTER COLUMN resource_type SET NOT NULL;
+	ALTER TABLE holds ALTER COLUMN resource_id SET NOT NULL;
 
 	CREATE TABLE IF NOT EXISTS evidence_receipts (
 	  id TEXT PRIMARY KEY,
@@ -340,12 +348,17 @@ func (s *PostgresStore) Wallet(ctx context.Context, accountID string) (Wallet, e
 }
 
 func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldResult, error) {
+	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 {
+		return HoldResult{}, ErrInvalidHoldInput
+	}
 	requestHash, err := hashJSON(struct {
-		AccountID   string `json:"accountId"`
-		WorkspaceID string `json:"workspaceId"`
-		AmountCents int64  `json:"amountCents"`
-		Currency    string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.AmountCents, input.Currency})
+		AccountID    string `json:"accountId"`
+		WorkspaceID  string `json:"workspaceId"`
+		ResourceType string `json:"resourceType"`
+		ResourceID   string `json:"resourceId"`
+		AmountCents  int64  `json:"amountCents"`
+		Currency     string `json:"currency"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
 	if err != nil {
 		return HoldResult{}, err
 	}
@@ -394,7 +407,7 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 		return HoldResult{}, err
 	}
 
-	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "hold", Source: "workspace_hold", Reason: input.WorkspaceID, CreatedAt: now}
+	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "hold", Source: input.ResourceType + "_hold", Reason: input.ResourceID, CreatedAt: now}
 	if _, err := tx.ExecContext(ctx, `
 	INSERT INTO ledger_entries(id, account_id, amount_cents, currency, direction, source, operator_user_id, reason, created_at)
 	VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8)
@@ -410,11 +423,11 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 		return HoldResult{}, err
 	}
 
-	result := HoldResult{ID: postgresID("hold", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "held", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
+	result := HoldResult{ID: postgresID("hold", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "held", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
 	if _, err := tx.ExecContext(ctx, `
-	INSERT INTO holds(id, account_id, workspace_id, amount_cents, currency, status, ledger_entry_id, wallet_transaction_id, idempotency_key, request_hash, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, result.ID, result.AccountID, result.WorkspaceID, result.AmountCents, result.Currency, result.Status, result.LedgerEntryID, result.WalletTransactionID, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
+	INSERT INTO holds(id, account_id, workspace_id, resource_type, resource_id, amount_cents, currency, status, ledger_entry_id, wallet_transaction_id, idempotency_key, request_hash, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, result.ID, result.AccountID, result.WorkspaceID, result.ResourceType, result.ResourceID, result.AmountCents, result.Currency, result.Status, result.LedgerEntryID, result.WalletTransactionID, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
 		return HoldResult{}, err
 	}
 	return result, tx.Commit()
@@ -700,7 +713,7 @@ func (s *PostgresStore) holdByIdempotencyKey(ctx context.Context, tx *sql.Tx, ke
 	var requestHash string
 	err := tx.QueryRowContext(ctx, `
 	SELECT
-	  h.id, h.account_id, h.workspace_id, h.amount_cents, h.currency, h.status, h.ledger_entry_id, h.wallet_transaction_id, h.created_at, h.request_hash,
+	  h.id, h.account_id, h.workspace_id, h.resource_type, h.resource_id, h.amount_cents, h.currency, h.status, h.ledger_entry_id, h.wallet_transaction_id, h.created_at, h.request_hash,
 	  w.account_id, w.balance_cents, w.frozen_cents, w.balance_cents - w.frozen_cents, w.total_spent_cents, w.currency, w.updated_at
 	FROM holds h
 	JOIN wallets w ON w.account_id = h.account_id
@@ -709,6 +722,8 @@ func (s *PostgresStore) holdByIdempotencyKey(ctx context.Context, tx *sql.Tx, ke
 		&result.ID,
 		&result.AccountID,
 		&result.WorkspaceID,
+		&result.ResourceType,
+		&result.ResourceID,
 		&result.AmountCents,
 		&result.Currency,
 		&result.Status,

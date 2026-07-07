@@ -8,6 +8,7 @@ import (
 var ErrIdempotencyConflict = errors.New("idempotency key already used with different payload")
 var ErrInsufficientBalance = errors.New("insufficient available balance")
 var ErrInsufficientFrozen = errors.New("insufficient frozen balance")
+var ErrInvalidHoldInput = errors.New("hold resource identity required")
 
 type ManualTopUpInput struct {
 	AccountID      string `json:"accountId"`
@@ -72,6 +73,8 @@ type ManualTopUpResult struct {
 type HoldInput struct {
 	AccountID      string `json:"accountId"`
 	WorkspaceID    string `json:"workspaceId"`
+	ResourceType   string `json:"resourceType"`
+	ResourceID     string `json:"resourceId"`
 	AmountCents    int64  `json:"amountCents"`
 	Currency       string `json:"currency"`
 	IdempotencyKey string `json:"-"`
@@ -81,6 +84,8 @@ type HoldResult struct {
 	ID                  string    `json:"id"`
 	AccountID           string    `json:"accountId"`
 	WorkspaceID         string    `json:"workspaceId"`
+	ResourceType        string    `json:"resourceType"`
+	ResourceID          string    `json:"resourceId"`
 	AmountCents         int64     `json:"amountCents"`
 	Currency            string    `json:"currency"`
 	Status              string    `json:"status"`

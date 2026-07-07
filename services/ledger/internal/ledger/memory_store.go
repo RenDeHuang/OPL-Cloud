@@ -99,12 +99,17 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 {
+		return HoldResult{}, ErrInvalidHoldInput
+	}
 	payloadHash, err := hashJSON(struct {
-		AccountID   string `json:"accountId"`
-		WorkspaceID string `json:"workspaceId"`
-		AmountCents int64  `json:"amountCents"`
-		Currency    string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.AmountCents, input.Currency})
+		AccountID    string `json:"accountId"`
+		WorkspaceID  string `json:"workspaceId"`
+		ResourceType string `json:"resourceType"`
+		ResourceID   string `json:"resourceId"`
+		AmountCents  int64  `json:"amountCents"`
+		Currency     string `json:"currency"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
 	if err != nil {
 		return HoldResult{}, err
 	}
@@ -137,8 +142,8 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 		AmountCents: input.AmountCents,
 		Currency:    input.Currency,
 		Direction:   "hold",
-		Source:      "workspace_hold",
-		Reason:      input.WorkspaceID,
+		Source:      input.ResourceType + "_hold",
+		Reason:      input.ResourceID,
 		CreatedAt:   now,
 	}
 	tx := WalletTransaction{
@@ -154,6 +159,8 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 		ID:                  s.newID("hold"),
 		AccountID:           input.AccountID,
 		WorkspaceID:         input.WorkspaceID,
+		ResourceType:        input.ResourceType,
+		ResourceID:          input.ResourceID,
 		AmountCents:         input.AmountCents,
 		Currency:            input.Currency,
 		Status:              "held",

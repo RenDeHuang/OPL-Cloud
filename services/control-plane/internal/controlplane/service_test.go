@@ -36,7 +36,43 @@ func TestCreateWorkspaceOrchestratesLedgerAndFabric(t *testing.T) {
 	if workspace.ComputeID != "compute-alpha" || workspace.VolumeID != "volume-alpha" || workspace.AttachmentID != "attachment-alpha" {
 		t.Fatalf("workspace must bind existing resources: %#v", workspace)
 	}
-	wantCalls := []string{"ledger.hold", "fabric.runtime", "ledger.evidence"}
+	wantCalls := []string{"fabric.runtime", "ledger.evidence"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestCreateComputeAllocationHoldsBeforeFabric(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
+
+	compute, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", PackageID: "basic", HoldAmountCents: 7862}, "compute-once")
+	if err != nil {
+		t.Fatalf("create compute: %v", err)
+	}
+
+	if compute.HoldID != "hold-alpha" || compute.HoldAmountCents != 7862 || compute.ID == "" {
+		t.Fatalf("compute missing hold linkage: %#v", compute)
+	}
+	wantCalls := []string{"ledger.hold", "fabric.compute"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestCreateStorageVolumeHoldsBeforeFabric(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
+
+	volume, err := service.CreateStorageVolume(context.Background(), StorageVolumeInput{AccountID: "acct-alpha", SizeGB: 10, HoldAmountCents: 101}, "storage-once")
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+
+	if volume.HoldID != "hold-alpha" || volume.HoldAmountCents != 101 || volume.ID == "" {
+		t.Fatalf("storage missing hold linkage: %#v", volume)
+	}
+	wantCalls := []string{"ledger.hold", "fabric.storage"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
 	}
@@ -53,7 +89,7 @@ func (f *fakeLedgerClient) ManualTopUp(ctx context.Context, input clients.Manual
 
 func (f *fakeLedgerClient) CreateHold(ctx context.Context, input clients.HoldInput, idempotencyKey string) (clients.HoldResult, error) {
 	*f.calls = append(*f.calls, "ledger.hold")
-	return clients.HoldResult{ID: "hold-alpha", AccountID: input.AccountID, AmountCents: 1000}, nil
+	return clients.HoldResult{ID: "hold-alpha", AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents}}, nil
 }
 
 func (f *fakeLedgerClient) ReleaseHold(ctx context.Context, input clients.HoldReleaseInput, idempotencyKey string) (clients.HoldReleaseResult, error) {
@@ -82,7 +118,7 @@ type fakeFabricClient struct {
 
 func (f *fakeFabricClient) CreateComputeAllocation(ctx context.Context, input clients.ComputeAllocationInput, idempotencyKey string) (clients.ComputeAllocation, error) {
 	*f.calls = append(*f.calls, "fabric.compute")
-	return clients.ComputeAllocation{ID: "compute-alpha", ProviderRequestID: "compute-request-alpha"}, nil
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, PackageID: input.PackageID, ProviderRequestID: "compute-request-alpha"}, nil
 }
 
 func (f *fakeFabricClient) GetComputeAllocation(ctx context.Context, id string) (clients.ComputeAllocation, error) {
@@ -97,7 +133,7 @@ func (f *fakeFabricClient) DestroyComputeAllocation(ctx context.Context, id stri
 
 func (f *fakeFabricClient) CreateStorageVolume(ctx context.Context, input clients.StorageVolumeInput, idempotencyKey string) (clients.StorageVolume, error) {
 	*f.calls = append(*f.calls, "fabric.storage")
-	return clients.StorageVolume{ID: "volume-alpha", ProviderRequestID: "volume-request-alpha"}, nil
+	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, SizeGB: input.SizeGB, ProviderRequestID: "volume-request-alpha"}, nil
 }
 
 func (f *fakeFabricClient) DestroyStorageVolume(ctx context.Context, id string, idempotencyKey string) (clients.StorageVolume, error) {

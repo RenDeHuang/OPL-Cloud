@@ -157,7 +157,7 @@ POST /api/workspaces/restore-storage-backup
 POST /api/workspaces/prune-storage-backups
 ```
 
-Restore is intentionally not in-place. A restore creates a new billable Workspace with a new PVC whose `dataSource` points at the selected `VolumeSnapshot`. The restored Workspace must pass the same prepaid hold rule as any new Workspace: seven days of compute and storage are frozen first, and the first hour is charged immediately.
+Restore is intentionally not in-place. A restore creates a new StorageVolume/PVC whose `dataSource` points at the selected `VolumeSnapshot`. The restored storage and any replacement compute must pass the same prepaid resource hold rule before Workspace URL/runtime creation resumes.
 
 Retention pruning deletes only `VolumeSnapshot` objects. It must never delete the source PVC, a restored PVC, runtime compute, Service, Ingress route, or Workspace access token.
 
@@ -213,7 +213,7 @@ The Fabric resource catalog is exposed in `GET /api/runtime/readiness` under `re
 The production billing chain is:
 
 ```text
-Workspace open/resume -> 7-day compute and storage holds -> hourly internal debits from available balance -> frozen hold consumption only after available balance is exhausted -> hold release or auto-stop/freeze -> Tencent bill reconciliation
+Compute/storage open -> seven-day resource holds -> Workspace URL/runtime creation -> hourly internal debits from available balance -> frozen hold consumption only after available balance is exhausted -> hold release or auto-stop/freeze -> Tencent bill reconciliation
 ```
 
 Record reconciliation output with:

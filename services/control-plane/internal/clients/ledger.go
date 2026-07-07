@@ -109,19 +109,24 @@ type ReconciliationResult struct {
 }
 
 type HoldInput struct {
-	AccountID   string `json:"accountId"`
-	WorkspaceID string `json:"workspaceId"`
-	AmountCents int64  `json:"amountCents"`
-	Currency    string `json:"currency"`
+	AccountID    string `json:"accountId"`
+	WorkspaceID  string `json:"workspaceId"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	AmountCents  int64  `json:"amountCents"`
+	Currency     string `json:"currency"`
 }
 
 type HoldResult struct {
-	ID          string `json:"id"`
-	AccountID   string `json:"accountId"`
-	WorkspaceID string `json:"workspaceId"`
-	AmountCents int64  `json:"amountCents"`
-	Currency    string `json:"currency"`
-	Status      string `json:"status"`
+	ID           string `json:"id"`
+	AccountID    string `json:"accountId"`
+	WorkspaceID  string `json:"workspaceId"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	AmountCents  int64  `json:"amountCents"`
+	Currency     string `json:"currency"`
+	Status       string `json:"status"`
+	Wallet       Wallet `json:"wallet"`
 }
 
 type HoldReleaseInput struct {
