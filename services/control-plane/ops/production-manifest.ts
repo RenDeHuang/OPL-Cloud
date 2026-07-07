@@ -59,9 +59,17 @@ function normalizeRegistry(registry) {
   return String(registry || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
+function hasContainerTag(image) {
+  const text = String(image || "");
+  const lastSlash = text.lastIndexOf("/");
+  const tagIndex = text.lastIndexOf(":");
+  const tag = tagIndex >= 0 ? text.slice(tagIndex + 1) : "";
+  return tagIndex > lastSlash && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag);
+}
+
 function looksLikeRegistryImage({ image, registry }) {
   const normalizedRegistry = normalizeRegistry(registry);
-  return Boolean(image && normalizedRegistry && image.startsWith(`${normalizedRegistry}/`) && image.includes(":"));
+  return Boolean(image && normalizedRegistry && image.startsWith(`${normalizedRegistry}/`) && hasContainerTag(image));
 }
 
 function looksLikeProductionDomain(domain) {

@@ -96,6 +96,33 @@ test("production manifest fails closed on missing env and inline secret values",
   assert.equal(JSON.stringify(report).includes("TENCENTCLOUD_SECRET"), false);
 });
 
+test("production manifest rejects empty container image tags", () => {
+  const report = validateProductionManifest({
+    env: {
+      OPL_RUNTIME_PROVIDER: { value: "tencent-tke" },
+      DATABASE_URL: { secretRef: "opl-cloud/database-url" },
+      OPL_CONSOLE_USERS_JSON: { secretRef: "opl-cloud/auth-users-json" },
+      OPL_PUBLIC_URL: { value: "https://cloud.medopl.cn" },
+      OPL_CONSOLE_DOMAIN: { value: "cloud.medopl.cn" },
+      OPL_WORKSPACE_DOMAIN: { value: "workspace.medopl.cn" },
+      OPL_CLOUD_IMAGE: { value: "registry.example.com/opl/opl-cloud:" },
+      OPL_WORKSPACE_IMAGE: { value: "registry.example.com/opl/one-person-lab-app:" },
+      OPL_K8S_NAMESPACE: { value: "opl-cloud" },
+      OPL_INGRESS_CLASS: { value: "qcloud" },
+      OPL_IMAGE_PULL_SECRET_NAME: { value: "tcr-pull-secret" },
+      OPL_WORKSPACE_STORAGE_CLASS: { value: "cbs" },
+      TENCENT_DEPLOY_KUBECONFIG_REF: { secretRef: "opl-cloud/tencent-deploy-kubeconfig-ref" },
+      TENCENT_DEPLOY_CLUSTER_ID: { value: "cls-123" },
+      TENCENT_TCR_REGISTRY: { value: "registry.example.com" },
+      TENCENT_TCR_NAMESPACE: { value: "opl" },
+      TENCENT_TCR_REGION: { value: "ap-guangzhou" }
+    }
+  });
+
+  assert.equal(report.ok, false);
+  assert.ok(report.failedChecks.includes("registry_images"));
+});
+
 test("production manifest rejects non-TKE production providers", () => {
   const report = validateProductionManifest({
     env: {

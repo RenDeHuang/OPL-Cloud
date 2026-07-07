@@ -109,6 +109,20 @@ test("productionReadiness reports only TKE-specific blockers", async () => {
   assert.ok(report.failedChecks.includes("provider_env"));
 });
 
+test("productionReadiness rejects empty container image tags", async () => {
+  const report = await productionReadiness({
+    env: {
+      ...tkeProductionEnv,
+      OPL_CLOUD_IMAGE: "registry.example.com/opl/opl-cloud:",
+      OPL_WORKSPACE_IMAGE: "registry.example.com/opl/one-person-lab-app:"
+    },
+    commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+  });
+
+  assert.equal(report.ready, false);
+  assert.ok(report.failedChecks.includes("registry_images"));
+});
+
 test("productionReadiness requires Tencent Go SDK mutation inputs for live compute allocation", async () => {
   const {
     TENCENTCLOUD_SECRET_ID,

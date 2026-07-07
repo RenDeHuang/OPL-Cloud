@@ -125,8 +125,9 @@
         "node tools/render-tke-manifest.ts --manifest deploy/tke/opl-cloud.k8s.json --out \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.ingress-bootstrap.json\"",
         "node tools/render-tke-manifest.ts --manifest deploy/tke/opl-cloud.k8s.json --skip-shared-ingress --out \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json\"",
         "kubectl --kubeconfig \"$KUBECONFIG\" apply -f \"$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json\"",
-        "rollout restart deployment/opl-cloud-control-plane",
-        "rollout status deployment/opl-cloud-control-plane"
+        "opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric",
+        "rollout restart \"deployment/$deployment\"",
+        "rollout status \"deployment/$deployment\""
       ]
     },
     "forbiddenRunTokens": [

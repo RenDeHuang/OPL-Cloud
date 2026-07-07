@@ -409,6 +409,27 @@ test("TKE production deploy patches shared Ingress config without overwriting Wo
   assert.doesNotMatch(text, /kubectl .*apply -f "\$OPL_DEPLOY_SECRET_DIR\/opl-cloud\.ingress-bootstrap\.json"[\s\S]*kubectl .*apply -f "\$OPL_DEPLOY_SECRET_DIR\/opl-cloud\.ingress-bootstrap\.json"/);
 });
 
+test("TKE production deploy rejects empty image tags before applying manifests", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const currentJob = job(workflow, "deploy");
+  const step = stepsByName(currentJob).get("Check deployment inputs");
+  const text = serializedStep(step);
+
+  assert.match(text, /tag="\$\{image##\*:\}"/);
+  assert.match(text, /\[ -z "\$tag" \]/);
+});
+
+test("TKE production deploy restarts every ConfigMap-backed service", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const currentJob = job(workflow, "deploy");
+  const step = stepsByName(currentJob).get("Render and apply manifest");
+  const text = serializedStep(step);
+
+  for (const deployment of ["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"]) {
+    assert.match(text, new RegExp(deployment));
+  }
+});
+
 test("TKE production diagnostics workflow is read-only and matches the deployment contract", async () => {
   const contract = await readJson(deploymentContractPath);
   const workflow = await readWorkflow(contract.diagnosticsWorkflow.file);
