@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	);
 
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS reason TEXT;
+	UPDATE manual_topups SET idempotency_key = 'migrated:' || id WHERE idempotency_key IS NULL;
+	UPDATE manual_topups SET request_hash = 'migrated:' || id WHERE request_hash IS NULL;
+	ALTER TABLE manual_topups ALTER COLUMN idempotency_key SET NOT NULL;
+	ALTER TABLE manual_topups ALTER COLUMN request_hash SET NOT NULL;
+
 	CREATE TABLE IF NOT EXISTS holds (
 	  id TEXT PRIMARY KEY,
 	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
@@ -72,6 +80,13 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	);
 
+	ALTER TABLE holds ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+	ALTER TABLE holds ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	UPDATE holds SET idempotency_key = 'migrated:' || id WHERE idempotency_key IS NULL;
+	UPDATE holds SET request_hash = 'migrated:' || id WHERE request_hash IS NULL;
+	ALTER TABLE holds ALTER COLUMN idempotency_key SET NOT NULL;
+	ALTER TABLE holds ALTER COLUMN request_hash SET NOT NULL;
+
 	CREATE TABLE IF NOT EXISTS evidence_receipts (
 	  id TEXT PRIMARY KEY,
 	  workspace_id TEXT NOT NULL,
@@ -82,6 +97,13 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 	  request_hash TEXT NOT NULL,
 	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	);
+
+	ALTER TABLE evidence_receipts ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+	ALTER TABLE evidence_receipts ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	UPDATE evidence_receipts SET idempotency_key = 'migrated:' || id WHERE idempotency_key IS NULL;
+	UPDATE evidence_receipts SET request_hash = 'migrated:' || id WHERE request_hash IS NULL;
+	ALTER TABLE evidence_receipts ALTER COLUMN idempotency_key SET NOT NULL;
+	ALTER TABLE evidence_receipts ALTER COLUMN request_hash SET NOT NULL;
 
 	CREATE TABLE IF NOT EXISTS resource_settlements (
 	  id TEXT PRIMARY KEY,
@@ -99,6 +121,13 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	);
 
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	UPDATE resource_settlements SET idempotency_key = 'migrated:' || id WHERE idempotency_key IS NULL;
+	UPDATE resource_settlements SET request_hash = 'migrated:' || id WHERE request_hash IS NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN idempotency_key SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN request_hash SET NOT NULL;
+
 	CREATE TABLE IF NOT EXISTS reconciliation_reports (
 	  id TEXT PRIMARY KEY,
 	  status TEXT NOT NULL,
@@ -109,6 +138,13 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 	  request_hash TEXT NOT NULL,
 	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	);
+
+	ALTER TABLE reconciliation_reports ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+	ALTER TABLE reconciliation_reports ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	UPDATE reconciliation_reports SET idempotency_key = 'migrated:' || id WHERE idempotency_key IS NULL;
+	UPDATE reconciliation_reports SET request_hash = 'migrated:' || id WHERE request_hash IS NULL;
+	ALTER TABLE reconciliation_reports ALTER COLUMN idempotency_key SET NOT NULL;
+	ALTER TABLE reconciliation_reports ALTER COLUMN request_hash SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   service TEXT NOT NULL,

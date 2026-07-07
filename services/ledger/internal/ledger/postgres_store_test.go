@@ -13,6 +13,11 @@ func TestPostgresSchemaUsesAppendFirstLedgerTables(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS ledger_entries",
 		"CREATE TABLE IF NOT EXISTS wallet_transactions",
 		"CREATE TABLE IF NOT EXISTS manual_topups",
+		"ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
+		"UPDATE manual_topups SET idempotency_key = 'migrated:' || id WHERE idempotency_key IS NULL",
+		"ALTER TABLE manual_topups ALTER COLUMN idempotency_key SET NOT NULL",
+		"ALTER TABLE holds ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
+		"ALTER TABLE holds ALTER COLUMN request_hash SET NOT NULL",
 		"CREATE TABLE IF NOT EXISTS idempotency_keys",
 		"CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_idempotency_key_idx",
 	}

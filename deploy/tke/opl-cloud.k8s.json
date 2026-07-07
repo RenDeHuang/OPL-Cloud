@@ -353,7 +353,7 @@
               {
                 "name": "ledger",
                 "image": "registry.example.com/opl/opl-cloud:2026-07-01",
-                "imagePullPolicy": "IfNotPresent",
+                "imagePullPolicy": "Always",
                 "ports": [
                   {
                     "name": "ledger",
