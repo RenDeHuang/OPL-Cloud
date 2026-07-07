@@ -73,6 +73,30 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/runtime-status", bytes.NewBufferString(`{"workspaceId":"ws-alpha"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body["ready"] != false {
+		t.Fatalf("ready must come from Fabric runtime state: %#v", body)
+	}
+	checks := body["checks"].([]any)
+	if len(checks) != 2 || checks[0].(map[string]any)["name"] != "deployment_ready" || checks[1].(map[string]any)["name"] != "service_endpoints_ready" {
+		t.Fatalf("runtime checks must pass through Fabric details: %#v", body["checks"])
+	}
+}
+
 type fakeLedgerClient struct{}
 
 type fakeLedgerClientWithKeys struct {
@@ -162,7 +186,18 @@ func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clien
 
 func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime-status")
-	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/" + workspaceID + "/", Status: "running"}, nil
+	return clients.WorkspaceRuntime{
+		ID:          "runtime-from-fabric",
+		WorkspaceID: workspaceID,
+		URL:         "https://workspace.medopl.cn/w/" + workspaceID + "/",
+		Status:      "unready",
+		ServiceName: "opl-compute-from-fabric",
+		Ready:       false,
+		Checks: []any{
+			map[string]any{"name": "deployment_ready", "ok": true},
+			map[string]any{"name": "service_endpoints_ready", "ok": false},
+		},
+	}, nil
 }
 
 func (f *fakeFabricClient) Readiness(_ context.Context) (map[string]any, error) {

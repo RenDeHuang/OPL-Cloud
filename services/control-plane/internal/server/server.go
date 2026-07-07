@@ -511,15 +511,21 @@ func reconciliationResponse(result clients.ReconciliationResult) map[string]any 
 }
 
 func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime) map[string]any {
-	ready := runtime.Status == "running"
+	ready := runtime.Ready
+	checks := runtime.Checks
+	if len(checks) == 0 {
+		ready = runtime.Status == "running"
+		checks = []any{map[string]any{"name": "fabric_runtime_running", "ok": ready}}
+	}
 	return map[string]any{
 		"provider":    "tencent-tke",
 		"workspaceId": runtime.WorkspaceID,
 		"runtimeId":   runtime.ID,
 		"url":         runtime.URL,
+		"serviceName": runtime.ServiceName,
 		"status":      runtime.Status,
 		"ready":       ready,
-		"checks":      []map[string]any{{"name": "fabric_runtime_running", "ok": ready}},
+		"checks":      checks,
 	}
 }
 
