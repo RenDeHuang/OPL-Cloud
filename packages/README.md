@@ -6,8 +6,6 @@ This directory contains shared package boundaries only. Runtime ownership now li
 
 | Package | Current role | Ownership target |
 | --- | --- | --- |
-| `fabric` | Resource catalog, runtime provider factory, and Tencent TKE adapter | `opl-fabric` or `opl-fabric-adapters` |
-| `ledger` | Tencent bill normalization, reconciliation guard helpers, control-plane evidence helpers, and task evidence receipt helpers; billing and evidence contracts are still called by Console service | `opl-ledger` |
 | `contracts` | Machine-readable product, management, billing, resource allocation, deployment, and evidence contracts shared by Console, Fabric, Workspace, and Ledger | shared contract package or product contract repository |
 
 ## Current Boundary
@@ -25,8 +23,8 @@ The service may call Fabric and Ledger through service clients or shared contrac
 When a package becomes independently deployable, keep this repository depending on an API or contract:
 
 - Console should depend on Workspace/Fabric/Ledger contracts.
-- Fabric should own resource catalog, runtime execution, and cloud adapter details.
-- Ledger should own billing events, reconciliation guard semantics, control-plane evidence, and task evidence receipts.
+- Fabric owns resource catalog, runtime execution, and cloud adapter details under `services/fabric`.
+- Ledger owns billing events, reconciliation guard semantics, control-plane evidence, and task evidence receipts under `services/ledger`.
 - ComputePool, ComputeAllocation, StorageVolume, and StorageAttachment contracts should stay shared: Console owns user-visible operations and receipts, while Fabric owns provider-specific execution mechanics.
 - Workspace runtime behavior remains owned by `one-person-lab-app`.
 

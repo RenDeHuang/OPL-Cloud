@@ -13,6 +13,22 @@ COPY services/control-plane/go.mod ./
 COPY services/control-plane ./
 RUN CGO_ENABLED=0 go build -o /out/opl-control-plane ./cmd/control-plane
 
+FROM golang:1.22-bookworm AS ledger-build
+
+WORKDIR /src/services/ledger
+COPY services/ledger/go.mod services/ledger/go.sum ./
+RUN go mod download
+COPY services/ledger ./
+RUN go build -o /out/opl-ledger ./cmd/ledger
+
+FROM golang:1.22-bookworm AS fabric-build
+
+WORKDIR /src/services/fabric
+COPY services/fabric/go.mod services/fabric/go.sum ./
+RUN go mod download
+COPY services/fabric ./
+RUN go build -o /out/opl-fabric ./cmd/fabric
+
 FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
@@ -40,6 +56,8 @@ COPY --from=build /app/dist ./dist
 COPY packages ./packages
 COPY --from=provisioner-build /out/opl-tencent-provisioner /usr/local/bin/opl-tencent-provisioner
 COPY --from=control-plane-build /out/opl-control-plane /usr/local/bin/opl-control-plane
+COPY --from=ledger-build /out/opl-ledger /usr/local/bin/opl-ledger
+COPY --from=fabric-build /out/opl-fabric /usr/local/bin/opl-fabric
 RUN mkdir -p /app/.runtime && chown -R node:node /app/.runtime
 
 USER node

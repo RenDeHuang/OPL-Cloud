@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { productionReadiness } from "../../services/control-plane/ops/production-readiness.ts";
+import { productionReadiness } from "../../services/fabric/ops/production-readiness.ts";
 
 const tkeProductionEnv = {
   OPL_RUNTIME_PROVIDER: "tencent-tke",

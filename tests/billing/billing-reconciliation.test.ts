@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeTencentBillRows, reconcileTencentBills } from "../../packages/ledger/src/billing-reconciliation.ts";
+import { normalizeTencentBillRows, reconcileTencentBills } from "../../services/ledger/ops/reconcile-tencent-bills.ts";
 
 test("reconciles OPL resource debits against internal provider cost evidence", () => {
   const report = reconcileTencentBills({

@@ -9,16 +9,20 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
   const manifest = JSON.parse(source);
   assert.equal(manifest.kind, "List");
   const items = manifest.items;
-  assert.deepEqual(items.map((item) => item.kind), [
-    "Namespace",
-    "ServiceAccount",
-    "ConfigMap",
-    "Deployment",
-    "Service",
-    "NetworkPolicy",
-    "TkeServiceConfig",
-    "Ingress"
-  ]);
+	assert.deepEqual(items.map((item) => item.kind), [
+		"Namespace",
+		"ServiceAccount",
+		"ConfigMap",
+		"Deployment",
+		"Service",
+		"NetworkPolicy",
+		"Deployment",
+		"Service",
+		"Deployment",
+		"Service",
+		"TkeServiceConfig",
+		"Ingress"
+	]);
 
   const namespace = items.find((item) => item.kind === "Namespace");
   assert.equal(namespace.metadata.name, "opl-cloud");
@@ -40,13 +44,22 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
   assert.equal(config.data.TENCENT_TCR_REGISTRY, "registry.example.com");
   assert.equal(config.data.TENCENT_TCR_NAMESPACE, "opl");
   assert.equal(config.data.TENCENT_TCR_REGION, "ap-guangzhou");
-  assert.equal(config.data.OPL_CODEX_MODEL, "gpt-5.5");
-  assert.equal(config.data.OPL_CODEX_REASONING_EFFORT, "xhigh");
-  assert.equal(config.data.OPL_CODEX_BASE_URL, "https://gflabtoken.cn/v1");
+	assert.equal(config.data.OPL_CODEX_MODEL, "gpt-5.5");
+	assert.equal(config.data.OPL_CODEX_REASONING_EFFORT, "xhigh");
+	assert.equal(config.data.OPL_CODEX_BASE_URL, "https://gflabtoken.cn/v1");
+	assert.equal(config.data.LEDGER_URL, "http://opl-cloud-ledger:8081");
+	assert.equal(config.data.FABRIC_URL, "http://opl-cloud-fabric:8082");
 
-  const deployment = items.find((item) => item.kind === "Deployment");
-  assert.equal(deployment.metadata.name, "opl-cloud-control-plane");
-  assert.equal(deployment.spec.template.spec.serviceAccountName, "opl-cloud-control-plane");
+	const deployments = items.filter((item) => item.kind === "Deployment");
+	assert.deepEqual(deployments.map((item) => item.metadata.name), [
+		"opl-cloud-control-plane",
+		"opl-cloud-ledger",
+		"opl-cloud-fabric"
+	]);
+	const deployment = deployments.find((item) => item.metadata.name === "opl-cloud-control-plane");
+	assert.equal(deployment.metadata.name, "opl-cloud-control-plane");
+	assert.equal(deployment.spec.selector.matchLabels["app.kubernetes.io/component"], "control-plane");
+	assert.equal(deployment.spec.template.spec.serviceAccountName, "opl-cloud-control-plane");
   assert.equal(deployment.spec.template.spec.automountServiceAccountToken, false);
   assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [{ name: "tcr-pull-secret" }]);
   const container = deployment.spec.template.spec.containers[0];
@@ -66,11 +79,29 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
   ]);
   assert.equal(container.env.find((item) => item.name === "OPL_OPERATOR_SUMMARY_TOKEN").valueFrom.secretKeyRef.optional, true);
   assert.equal(container.env.find((item) => item.name === "OPL_CODEX_API_KEY").valueFrom.secretKeyRef.optional, true);
-  assert.deepEqual(deployment.spec.template.spec.volumes.map((volume) => volume.name), [
-    "runtime-state",
-    "deploy-kubeconfig",
-    "tmp"
-  ]);
+	assert.deepEqual(deployment.spec.template.spec.volumes.map((volume) => volume.name), [
+		"runtime-state",
+		"deploy-kubeconfig",
+		"tmp"
+	]);
+	const ledger = deployments.find((item) => item.metadata.name === "opl-cloud-ledger");
+	assert.equal(ledger.spec.template.spec.containers[0].command[0], "/usr/local/bin/opl-ledger");
+	assert.equal(ledger.spec.template.spec.containers[0].ports[0].containerPort, 8081);
+	assert.deepEqual(ledger.spec.template.spec.containers[0].env.map((item) => `${item.name}->${item.valueFrom.secretKeyRef.name}/${item.valueFrom.secretKeyRef.key}`), [
+		"DATABASE_URL->opl-cloud-database/DATABASE_URL"
+	]);
+	const fabric = deployments.find((item) => item.metadata.name === "opl-cloud-fabric");
+	assert.equal(fabric.spec.template.spec.containers[0].command[0], "/usr/local/bin/opl-fabric");
+	assert.equal(fabric.spec.template.spec.containers[0].ports[0].containerPort, 8082);
+	const services = items.filter((item) => item.kind === "Service");
+	assert.deepEqual(services.map((item) => item.metadata.name), [
+		"opl-cloud-control-plane",
+		"opl-cloud-ledger",
+		"opl-cloud-fabric"
+	]);
+	for (const service of services) {
+		assert.equal(service.spec.selector["app.kubernetes.io/component"], service.metadata.labels["app.kubernetes.io/component"]);
+	}
 
   const ingress = items.find((item) => item.kind === "Ingress");
   assert.equal(ingress.spec.ingressClassName, "qcloud");

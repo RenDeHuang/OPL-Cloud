@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -42,7 +44,7 @@ func NewServer(service *controlplane.Service) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"id": "usr-local", "role": "owner"})
+		writeJSON(w, http.StatusOK, map[string]string{"id": "usr-admin", "role": "admin"})
 	})
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, app.state(r.URL.Query().Get("accountId")))
@@ -54,10 +56,19 @@ func NewServer(service *controlplane.Service) http.Handler {
 		writeJSON(w, http.StatusOK, app.operatorSummary())
 	})
 	mux.HandleFunc("GET /api/runtime/readiness", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, app.readiness(r.Context()))
+		readiness, err := service.RuntimeReadiness(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, readiness)
 	})
 	mux.HandleFunc("GET /api/production/readiness", func(w http.ResponseWriter, r *http.Request) {
-		readiness := app.readiness(r.Context())
+		readiness, err := service.RuntimeReadiness(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
 		readiness["checks"] = []any{}
 		writeJSON(w, http.StatusOK, readiness)
 	})
@@ -77,26 +88,76 @@ func NewServer(service *controlplane.Service) http.Handler {
 	})
 	mux.HandleFunc("POST /api/workspaces/runtime-status", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		writeJSON(w, http.StatusOK, app.runtimeStatus(r.Context(), stringField(input, "workspaceId", "")))
-	})
-	mux.HandleFunc("POST /api/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		idempotencyKey := r.Header.Get("Idempotency-Key")
-		_ = idempotencyKey
-		workspace, err := app.createWorkspace(r.Context(), decodeJSON(r))
+		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), stringField(input, "workspaceId", ""))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		writeJSON(w, http.StatusOK, workspaceRuntimeStatusResponse(runtime))
+	})
+	mux.HandleFunc("POST /api/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		input := decodeJSON(r)
+		workspace, err := service.CreateWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
+			AccountID: stringField(input, "accountId", "acct-local"),
+			OwnerID:   firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", "")),
+			Name:      firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace")),
+			PackageID: stringField(input, "packageId", "basic"),
+		}, idempotencyKey)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		app.rememberWorkspaceProjection(workspace)
 		writeJSON(w, http.StatusCreated, workspace)
 	})
 	mux.HandleFunc("GET /api/billing/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"currency": "CNY", "balanceCents": 0})
 	})
 	mux.HandleFunc("POST /api/billing/topups", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusCreated, app.topUp(decodeJSON(r)))
+		input := decodeJSON(r)
+		idempotencyKey := firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""))
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		result, err := service.ManualTopUp(r.Context(), controlplane.ManualTopUpInput{
+			AccountID:      stringField(input, "accountId", "acct-local"),
+			AmountCents:    moneyToCents(input),
+			Currency:       stringField(input, "currency", "CNY"),
+			OperatorUserID: stringField(input, "operatorUserId", "operator"),
+			Reason:         stringField(input, "reason", ""),
+		}, idempotencyKey)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, manualTopUpResponse(result))
 	})
 	mux.HandleFunc("POST /api/billing/resource-settlements", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, app.settleResources(decodeJSON(r)))
+		input := decodeJSON(r)
+		idempotencyKey := firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(input, "sourceEventId", ""))
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		result, err := service.SettleResource(r.Context(), controlplane.ResourceSettlementInput{
+			AccountID:    stringField(input, "accountId", "acct-local"),
+			WorkspaceID:  stringField(input, "workspaceId", ""),
+			ResourceType: stringField(input, "resourceType", "compute"),
+			ResourceID:   firstNonEmpty(stringField(input, "resourceId", ""), stringField(input, "computeAllocationId", ""), stringField(input, "storageId", "")),
+			AmountCents:  settlementAmountCents(input),
+			Currency:     stringField(input, "currency", "CNY"),
+		}, idempotencyKey)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, settlementResponse(result))
 	})
 	mux.HandleFunc("POST /api/billing/reconciliation", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -104,7 +165,17 @@ func NewServer(service *controlplane.Service) http.Handler {
 		if report == nil {
 			report = map[string]any{}
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"id": stringField(report, "id", "reconciliation-local"), "guard": map[string]any{"status": "ok", "blockNewWorkspaces": false, "reason": "operator_reconciliation"}})
+		idempotencyKey := firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(report, "id", ""))
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		result, err := service.RecordReconciliation(r.Context(), controlplane.ReconciliationInput{Report: report}, idempotencyKey)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, reconciliationResponse(result))
 	})
 	mux.HandleFunc("GET /api/compute-pools", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, computePools())
@@ -113,12 +184,19 @@ func NewServer(service *controlplane.Service) http.Handler {
 		writeJSON(w, http.StatusOK, app.state(r.URL.Query().Get("accountId"))["computeAllocations"])
 	})
 	mux.HandleFunc("POST /api/compute-allocations", func(w http.ResponseWriter, r *http.Request) {
-		compute, err := app.createCompute(r.Context(), decodeJSON(r))
+		input := decodeJSON(r)
+		compute, err := service.CreateComputeAllocation(r.Context(), controlplane.ComputeAllocationInput{
+			AccountID:   stringField(input, "accountId", "acct-local"),
+			WorkspaceID: stringField(input, "workspaceId", ""),
+			PackageID:   stringField(input, "packageId", "basic"),
+		}, mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, compute)
+		body := structToMap(compute)
+		app.rememberCompute(body)
+		writeJSON(w, http.StatusAccepted, body)
 	})
 	mux.HandleFunc("GET /api/compute-allocations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		compute, ok := app.getCompute(strings.TrimSpace(r.PathValue("id")))
@@ -129,39 +207,67 @@ func NewServer(service *controlplane.Service) http.Handler {
 		writeJSON(w, http.StatusOK, compute)
 	})
 	mux.HandleFunc("POST /api/compute-allocations/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
-		compute, err := app.destroyCompute(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		input := decodeJSON(r)
+		compute, err := service.DestroyComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")), mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, compute)
+		body := structToMap(compute)
+		app.rememberCompute(body)
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/storage-volumes", func(w http.ResponseWriter, r *http.Request) {
-		storage, err := app.createStorage(r.Context(), decodeJSON(r))
+		input := decodeJSON(r)
+		storage, err := service.CreateStorageVolume(r.Context(), controlplane.StorageVolumeInput{
+			AccountID:   stringField(input, "accountId", "acct-local"),
+			WorkspaceID: stringField(input, "workspaceId", ""),
+			SizeGB:      int(numberField(input, "sizeGb", 10)),
+		}, mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, storage)
+		body := structToMap(storage)
+		app.rememberStorage(body)
+		writeJSON(w, http.StatusAccepted, body)
 	})
 	mux.HandleFunc("POST /api/storage-volumes/destroy", func(w http.ResponseWriter, r *http.Request) {
-		storage, err := app.destroyStorage(r.Context(), decodeJSON(r))
+		input := decodeJSON(r)
+		storage, err := service.DestroyStorageVolume(r.Context(), stringField(input, "storageId", ""), mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, storage)
+		body := structToMap(storage)
+		app.rememberStorage(body)
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
-		attachment, err := app.attachStorage(decodeJSON(r))
+		input := decodeJSON(r)
+		attachment, err := service.CreateStorageAttachment(r.Context(), controlplane.StorageAttachmentInput{
+			WorkspaceID: stringField(input, "workspaceId", ""),
+			ComputeID:   stringField(input, "computeAllocationId", ""),
+			VolumeID:    stringField(input, "storageId", ""),
+		}, mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusAccepted, attachment)
+		body := structToMap(attachment)
+		app.rememberAttachment(body, input)
+		writeJSON(w, http.StatusAccepted, body)
 	})
 	mux.HandleFunc("POST /api/storage-attachments/detach", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, app.detachStorage(decodeJSON(r)))
+		input := decodeJSON(r)
+		attachment, err := service.DetachStorageAttachment(r.Context(), stringField(input, "attachmentId", ""), mutationKey(r, input))
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		body := structToMap(attachment)
+		app.rememberAttachment(body, input)
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("GET /api/support/tickets", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"tickets": []any{}})
@@ -174,25 +280,19 @@ func NewServer(service *controlplane.Service) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"receipts": []any{}})
 	})
 	mux.HandleFunc("POST /api/organizations", func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		name := stringField(input, "name", "Organization")
-		writeJSON(w, http.StatusCreated, map[string]any{"id": "org-local", "name": name, "billingAccountId": stringField(input, "billingAccountId", "acct-local"), "status": "active"})
+		writeJSON(w, http.StatusCreated, app.createOrganization(decodeJSON(r)))
 	})
 	mux.HandleFunc("POST /api/organizations/members", func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		writeJSON(w, http.StatusCreated, map[string]any{"id": "membership-local", "organizationId": stringField(input, "organizationId", "org-local"), "userId": stringField(input, "userId", "usr-local"), "role": stringField(input, "role", "member"), "status": "active"})
+		writeJSON(w, http.StatusCreated, app.createMembership(decodeJSON(r)))
 	})
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		writeJSON(w, http.StatusCreated, map[string]any{"id": "usr-local", "email": stringField(input, "email", "owner@example.com"), "accountId": stringField(input, "accountId", "acct-local"), "status": "active"})
+		writeJSON(w, http.StatusCreated, app.createUser(decodeJSON(r)))
 	})
 	mux.HandleFunc("POST /api/users/disable", func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		writeJSON(w, http.StatusOK, map[string]any{"id": stringField(input, "userId", "usr-local"), "status": "disabled"})
+		writeJSON(w, http.StatusOK, app.setUserStatus(decodeJSON(r), "disabled"))
 	})
 	mux.HandleFunc("POST /api/users/delete", func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		writeJSON(w, http.StatusOK, map[string]any{"id": stringField(input, "userId", "usr-local"), "status": "deleted"})
+		writeJSON(w, http.StatusOK, app.setUserStatus(decodeJSON(r), "deleted"))
 	})
 	mux.HandleFunc("POST /api/operator/cleanup-workspace-access", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"cleaned": []any{}, "skipped": []any{}})
@@ -239,9 +339,103 @@ func numberField(input map[string]any, key string, fallback float64) float64 {
 	}
 }
 
+func moneyToCents(input map[string]any) int64 {
+	if cents := numberField(input, "amountCents", -1); cents >= 0 {
+		return int64(cents)
+	}
+	return int64(numberField(input, "amount", 0) * 100)
+}
+
+func mutationKey(r *http.Request, input map[string]any) string {
+	return firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(input, "sourceEventId", ""), stableID(r.Method, r.URL.Path, time.Now().UTC().String()))
+}
+
+func structToMap(value any) map[string]any {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return map[string]any{}
+	}
+	var output map[string]any
+	if err := json.Unmarshal(data, &output); err != nil {
+		return map[string]any{}
+	}
+	return output
+}
+
+func manualTopUpResponse(result clients.ManualTopUpResult) map[string]any {
+	return map[string]any{
+		"id":                  result.TopUp.ID,
+		"idempotent":          result.Replayed,
+		"targetAccountId":     result.TopUp.AccountID,
+		"amount":              float64(result.TopUp.AmountCents) / 100,
+		"amountCents":         result.TopUp.AmountCents,
+		"operatorUserId":      result.TopUp.OperatorUserID,
+		"ledgerEntryId":       result.LedgerEntry.ID,
+		"walletTransactionId": result.WalletTransaction.ID,
+		"balance":             float64(result.Wallet.BalanceCents) / 100,
+		"frozen":              float64(result.Wallet.FrozenCents) / 100,
+		"available":           float64(result.Wallet.AvailableCents) / 100,
+		"wallet":              result.Wallet,
+		"status":              "completed",
+	}
+}
+
+func settlementAmountCents(input map[string]any) int64 {
+	if cents := numberField(input, "amountCents", -1); cents >= 0 {
+		return int64(cents)
+	}
+	if amount := numberField(input, "amount", -1); amount >= 0 {
+		return int64(amount * 100)
+	}
+	hours := numberField(input, "hours", 1)
+	return int64(hours * 100)
+}
+
+func settlementResponse(result clients.ResourceSettlementResult) map[string]any {
+	return map[string]any{
+		"id":                  result.ID,
+		"accountId":           result.AccountID,
+		"workspaceId":         result.WorkspaceID,
+		"resourceType":        result.ResourceType,
+		"resourceId":          result.ResourceID,
+		"amount":              float64(result.AmountCents) / 100,
+		"amountCents":         result.AmountCents,
+		"status":              result.Status,
+		"ledgerEntryId":       result.LedgerEntryID,
+		"walletTransactionId": result.WalletTransactionID,
+		"wallet":              result.Wallet,
+	}
+}
+
+func reconciliationResponse(result clients.ReconciliationResult) map[string]any {
+	return map[string]any{
+		"id":     result.ID,
+		"status": result.Status,
+		"guard": map[string]any{
+			"status":             result.Status,
+			"blockNewWorkspaces": result.BlockNewWorkspaces,
+			"reason":             result.Reason,
+		},
+		"report": result.Report,
+	}
+}
+
+func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime) map[string]any {
+	ready := runtime.Status == "running"
+	return map[string]any{
+		"provider":    "tencent-tke",
+		"workspaceId": runtime.WorkspaceID,
+		"runtimeId":   runtime.ID,
+		"url":         runtime.URL,
+		"status":      runtime.Status,
+		"ready":       ready,
+		"checks":      []map[string]any{{"name": "fabric_runtime_running", "ok": ready}},
+	}
+}
+
 func sessionPayload() map[string]any {
 	return map[string]any{
-		"user":      map[string]any{"id": "usr-local", "email": "owner@example.com", "accountId": "acct-local", "role": "admin", "status": "active"},
+		"user":      map[string]any{"id": "usr-admin", "email": "owner@example.com", "accountId": "acct-admin", "role": "admin", "status": "active"},
 		"csrfToken": "csrf-local",
 	}
 }

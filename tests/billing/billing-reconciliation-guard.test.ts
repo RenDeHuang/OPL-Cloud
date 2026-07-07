@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   billingReconciliationGuard,
   createBillingReconciliationReport
-} from "../../packages/ledger/src/billing-reconciliation.ts";
+} from "../../services/ledger/ops/reconcile-tencent-bills.ts";
 
 test("billing reconciliation report blocks new provisioning when OPL debits do not cover provider cost evidence", () => {
   const report = createBillingReconciliationReport({

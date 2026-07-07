@@ -73,12 +73,12 @@ function setDeployment(item, values) {
   const podSpec = item.spec?.template?.spec;
   if (!podSpec) return;
 
-  podSpec.imagePullSecrets = [{ name: values.OPL_IMAGE_PULL_SECRET_NAME }];
-  for (const container of podSpec.containers || []) {
-    if (container.name === "control-plane") {
-      container.image = values.OPL_CLOUD_IMAGE;
-    }
-  }
+	podSpec.imagePullSecrets = [{ name: values.OPL_IMAGE_PULL_SECRET_NAME }];
+	for (const container of podSpec.containers || []) {
+		if (["control-plane", "ledger", "fabric"].includes(container.name)) {
+			container.image = values.OPL_CLOUD_IMAGE;
+		}
+	}
 }
 
 function setIngress(item, values) {

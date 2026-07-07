@@ -28,12 +28,14 @@ let productionReport = null;
 let runtimeReport = null;
 
 if (envReport.ready) {
-  const [{ productionReadiness }, { createRuntimeProvider }] = await Promise.all([
-    import("../services/control-plane/ops/production-readiness.ts"),
-    import("../packages/fabric/src/runtime-provider-factory.ts")
-  ]);
+  const { productionReadiness } = await import("../services/fabric/ops/production-readiness.ts");
   productionReport = await productionReadiness({ env: process.env });
-  runtimeReport = await createRuntimeProvider({ env: process.env }).readiness();
+  runtimeReport = {
+    ready: productionReport.ready,
+    provider: process.env.OPL_RUNTIME_PROVIDER || "tencent-tke",
+    missingEnv: productionReport.missingEnv,
+    missingTools: productionReport.missingTools
+  };
 }
 
 const result = {

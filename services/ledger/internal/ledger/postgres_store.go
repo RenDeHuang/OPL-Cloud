@@ -3,18 +3,24 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
 const postgresSchema = `
-CREATE TABLE IF NOT EXISTS wallets (
-  account_id TEXT PRIMARY KEY,
-  balance_cents BIGINT NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL DEFAULT 'CNY',
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+	CREATE TABLE IF NOT EXISTS wallets (
+	  account_id TEXT PRIMARY KEY,
+	  balance_cents BIGINT NOT NULL DEFAULT 0,
+	  frozen_cents BIGINT NOT NULL DEFAULT 0,
+	  total_spent_cents BIGINT NOT NULL DEFAULT 0,
+	  currency TEXT NOT NULL DEFAULT 'CNY',
+	  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	);
+
+	ALTER TABLE wallets ADD COLUMN IF NOT EXISTS frozen_cents BIGINT NOT NULL DEFAULT 0;
+	ALTER TABLE wallets ADD COLUMN IF NOT EXISTS total_spent_cents BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS ledger_entries (
   id TEXT PRIMARY KEY,
@@ -38,7 +44,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS manual_topups (
+	CREATE TABLE IF NOT EXISTS manual_topups (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES wallets(account_id),
   amount_cents BIGINT NOT NULL,
@@ -50,7 +56,59 @@ CREATE TABLE IF NOT EXISTS manual_topups (
   request_hash TEXT NOT NULL,
   reason TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+	);
+
+	CREATE TABLE IF NOT EXISTS holds (
+	  id TEXT PRIMARY KEY,
+	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
+	  workspace_id TEXT NOT NULL,
+	  amount_cents BIGINT NOT NULL,
+	  currency TEXT NOT NULL,
+	  status TEXT NOT NULL,
+	  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
+	  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
+	  idempotency_key TEXT NOT NULL,
+	  request_hash TEXT NOT NULL,
+	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	);
+
+	CREATE TABLE IF NOT EXISTS evidence_receipts (
+	  id TEXT PRIMARY KEY,
+	  workspace_id TEXT NOT NULL,
+	  provider_request_id TEXT NOT NULL,
+	  redacted_url TEXT NOT NULL,
+	  token_version TEXT NOT NULL,
+	  idempotency_key TEXT NOT NULL,
+	  request_hash TEXT NOT NULL,
+	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	);
+
+	CREATE TABLE IF NOT EXISTS resource_settlements (
+	  id TEXT PRIMARY KEY,
+	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
+	  workspace_id TEXT NOT NULL,
+	  resource_type TEXT NOT NULL,
+	  resource_id TEXT NOT NULL,
+	  amount_cents BIGINT NOT NULL,
+	  currency TEXT NOT NULL,
+	  status TEXT NOT NULL,
+	  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
+	  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
+	  idempotency_key TEXT NOT NULL,
+	  request_hash TEXT NOT NULL,
+	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	);
+
+	CREATE TABLE IF NOT EXISTS reconciliation_reports (
+	  id TEXT PRIMARY KEY,
+	  status TEXT NOT NULL,
+	  report_json TEXT NOT NULL,
+	  block_new_workspaces BOOLEAN NOT NULL,
+	  reason TEXT NOT NULL,
+	  idempotency_key TEXT NOT NULL,
+	  request_hash TEXT NOT NULL,
+	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	);
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   service TEXT NOT NULL,
@@ -61,9 +119,17 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   PRIMARY KEY (service, idempotency_key)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_idempotency_key_idx
-  ON manual_topups(idempotency_key);
-`
+	CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_idempotency_key_idx
+	  ON manual_topups(idempotency_key);
+	CREATE UNIQUE INDEX IF NOT EXISTS holds_idempotency_key_idx
+	  ON holds(idempotency_key);
+	CREATE UNIQUE INDEX IF NOT EXISTS evidence_receipts_idempotency_key_idx
+	  ON evidence_receipts(idempotency_key);
+	CREATE UNIQUE INDEX IF NOT EXISTS resource_settlements_idempotency_key_idx
+	  ON resource_settlements(idempotency_key);
+	CREATE UNIQUE INDEX IF NOT EXISTS reconciliation_reports_idempotency_key_idx
+	  ON reconciliation_reports(idempotency_key);
+	`
 
 type PostgresStore struct {
 	db  *sql.DB
@@ -117,16 +183,19 @@ VALUES ('ledger.manual_topups', $1, $2)
 
 	wallet := Wallet{}
 	if err := tx.QueryRowContext(ctx, `
-INSERT INTO wallets(account_id, balance_cents, currency, updated_at)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (account_id) DO UPDATE SET
-  balance_cents = wallets.balance_cents + EXCLUDED.balance_cents,
-  currency = EXCLUDED.currency,
-  updated_at = EXCLUDED.updated_at
-RETURNING account_id, balance_cents, currency, updated_at
-`, input.AccountID, input.AmountCents, input.Currency, now).Scan(
+	INSERT INTO wallets(account_id, balance_cents, frozen_cents, total_spent_cents, currency, updated_at)
+	VALUES ($1, $2, $3, $4, $5, $6)
+	ON CONFLICT (account_id) DO UPDATE SET
+	  balance_cents = wallets.balance_cents + EXCLUDED.balance_cents,
+	  currency = EXCLUDED.currency,
+	  updated_at = EXCLUDED.updated_at
+	RETURNING account_id, balance_cents, frozen_cents, balance_cents - frozen_cents, total_spent_cents, currency, updated_at
+	`, input.AccountID, input.AmountCents, int64(0), int64(0), input.Currency, now).Scan(
 		&wallet.AccountID,
 		&wallet.BalanceCents,
+		&wallet.FrozenCents,
+		&wallet.AvailableCents,
+		&wallet.TotalSpentCents,
 		&wallet.Currency,
 		&wallet.UpdatedAt,
 	); err != nil {
@@ -198,14 +267,254 @@ WHERE service = 'ledger.manual_topups' AND idempotency_key = $2
 func (s *PostgresStore) Wallet(ctx context.Context, accountID string) (Wallet, error) {
 	wallet := Wallet{}
 	err := s.db.QueryRowContext(ctx, `
-SELECT account_id, balance_cents, currency, updated_at
-FROM wallets
-WHERE account_id = $1
-`, accountID).Scan(&wallet.AccountID, &wallet.BalanceCents, &wallet.Currency, &wallet.UpdatedAt)
+	SELECT account_id, balance_cents, frozen_cents, balance_cents - frozen_cents, total_spent_cents, currency, updated_at
+	FROM wallets
+	WHERE account_id = $1
+	`, accountID).Scan(&wallet.AccountID, &wallet.BalanceCents, &wallet.FrozenCents, &wallet.AvailableCents, &wallet.TotalSpentCents, &wallet.Currency, &wallet.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Wallet{AccountID: accountID, Currency: "CNY"}, nil
 	}
 	return wallet, err
+}
+
+func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldResult, error) {
+	requestHash, err := hashJSON(struct {
+		AccountID   string `json:"accountId"`
+		WorkspaceID string `json:"workspaceId"`
+		AmountCents int64  `json:"amountCents"`
+		Currency    string `json:"currency"`
+	}{input.AccountID, input.WorkspaceID, input.AmountCents, input.Currency})
+	if err != nil {
+		return HoldResult{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	existing, existingHash, err := s.holdByIdempotencyKey(ctx, tx, input.IdempotencyKey)
+	if err == nil {
+		if existingHash != requestHash {
+			return HoldResult{}, ErrIdempotencyConflict
+		}
+		existing.Replayed = true
+		return existing, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return HoldResult{}, err
+	}
+
+	now := s.now()
+	wallet := Wallet{}
+	if err := tx.QueryRowContext(ctx, `
+	INSERT INTO wallets(account_id, balance_cents, frozen_cents, total_spent_cents, currency, updated_at)
+	VALUES ($1, 0, 0, 0, $2, $3)
+	ON CONFLICT (account_id) DO UPDATE SET
+	  frozen_cents = wallets.frozen_cents + $4,
+	  currency = EXCLUDED.currency,
+	  updated_at = EXCLUDED.updated_at
+	WHERE wallets.balance_cents - wallets.frozen_cents >= $4
+	RETURNING account_id, balance_cents, frozen_cents, balance_cents - frozen_cents, total_spent_cents, currency, updated_at
+	`, input.AccountID, input.Currency, now, input.AmountCents).Scan(
+		&wallet.AccountID,
+		&wallet.BalanceCents,
+		&wallet.FrozenCents,
+		&wallet.AvailableCents,
+		&wallet.TotalSpentCents,
+		&wallet.Currency,
+		&wallet.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return HoldResult{}, ErrInsufficientBalance
+		}
+		return HoldResult{}, err
+	}
+
+	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "hold", Source: "workspace_hold", Reason: input.WorkspaceID, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO ledger_entries(id, account_id, amount_cents, currency, direction, source, operator_user_id, reason, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8)
+	`, entry.ID, entry.AccountID, entry.AmountCents, entry.Currency, entry.Direction, entry.Source, entry.Reason, entry.CreatedAt); err != nil {
+		return HoldResult{}, err
+	}
+
+	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: input.AmountCents, BalanceCents: wallet.BalanceCents, Currency: input.Currency, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, currency, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
+		return HoldResult{}, err
+	}
+
+	result := HoldResult{ID: postgresID("hold", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "held", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO holds(id, account_id, workspace_id, amount_cents, currency, status, ledger_entry_id, wallet_transaction_id, idempotency_key, request_hash, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, result.ID, result.AccountID, result.WorkspaceID, result.AmountCents, result.Currency, result.Status, result.LedgerEntryID, result.WalletTransactionID, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
+		return HoldResult{}, err
+	}
+	return result, tx.Commit()
+}
+
+func (s *PostgresStore) RecordEvidence(ctx context.Context, input EvidenceInput) (EvidenceReceipt, error) {
+	requestHash, err := hashJSON(struct {
+		WorkspaceID       string `json:"workspaceId"`
+		ProviderRequestID string `json:"providerRequestId"`
+		RedactedURL       string `json:"redactedUrl"`
+		TokenVersion      string `json:"tokenVersion"`
+	}{input.WorkspaceID, input.ProviderRequestID, input.RedactedURL, input.TokenVersion})
+	if err != nil {
+		return EvidenceReceipt{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EvidenceReceipt{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	existing, existingHash, err := s.evidenceByIdempotencyKey(ctx, tx, input.IdempotencyKey)
+	if err == nil {
+		if existingHash != requestHash {
+			return EvidenceReceipt{}, ErrIdempotencyConflict
+		}
+		existing.Replayed = true
+		return existing, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return EvidenceReceipt{}, err
+	}
+
+	now := s.now()
+	receipt := EvidenceReceipt{ID: postgresID("ev", now), WorkspaceID: input.WorkspaceID, ProviderRequestID: input.ProviderRequestID, RedactedURL: input.RedactedURL, TokenVersion: input.TokenVersion, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO evidence_receipts(id, workspace_id, provider_request_id, redacted_url, token_version, idempotency_key, request_hash, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, receipt.ID, receipt.WorkspaceID, receipt.ProviderRequestID, receipt.RedactedURL, receipt.TokenVersion, input.IdempotencyKey, requestHash, receipt.CreatedAt); err != nil {
+		return EvidenceReceipt{}, err
+	}
+	return receipt, tx.Commit()
+}
+
+func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
+	requestHash, err := hashJSON(struct {
+		AccountID    string `json:"accountId"`
+		WorkspaceID  string `json:"workspaceId"`
+		ResourceType string `json:"resourceType"`
+		ResourceID   string `json:"resourceId"`
+		AmountCents  int64  `json:"amountCents"`
+		Currency     string `json:"currency"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
+	if err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	existing, existingHash, err := s.settlementByIdempotencyKey(ctx, tx, input.IdempotencyKey)
+	if err == nil {
+		if existingHash != requestHash {
+			return ResourceSettlementResult{}, ErrIdempotencyConflict
+		}
+		existing.Replayed = true
+		return existing, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ResourceSettlementResult{}, err
+	}
+
+	now := s.now()
+	wallet := Wallet{}
+	if err := tx.QueryRowContext(ctx, `
+	UPDATE wallets
+	SET
+	  balance_cents = balance_cents - $2,
+	  frozen_cents = GREATEST(0, frozen_cents - $2),
+	  total_spent_cents = total_spent_cents + $2,
+	  currency = $3,
+	  updated_at = $4
+	WHERE account_id = $1 AND balance_cents >= $2
+	RETURNING account_id, balance_cents, frozen_cents, balance_cents - frozen_cents, total_spent_cents, currency, updated_at
+	`, input.AccountID, input.AmountCents, input.Currency, now).Scan(&wallet.AccountID, &wallet.BalanceCents, &wallet.FrozenCents, &wallet.AvailableCents, &wallet.TotalSpentCents, &wallet.Currency, &wallet.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ResourceSettlementResult{}, ErrInsufficientBalance
+		}
+		return ResourceSettlementResult{}, err
+	}
+
+	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_settlement", Reason: input.WorkspaceID, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO ledger_entries(id, account_id, amount_cents, currency, direction, source, operator_user_id, reason, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8)
+	`, entry.ID, entry.AccountID, entry.AmountCents, entry.Currency, entry.Direction, entry.Source, entry.Reason, entry.CreatedAt); err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, Currency: input.Currency, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, currency, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
+		return ResourceSettlementResult{}, err
+	}
+
+	result := ResourceSettlementResult{ID: postgresID("settle", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO resource_settlements(id, account_id, workspace_id, resource_type, resource_id, amount_cents, currency, status, ledger_entry_id, wallet_transaction_id, idempotency_key, request_hash, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, result.ID, result.AccountID, result.WorkspaceID, result.ResourceType, result.ResourceID, result.AmountCents, result.Currency, result.Status, result.LedgerEntryID, result.WalletTransactionID, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	return result, tx.Commit()
+}
+
+func (s *PostgresStore) RecordReconciliation(ctx context.Context, input ReconciliationInput) (ReconciliationResult, error) {
+	requestHash, err := hashJSON(input.Report)
+	if err != nil {
+		return ReconciliationResult{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ReconciliationResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	existing, existingHash, err := s.reconciliationByIdempotencyKey(ctx, tx, input.IdempotencyKey)
+	if err == nil {
+		if existingHash != requestHash {
+			return ReconciliationResult{}, ErrIdempotencyConflict
+		}
+		existing.Replayed = true
+		return existing, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ReconciliationResult{}, err
+	}
+
+	id := stringFromAny(input.Report["id"])
+	if id == "" {
+		id = postgresID("recon", s.now())
+	}
+	status := stringFromAny(input.Report["status"])
+	if status == "" {
+		status = "ok"
+	}
+	reportJSON, err := json.Marshal(input.Report)
+	if err != nil {
+		return ReconciliationResult{}, err
+	}
+	now := s.now()
+	result := ReconciliationResult{ID: id, Status: status, Report: input.Report, BlockNewWorkspaces: status != "ok", Reason: "operator_reconciliation", CreatedAt: now}
+	if _, err := tx.ExecContext(ctx, `
+	INSERT INTO reconciliation_reports(id, status, report_json, block_new_workspaces, reason, idempotency_key, request_hash, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, result.ID, result.Status, string(reportJSON), result.BlockNewWorkspaces, result.Reason, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
+		return ReconciliationResult{}, err
+	}
+	return result, tx.Commit()
 }
 
 func (s *PostgresStore) manualTopUpByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (ManualTopUpResult, string, error) {
@@ -213,10 +522,10 @@ func (s *PostgresStore) manualTopUpByIdempotencyKey(ctx context.Context, tx *sql
 	var requestHash string
 	err := tx.QueryRowContext(ctx, `
 SELECT
-  mt.id, mt.account_id, mt.amount_cents, mt.currency, mt.operator_user_id, mt.ledger_entry_id, mt.reason, mt.created_at, mt.request_hash,
-  le.id, le.account_id, le.amount_cents, le.currency, le.direction, le.source, le.operator_user_id, le.reason, le.created_at,
-  wt.id, wt.account_id, wt.ledger_entry_id, wt.amount_cents, wt.balance_cents, wt.currency, wt.created_at,
-  w.account_id, w.balance_cents, w.currency, w.updated_at
+	  mt.id, mt.account_id, mt.amount_cents, mt.currency, mt.operator_user_id, mt.ledger_entry_id, mt.reason, mt.created_at, mt.request_hash,
+	  le.id, le.account_id, le.amount_cents, le.currency, le.direction, le.source, le.operator_user_id, le.reason, le.created_at,
+	  wt.id, wt.account_id, wt.ledger_entry_id, wt.amount_cents, wt.balance_cents, wt.currency, wt.created_at,
+	  w.account_id, w.balance_cents, w.frozen_cents, w.balance_cents - w.frozen_cents, w.total_spent_cents, w.currency, w.updated_at
 FROM manual_topups mt
 JOIN ledger_entries le ON le.id = mt.ledger_entry_id
 JOIN wallet_transactions wt ON wt.id = mt.wallet_transaction_id
@@ -250,9 +559,120 @@ WHERE mt.idempotency_key = $1
 		&result.WalletTransaction.CreatedAt,
 		&result.Wallet.AccountID,
 		&result.Wallet.BalanceCents,
+		&result.Wallet.FrozenCents,
+		&result.Wallet.AvailableCents,
+		&result.Wallet.TotalSpentCents,
 		&result.Wallet.Currency,
 		&result.Wallet.UpdatedAt,
 	)
+	return result, requestHash, err
+}
+
+func (s *PostgresStore) holdByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (HoldResult, string, error) {
+	result := HoldResult{}
+	var requestHash string
+	err := tx.QueryRowContext(ctx, `
+	SELECT
+	  h.id, h.account_id, h.workspace_id, h.amount_cents, h.currency, h.status, h.ledger_entry_id, h.wallet_transaction_id, h.created_at, h.request_hash,
+	  w.account_id, w.balance_cents, w.frozen_cents, w.balance_cents - w.frozen_cents, w.total_spent_cents, w.currency, w.updated_at
+	FROM holds h
+	JOIN wallets w ON w.account_id = h.account_id
+	WHERE h.idempotency_key = $1
+	`, key).Scan(
+		&result.ID,
+		&result.AccountID,
+		&result.WorkspaceID,
+		&result.AmountCents,
+		&result.Currency,
+		&result.Status,
+		&result.LedgerEntryID,
+		&result.WalletTransactionID,
+		&result.CreatedAt,
+		&requestHash,
+		&result.Wallet.AccountID,
+		&result.Wallet.BalanceCents,
+		&result.Wallet.FrozenCents,
+		&result.Wallet.AvailableCents,
+		&result.Wallet.TotalSpentCents,
+		&result.Wallet.Currency,
+		&result.Wallet.UpdatedAt,
+	)
+	return result, requestHash, err
+}
+
+func (s *PostgresStore) evidenceByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (EvidenceReceipt, string, error) {
+	result := EvidenceReceipt{}
+	var requestHash string
+	err := tx.QueryRowContext(ctx, `
+	SELECT id, workspace_id, provider_request_id, redacted_url, token_version, created_at, request_hash
+	FROM evidence_receipts
+	WHERE idempotency_key = $1
+	`, key).Scan(
+		&result.ID,
+		&result.WorkspaceID,
+		&result.ProviderRequestID,
+		&result.RedactedURL,
+		&result.TokenVersion,
+		&result.CreatedAt,
+		&requestHash,
+	)
+	return result, requestHash, err
+}
+
+func (s *PostgresStore) settlementByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (ResourceSettlementResult, string, error) {
+	result := ResourceSettlementResult{}
+	var requestHash string
+	err := tx.QueryRowContext(ctx, `
+	SELECT
+	  rs.id, rs.account_id, rs.workspace_id, rs.resource_type, rs.resource_id, rs.amount_cents, rs.currency, rs.status, rs.ledger_entry_id, rs.wallet_transaction_id, rs.created_at, rs.request_hash,
+	  w.account_id, w.balance_cents, w.frozen_cents, w.balance_cents - w.frozen_cents, w.total_spent_cents, w.currency, w.updated_at
+	FROM resource_settlements rs
+	JOIN wallets w ON w.account_id = rs.account_id
+	WHERE rs.idempotency_key = $1
+	`, key).Scan(
+		&result.ID,
+		&result.AccountID,
+		&result.WorkspaceID,
+		&result.ResourceType,
+		&result.ResourceID,
+		&result.AmountCents,
+		&result.Currency,
+		&result.Status,
+		&result.LedgerEntryID,
+		&result.WalletTransactionID,
+		&result.CreatedAt,
+		&requestHash,
+		&result.Wallet.AccountID,
+		&result.Wallet.BalanceCents,
+		&result.Wallet.FrozenCents,
+		&result.Wallet.AvailableCents,
+		&result.Wallet.TotalSpentCents,
+		&result.Wallet.Currency,
+		&result.Wallet.UpdatedAt,
+	)
+	return result, requestHash, err
+}
+
+func (s *PostgresStore) reconciliationByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (ReconciliationResult, string, error) {
+	result := ReconciliationResult{}
+	var requestHash string
+	var reportJSON string
+	err := tx.QueryRowContext(ctx, `
+	SELECT id, status, report_json, block_new_workspaces, reason, created_at, request_hash
+	FROM reconciliation_reports
+	WHERE idempotency_key = $1
+	`, key).Scan(
+		&result.ID,
+		&result.Status,
+		&reportJSON,
+		&result.BlockNewWorkspaces,
+		&result.Reason,
+		&result.CreatedAt,
+		&requestHash,
+	)
+	if err == nil {
+		_ = json.Unmarshal([]byte(reportJSON), &result.Report)
+	}
 	return result, requestHash, err
 }
 

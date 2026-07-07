@@ -9,16 +9,27 @@ import (
 
 type Provider interface {
 	CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error)
+	DestroyComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error)
+	CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error)
+	DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error)
+	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error)
+	DetachStorageAttachment(ctx context.Context, attachment StorageAttachment) (StorageAttachment, error)
+	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error)
+	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
+	Readiness(ctx context.Context) (map[string]any, error)
 }
 
 type Service struct {
-	provider Provider
-	mu       sync.Mutex
-	runtimes map[string]WorkspaceRuntime
+	provider    Provider
+	mu          sync.Mutex
+	computes    map[string]ComputeAllocation
+	volumes     map[string]StorageVolume
+	attachments map[string]StorageAttachment
+	runtimes    map[string]WorkspaceRuntime
 }
 
 func NewService(provider Provider) *Service {
-	return &Service{provider: provider, runtimes: map[string]WorkspaceRuntime{}}
+	return &Service{provider: provider, computes: map[string]ComputeAllocation{}, volumes: map[string]StorageVolume{}, attachments: map[string]StorageAttachment{}, runtimes: map[string]WorkspaceRuntime{}}
 }
 
 func (s *Service) Catalog(_ context.Context) Catalog {
@@ -35,71 +46,127 @@ func (s *Service) Catalog(_ context.Context) Catalog {
 }
 
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
-	return s.provider.CreateComputeAllocation(ctx, input)
-}
-
-func (s *Service) DestroyComputeAllocation(_ context.Context, allocationID string) (ComputeAllocation, error) {
-	now := time.Now().UTC()
-	return ComputeAllocation{ID: allocationID, Status: "destroy_requested", Provider: "tencent-tke", ProviderRequestID: providerRequestID("compute-destroy", allocationID), CreatedAt: now}, nil
-}
-
-func (s *Service) CreateStorageVolume(_ context.Context, input StorageVolumeInput) (StorageVolume, error) {
-	now := time.Now().UTC()
-	id := fabricID("vol", input.WorkspaceID, now)
-	return StorageVolume{ID: id, WorkspaceID: input.WorkspaceID, Status: "ready", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey), CreatedAt: now}, nil
-}
-
-func (s *Service) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput) (StorageAttachment, error) {
-	now := time.Now().UTC()
-	id := fabricID("att", input.WorkspaceID, now)
-	return StorageAttachment{ID: id, WorkspaceID: input.WorkspaceID, VolumeID: input.VolumeID, Status: "attached", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey), CreatedAt: now}, nil
-}
-
-func (s *Service) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput) (WorkspaceRuntime, error) {
+	allocation, err := s.provider.CreateComputeAllocation(ctx, input)
+	if err != nil {
+		return allocation, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.computes[allocation.ID] = allocation
+	return allocation, nil
+}
 
-	now := time.Now().UTC()
-	runtime := WorkspaceRuntime{
-		ID:                fabricID("rt", input.WorkspaceID, now),
-		WorkspaceID:       input.WorkspaceID,
-		URL:               fmt.Sprintf("https://workspace.medopl.cn/w/%s/", input.WorkspaceID),
-		Status:            "running",
-		ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey),
-		CreatedAt:         now,
+func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID string) (ComputeAllocation, error) {
+	s.mu.Lock()
+	existing := s.computes[allocationID]
+	s.mu.Unlock()
+	if existing.ID == "" {
+		existing = ComputeAllocation{ID: allocationID}
 	}
+	allocation, err := s.provider.DestroyComputeAllocation(ctx, existing)
+	if err != nil {
+		return allocation, err
+	}
+	s.mu.Lock()
+	s.computes[allocationID] = allocation
+	s.mu.Unlock()
+	return allocation, nil
+}
+
+func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	volume, err := s.provider.CreateStorageVolume(ctx, input)
+	if err != nil {
+		return volume, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.volumes[volume.ID] = volume
+	return volume, nil
+}
+
+func (s *Service) DestroyStorageVolume(ctx context.Context, volumeID string) (StorageVolume, error) {
+	s.mu.Lock()
+	existing := s.volumes[volumeID]
+	s.mu.Unlock()
+	if existing.ID == "" {
+		existing = StorageVolume{ID: volumeID}
+	}
+	volume, err := s.provider.DestroyStorageVolume(ctx, existing)
+	if err != nil {
+		return volume, err
+	}
+	s.mu.Lock()
+	s.volumes[volumeID] = volume
+	s.mu.Unlock()
+	return volume, nil
+}
+
+func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput) (StorageAttachment, error) {
+	s.mu.Lock()
+	compute := s.computes[input.ComputeID]
+	volume := s.volumes[input.VolumeID]
+	s.mu.Unlock()
+	attachment, err := s.provider.CreateStorageAttachment(ctx, input, compute, volume)
+	if err != nil {
+		return attachment, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attachments[attachment.ID] = attachment
+	return attachment, nil
+}
+
+func (s *Service) DetachStorageAttachment(ctx context.Context, attachmentID string) (StorageAttachment, error) {
+	s.mu.Lock()
+	existing := s.attachments[attachmentID]
+	s.mu.Unlock()
+	if existing.ID == "" {
+		existing = StorageAttachment{ID: attachmentID}
+	}
+	attachment, err := s.provider.DetachStorageAttachment(ctx, existing)
+	if err != nil {
+		return attachment, err
+	}
+	s.mu.Lock()
+	s.attachments[attachmentID] = attachment
+	s.mu.Unlock()
+	return attachment, nil
+}
+
+func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput) (WorkspaceRuntime, error) {
+	s.mu.Lock()
+	compute := s.computes[input.ComputeID]
+	volume := s.volumes[input.VolumeID]
+	s.mu.Unlock()
+	runtime, err := s.provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
+	if err != nil {
+		return runtime, err
+	}
+	s.mu.Lock()
 	s.runtimes[input.WorkspaceID] = runtime
+	s.mu.Unlock()
 	return runtime, nil
 }
 
-func (s *Service) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
+func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	runtime, err := s.provider.WorkspaceRuntimeStatus(ctx, workspaceID)
+	if err != nil {
+		return runtime, err
+	}
+	if runtime.Status != "not_found" {
+		return runtime, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if runtime, ok := s.runtimes[workspaceID]; ok {
-		return runtime, nil
+	if existing, ok := s.runtimes[workspaceID]; ok {
+		return existing, nil
 	}
 	return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, nil
 }
 
-type DryRunProvider struct{}
-
-func NewDryRunProvider() DryRunProvider {
-	return DryRunProvider{}
-}
-
-func (DryRunProvider) CreateComputeAllocation(_ context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
-	now := time.Now().UTC()
-	return ComputeAllocation{
-		ID:                fabricID("ca", input.WorkspaceID, now),
-		AccountID:         input.AccountID,
-		WorkspaceID:       input.WorkspaceID,
-		PackageID:         input.PackageID,
-		Status:            "allocated",
-		Provider:          "tencent-tke",
-		ProviderRequestID: providerRequestID("compute", input.IdempotencyKey),
-		CreatedAt:         now,
-	}, nil
+func (s *Service) Readiness(ctx context.Context) (map[string]any, error) {
+	return s.provider.Readiness(ctx)
 }
 
 func fabricID(prefix string, owner string, now time.Time) string {
@@ -108,7 +175,7 @@ func fabricID(prefix string, owner string, now time.Time) string {
 
 func providerRequestID(prefix string, key string) string {
 	if key == "" {
-		key = "dry-run"
+		key = "no-idempotency-key"
 	}
 	return fmt.Sprintf("%s_%s", prefix, key)
 }

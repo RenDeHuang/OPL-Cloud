@@ -13,6 +13,14 @@ func NewServer(service *fabric.Service) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /fabric/readiness", func(w http.ResponseWriter, r *http.Request) {
+		readiness, err := service.Readiness(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, readiness)
+	})
 	mux.HandleFunc("GET /fabric/catalog", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, service.Catalog(r.Context()))
 	})
@@ -40,12 +48,28 @@ func NewServer(service *fabric.Service) http.Handler {
 		volume, err := service.CreateStorageVolume(r.Context(), input)
 		writeResult(w, volume, err)
 	})
+	mux.HandleFunc("POST /fabric/storage-volumes/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Idempotency-Key") == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		volume, err := service.DestroyStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		writeResult(w, volume, err)
+	})
 	mux.HandleFunc("POST /fabric/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageAttachmentInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
 			return
 		}
 		attachment, err := service.CreateStorageAttachment(r.Context(), input)
+		writeResult(w, attachment, err)
+	})
+	mux.HandleFunc("POST /fabric/storage-attachments/{id}/detach", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Idempotency-Key") == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		attachment, err := service.DetachStorageAttachment(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		writeResult(w, attachment, err)
 	})
 	mux.HandleFunc("POST /fabric/workspace-runtimes", func(w http.ResponseWriter, r *http.Request) {

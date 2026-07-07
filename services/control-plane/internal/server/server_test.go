@@ -3,21 +3,18 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func TestCreateWorkspaceHTTPRequiresAttachment(t *testing.T) {
+func TestCreateWorkspaceHTTPRequiresIdempotencyKey(t *testing.T) {
 	server := NewServer(controlplane.NewService(nil, nil))
 	body := bytes.NewBufferString(`{"accountId":"acct-alpha","ownerId":"usr-owner","name":"Alpha Lab","packageId":"basic"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", body)
@@ -25,25 +22,105 @@ func TestCreateWorkspaceHTTPRequiresAttachment(t *testing.T) {
 
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
-func TestCreateComputeAllocationUsesProvisionerShape(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "provisioner")
-	script := `#!/bin/sh
-cat >/dev/null
-printf '{"ok":true,"operationId":"op-alpha","poolId":"pool-basic","nodePoolId":"np-basic","instanceId":"ins-alpha","nodeName":"10.0.0.8","privateIp":"10.0.0.8","status":"running","providerRequestId":"req-alpha","providerData":{"machineName":"machine-alpha"}}\n'
-`
-	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake provisioner: %v", err)
+func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, fakeFabricClient{}))
+	body := bytes.NewBufferString(`{"accountId":"acct-alpha","ownerId":"usr-owner","name":"Alpha Lab","packageId":"basic"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", body)
+	req.Header.Set("Idempotency-Key", "workspace-once")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
-	t.Setenv("OPL_TENCENT_PROVISIONER_BIN", bin)
-	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
-	server := NewServer(controlplane.NewService(nil, nil))
+	var workspace map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&workspace); err != nil {
+		t.Fatalf("decode workspace: %v", err)
+	}
+	if workspace["accountId"] != "acct-alpha" || workspace["ownerId"] != "usr-owner" || workspace["url"] != "https://workspace.medopl.cn/w/ws-from-fabric/" {
+		t.Fatalf("workspace did not come from service boundary: %#v", workspace)
+	}
+	if workspace["holdId"] != "hold-from-ledger" || workspace["computeId"] != "compute-from-fabric" || workspace["evidenceId"] != "evidence-from-ledger" {
+		t.Fatalf("workspace missing ledger/fabric evidence: %#v", workspace)
+	}
+}
+
+type fakeLedgerClient struct{}
+
+func (fakeLedgerClient) ManualTopUp(_ context.Context, input clients.ManualTopUpInput, _ string) (clients.ManualTopUpResult, error) {
+	return clients.ManualTopUpResult{
+		TopUp:             clients.ManualTopUp{ID: "topup-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents, OperatorUserID: input.OperatorUserID},
+		LedgerEntry:       clients.LedgerEntry{ID: "ledger-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents},
+		WalletTransaction: clients.WalletTransaction{ID: "wallet-tx-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents},
+		Wallet:            clients.Wallet{AccountID: input.AccountID, BalanceCents: input.AmountCents, AvailableCents: input.AmountCents, Currency: "CNY"},
+	}, nil
+}
+
+func (fakeLedgerClient) CreateHold(_ context.Context, input clients.HoldInput, _ string) (clients.HoldResult, error) {
+	return clients.HoldResult{ID: "hold-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents}, nil
+}
+
+func (fakeLedgerClient) RecordEvidence(_ context.Context, input clients.EvidenceInput, _ string) (clients.EvidenceReceipt, error) {
+	return clients.EvidenceReceipt{ID: "evidence-from-ledger", WorkspaceID: input.WorkspaceID}, nil
+}
+
+func (fakeLedgerClient) SettleResource(_ context.Context, input clients.ResourceSettlementInput, _ string) (clients.ResourceSettlementResult, error) {
+	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, AvailableCents: 8800, Currency: "CNY"}}, nil
+}
+
+func (fakeLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
+	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "ok", Report: input.Report, BlockNewWorkspaces: false, Reason: "operator_reconciliation"}, nil
+}
+
+type fakeFabricClient struct{}
+
+func (fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
+	return clients.ComputeAllocation{ID: "compute-from-fabric", ProviderRequestID: "compute-request-from-fabric"}, nil
+}
+
+func (fakeFabricClient) DestroyComputeAllocation(_ context.Context, id string, _ string) (clients.ComputeAllocation, error) {
+	return clients.ComputeAllocation{ID: id, ProviderRequestID: "compute-destroy-from-fabric"}, nil
+}
+
+func (fakeFabricClient) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
+	return clients.StorageVolume{ID: "volume-from-fabric", WorkspaceID: input.WorkspaceID, Status: "ready", ProviderRequestID: "storage-request-from-fabric"}, nil
+}
+
+func (fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ string) (clients.StorageVolume, error) {
+	return clients.StorageVolume{ID: id, Status: "destroyed", ProviderRequestID: "storage-destroy-from-fabric"}, nil
+}
+
+func (fakeFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
+	return clients.StorageAttachment{ID: "attachment-from-fabric", WorkspaceID: input.WorkspaceID, VolumeID: input.VolumeID, Status: "attached", ProviderRequestID: "attachment-request-from-fabric"}, nil
+}
+
+func (fakeFabricClient) DetachStorageAttachment(_ context.Context, id string, _ string) (clients.StorageAttachment, error) {
+	return clients.StorageAttachment{ID: id, Status: "detached", ProviderRequestID: "attachment-detach-from-fabric"}, nil
+}
+
+func (fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, _ string) (clients.WorkspaceRuntime, error) {
+	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", ServiceName: "opl-compute-from-fabric"}, nil
+}
+
+func (fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
+	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/" + workspaceID + "/", Status: "running"}, nil
+}
+
+func (fakeFabricClient) Readiness(_ context.Context) (map[string]any, error) {
+	return map[string]any{"provider": "tencent-tke", "ready": true, "missingEnv": []string{}, "missingTools": []string{}}, nil
+}
+
+func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","packageId":"basic","name":"Production Compute"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "compute-once")
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -55,108 +132,14 @@ printf '{"ok":true,"operationId":"op-alpha","poolId":"pool-basic","nodePoolId":"
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body["id"] == "compute-local" {
-		t.Fatalf("compute allocation still uses local stub id")
+	if body["id"] != "compute-from-fabric" || body["providerRequestId"] != "compute-request-from-fabric" {
+		t.Fatalf("compute allocation did not come from Fabric: %#v", body)
 	}
-	for attempt := 0; attempt < 20 && body["status"] != "running"; attempt++ {
-		time.Sleep(10 * time.Millisecond)
-		getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+body["id"].(string), nil)
-		getRec := httptest.NewRecorder()
-		server.ServeHTTP(getRec, getReq)
-		if getRec.Code != http.StatusOK {
-			t.Fatalf("get status = %d, want %d: %s", getRec.Code, http.StatusOK, getRec.Body.String())
-		}
-		if err := json.NewDecoder(getRec.Body).Decode(&body); err != nil {
-			t.Fatalf("decode get response: %v", err)
-		}
-	}
-	if body["provider"] != "tencent-tke" || body["nodeName"] == "" || body["instanceId"] == "" || body["billingStatus"] != "active" {
-		t.Fatalf("unexpected compute shape: %#v", body)
-	}
-	nodeSelector, _ := body["nodeSelector"].(map[string]any)
-	if nodeSelector["cloud.tencent.com/node-instance-id"] != "machine-alpha" {
-		t.Fatalf("node selector = %#v, want Tencent instance id label machine-alpha", nodeSelector)
-	}
-}
-
-func TestTKENodeSelectorUsesTencentInstanceLabel(t *testing.T) {
-	withMachine := tkeNodeSelector(map[string]string{"machineName": "np-basic-2"}, "10.0.0.8")
-	if withMachine["cloud.tencent.com/node-instance-id"] != "np-basic-2" {
-		t.Fatalf("selector with machineName = %#v", withMachine)
-	}
-	if _, ok := withMachine["kubernetes.io/hostname"]; ok {
-		t.Fatalf("selector must not use machineName as hostname: %#v", withMachine)
-	}
-	withoutMachine := tkeNodeSelector(map[string]string{}, "10.0.0.8")
-	if withoutMachine["kubernetes.io/hostname"] != "10.0.0.8" {
-		t.Fatalf("selector without machineName = %#v", withoutMachine)
-	}
-}
-
-func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
-	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
-	t.Setenv("OPL_IMAGE_PULL_SECRET_NAME", "pull-secret")
-	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
-	compute := map[string]any{"id": "compute-alpha", "ownerAccountId": "acct-alpha", "packageId": "basic", "runtime": map[string]any{"nodeSelector": map[string]any{"cloud.tencent.com/node-instance-id": "np-basic-2"}}}
-	storage := map[string]any{"providerResourceId": "pvc/opl-storage-alpha-data"}
-	var manifest map[string]any
-	if err := json.Unmarshal(workspaceManifest("ws-alpha", "Alpha", "token", "opl-compute-alpha", compute, storage), &manifest); err != nil {
-		t.Fatalf("decode workspace manifest: %v", err)
-	}
-	var deployment map[string]any
-	var secret map[string]any
-	for _, item := range manifest["items"].([]any) {
-		candidate := item.(map[string]any)
-		if candidate["kind"] == "Deployment" {
-			deployment = candidate
-		}
-		if candidate["kind"] == "Secret" {
-			secret = candidate
-		}
-	}
-	secretData := secret["data"].(map[string]any)
-	passwordBytes, err := base64.StdEncoding.DecodeString(secretData["OPL_AIONUI_ADMIN_PASSWORD"].(string))
-	if err != nil {
-		t.Fatalf("decode webui password: %v", err)
-	}
-	if string(passwordBytes) != "opl_jngdohVMGgp2Kdvpg4f-OLuNAa1!" {
-		t.Fatalf("workspace must derive a per-workspace WebUI password, got %q", string(passwordBytes))
-	}
-	podSpec := nested(deployment, "spec", "template", "spec").(map[string]any)
-	if nested(deployment, "metadata", "labels", "oplcloud.cn/workspace-id") != "ws-alpha" {
-		t.Fatalf("deployment must carry workspace label for stateless runtime lookup: %#v", nested(deployment, "metadata", "labels"))
-	}
-	if podSpec["hostNetwork"] != true || podSpec["dnsPolicy"] != "ClusterFirstWithHostNet" {
-		t.Fatalf("workspace pod must use host networking on dedicated TKE nodes: %#v", podSpec)
-	}
-	toleration := podSpec["tolerations"].([]any)[0].(map[string]any)
-	if toleration["key"] != "tke.cloud.tencent.com/eni-ip-unavailable" || toleration["effect"] != "NoSchedule" {
-		t.Fatalf("workspace pod must tolerate TKE ENI readiness taint: %#v", toleration)
-	}
-	container := podSpec["containers"].([]any)[0].(map[string]any)
-	resources := container["resources"].(map[string]any)
-	requests := resources["requests"].(map[string]any)
-	limits := resources["limits"].(map[string]any)
-	if requests["cpu"] != "1" || requests["memory"] != "2Gi" {
-		t.Fatalf("workspace requests must leave room for node overhead: %#v", requests)
-	}
-	if limits["cpu"] != "2" || limits["memory"] != "4Gi" {
-		t.Fatalf("workspace limits must preserve the package shape: %#v", limits)
-	}
-	env := envMap(container["env"].([]any))
-	for key := range env {
-		if strings.Contains(key, "AUTH_MODE") || strings.Contains(key, "PERSISTENT_CONFIG") || key == "WEBUI"+"_"+"AUTH" {
-			t.Fatalf("workspace must use AionUI login with managed credentials, not retired auth bypass env: %#v", env)
-		}
-	}
-	if env["AIONUI_ALLOW_REMOTE"] != "true" {
-		t.Fatalf("workspace must allow remote AionUI access: %#v", env)
-	}
-	lifecycle := container["lifecycle"].(map[string]any)
-	postStart := nested(lifecycle, "postStart", "exec").(map[string]any)
-	command := postStart["command"].([]any)
-	if !strings.Contains(strings.Join([]string{command[0].(string), command[1].(string), command[2].(string)}, " "), "/api/webui/change-password") {
-		t.Fatalf("workspace must set the managed WebUI password after startup: %#v", command)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-from-fabric", nil)
+	getRec := httptest.NewRecorder()
+	server.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d: %s", getRec.Code, http.StatusOK, getRec.Body.String())
 	}
 }
 
@@ -204,47 +187,6 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	}
 	if !slices.Contains(row["walletTransactionIds"].([]string), wallet["id"].(string)) {
 		t.Fatalf("walletTransactionIds missing wallet id: %#v", row["walletTransactionIds"])
-	}
-}
-
-func TestRuntimeStatusRecoversWorkspaceResourcesFromKubernetesLabels(t *testing.T) {
-	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
-	app := newRuntimeApp()
-	deployment := map[string]any{
-		"kind":     "Deployment",
-		"metadata": map[string]any{"name": "opl-compute-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
-		"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"labels": map[string]any{"app": "workspace"}}, "spec": map[string]any{
-			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test"}},
-			"volumes":    []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
-		}}},
-		"status": map[string]any{"readyReplicas": 1, "availableReplicas": 1},
-	}
-	service := map[string]any{
-		"kind":     "Service",
-		"metadata": map[string]any{"name": "opl-compute-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
-		"spec":     map[string]any{"selector": map[string]any{"app": "workspace"}},
-	}
-	app.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
-		if len(args) == 6 && args[0] == "get" && args[1] == "deployment,service" && args[2] == "-l" && args[3] == "oplcloud.cn/workspace-id=ws-alpha" {
-			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service}}), nil
-		}
-		want := []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "-o", "json"}
-		if !slices.Equal(args, want) {
-			t.Fatalf("kubectl args = %#v, want %#v", args, want)
-		}
-		return mustJSON(map[string]any{"kind": "List", "items": []any{
-			deployment,
-			map[string]any{"kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "opl-storage-alpha-data"}, "status": map[string]any{"phase": "Bound"}},
-			service,
-			map[string]any{"kind": "Ingress", "metadata": map[string]any{"name": "opl-cloud"}, "spec": map[string]any{"rules": []any{map[string]any{"http": map[string]any{"paths": []any{map[string]any{"path": "/", "backend": map[string]any{"service": map[string]any{"name": gatewayService, "port": map[string]any{"number": 8787}}}}}}}}}},
-			map[string]any{"kind": "Endpoints", "metadata": map[string]any{"name": "opl-compute-alpha"}, "subsets": []any{map[string]any{"addresses": []any{map[string]any{"ip": "10.0.0.8"}}}}},
-		}}), nil
-	}
-
-	status := app.runtimeStatus(context.Background(), "ws-alpha")
-
-	if status["ready"] != true {
-		t.Fatalf("status = %#v, want ready", status)
 	}
 }
 
@@ -316,38 +258,6 @@ func TestWorkspaceGatewaySetsActiveCookieForRootRuntimeApi(t *testing.T) {
 	}
 }
 
-func TestExecuteKubectlKeepsStderrWarningsOutOfJSON(t *testing.T) {
-	binDir := t.TempDir()
-	kubectl := filepath.Join(binDir, "kubectl")
-	script := `#!/bin/sh
-printf 'Warning: endpoints is deprecated\n' >&2
-printf '{"kind":"List","items":[]}\n'
-`
-	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake kubectl: %v", err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("OPL_K8S_NAMESPACE", "opl-cloud")
-
-	raw, err := executeKubectl(context.Background(), []string{"get", "endpoints/opl-compute-alpha", "-o", "json"}, nil)
-
-	if err != nil {
-		t.Fatalf("execute kubectl: %v", err)
-	}
-	if !json.Valid(raw) {
-		t.Fatalf("kubectl output must stay valid JSON, got %q", string(raw))
-	}
-}
-
-func envMap(entries []any) map[string]string {
-	values := map[string]string{}
-	for _, entry := range entries {
-		asMap, _ := entry.(map[string]any)
-		values[stringValue(asMap["name"])] = stringValue(asMap["value"])
-	}
-	return values
-}
-
 func TestOverviewHTTP(t *testing.T) {
 	server := NewServer(controlplane.NewService(nil, nil))
 	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
@@ -402,7 +312,7 @@ func TestOperatorLoginRejectsInvalidToken(t *testing.T) {
 }
 
 func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
-	server := NewServer(controlplane.NewService(nil, nil))
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, fakeFabricClient{}))
 	cases := []struct {
 		method string
 		path   string
@@ -451,6 +361,7 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 			}
 			req := httptest.NewRequest(tc.method, tc.path, body)
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", "route-contract-test")
 			rec := httptest.NewRecorder()
 
 			server.ServeHTTP(rec, req)

@@ -16,7 +16,7 @@
     "build": "vite build",
     "verify:production": "node tools/production-verifier.ts",
     "provision:manual-workspace": "node tools/provision-manual-workspace.ts",
-    "reconcile:tencent": "node tools/reconcile-tencent-bills.ts",
+    "reconcile:tencent": "node services/ledger/ops/reconcile-tencent-bills.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {

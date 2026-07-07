@@ -73,6 +73,12 @@ test("packages/console does not keep business service implementations or compati
   await assert.rejects(() => access(new URL("../../packages/console/src/services", import.meta.url)));
 });
 
+test("packages contains contracts only, not Fabric or Ledger implementation packages", async () => {
+  await assertFile("packages/contracts/opl-cloud-service-boundary-contract.json");
+  await assert.rejects(() => access(new URL("../../packages/fabric", import.meta.url)));
+  await assert.rejects(() => access(new URL("../../packages/ledger", import.meta.url)));
+});
+
 test("target service boundaries assign persistence, cloud SDKs, and UI responsibilities", async () => {
   const boundary = JSON.parse(
     await readFile(

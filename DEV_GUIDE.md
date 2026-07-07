@@ -111,7 +111,7 @@ unit/contract tests pass
 ```bash
 node --test tests/contracts/route-api-contract.test.ts
 node --test tests/domain/resource-provisioning.test.ts
-node --test tests/providers/tencent-tke-provider.test.ts tests/providers/tencent-provisioner-client.test.ts
+cd services/fabric && go test ./...
 node --test tests/ui/commercial-console-routes.test.ts tests/ui/commercial-console-surface.test.ts tests/ui/console-clickability-contract.test.ts
 npm run build
 git diff --check

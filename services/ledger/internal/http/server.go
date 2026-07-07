@@ -37,6 +37,106 @@ func NewServer(store ledger.Store) http.Handler {
 		}
 		writeJSON(w, http.StatusCreated, result)
 	})
+	mux.HandleFunc("POST /ledger/holds", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.HoldInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.CreateHold(r.Context(), input)
+		if errors.Is(err, ledger.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ledger.ErrInsufficientBalance) {
+			writeError(w, http.StatusPaymentRequired, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "hold failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	})
+	mux.HandleFunc("POST /ledger/evidence", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.EvidenceInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.RecordEvidence(r.Context(), input)
+		if errors.Is(err, ledger.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "evidence failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	})
+	mux.HandleFunc("POST /ledger/resource-settlements", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.ResourceSettlementInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.SettleResource(r.Context(), input)
+		if errors.Is(err, ledger.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ledger.ErrInsufficientBalance) {
+			writeError(w, http.StatusPaymentRequired, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "resource settlement failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	})
+	mux.HandleFunc("POST /ledger/reconciliation", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.ReconciliationInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.RecordReconciliation(r.Context(), input)
+		if errors.Is(err, ledger.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "reconciliation failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	})
 	mux.HandleFunc("GET /ledger/accounts/{accountId}/wallet", func(w http.ResponseWriter, r *http.Request) {
 		accountID := strings.TrimSpace(r.PathValue("accountId"))
 		if accountID == "" {

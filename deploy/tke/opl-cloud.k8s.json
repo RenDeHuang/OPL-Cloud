@@ -76,7 +76,9 @@
         "TENCENT_CVM_SECURITY_GROUP_IDS": "sg-xxxxxxxx",
         "TENCENT_CVM_SYSTEM_DISK_TYPE": "CLOUD_BSSD",
         "TENCENT_CVM_SYSTEM_DISK_SIZE_GB": "50",
-        "RUN_TENCENT_CREATE_RELEASE_EXECUTION": "0"
+        "RUN_TENCENT_CREATE_RELEASE_EXECUTION": "0",
+        "LEDGER_URL": "http://opl-cloud-ledger:8081",
+        "FABRIC_URL": "http://opl-cloud-fabric:8082"
       }
     },
     {
@@ -86,20 +88,23 @@
         "name": "opl-cloud-control-plane",
         "namespace": "opl-cloud",
         "labels": {
-          "app.kubernetes.io/name": "opl-cloud"
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "control-plane"
         }
       },
       "spec": {
         "replicas": 1,
         "selector": {
           "matchLabels": {
-            "app.kubernetes.io/name": "opl-cloud"
+            "app.kubernetes.io/name": "opl-cloud",
+            "app.kubernetes.io/component": "control-plane"
           }
         },
         "template": {
           "metadata": {
             "labels": {
-              "app.kubernetes.io/name": "opl-cloud"
+              "app.kubernetes.io/name": "opl-cloud",
+              "app.kubernetes.io/component": "control-plane"
             }
           },
           "spec": {
@@ -283,13 +288,15 @@
         "name": "opl-cloud-control-plane",
         "namespace": "opl-cloud",
         "labels": {
-          "app.kubernetes.io/name": "opl-cloud"
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "control-plane"
         }
       },
       "spec": {
         "type": "NodePort",
         "selector": {
-          "app.kubernetes.io/name": "opl-cloud"
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "control-plane"
         },
         "ports": [
           {
@@ -310,7 +317,8 @@
       "spec": {
         "podSelector": {
           "matchLabels": {
-            "app.kubernetes.io/name": "opl-cloud"
+            "app.kubernetes.io/name": "opl-cloud",
+            "app.kubernetes.io/component": "control-plane"
           }
         },
         "policyTypes": [
@@ -324,6 +332,284 @@
                 "port": 8787
               }
             ]
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "opl-cloud-ledger",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "ledger"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "opl-cloud",
+            "app.kubernetes.io/component": "ledger"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/name": "opl-cloud",
+              "app.kubernetes.io/component": "ledger"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "opl-cloud-control-plane",
+            "automountServiceAccountToken": false,
+            "imagePullSecrets": [
+              {
+                "name": "tcr-pull-secret"
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "ledger",
+                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "name": "ledger",
+                    "containerPort": 8081
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "configMapRef": {
+                      "name": "opl-cloud-config"
+                    }
+                  }
+                ],
+                "env": [
+                  {
+                    "name": "DATABASE_URL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-database",
+                        "key": "DATABASE_URL"
+                      }
+                    }
+                  }
+                ],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8081
+                  },
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 10
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8081
+                  },
+                  "initialDelaySeconds": 20,
+                  "periodSeconds": 20
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "768Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "volumeMounts": [],
+                "command": [
+                  "/usr/local/bin/opl-ledger"
+                ]
+              }
+            ],
+            "volumes": []
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "opl-cloud-ledger",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "ledger"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "ledger"
+        },
+        "ports": [
+          {
+            "name": "ledger",
+            "port": 8081,
+            "targetPort": "ledger"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "opl-cloud-fabric",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "fabric"
+        }
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "opl-cloud",
+            "app.kubernetes.io/component": "fabric"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app.kubernetes.io/name": "opl-cloud",
+              "app.kubernetes.io/component": "fabric"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "opl-cloud-control-plane",
+            "automountServiceAccountToken": false,
+            "imagePullSecrets": [
+              {
+                "name": "tcr-pull-secret"
+              }
+            ],
+            "securityContext": {
+              "runAsNonRoot": true,
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "fabric",
+                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
+                "imagePullPolicy": "IfNotPresent",
+                "ports": [
+                  {
+                    "name": "fabric",
+                    "containerPort": 8082
+                  }
+                ],
+                "envFrom": [
+                  {
+                    "configMapRef": {
+                      "name": "opl-cloud-config"
+                    }
+                  }
+                ],
+                "env": [],
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8082
+                  },
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 10
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8082
+                  },
+                  "initialDelaySeconds": 20,
+                  "periodSeconds": 20
+                },
+                "resources": {
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "768Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "volumeMounts": [],
+                "command": [
+                  "/usr/local/bin/opl-fabric"
+                ]
+              }
+            ],
+            "volumes": []
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "opl-cloud-fabric",
+        "namespace": "opl-cloud",
+        "labels": {
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "fabric"
+        }
+      },
+      "spec": {
+        "type": "ClusterIP",
+        "selector": {
+          "app.kubernetes.io/name": "opl-cloud",
+          "app.kubernetes.io/component": "fabric"
+        },
+        "ports": [
+          {
+            "name": "fabric",
+            "port": 8082,
+            "targetPort": "fabric"
           }
         ]
       }

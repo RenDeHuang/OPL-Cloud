@@ -15,7 +15,7 @@ func main() {
 		addr = ":8082"
 	}
 
-	server := fabrichttp.NewServer(fabric.NewService(fabric.NewDryRunProvider()))
+	server := fabrichttp.NewServer(fabric.NewService(fabric.NewTencentProvider()))
 	log.Printf("fabric listening on %s", addr)
 	if err := http.ListenAndServe(addr, server); err != nil {
 		log.Fatal(err)

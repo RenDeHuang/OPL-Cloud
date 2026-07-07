@@ -9,8 +9,14 @@ import (
 
 type FabricClient interface {
 	CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (ComputeAllocation, error)
+	DestroyComputeAllocation(ctx context.Context, id string, idempotencyKey string) (ComputeAllocation, error)
 	CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (StorageVolume, error)
+	DestroyStorageVolume(ctx context.Context, id string, idempotencyKey string) (StorageVolume, error)
+	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error)
+	DetachStorageAttachment(ctx context.Context, id string, idempotencyKey string) (StorageAttachment, error)
 	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error)
+	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
+	Readiness(ctx context.Context) (map[string]any, error)
 }
 
 type ComputeAllocationInput struct {
@@ -20,8 +26,15 @@ type ComputeAllocationInput struct {
 }
 
 type ComputeAllocation struct {
-	ID                string `json:"id"`
-	ProviderRequestID string `json:"providerRequestId"`
+	ID                 string `json:"id"`
+	AccountID          string `json:"accountId"`
+	WorkspaceID        string `json:"workspaceId"`
+	PackageID          string `json:"packageId"`
+	Status             string `json:"status"`
+	Provider           string `json:"provider"`
+	ProviderResourceID string `json:"providerResourceId"`
+	ProviderRequestID  string `json:"providerRequestId"`
+	ServiceName        string `json:"serviceName"`
 }
 
 type StorageVolumeInput struct {
@@ -32,6 +45,22 @@ type StorageVolumeInput struct {
 
 type StorageVolume struct {
 	ID                string `json:"id"`
+	ProviderRequestID string `json:"providerRequestId"`
+	WorkspaceID       string `json:"workspaceId"`
+	Status            string `json:"status"`
+}
+
+type StorageAttachmentInput struct {
+	WorkspaceID string `json:"workspaceId"`
+	ComputeID   string `json:"computeId"`
+	VolumeID    string `json:"volumeId"`
+}
+
+type StorageAttachment struct {
+	ID                string `json:"id"`
+	WorkspaceID       string `json:"workspaceId"`
+	VolumeID          string `json:"volumeId"`
+	Status            string `json:"status"`
 	ProviderRequestID string `json:"providerRequestId"`
 }
 
@@ -46,6 +75,10 @@ type WorkspaceRuntime struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspaceId"`
 	URL         string `json:"url"`
+	Status      string `json:"status"`
+	ServiceName string `json:"serviceName"`
+	Ready       bool   `json:"ready"`
+	Checks      []any  `json:"checks"`
 }
 
 type fabricHTTPClient struct {
@@ -66,9 +99,33 @@ func (c *fabricHTTPClient) CreateComputeAllocation(ctx context.Context, input Co
 	return result, err
 }
 
+func (c *fabricHTTPClient) DestroyComputeAllocation(ctx context.Context, id string, idempotencyKey string) (ComputeAllocation, error) {
+	var result ComputeAllocation
+	err := c.post(ctx, "/fabric/compute-allocations/"+id+"/destroy", map[string]string{}, idempotencyKey, &result)
+	return result, err
+}
+
 func (c *fabricHTTPClient) CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (StorageVolume, error) {
 	var result StorageVolume
 	err := c.post(ctx, "/fabric/storage-volumes", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) DestroyStorageVolume(ctx context.Context, id string, idempotencyKey string) (StorageVolume, error) {
+	var result StorageVolume
+	err := c.post(ctx, "/fabric/storage-volumes/"+id+"/destroy", map[string]string{}, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error) {
+	var result StorageAttachment
+	err := c.post(ctx, "/fabric/storage-attachments", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) DetachStorageAttachment(ctx context.Context, id string, idempotencyKey string) (StorageAttachment, error) {
+	var result StorageAttachment
+	err := c.post(ctx, "/fabric/storage-attachments/"+id+"/detach", map[string]string{}, idempotencyKey, &result)
 	return result, err
 }
 
@@ -76,6 +133,34 @@ func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input Wor
 	var result WorkspaceRuntime
 	err := c.post(ctx, "/fabric/workspace-runtimes", input, idempotencyKey, &result)
 	return result, err
+}
+
+func (c *fabricHTTPClient) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/workspace-runtimes/"+workspaceID+"/status", nil)
+	if err != nil {
+		return result, err
+	}
+	res, err := c.client.Do(req)
+	if err != nil {
+		return result, err
+	}
+	defer res.Body.Close()
+	return result, json.NewDecoder(res.Body).Decode(&result)
+}
+
+func (c *fabricHTTPClient) Readiness(ctx context.Context) (map[string]any, error) {
+	result := map[string]any{}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/readiness", nil)
+	if err != nil {
+		return result, err
+	}
+	res, err := c.client.Do(req)
+	if err != nil {
+		return result, err
+	}
+	defer res.Body.Close()
+	return result, json.NewDecoder(res.Body).Decode(&result)
 }
 
 func (c *fabricHTTPClient) post(ctx context.Context, path string, input any, idempotencyKey string, output any) error {
