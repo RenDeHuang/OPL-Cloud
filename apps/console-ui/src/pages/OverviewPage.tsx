@@ -80,7 +80,7 @@ export function OverviewPage({ state, wallet, tickets }: any) {
           />
         </InsightPanel>
 
-        <InsightPanel title="最近信号" eyebrow="关注">
+        <InsightPanel title="最近通知" eyebrow="关注">
           <TimelineList items={recentSignals} emptyText="当前没有告警或待处理工单" />
         </InsightPanel>
       </div>

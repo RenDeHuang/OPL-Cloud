@@ -408,7 +408,12 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/operator/cleanup-workspace-access", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"cleaned": []any{}, "skipped": []any{}})
+		result, err := app.cleanupWorkspaceAccess(decodeJSON(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("GET /api/admin/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"service": "control-plane", "status": "ok"})

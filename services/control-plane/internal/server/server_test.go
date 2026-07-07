@@ -434,6 +434,69 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	}
 }
 
+func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+
+	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"pi"}`)
+	createResource(t, server, http.MethodPost, "/api/billing/topups", `{"accountId":"acct-alpha","amount":100,"idempotencyKey":"topup-alpha"}`)
+	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
+	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123}`)
+
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
+	stateRec := httptest.NewRecorder()
+	server.ServeHTTP(stateRec, stateReq)
+	if stateRec.Code != http.StatusOK {
+		t.Fatalf("management state status = %d: %s", stateRec.Code, stateRec.Body.String())
+	}
+	var management map[string]any
+	if err := json.NewDecoder(stateRec.Body).Decode(&management); err != nil {
+		t.Fatalf("decode management state: %v", err)
+	}
+	accounts := management["accounts"].([]any)
+	if !slices.ContainsFunc(accounts, func(item any) bool {
+		account := item.(map[string]any)
+		return account["accountId"] == "acct-alpha" && account["email"] == "owner@lab.example" && number(account["totalSpent"]) > 0
+	}) {
+		t.Fatalf("management accounts missing real account totals: %#v", accounts)
+	}
+	if len(management["manualTopups"].([]any)) == 0 || len(management["billingLedger"].([]any)) == 0 || len(management["walletTransactions"].([]any)) == 0 {
+		t.Fatalf("management state missing ledger-backed admin rows: %#v", management)
+	}
+
+	operatorReq := httptest.NewRequest(http.MethodGet, "/api/operator/summary", nil)
+	operatorRec := httptest.NewRecorder()
+	server.ServeHTTP(operatorRec, operatorReq)
+	if operatorRec.Code != http.StatusOK {
+		t.Fatalf("operator summary status = %d: %s", operatorRec.Code, operatorRec.Body.String())
+	}
+	var operator map[string]any
+	if err := json.NewDecoder(operatorRec.Body).Decode(&operator); err != nil {
+		t.Fatalf("decode operator summary: %v", err)
+	}
+	operatorAccounts := operator["accounts"].(map[string]any)
+	if number(operatorAccounts["total"]) < 1 || number(operatorAccounts["totalSpent"]) <= 0 {
+		t.Fatalf("operator accounts did not use real totals: %#v", operatorAccounts)
+	}
+}
+
+func TestCleanupWorkspaceAccessDisablesInvalidActiveURL(t *testing.T) {
+	app := newRuntimeApp()
+	app.workspaces["ws-alpha"] = map[string]any{
+		"id":             "ws-alpha",
+		"ownerAccountId": "acct-alpha",
+		"storageId":      "missing-storage",
+		"access":         map[string]any{"tokenStatus": "active"},
+	}
+
+	result, err := app.cleanupWorkspaceAccess(map[string]any{"reason": "test"})
+	if err != nil {
+		t.Fatalf("cleanup workspace access: %v", err)
+	}
+	if len(result["cleaned"].([]any)) != 1 || nested(app.workspaces["ws-alpha"], "access", "tokenStatus") != "disabled" {
+		t.Fatalf("cleanup did not disable invalid URL: result=%#v workspace=%#v", result, app.workspaces["ws-alpha"])
+	}
+}
+
 func TestResourceSettlementProjectsLedgerEvidenceIntoConsoleState(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 

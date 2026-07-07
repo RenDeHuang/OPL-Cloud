@@ -144,6 +144,7 @@ func (app *runtimeApp) state(accountID string) map[string]any {
 		"computeAllocations":    values(app.computes),
 		"storageVolumes":        values(app.storages),
 		"storageAttachments":    values(app.attachments),
+		"accounts":              app.accountsLocked(),
 		"billingLedger":         copySlice(app.ledger),
 		"resourceUsageLogs":     copySlice(app.usage),
 		"walletTransactions":    copySlice(app.walletTx),
@@ -382,7 +383,7 @@ func (app *runtimeApp) managementState() map[string]any {
 		"organizations":          values(app.orgs),
 		"users":                  values(app.users),
 		"memberships":            values(app.memberships),
-		"accounts":               []any{app.wallet("acct-admin")},
+		"accounts":               app.accountsLocked(),
 		"packages":               packageList(),
 		"computePools":           computePools(),
 		"workspaces":             values(app.workspaces),
@@ -390,6 +391,8 @@ func (app *runtimeApp) managementState() map[string]any {
 		"storageVolumes":         values(app.storages),
 		"storageAttachments":     values(app.attachments),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
+		"billingLedger":          copySlice(app.ledger),
+		"resourceUsageLogs":      copySlice(app.usage),
 		"walletTransactions":     copySlice(app.walletTx),
 		"manualTopups":           copySlice(app.topups),
 	}
@@ -399,11 +402,12 @@ func (app *runtimeApp) operatorSummary() map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	running := countStatus(app.computes, "running")
+	accounts := app.accountsLocked()
 	return map[string]any{
 		"product":                "OPL Console",
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),
 		"accountScope":           "all",
-		"accounts":               map[string]any{"total": len(app.wallets), "frozen": 0, "balance": totalWallet(app.wallets, "balance"), "totalSpent": totalDebits(app.walletTx)},
+		"accounts":               map[string]any{"total": len(accounts), "frozen": totalAccountField(accounts, "frozen"), "balance": totalAccountField(accounts, "balance"), "totalSpent": totalDebits(app.walletTx, app.ledger)},
 		"workspaces":             map[string]any{"total": len(app.workspaces), "running": countStatus(app.workspaces, "running"), "urlActive": countActiveURLs(app.workspaces), "destroyed": countStatus(app.workspaces, "destroyed"), "needsAttention": 0},
 		"computeAllocations":     map[string]any{"total": len(app.computes), "running": running, "failed": countStatus(app.computes, "failed")},
 		"notifications":          map[string]any{"total": 0, "error": 0, "warning": 0, "recent": []any{}},
@@ -414,6 +418,42 @@ func (app *runtimeApp) operatorSummary() map[string]any {
 		"productionE2E":          map[string]any{},
 		"billingReconciliation":  map[string]any{"reports": 0, "guard": map[string]any{"status": "not_required", "blockNewWorkspaces": false, "reason": "billing_reconciliation_not_required"}},
 	}
+}
+
+func (app *runtimeApp) accountsLocked() []any {
+	accountIDs := map[string]bool{}
+	for accountID := range app.wallets {
+		accountIDs[accountID] = true
+	}
+	for _, user := range app.users {
+		if accountID := stringValue(user["accountId"]); accountID != "" {
+			accountIDs[accountID] = true
+		}
+	}
+	for _, workspace := range app.workspaces {
+		if accountID := firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(workspace["accountId"])); accountID != "" {
+			accountIDs[accountID] = true
+		}
+	}
+	keys := make([]string, 0, len(accountIDs))
+	for accountID := range accountIDs {
+		keys = append(keys, accountID)
+	}
+	sort.Strings(keys)
+	rows := make([]any, 0, len(keys))
+	for _, accountID := range keys {
+		row := app.wallet(accountID)
+		row["totalRecharged"] = totalTopupsForAccount(app.topups, accountID)
+		row["totalSpent"] = totalDebitsForAccount(accountID, app.walletTx, app.ledger)
+		for _, user := range app.users {
+			if stringValue(user["accountId"]) == accountID {
+				row["userId"] = firstNonEmpty(stringValue(row["userId"]), stringValue(user["id"]))
+				row["email"] = firstNonEmpty(stringValue(row["email"]), stringValue(user["email"]))
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func (app *runtimeApp) getCompute(id string) (map[string]any, bool) {
@@ -435,6 +475,65 @@ func (app *runtimeApp) getAttachment(id string) (map[string]any, bool) {
 	defer app.mu.Unlock()
 	attachment, ok := app.attachments[id]
 	return cloneMap(attachment), ok
+}
+
+func (app *runtimeApp) cleanupWorkspaceAccess(input map[string]any) (map[string]any, error) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	requested := stringSet(stringSliceField(input, "workspaceIds"))
+	cleaned := []any{}
+	skipped := []any{}
+	for id, workspace := range app.workspaces {
+		if len(requested) > 0 && !requested[id] {
+			continue
+		}
+		if nested(workspace, "access", "tokenStatus") != "active" {
+			skipped = append(skipped, map[string]any{"id": id, "reason": "url_not_active"})
+			continue
+		}
+		reason := app.workspaceCleanupReasonLocked(workspace)
+		if reason == "" && len(requested) == 0 {
+			skipped = append(skipped, map[string]any{"id": id, "reason": "resource_chain_active"})
+			continue
+		}
+		access, _ := workspace["access"].(map[string]any)
+		access = cloneMap(access)
+		access["tokenStatus"] = "disabled"
+		access["requiresLogin"] = false
+		workspace["access"] = access
+		cleaned = append(cleaned, map[string]any{"id": id, "reason": firstNonEmpty(reason, "operator_requested")})
+	}
+	if len(cleaned) > 0 {
+		if err := app.persistLocked(); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{"cleaned": cleaned, "skipped": skipped}, nil
+}
+
+func (app *runtimeApp) workspaceCleanupReasonLocked(workspace map[string]any) string {
+	if stringValue(workspace["ownerAccountId"]) == "" && stringValue(workspace["accountId"]) == "" {
+		return "missing_owner"
+	}
+	storageID := stringValue(workspace["storageId"])
+	storage := app.storages[storageID]
+	if storageID == "" || storage == nil {
+		return "missing_storage"
+	}
+	if stringValue(storage["status"]) == "destroyed" || stringValue(storage["billingStatus"]) == "stopped" {
+		return "storage_destroyed"
+	}
+	computeID := stringValue(workspace["currentComputeAllocationId"])
+	compute := app.computes[computeID]
+	if computeID != "" && (compute == nil || stringValue(compute["status"]) == "destroyed") {
+		return "compute_unavailable"
+	}
+	attachmentID := stringValue(workspace["currentAttachmentId"])
+	attachment := app.attachments[attachmentID]
+	if attachmentID != "" && (attachment == nil || stringValue(attachment["status"]) == "detached") {
+		return "attachment_unavailable"
+	}
+	return ""
 }
 
 func (app *runtimeApp) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -849,6 +948,30 @@ func uniqueStrings(input []string) []string {
 	return output
 }
 
+func stringSliceField(input map[string]any, key string) []string {
+	raw, ok := input[key].([]any)
+	if !ok {
+		return nil
+	}
+	output := []string{}
+	for _, item := range raw {
+		if value := stringValue(item); value != "" {
+			output = append(output, value)
+		}
+	}
+	return output
+}
+
+func stringSet(input []string) map[string]bool {
+	output := map[string]bool{}
+	for _, value := range input {
+		if value != "" {
+			output[value] = true
+		}
+	}
+	return output
+}
+
 func mapContainsAnyID(input map[string]any, ids ...string) bool {
 	for _, id := range ids {
 		if id == "" {
@@ -883,14 +1006,67 @@ func countActiveURLs(input map[string]map[string]any) int {
 	return count
 }
 
-func totalWallet(wallets map[string]map[string]any, key string) float64 {
+func totalAccountField(accounts []any, key string) float64 {
 	total := float64(0)
-	for _, wallet := range wallets {
-		total += number(wallet[key])
+	for _, item := range accounts {
+		account, _ := item.(map[string]any)
+		total += number(account[key])
 	}
 	return total
 }
 
-func totalDebits(transactions []map[string]any) float64 {
-	return float64(len(transactions))
+func totalTopupsForAccount(topups []map[string]any, accountID string) float64 {
+	total := float64(0)
+	for _, topup := range topups {
+		if firstNonEmpty(stringValue(topup["accountId"]), stringValue(topup["targetAccountId"])) != accountID {
+			continue
+		}
+		total += amountValue(topup)
+	}
+	return total
+}
+
+func totalDebitsForAccount(accountID string, transactions []map[string]any, ledger []map[string]any) float64 {
+	total := float64(0)
+	for _, tx := range transactions {
+		if stringValue(tx["accountId"]) != accountID {
+			continue
+		}
+		amount := amountValue(tx)
+		if amount < 0 {
+			total += -amount
+		}
+	}
+	for _, entry := range ledger {
+		if stringValue(entry["accountId"]) != accountID {
+			continue
+		}
+		amount := amountValue(entry)
+		if amount < 0 {
+			total += -amount
+		}
+	}
+	return total
+}
+
+func totalDebits(transactions []map[string]any, ledger []map[string]any) float64 {
+	total := float64(0)
+	for _, tx := range transactions {
+		if amount := amountValue(tx); amount < 0 {
+			total += -amount
+		}
+	}
+	for _, entry := range ledger {
+		if amount := amountValue(entry); amount < 0 {
+			total += -amount
+		}
+	}
+	return total
+}
+
+func amountValue(row map[string]any) float64 {
+	if amount := number(row["amount"]); amount != 0 {
+		return amount
+	}
+	return float64(number(row["amountCents"])) / 100
 }
