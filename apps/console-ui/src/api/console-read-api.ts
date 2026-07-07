@@ -1,7 +1,10 @@
 import { getJson, postJson } from "./console-api.ts";
 
-export function getConsoleState() {
-  return getJson("/api/state");
+export function getConsoleState(accountId = "") {
+  const params = new URLSearchParams();
+  if (accountId) params.set("accountId", accountId);
+  const query = params.toString();
+  return getJson(`/api/state${query ? `?${query}` : ""}`);
 }
 
 export function getOperatorSummary() {

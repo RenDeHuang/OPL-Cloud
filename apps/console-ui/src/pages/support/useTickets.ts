@@ -17,7 +17,7 @@ export function useTickets({ csrfToken = "", all = false }: any = {}) {
 
   async function createTicket(input) {
     const ticket = await createSupportTicketMapping(input, csrfToken);
-    setTickets((current) => [ticket, ...current]);
+    await refresh();
     return ticket;
   }
 

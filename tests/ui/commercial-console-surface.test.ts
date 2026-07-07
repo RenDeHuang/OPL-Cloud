@@ -415,6 +415,20 @@ test("Admin users surface is backed by management state and can create login use
   assert.match(routesSource, /"POST \/api\/users\/delete"/, "admin.users route contract must declare user delete");
 });
 
+test("frontend state reads backend account scope and refreshes support mappings after mutations", async () => {
+  const pageSource = await source("apps/console-ui/src/pages/ConsolePage.tsx");
+  const storeSource = await source("apps/console-ui/src/store/console-state.ts");
+  const apiSource = await source("apps/console-ui/src/api/console-read-api.ts");
+  const ticketsSource = await source("apps/console-ui/src/pages/support/useTickets.ts");
+
+  assert.match(pageSource, /accountId: session\.user\?\.accountId/, "Console state must use the authenticated account id");
+  assert.match(apiSource, /getConsoleState\(accountId = ""\)/, "state client must accept account scope");
+  assert.match(storeSource, /getConsoleState\(accountId\)/, "state hook must request backend state for the current account");
+  assert.match(storeSource, /tickets\.refresh\(\)/, "shared mutation path must refresh support mappings from backend");
+  assert.doesNotMatch(ticketsSource, /setTickets\(\(current\)/, "support create must not locally prepend unverified ticket state");
+  assert.match(ticketsSource, /await refresh\(\)/, "support create must reload persisted mappings after mutation");
+});
+
 test("resource pages expose relationship map, wallet risk, support context, and data retention policy", async () => {
   const resourceSource = await source("apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx");
   const workspaceSource = await source("apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx");

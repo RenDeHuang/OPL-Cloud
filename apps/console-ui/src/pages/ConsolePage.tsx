@@ -11,7 +11,7 @@ import { buildMenu } from "./shared/console-menu.tsx";
 export default function ConsolePage({ route, session, onLogout }: any) {
   const isAdmin = session.user.role === "admin";
   const path = window.location.pathname;
-  const consoleState = useConsoleState({ isAdmin, path, csrfToken: session.csrfToken });
+  const consoleState = useConsoleState({ isAdmin, path, csrfToken: session.csrfToken, accountId: session.user?.accountId || "" });
 
   async function logout() {
     try {

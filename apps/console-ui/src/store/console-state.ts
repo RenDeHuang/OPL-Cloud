@@ -9,7 +9,7 @@ import {
 } from "../api/console-read-api.ts";
 import { useTickets } from "../pages/support/useTickets.ts";
 
-export function useConsoleState({ isAdmin, path, csrfToken }: any) {
+export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
   const [state, setState] = useState<any>(null);
   const [managementState, setManagementState] = useState<any>({ users: [], accounts: [] });
   const [adminOps, setAdminOps] = useState<any>({ operator: null, runtime: null, launch: null, error: "" });
@@ -22,7 +22,7 @@ export function useConsoleState({ isAdmin, path, csrfToken }: any) {
 
   async function refresh() {
     const [next, management] = await Promise.all([
-      getConsoleState(),
+      getConsoleState(accountId),
       isAdmin ? getManagementState() : Promise.resolve(null)
     ]);
     setState(next);
@@ -62,12 +62,14 @@ export function useConsoleState({ isAdmin, path, csrfToken }: any) {
       const result = await action();
       await refresh();
       await refreshAdminOps();
+      await tickets.refresh();
       message.success(success);
       return result || true;
     } catch (err) {
       try {
         await refresh();
         await refreshAdminOps();
+        await tickets.refresh();
       } catch (refreshError) {
         message.error(refreshError.message);
       }
