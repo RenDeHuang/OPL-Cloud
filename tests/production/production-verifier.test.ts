@@ -794,8 +794,16 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false } = {}) {
         first() {
           return this;
         },
+        last() {
+          this.target = "last";
+          return this;
+        },
         async count() {
           return selector === 'input[type="file"]' && !state.setup ? 1 : 0;
+        },
+        async fill(value) {
+          actions.push(["fillLocator", selector, value, this.target || "first"]);
+          if (state.setup) state.accessKey = value;
         },
         async setInputFiles(filePath) {
           actions.push(["setInputFiles", filePath]);
@@ -818,6 +826,10 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false } = {}) {
         },
         async click() {
           actions.push(["roleClick", role, String(options.name || "")]);
+          if (state.setup && /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i.test(String(options.name || ""))) {
+            if (state.accessKey) state.setup = false;
+            return;
+          }
           throw new Error("guid page controls are data-testid only in this fixture");
         }
       };
@@ -1408,9 +1420,9 @@ test("production verifier completes first-run model access before file upload", 
     screenshotDir: ""
   });
 
-  assert.ok(actions.some((action) => action[0] === "accessDispatchEvent" && action[1] === "input"));
-  assert.ok(actions.some((action) => action[0] === "domClick" && action[1] === "finish-setup"));
-  assert.ok(actions.findIndex((action) => action[0] === "domClick" && action[1] === "finish-setup") < actions.findIndex((action) => action[0] === "setInputFiles"));
+  assert.ok(actions.some((action) => action[0] === "fillLocator" && action[2] === "test-access-key"));
+  assert.ok(actions.some((action) => action[0] === "roleClick" && /Finish setup/i.test(action[2])));
+  assert.ok(actions.findIndex((action) => action[0] === "roleClick" && /Finish setup/i.test(action[2])) < actions.findIndex((action) => action[0] === "setInputFiles"));
   assert.deepEqual(checks.map((check) => `${check.name}:${check.ok}`), [
     "workspace_browser_opened:true",
     "workspace_browser_model_access_configured:true",

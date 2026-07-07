@@ -426,38 +426,52 @@ async function configureModelAccessIfNeeded(page, { modelAccessKey = "" } = {}) 
   if (!needsSetup) return false;
   if (!modelAccessKey) throw new Error("workspace_browser_model_access_key_missing");
 
-  const result = await page.evaluate(({ key }) => {
-    const visible = (element) => {
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-    };
-    const fields = Array.from(document.querySelectorAll("input, textarea")).filter(visible);
-    const field = fields.find((element) => {
-      const label = [
-        element.getAttribute("aria-label") || "",
-        element.getAttribute("placeholder") || "",
-        element.closest("label, div, section, form")?.innerText || ""
-      ].join(" ");
-      return /access key|api key|token|secret|model access|openai/i.test(label);
-    }) || fields[fields.length - 1];
-    if (!field) return "input_missing";
+  let configured = false;
+  if (typeof page.locator === "function" && typeof page.getByRole === "function") {
+    try {
+      const input = page.locator('input[type="password"], input[placeholder*="access" i], input[aria-label*="access" i], textarea').last();
+      await input.fill(modelAccessKey, { timeout: 15_000 });
+      await page.getByRole("button", { name: /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i }).first().click({ timeout: 15_000 });
+      configured = true;
+    } catch {
+      configured = false;
+    }
+  }
 
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set ||
-      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-    if (setter) setter.call(field, key);
-    field.value = key;
-    field.dispatchEvent(new Event("input", { bubbles: true }));
-    field.dispatchEvent(new Event("change", { bubbles: true }));
+  if (!configured) {
+    const result = await page.evaluate(({ key }) => {
+      const visible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      };
+      const fields = Array.from(document.querySelectorAll("input, textarea")).filter(visible);
+      const field = fields.find((element) => {
+        const label = [
+          element.getAttribute("aria-label") || "",
+          element.getAttribute("placeholder") || "",
+          element.closest("label, div, section, form")?.innerText || ""
+        ].join(" ");
+        return /access key|api key|token|secret|model access|openai/i.test(label);
+      }) || fields[fields.length - 1];
+      if (!field) return "input_missing";
 
-    const button = Array.from(document.querySelectorAll("button, [role='button']"))
-      .filter((element) => !element.disabled && element.getAttribute("aria-disabled") !== "true" && visible(element))
-      .find((element) => /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i.test(element.innerText || element.textContent || ""));
-    if (!button) return "finish_button_missing";
-    button.click();
-    return true;
-  }, { key: modelAccessKey });
-  if (result !== true) throw new Error(`workspace_browser_model_access_${result}`);
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set ||
+        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      if (setter) setter.call(field, key);
+      field.value = key;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+
+      const button = Array.from(document.querySelectorAll("button, [role='button']"))
+        .filter((element) => !element.disabled && element.getAttribute("aria-disabled") !== "true" && visible(element))
+        .find((element) => /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i.test(element.innerText || element.textContent || ""));
+      if (!button) return "finish_button_missing";
+      button.click();
+      return true;
+    }, { key: modelAccessKey });
+    if (result !== true) throw new Error(`workspace_browser_model_access_${result}`);
+  }
 
   await page.waitForFunction(() => {
     const text = document.body?.innerText || "";
