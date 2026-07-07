@@ -157,6 +157,11 @@ func (app *runtimeApp) rememberCompute(allocation any) {
 		defer app.mu.Unlock()
 		accountID := stringValue(row["accountId"])
 		app.computes[stringValue(row["id"])] = row
+		if stringValue(row["status"]) == "destroyed" {
+			app.rememberReleaseLocked(accountID, "compute", stringValue(row["id"]), row)
+			app.suspendWorkspacesForComputeLocked(stringValue(row["id"]))
+			return
+		}
 		app.rememberHoldLocked(accountID, "compute", stringValue(row["id"]), row)
 	}
 }
@@ -167,6 +172,11 @@ func (app *runtimeApp) rememberStorage(volume any) {
 		defer app.mu.Unlock()
 		accountID := stringValue(row["accountId"])
 		app.storages[stringValue(row["id"])] = row
+		if stringValue(row["status"]) == "destroyed" {
+			app.rememberReleaseLocked(accountID, "storage", stringValue(row["id"]), row)
+			app.markWorkspacesStorageDestroyedLocked(stringValue(row["id"]))
+			return
+		}
 		app.rememberHoldLocked(accountID, "storage", stringValue(row["id"]), row)
 	}
 }
@@ -188,6 +198,23 @@ func (app *runtimeApp) rememberHoldLocked(accountID string, resourceType string,
 	app.ledger = append(app.ledger, ledger)
 }
 
+func (app *runtimeApp) rememberReleaseLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
+	releaseID := stringValue(row["holdReleaseId"])
+	if accountID == "" || releaseID == "" {
+		return
+	}
+	if wallet, ok := row["wallet"].(map[string]any); ok {
+		app.wallets[accountID] = walletProjection(walletFromMap(wallet))
+	}
+	ledger := map[string]any{"id": releaseID, "accountId": accountID, "type": resourceType + "_hold_released", "resourceId": resourceID, "amountCents": int64(numberField(row, "holdAmountCents", 0))}
+	if resourceType == "storage" {
+		ledger["storageId"] = resourceID
+	} else {
+		ledger["computeAllocationId"] = resourceID
+	}
+	app.ledger = append(app.ledger, ledger)
+}
+
 func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) {
 	if row, ok := attachment.(map[string]any); ok {
 		row["computeAllocationId"] = stringField(input, "computeAllocationId", "")
@@ -196,6 +223,48 @@ func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) 
 		app.mu.Lock()
 		defer app.mu.Unlock()
 		app.attachments[stringValue(row["id"])] = row
+		if stringValue(row["status"]) == "detached" {
+			app.clearWorkspacesForAttachmentLocked(stringValue(row["id"]))
+		}
+	}
+}
+
+func (app *runtimeApp) suspendWorkspacesForComputeLocked(computeID string) {
+	for _, workspace := range app.workspaces {
+		if stringValue(workspace["currentComputeAllocationId"]) == computeID || stringValue(workspace["computeAllocationId"]) == computeID {
+			workspace["currentComputeAllocationId"] = ""
+			workspace["computeAllocationId"] = ""
+			workspace["state"] = "suspended"
+			workspace["status"] = "suspended"
+			workspace["access"] = map[string]any{"tokenStatus": "suspended", "requiresLogin": false}
+		}
+	}
+}
+
+func (app *runtimeApp) clearWorkspacesForAttachmentLocked(attachmentID string) {
+	for _, workspace := range app.workspaces {
+		if stringValue(workspace["currentAttachmentId"]) == attachmentID || stringValue(workspace["attachmentId"]) == attachmentID {
+			workspace["currentAttachmentId"] = ""
+			workspace["attachmentId"] = ""
+			if stringValue(workspace["state"]) != "data_deleted" {
+				workspace["state"] = "suspended"
+				workspace["status"] = "suspended"
+			}
+		}
+	}
+}
+
+func (app *runtimeApp) markWorkspacesStorageDestroyedLocked(storageID string) {
+	for _, workspace := range app.workspaces {
+		if stringValue(workspace["storageId"]) == storageID {
+			workspace["state"] = "data_deleted"
+			workspace["status"] = "unrecoverable"
+			workspace["currentComputeAllocationId"] = ""
+			workspace["computeAllocationId"] = ""
+			workspace["currentAttachmentId"] = ""
+			workspace["attachmentId"] = ""
+			workspace["access"] = map[string]any{"tokenStatus": "disabled", "requiresLogin": false}
+		}
 	}
 }
 
@@ -248,6 +317,13 @@ func (app *runtimeApp) getCompute(id string) (map[string]any, bool) {
 	return cloneMap(compute), ok
 }
 
+func (app *runtimeApp) getStorage(id string) (map[string]any, bool) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	storage, ok := app.storages[id]
+	return cloneMap(storage), ok
+}
+
 func (app *runtimeApp) getAttachment(id string) (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -285,6 +361,14 @@ func (app *runtimeApp) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, 
 	app.mu.Lock()
 	workspace := cloneMap(app.workspaces[workspaceID])
 	app.mu.Unlock()
+	if stringValue(workspace["state"]) == "data_deleted" || stringValue(nested(workspace, "access", "tokenStatus")) == "disabled" {
+		writeError(w, http.StatusGone, "workspace_storage_destroyed")
+		return
+	}
+	if stringValue(workspace["state"]) == "suspended" || stringValue(nested(workspace, "access", "tokenStatus")) == "suspended" {
+		writeError(w, http.StatusConflict, "workspace_suspended")
+		return
+	}
 	serviceName := stringValue(nested(workspace, "runtime", "serviceName"))
 	if serviceName == "" {
 		http.NotFound(w, r)

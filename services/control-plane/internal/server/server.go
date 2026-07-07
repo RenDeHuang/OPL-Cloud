@@ -231,7 +231,9 @@ func NewServer(service *controlplane.Service) http.Handler {
 	})
 	mux.HandleFunc("POST /api/compute-allocations/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		compute, err := service.DestroyComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")), mutationKey(r, input))
+		id := strings.TrimSpace(r.PathValue("id"))
+		existing, _ := app.getCompute(id)
+		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -258,7 +260,9 @@ func NewServer(service *controlplane.Service) http.Handler {
 	})
 	mux.HandleFunc("POST /api/storage-volumes/destroy", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		storage, err := service.DestroyStorageVolume(r.Context(), stringField(input, "storageId", ""), mutationKey(r, input))
+		id := stringField(input, "storageId", "")
+		existing, _ := app.getStorage(id)
+		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -491,6 +495,16 @@ func settlementAmountCents(input map[string]any) int64 {
 	}
 	hours := numberField(input, "hours", 1)
 	return int64(hours * 100)
+}
+
+func destroyResourceInput(id string, row map[string]any) controlplane.DestroyResourceInput {
+	return controlplane.DestroyResourceInput{
+		ID:              id,
+		AccountID:       firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]), "acct-local"),
+		WorkspaceID:     stringValue(row["workspaceId"]),
+		HoldID:          stringValue(row["holdId"]),
+		HoldAmountCents: int64(numberField(row, "holdAmountCents", 0)),
+	}
 }
 
 func computeHoldAmountCents(packageID string) int64 {

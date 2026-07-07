@@ -48,6 +48,7 @@ type ComputeAllocation struct {
 	BillingStatus      string `json:"billingStatus,omitempty"`
 	HoldID             string `json:"holdId,omitempty"`
 	HoldAmountCents    int64  `json:"holdAmountCents,omitempty"`
+	HoldReleaseID      string `json:"holdReleaseId,omitempty"`
 	Wallet             Wallet `json:"wallet,omitempty"`
 }
 
@@ -71,6 +72,7 @@ type StorageVolume struct {
 	BillingStatus      string `json:"billingStatus,omitempty"`
 	HoldID             string `json:"holdId,omitempty"`
 	HoldAmountCents    int64  `json:"holdAmountCents,omitempty"`
+	HoldReleaseID      string `json:"holdReleaseId,omitempty"`
 	Wallet             Wallet `json:"wallet,omitempty"`
 }
 

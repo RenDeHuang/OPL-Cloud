@@ -66,6 +66,14 @@ type StorageAttachmentInput struct {
 	VolumeID    string `json:"volumeId"`
 }
 
+type DestroyResourceInput struct {
+	ID              string `json:"id"`
+	AccountID       string `json:"accountId"`
+	WorkspaceID     string `json:"workspaceId"`
+	HoldID          string `json:"holdId"`
+	HoldAmountCents int64  `json:"holdAmountCents"`
+}
+
 func NewService(ledger clients.LedgerClient, fabric clients.FabricClient) *Service {
 	return &Service{ledger: ledger, fabric: fabric}
 }
@@ -127,8 +135,22 @@ func (s *Service) GetComputeAllocation(ctx context.Context, id string) (clients.
 	return s.fabric.GetComputeAllocation(ctx, id)
 }
 
-func (s *Service) DestroyComputeAllocation(ctx context.Context, id string, idempotencyKey string) (clients.ComputeAllocation, error) {
-	return s.fabric.DestroyComputeAllocation(ctx, id, idempotencyKey)
+func (s *Service) DestroyComputeAllocation(ctx context.Context, input DestroyResourceInput, idempotencyKey string) (clients.ComputeAllocation, error) {
+	allocation, err := s.fabric.DestroyComputeAllocation(ctx, input.ID, idempotencyKey)
+	if err != nil {
+		return allocation, err
+	}
+	if input.HoldID != "" && input.HoldAmountCents > 0 {
+		release, err := s.ledger.ReleaseHold(ctx, clients.HoldReleaseInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: input.ID, HoldID: input.HoldID, AmountCents: input.HoldAmountCents, Currency: "CNY", Reason: "destroy_compute"}, idempotencyKey+":hold-release")
+		if err != nil {
+			return allocation, err
+		}
+		allocation.HoldID = input.HoldID
+		allocation.HoldAmountCents = input.HoldAmountCents
+		allocation.HoldReleaseID = release.ID
+		allocation.Wallet = release.Wallet
+	}
+	return allocation, nil
 }
 
 func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (clients.StorageVolume, error) {
@@ -151,8 +173,22 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	return volume, nil
 }
 
-func (s *Service) DestroyStorageVolume(ctx context.Context, id string, idempotencyKey string) (clients.StorageVolume, error) {
-	return s.fabric.DestroyStorageVolume(ctx, id, idempotencyKey)
+func (s *Service) DestroyStorageVolume(ctx context.Context, input DestroyResourceInput, idempotencyKey string) (clients.StorageVolume, error) {
+	volume, err := s.fabric.DestroyStorageVolume(ctx, input.ID, idempotencyKey)
+	if err != nil {
+		return volume, err
+	}
+	if input.HoldID != "" && input.HoldAmountCents > 0 {
+		release, err := s.ledger.ReleaseHold(ctx, clients.HoldReleaseInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: input.ID, HoldID: input.HoldID, AmountCents: input.HoldAmountCents, Currency: "CNY", Reason: "destroy_storage"}, idempotencyKey+":hold-release")
+		if err != nil {
+			return volume, err
+		}
+		volume.HoldID = input.HoldID
+		volume.HoldAmountCents = input.HoldAmountCents
+		volume.HoldReleaseID = release.ID
+		volume.Wallet = release.Wallet
+	}
+	return volume, nil
 }
 
 func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (clients.StorageAttachment, error) {

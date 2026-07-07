@@ -78,6 +78,40 @@ func TestCreateStorageVolumeHoldsBeforeFabric(t *testing.T) {
 	}
 }
 
+func TestDestroyComputeAllocationReleasesHoldAfterFabricDestroy(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
+
+	compute, err := service.DestroyComputeAllocation(context.Background(), DestroyResourceInput{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", HoldID: "hold-alpha", HoldAmountCents: 7862}, "destroy-compute")
+	if err != nil {
+		t.Fatalf("destroy compute: %v", err)
+	}
+	if compute.HoldReleaseID != "release-alpha" || compute.Wallet.AccountID != "acct-alpha" {
+		t.Fatalf("compute missing release linkage: %#v", compute)
+	}
+	wantCalls := []string{"fabric.compute-destroy", "ledger.release"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestDestroyStorageVolumeReleasesHoldAfterFabricDestroy(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
+
+	volume, err := service.DestroyStorageVolume(context.Background(), DestroyResourceInput{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", HoldID: "hold-alpha", HoldAmountCents: 101}, "destroy-storage")
+	if err != nil {
+		t.Fatalf("destroy storage: %v", err)
+	}
+	if volume.HoldReleaseID != "release-alpha" || volume.Wallet.AccountID != "acct-alpha" {
+		t.Fatalf("storage missing release linkage: %#v", volume)
+	}
+	wantCalls := []string{"fabric.storage-destroy", "ledger.release"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
 type fakeLedgerClient struct {
 	calls *[]string
 }
@@ -94,7 +128,7 @@ func (f *fakeLedgerClient) CreateHold(ctx context.Context, input clients.HoldInp
 
 func (f *fakeLedgerClient) ReleaseHold(ctx context.Context, input clients.HoldReleaseInput, idempotencyKey string) (clients.HoldReleaseResult, error) {
 	*f.calls = append(*f.calls, "ledger.release")
-	return clients.HoldReleaseResult{ID: "release-alpha", AccountID: input.AccountID, AmountCents: input.AmountCents, Status: "released"}, nil
+	return clients.HoldReleaseResult{ID: "release-alpha", AccountID: input.AccountID, AmountCents: input.AmountCents, Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, AvailableCents: 20000}}, nil
 }
 
 func (f *fakeLedgerClient) RecordEvidence(ctx context.Context, input clients.EvidenceInput, idempotencyKey string) (clients.EvidenceReceipt, error) {

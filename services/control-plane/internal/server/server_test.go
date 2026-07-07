@@ -311,6 +311,59 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	}
 }
 
+func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
+	app := newRuntimeApp()
+	app.workspaces["ws-alpha"] = map[string]any{
+		"id":                         "ws-alpha",
+		"ownerAccountId":             "acct-alpha",
+		"state":                      "running",
+		"status":                     "running",
+		"currentComputeAllocationId": "compute-alpha",
+		"computeAllocationId":        "compute-alpha",
+		"storageId":                  "storage-alpha",
+		"currentAttachmentId":        "attach-alpha",
+		"attachmentId":               "attach-alpha",
+		"runtime":                    map[string]any{"serviceName": "runtime-alpha"},
+		"access":                     map[string]any{"tokenStatus": "active"},
+	}
+
+	app.rememberCompute(map[string]any{
+		"id":              "compute-alpha",
+		"accountId":       "acct-alpha",
+		"status":          "destroyed",
+		"holdId":          "hold-compute",
+		"holdReleaseId":   "release-compute",
+		"holdAmountCents": 7862,
+		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": 20000, "frozenCents": 0, "availableCents": 20000, "currency": "CNY"},
+	})
+	workspace := app.workspaces["ws-alpha"]
+	if workspace["state"] != "suspended" || workspace["currentComputeAllocationId"] != "" {
+		t.Fatalf("compute destroy did not suspend and clear compute pointer: %#v", workspace)
+	}
+
+	app.rememberAttachment(map[string]any{"id": "attach-alpha", "status": "detached"}, map[string]any{})
+	if workspace["currentAttachmentId"] != "" || workspace["attachmentId"] != "" {
+		t.Fatalf("attachment detach did not clear workspace pointer: %#v", workspace)
+	}
+
+	app.rememberStorage(map[string]any{
+		"id":              "storage-alpha",
+		"accountId":       "acct-alpha",
+		"status":          "destroyed",
+		"holdId":          "hold-storage",
+		"holdReleaseId":   "release-storage",
+		"holdAmountCents": 101,
+		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": 20000, "frozenCents": 0, "availableCents": 20000, "currency": "CNY"},
+	})
+	access, ok := workspace["access"].(map[string]any)
+	if workspace["state"] != "data_deleted" || workspace["status"] != "unrecoverable" || !ok || access["tokenStatus"] != "disabled" {
+		t.Fatalf("storage destroy did not mark workspace unrecoverable: %#v", workspace)
+	}
+	if len(app.ledger) != 2 || app.ledger[0]["type"] != "compute_hold_released" || app.ledger[1]["type"] != "storage_hold_released" {
+		t.Fatalf("missing hold release ledger projection: %#v", app.ledger)
+	}
+}
+
 func TestResourceSettlementProjectsLedgerEvidenceIntoConsoleState(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 
@@ -443,6 +496,32 @@ func TestWorkspaceGatewaySetsActiveCookieForRootRuntimeApi(t *testing.T) {
 	}
 	if !slices.Equal(gotPaths, []string{"/", "/api/auth/user"}) {
 		t.Fatalf("proxied paths = %#v, want entry and root API paths", gotPaths)
+	}
+}
+
+func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_DOMAIN", "workspace.medopl.cn")
+	for _, tc := range []struct {
+		name string
+		row  map[string]any
+		want int
+	}{
+		{name: "suspended", row: map[string]any{"state": "suspended", "runtime": map[string]any{"serviceName": "runtime-alpha"}}, want: http.StatusConflict},
+		{name: "data deleted", row: map[string]any{"state": "data_deleted", "runtime": map[string]any{"serviceName": "runtime-alpha"}}, want: http.StatusGone},
+		{name: "access disabled", row: map[string]any{"state": "running", "access": map[string]any{"tokenStatus": "disabled"}, "runtime": map[string]any{"serviceName": "runtime-alpha"}}, want: http.StatusGone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newRuntimeApp()
+			app.workspaces["ws-alpha"] = tc.row
+			req := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
+			rec := httptest.NewRecorder()
+
+			app.proxyWorkspace(rec, req)
+
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
 	}
 }
 
