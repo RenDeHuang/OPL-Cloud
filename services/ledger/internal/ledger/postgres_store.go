@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT;
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS amount_cents BIGINT;
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_cents BIGINT;
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS currency TEXT;
+UPDATE wallet_transactions SET ledger_entry_id = id WHERE ledger_entry_id IS NULL;
+UPDATE wallet_transactions SET amount_cents = 0 WHERE amount_cents IS NULL;
+UPDATE wallet_transactions SET balance_cents = 0 WHERE balance_cents IS NULL;
+UPDATE wallet_transactions SET currency = 'CNY' WHERE currency IS NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN ledger_entry_id SET NOT NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN amount_cents SET NOT NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN balance_cents SET NOT NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN currency SET NOT NULL;
+
 	CREATE TABLE IF NOT EXISTS manual_topups (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES wallets(account_id),
@@ -60,11 +73,38 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	);
 
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS account_id TEXT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS amount_cents BIGINT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS currency TEXT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS operator_user_id TEXT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT;
+	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS wallet_transaction_id TEXT;
 	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS request_hash TEXT;
 	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS reason TEXT;
+	DO $$
+	BEGIN
+	  IF EXISTS (
+	    SELECT 1 FROM information_schema.columns
+	    WHERE table_schema = 'public' AND table_name = 'manual_topups' AND column_name = 'target_account_id'
+	  ) THEN
+	    EXECUTE 'UPDATE manual_topups SET account_id = target_account_id WHERE account_id IS NULL';
+	  END IF;
+	END $$;
+	UPDATE manual_topups SET account_id = id WHERE account_id IS NULL;
+	UPDATE manual_topups SET amount_cents = 0 WHERE amount_cents IS NULL;
+	UPDATE manual_topups SET currency = 'CNY' WHERE currency IS NULL;
+	UPDATE manual_topups SET operator_user_id = '' WHERE operator_user_id IS NULL;
+	UPDATE manual_topups SET ledger_entry_id = id WHERE ledger_entry_id IS NULL;
+	UPDATE manual_topups SET wallet_transaction_id = id WHERE wallet_transaction_id IS NULL;
 	UPDATE manual_topups SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
 	UPDATE manual_topups SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
+	ALTER TABLE manual_topups ALTER COLUMN account_id SET NOT NULL;
+	ALTER TABLE manual_topups ALTER COLUMN amount_cents SET NOT NULL;
+	ALTER TABLE manual_topups ALTER COLUMN currency SET NOT NULL;
+	ALTER TABLE manual_topups ALTER COLUMN operator_user_id SET NOT NULL;
+	ALTER TABLE manual_topups ALTER COLUMN ledger_entry_id SET NOT NULL;
+	ALTER TABLE manual_topups ALTER COLUMN wallet_transaction_id SET NOT NULL;
 	ALTER TABLE manual_topups ALTER COLUMN idempotency_key SET NOT NULL;
 	ALTER TABLE manual_topups ALTER COLUMN request_hash SET NOT NULL;
 
