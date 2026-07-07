@@ -19,8 +19,16 @@ func main() {
 		clients.NewLedgerHTTPClient(ledgerURL, nil),
 		clients.NewFabricHTTPClient(fabricURL, nil),
 	)
+	store, err := controlserver.ReadModelStoreFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	handler, err := controlserver.NewPersistentServer(service, store)
+	if err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("control-plane listening on %s", addr)
-	if err := http.ListenAndServe(addr, controlserver.NewServer(service)); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
 }

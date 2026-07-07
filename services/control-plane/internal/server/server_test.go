@@ -97,6 +97,76 @@ func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	}
 }
 
+func TestPersistentReadModelSurvivesServerRestart(t *testing.T) {
+	path := t.TempDir() + "/control-plane-state.json"
+	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	server, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	if err != nil {
+		t.Fatalf("create persistent server: %v", err)
+	}
+	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
+
+	restarted, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	if err != nil {
+		t.Fatalf("restart persistent server: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
+	rec := httptest.NewRecorder()
+	restarted.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var state map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	computes := state["computeAllocations"].([]any)
+	if len(computes) != 1 || computes[0].(map[string]any)["id"] == "" {
+		t.Fatalf("compute allocation did not survive restart: %#v", computes)
+	}
+	ledger := state["billingLedger"].([]any)
+	if len(ledger) != 1 || ledger[0].(map[string]any)["type"] != "compute_hold" {
+		t.Fatalf("compute hold ledger did not survive restart: %#v", ledger)
+	}
+	wallet := state["wallet"].(map[string]any)
+	if wallet["frozenCents"].(float64) <= 0 {
+		t.Fatalf("wallet frozen state did not survive restart: %#v", wallet)
+	}
+}
+
+func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
+	path := t.TempDir() + "/control-plane-state.json"
+	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	server, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	if err != nil {
+		t.Fatalf("create persistent server: %v", err)
+	}
+	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
+	createResource(t, server, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
+	createResource(t, server, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"compute-from-fabric","storageId":"volume-from-fabric","mountPath":"/data"}`)
+	workspace := createResource(t, server, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
+	createResource(t, server, http.MethodPost, "/api/workspaces/delete-token", `{"workspaceId":"`+stringValue(workspace["id"])+`"}`)
+
+	restarted, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	if err != nil {
+		t.Fatalf("restart persistent server: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
+	rec := httptest.NewRecorder()
+	restarted.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var state map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	workspaces := state["workspaces"].([]any)
+	if len(workspaces) != 1 || nested(workspaces[0].(map[string]any), "access", "tokenStatus") != "disabled" {
+		t.Fatalf("workspace token state did not survive restart: %#v", workspaces)
+	}
+}
+
 type fakeLedgerClient struct{}
 
 type fakeLedgerClientWithKeys struct {

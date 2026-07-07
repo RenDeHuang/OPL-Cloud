@@ -13,7 +13,18 @@ import (
 )
 
 func NewServer(service *controlplane.Service) http.Handler {
-	app := newRuntimeApp()
+	handler, err := NewPersistentServer(service, nil)
+	if err != nil {
+		panic(err)
+	}
+	return handler
+}
+
+func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (http.Handler, error) {
+	app, err := newRuntimeAppWithStore(store)
+	if err != nil {
+		return nil, err
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/w/", app.proxyWorkspace)
 	mux.HandleFunc("/login", app.proxyWorkspaceRoot)
@@ -81,11 +92,29 @@ func NewServer(service *controlplane.Service) http.Handler {
 	})
 	mux.HandleFunc("POST /api/workspaces/reset-token", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		writeJSON(w, http.StatusOK, map[string]any{"id": stringField(input, "workspaceId", "ws-local"), "tokenStatus": "active"})
+		workspace, ok, err := app.setWorkspaceAccess(stringField(input, "workspaceId", ""), "active")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "workspace_not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": workspace["id"], "tokenStatus": nested(workspace, "access", "tokenStatus"), "access": workspace["access"]})
 	})
 	mux.HandleFunc("POST /api/workspaces/delete-token", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		writeJSON(w, http.StatusOK, map[string]any{"id": stringField(input, "workspaceId", "ws-local"), "tokenStatus": "deleted"})
+		workspace, ok, err := app.setWorkspaceAccess(stringField(input, "workspaceId", ""), "disabled")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "workspace_not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": workspace["id"], "tokenStatus": nested(workspace, "access", "tokenStatus"), "access": workspace["access"]})
 	})
 	mux.HandleFunc("POST /api/workspaces/runtime-status", func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -119,7 +148,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		app.rememberWorkspaceProjection(workspace)
+		if err := app.rememberWorkspaceProjection(workspace); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusCreated, workspaceResponse(structToMap(workspace)))
 	})
 	mux.HandleFunc("GET /api/billing/summary", func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +173,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 		}, idempotencyKey)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		if err := app.rememberManualTopUp(result); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, manualTopUpResponse(result))
@@ -166,7 +202,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		result = completeSettlementResult(result, settlement)
-		app.rememberResourceSettlement(result)
+		if err := app.rememberResourceSettlement(result); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusCreated, settlementResponse(result))
 	})
 	mux.HandleFunc("POST /api/billing/reconciliation", func(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +245,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		body := computeResponse(structToMap(compute))
-		app.rememberCompute(body)
+		if err := app.rememberCompute(body); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusAccepted, body)
 	})
 	mux.HandleFunc("GET /api/compute-allocations/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +261,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 		fresh, err := service.GetComputeAllocation(r.Context(), id)
 		if err == nil && fresh.ID != "" {
 			body := computeResponse(structToMap(fresh))
-			app.rememberCompute(body)
+			if err := app.rememberCompute(body); err != nil {
+				writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+				return
+			}
 			writeJSON(w, http.StatusOK, body)
 			return
 		}
@@ -239,7 +284,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		body := computeResponse(structToMap(compute))
-		app.rememberCompute(body)
+		if err := app.rememberCompute(body); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/storage-volumes", func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +303,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		body := storageResponse(structToMap(storage))
-		app.rememberStorage(body)
+		if err := app.rememberStorage(body); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusAccepted, body)
 	})
 	mux.HandleFunc("POST /api/storage-volumes/destroy", func(w http.ResponseWriter, r *http.Request) {
@@ -268,7 +319,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		body := storageResponse(structToMap(storage))
-		app.rememberStorage(body)
+		if err := app.rememberStorage(body); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +337,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)
-		app.rememberAttachment(body, input)
+		if err := app.rememberAttachment(body, input); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusAccepted, body)
 	})
 	mux.HandleFunc("POST /api/storage-attachments/detach", func(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +351,10 @@ func NewServer(service *controlplane.Service) http.Handler {
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)
-		app.rememberAttachment(body, input)
+		if err := app.rememberAttachment(body, input); err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
 		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("GET /api/support/tickets", func(w http.ResponseWriter, r *http.Request) {
@@ -308,19 +368,44 @@ func NewServer(service *controlplane.Service) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"receipts": []any{}})
 	})
 	mux.HandleFunc("POST /api/organizations", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusCreated, app.createOrganization(decodeJSON(r)))
+		body, err := app.createOrganization(decodeJSON(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, body)
 	})
 	mux.HandleFunc("POST /api/organizations/members", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusCreated, app.createMembership(decodeJSON(r)))
+		body, err := app.createMembership(decodeJSON(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, body)
 	})
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusCreated, app.createUser(decodeJSON(r)))
+		body, err := app.createUser(decodeJSON(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, body)
 	})
 	mux.HandleFunc("POST /api/users/disable", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, app.setUserStatus(decodeJSON(r), "disabled"))
+		body, err := app.setUserStatus(decodeJSON(r), "disabled")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/users/delete", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, app.setUserStatus(decodeJSON(r), "deleted"))
+		body, err := app.setUserStatus(decodeJSON(r), "deleted")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/operator/cleanup-workspace-access", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"cleaned": []any{}, "skipped": []any{}})
@@ -328,7 +413,7 @@ func NewServer(service *controlplane.Service) http.Handler {
 	mux.HandleFunc("GET /api/admin/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"service": "control-plane", "status": "ok"})
 	})
-	return mux
+	return mux, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

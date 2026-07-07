@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 type runtimeApp struct {
 	mu          sync.Mutex
+	store       ReadModelStore
 	computes    map[string]map[string]any
 	storages    map[string]map[string]any
 	attachments map[string]map[string]any
@@ -33,6 +35,24 @@ type runtimeApp struct {
 }
 
 func newRuntimeApp() *runtimeApp {
+	return newRuntimeAppEmpty()
+}
+
+func newRuntimeAppWithStore(store ReadModelStore) (*runtimeApp, error) {
+	app := newRuntimeAppEmpty()
+	app.store = store
+	if store == nil {
+		return app, nil
+	}
+	snapshot, err := store.Load(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	app.applySnapshot(snapshot)
+	return app, nil
+}
+
+func newRuntimeAppEmpty() *runtimeApp {
 	return &runtimeApp{
 		computes:    map[string]map[string]any{},
 		storages:    map[string]map[string]any{},
@@ -43,6 +63,70 @@ func newRuntimeApp() *runtimeApp {
 		memberships: map[string]map[string]any{},
 		wallets:     map[string]map[string]any{},
 	}
+}
+
+func (app *runtimeApp) snapshotLocked() readModelSnapshot {
+	return readModelSnapshot{
+		Version:     1,
+		Computes:    cloneMapMap(app.computes),
+		Storages:    cloneMapMap(app.storages),
+		Attachments: cloneMapMap(app.attachments),
+		Workspaces:  cloneMapMap(app.workspaces),
+		Users:       cloneMapMap(app.users),
+		Orgs:        cloneMapMap(app.orgs),
+		Memberships: cloneMapMap(app.memberships),
+		Wallets:     cloneMapMap(app.wallets),
+		Ledger:      cloneMapSlice(app.ledger),
+		Usage:       cloneMapSlice(app.usage),
+		WalletTx:    cloneMapSlice(app.walletTx),
+		Topups:      cloneMapSlice(app.topups),
+	}
+}
+
+func (app *runtimeApp) applySnapshot(snapshot readModelSnapshot) {
+	if len(snapshot.Computes) > 0 {
+		app.computes = cloneMapMap(snapshot.Computes)
+	}
+	if len(snapshot.Storages) > 0 {
+		app.storages = cloneMapMap(snapshot.Storages)
+	}
+	if len(snapshot.Attachments) > 0 {
+		app.attachments = cloneMapMap(snapshot.Attachments)
+	}
+	if len(snapshot.Workspaces) > 0 {
+		app.workspaces = cloneMapMap(snapshot.Workspaces)
+	}
+	if len(snapshot.Users) > 0 {
+		app.users = cloneMapMap(snapshot.Users)
+	}
+	if len(snapshot.Orgs) > 0 {
+		app.orgs = cloneMapMap(snapshot.Orgs)
+	}
+	if len(snapshot.Memberships) > 0 {
+		app.memberships = cloneMapMap(snapshot.Memberships)
+	}
+	if len(snapshot.Wallets) > 0 {
+		app.wallets = cloneMapMap(snapshot.Wallets)
+	}
+	if snapshot.Ledger != nil {
+		app.ledger = cloneMapSlice(snapshot.Ledger)
+	}
+	if snapshot.Usage != nil {
+		app.usage = cloneMapSlice(snapshot.Usage)
+	}
+	if snapshot.WalletTx != nil {
+		app.walletTx = cloneMapSlice(snapshot.WalletTx)
+	}
+	if snapshot.Topups != nil {
+		app.topups = cloneMapSlice(snapshot.Topups)
+	}
+}
+
+func (app *runtimeApp) persistLocked() error {
+	if app.store == nil {
+		return nil
+	}
+	return app.store.Save(context.Background(), app.snapshotLocked())
 }
 
 func (app *runtimeApp) state(accountID string) map[string]any {
@@ -80,17 +164,17 @@ func (app *runtimeApp) currentUserLocked() map[string]any {
 	return map[string]any{"id": "usr-admin", "email": "owner@example.com", "accountId": "acct-admin", "role": "admin", "status": "active"}
 }
 
-func (app *runtimeApp) createOrganization(input map[string]any) map[string]any {
+func (app *runtimeApp) createOrganization(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	name := stringField(input, "name", "Organization")
 	id := "org-" + compactID(name+"-"+time.Now().UTC().Format("20060102150405.000000000"))
 	org := map[string]any{"id": id, "name": name, "billingAccountId": stringField(input, "billingAccountId", "acct-admin"), "status": "active"}
 	app.orgs[id] = org
-	return cloneMap(org)
+	return cloneMap(org), app.persistLocked()
 }
 
-func (app *runtimeApp) createMembership(input map[string]any) map[string]any {
+func (app *runtimeApp) createMembership(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	orgID := stringField(input, "organizationId", "")
@@ -98,20 +182,20 @@ func (app *runtimeApp) createMembership(input map[string]any) map[string]any {
 	id := "mem-" + stableID(orgID, userID, time.Now().UTC().String())[:12]
 	membership := map[string]any{"id": id, "organizationId": orgID, "userId": userID, "role": stringField(input, "role", "member"), "status": "active"}
 	app.memberships[id] = membership
-	return cloneMap(membership)
+	return cloneMap(membership), app.persistLocked()
 }
 
-func (app *runtimeApp) createUser(input map[string]any) map[string]any {
+func (app *runtimeApp) createUser(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	email := stringField(input, "email", "owner@example.com")
 	id := "usr-" + compactID(email+"-"+time.Now().UTC().Format("20060102150405.000000000"))
 	user := map[string]any{"id": id, "email": email, "accountId": stringField(input, "accountId", "acct-admin"), "role": stringField(input, "role", "owner"), "status": "active"}
 	app.users[id] = user
-	return cloneMap(user)
+	return cloneMap(user), app.persistLocked()
 }
 
-func (app *runtimeApp) setUserStatus(input map[string]any, status string) map[string]any {
+func (app *runtimeApp) setUserStatus(input map[string]any, status string) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	id := stringField(input, "userId", "")
@@ -121,10 +205,25 @@ func (app *runtimeApp) setUserStatus(input map[string]any, status string) map[st
 	}
 	user["status"] = status
 	app.users[id] = user
-	return cloneMap(user)
+	return cloneMap(user), app.persistLocked()
 }
 
-func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspaceProjection) {
+func (app *runtimeApp) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	workspace := app.workspaces[workspaceID]
+	if workspace == nil {
+		return nil, false, nil
+	}
+	access, _ := workspace["access"].(map[string]any)
+	access = cloneMap(access)
+	access["tokenStatus"] = tokenStatus
+	access["requiresLogin"] = false
+	workspace["access"] = access
+	return cloneMap(workspace), true, app.persistLocked()
+}
+
+func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspaceProjection) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
@@ -149,9 +248,10 @@ func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspacePro
 		"evidenceId":                 workspace.EvidenceID,
 		"access":                     map[string]any{"tokenStatus": "active", "requiresLogin": false},
 	}
+	return app.persistLocked()
 }
 
-func (app *runtimeApp) rememberCompute(allocation any) {
+func (app *runtimeApp) rememberCompute(allocation any) error {
 	if row, ok := allocation.(map[string]any); ok {
 		app.mu.Lock()
 		defer app.mu.Unlock()
@@ -160,13 +260,15 @@ func (app *runtimeApp) rememberCompute(allocation any) {
 		if stringValue(row["status"]) == "destroyed" {
 			app.rememberReleaseLocked(accountID, "compute", stringValue(row["id"]), row)
 			app.suspendWorkspacesForComputeLocked(stringValue(row["id"]))
-			return
+			return app.persistLocked()
 		}
 		app.rememberHoldLocked(accountID, "compute", stringValue(row["id"]), row)
+		return app.persistLocked()
 	}
+	return nil
 }
 
-func (app *runtimeApp) rememberStorage(volume any) {
+func (app *runtimeApp) rememberStorage(volume any) error {
 	if row, ok := volume.(map[string]any); ok {
 		app.mu.Lock()
 		defer app.mu.Unlock()
@@ -175,10 +277,12 @@ func (app *runtimeApp) rememberStorage(volume any) {
 		if stringValue(row["status"]) == "destroyed" {
 			app.rememberReleaseLocked(accountID, "storage", stringValue(row["id"]), row)
 			app.markWorkspacesStorageDestroyedLocked(stringValue(row["id"]))
-			return
+			return app.persistLocked()
 		}
 		app.rememberHoldLocked(accountID, "storage", stringValue(row["id"]), row)
+		return app.persistLocked()
 	}
+	return nil
 }
 
 func (app *runtimeApp) rememberHoldLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
@@ -215,7 +319,7 @@ func (app *runtimeApp) rememberReleaseLocked(accountID string, resourceType stri
 	app.ledger = append(app.ledger, ledger)
 }
 
-func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) {
+func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) error {
 	if row, ok := attachment.(map[string]any); ok {
 		row["computeAllocationId"] = stringField(input, "computeAllocationId", "")
 		row["storageId"] = firstNonEmpty(stringValue(row["volumeId"]), stringField(input, "storageId", ""))
@@ -226,7 +330,9 @@ func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) 
 		if stringValue(row["status"]) == "detached" {
 			app.clearWorkspacesForAttachmentLocked(stringValue(row["id"]))
 		}
+		return app.persistLocked()
 	}
+	return nil
 }
 
 func (app *runtimeApp) suspendWorkspacesForComputeLocked(computeID string) {
@@ -452,15 +558,17 @@ func (app *runtimeApp) addLedgerLocked(accountID string, entryType string, ids m
 	return entry
 }
 
-func (app *runtimeApp) addUsageLocked(accountID string, resourceType string, ids map[string]any) {
-	entry := map[string]any{"id": "usage-" + stableID(accountID, resourceType, time.Now().UTC().String())[:12], "accountId": accountID, "resourceType": resourceType}
-	for key, value := range ids {
-		entry[key] = value
-	}
-	app.usage = append(app.usage, entry)
+func (app *runtimeApp) rememberManualTopUp(result clients.ManualTopUpResult) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.topups = append(app.topups, structToMap(result.TopUp))
+	app.ledger = append(app.ledger, map[string]any{"id": result.LedgerEntry.ID, "accountId": result.LedgerEntry.AccountID, "type": "manual_topup", "amountCents": result.LedgerEntry.AmountCents})
+	app.walletTx = append(app.walletTx, map[string]any{"id": result.WalletTransaction.ID, "accountId": result.WalletTransaction.AccountID, "type": "manual_topup", "ledgerEntryId": result.WalletTransaction.LedgerEntryID, "amountCents": result.WalletTransaction.AmountCents})
+	app.wallets[result.Wallet.AccountID] = walletProjection(result.Wallet)
+	return app.persistLocked()
 }
 
-func (app *runtimeApp) rememberResourceSettlement(result clients.ResourceSettlementResult) {
+func (app *runtimeApp) rememberResourceSettlement(result clients.ResourceSettlementResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
@@ -487,6 +595,7 @@ func (app *runtimeApp) rememberResourceSettlement(result clients.ResourceSettlem
 	app.usage = append(app.usage, usage)
 	app.walletTx = append(app.walletTx, map[string]any{"id": result.WalletTransactionID, "accountId": result.AccountID, "type": debitType, "metadata": ids})
 	app.wallets[result.AccountID] = walletProjection(result.Wallet)
+	return app.persistLocked()
 }
 
 func (app *runtimeApp) resourceLedgerEvidenceLocked() []any {
@@ -553,9 +662,7 @@ func (app *runtimeApp) wallet(accountID string) map[string]any {
 	if wallet, ok := app.wallets[accountID]; ok {
 		return wallet
 	}
-	wallet := map[string]any{"id": accountID, "accountId": accountID, "balance": float64(0), "frozen": float64(0), "available": float64(0), "totalRecharged": float64(0)}
-	app.wallets[accountID] = wallet
-	return wallet
+	return map[string]any{"id": accountID, "accountId": accountID, "balance": float64(0), "frozen": float64(0), "available": float64(0), "totalRecharged": float64(0)}
 }
 
 func walletProjection(wallet clients.Wallet) map[string]any {
@@ -688,6 +795,22 @@ func cloneMap(input map[string]any) map[string]any {
 	output := map[string]any{}
 	for key, value := range input {
 		output[key] = value
+	}
+	return output
+}
+
+func cloneMapMap(input map[string]map[string]any) map[string]map[string]any {
+	output := map[string]map[string]any{}
+	for key, value := range input {
+		output[key] = cloneMap(value)
+	}
+	return output
+}
+
+func cloneMapSlice(input []map[string]any) []map[string]any {
+	output := make([]map[string]any, 0, len(input))
+	for _, item := range input {
+		output = append(output, cloneMap(item))
 	}
 	return output
 }
