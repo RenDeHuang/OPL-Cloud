@@ -437,7 +437,7 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 
-	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"pi"}`)
+	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
 	createResource(t, server, http.MethodPost, "/api/billing/topups", `{"accountId":"acct-alpha","amount":100,"idempotencyKey":"topup-alpha"}`)
 	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123}`)
@@ -680,8 +680,9 @@ func TestOverviewHTTP(t *testing.T) {
 func TestOperatorLoginUsesConfiguredToken(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
 	server := NewServer(controlplane.NewService(nil, nil))
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{"operatorToken":"operator-secret"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-opl-operator-token", "operator-secret")
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -700,14 +701,80 @@ func TestOperatorLoginUsesConfiguredToken(t *testing.T) {
 func TestOperatorLoginRejectsInvalidToken(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
 	server := NewServer(controlplane.NewService(nil, nil))
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{"operatorToken":"wrong"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-opl-operator-token", "wrong")
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestLoginSessionMeAndLogoutUseStoredPasswordHash(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!"}`)
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"owner@lab.example","password":"CorrectHorseBatteryStaple!"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	server.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+	if loginRec.Header().Get("x-opl-csrf-token") == "" || len(loginRec.Result().Cookies()) == 0 {
+		t.Fatalf("login must issue csrf and session cookie")
+	}
+	var loginPayload map[string]any
+	if err := json.NewDecoder(loginRec.Body).Decode(&loginPayload); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	user := loginPayload["user"].(map[string]any)
+	if user["passwordHash"] != nil || user["email"] != "owner@lab.example" {
+		t.Fatalf("login leaked credentials or wrong user: %#v", user)
+	}
+
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	for _, cookie := range loginRec.Result().Cookies() {
+		meReq.AddCookie(cookie)
+	}
+	meRec := httptest.NewRecorder()
+	server.ServeHTTP(meRec, meReq)
+	if meRec.Code != http.StatusOK {
+		t.Fatalf("me status = %d: %s", meRec.Code, meRec.Body.String())
+	}
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/auth/logout", bytes.NewBufferString(`{}`))
+	for _, cookie := range loginRec.Result().Cookies() {
+		logoutReq.AddCookie(cookie)
+	}
+	logoutRec := httptest.NewRecorder()
+	server.ServeHTTP(logoutRec, logoutReq)
+	if logoutRec.Code != http.StatusOK {
+		t.Fatalf("logout status = %d: %s", logoutRec.Code, logoutRec.Body.String())
+	}
+	afterLogoutReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	for _, cookie := range loginRec.Result().Cookies() {
+		afterLogoutReq.AddCookie(cookie)
+	}
+	afterLogoutRec := httptest.NewRecorder()
+	server.ServeHTTP(afterLogoutRec, afterLogoutReq)
+	if afterLogoutRec.Code != http.StatusUnauthorized {
+		t.Fatalf("me after logout status = %d, want 401", afterLogoutRec.Code)
+	}
+
+	managementReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
+	managementRec := httptest.NewRecorder()
+	server.ServeHTTP(managementRec, managementReq)
+	var management map[string]any
+	if err := json.NewDecoder(managementRec.Body).Decode(&management); err != nil {
+		t.Fatalf("decode management: %v", err)
+	}
+	managementUser := management["users"].([]any)[0].(map[string]any)
+	if managementUser["passwordHash"] != nil {
+		t.Fatalf("management state leaked password hash: %#v", managementUser)
 	}
 }
 

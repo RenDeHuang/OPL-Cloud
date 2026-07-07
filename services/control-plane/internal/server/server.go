@@ -35,28 +35,50 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"token": "control-plane-local-token"})
+		payload, sessionID, err := app.login(decodeJSON(r))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials")
+			return
+		}
+		http.SetCookie(w, sessionCookie(sessionID, 12*60*60))
+		w.Header().Set("x-opl-csrf-token", stringValue(payload["csrfToken"]))
+		writeJSON(w, http.StatusOK, payload)
 	})
 	mux.HandleFunc("POST /api/auth/operator-login", func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
 		expectedToken := strings.TrimSpace(os.Getenv("OPL_OPERATOR_SUMMARY_TOKEN"))
-		if expectedToken == "" || stringField(input, "operatorToken", "") != expectedToken {
+		if expectedToken == "" || r.Header.Get("x-opl-operator-token") != expectedToken {
 			writeError(w, http.StatusUnauthorized, "operator_token_invalid")
 			return
 		}
-		session := sessionPayload()
-		w.Header().Set("Set-Cookie", "opl_session=control-plane-operator; Path=/; HttpOnly; Secure; SameSite=Lax")
-		w.Header().Set("x-opl-csrf-token", session["csrfToken"].(string))
-		writeJSON(w, http.StatusOK, session)
+		payload, sessionID, err := app.operatorLogin()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "operator_session_failed")
+			return
+		}
+		http.SetCookie(w, sessionCookie(sessionID, 12*60*60))
+		w.Header().Set("x-opl-csrf-token", stringValue(payload["csrfToken"]))
+		writeJSON(w, http.StatusOK, payload)
 	})
 	mux.HandleFunc("GET /api/auth/me", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, sessionPayload())
+		payload, ok := app.session(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
+			return
+		}
+		writeJSON(w, http.StatusOK, payload)
 	})
 	mux.HandleFunc("POST /api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		app.logout(r)
+		http.SetCookie(w, sessionCookie("", -1))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"id": "usr-admin", "role": "admin"})
+		payload, ok := app.session(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
+			return
+		}
+		writeJSON(w, http.StatusOK, payload["user"])
 	})
 	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, app.state(r.URL.Query().Get("accountId")))
@@ -386,7 +408,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		body, err := app.createUser(decodeJSON(r))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -686,12 +708,5 @@ func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime) map[string
 		"status":      runtime.Status,
 		"ready":       ready,
 		"checks":      checks,
-	}
-}
-
-func sessionPayload() map[string]any {
-	return map[string]any{
-		"user":      map[string]any{"id": "usr-admin", "email": "owner@example.com", "accountId": "acct-admin", "role": "admin", "status": "active"},
-		"csrfToken": "csrf-local",
 	}
 }

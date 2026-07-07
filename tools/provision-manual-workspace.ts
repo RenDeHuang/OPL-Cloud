@@ -40,14 +40,15 @@ function authHeaders(auth = null) {
   };
 }
 
-async function requestJson({ origin, path, method = "GET", body = null, auth = null }) {
-  const response = await fetch(endpoint(origin, path), {
-    method,
-    headers: {
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...authHeaders(auth)
-    },
-    body: body ? JSON.stringify(body) : undefined
+async function requestJson({ origin, path, method = "GET", body = null, auth = null, headers: extraHeaders = {} }) {
+	const response = await fetch(endpoint(origin, path), {
+		method,
+		headers: {
+			...(body ? { "content-type": "application/json" } : {}),
+			...authHeaders(auth),
+			...extraHeaders
+		},
+		body: body ? JSON.stringify(body) : undefined
   });
   const payload = await readResponse(response);
   if (!response.ok) {
@@ -66,11 +67,12 @@ async function requestJson({ origin, path, method = "GET", body = null, auth = n
 async function operatorSession({ origin, operatorToken }) {
   if (!operatorToken) throw new Error("operator_token_required");
   const { payload, response } = await requestJson({
-    origin,
-    path: "/api/auth/operator-login",
-    method: "POST",
-    body: { operatorToken }
-  });
+		origin,
+		path: "/api/auth/operator-login",
+		method: "POST",
+		body: {},
+		headers: { "x-opl-operator-token": operatorToken }
+	});
   return {
     cookie: cookieHeaderFromSetCookie(response.headers?.get?.("set-cookie") || ""),
     csrf: response.headers?.get?.("x-opl-csrf-token") || payload?.csrfToken || ""

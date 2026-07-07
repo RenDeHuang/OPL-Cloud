@@ -94,21 +94,22 @@ function authHeaderValues(auth = null) {
   return headers;
 }
 
-function requestHeaders({ body = null, auth = null, idempotencyKey = "" } = {}) {
-  const headers = {
-    ...(body ? { "content-type": "application/json" } : {}),
-    ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
-    ...authHeaderValues(auth)
-  };
-  return Object.keys(headers).length > 0 ? headers : undefined;
+function requestHeaders({ body = null, auth = null, idempotencyKey = "", headers: extraHeaders = {} } = {}) {
+	const headers = {
+		...(body ? { "content-type": "application/json" } : {}),
+		...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+		...authHeaderValues(auth),
+		...extraHeaders
+	};
+	return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-async function requestJsonWithResponse({ fetchImpl, origin, path, method = "GET", body = null, auth = null, idempotencyKey = "" }) {
-  const response = await fetchImpl(endpoint(origin, path), {
-    method,
-    headers: requestHeaders({ body, auth, idempotencyKey }),
-    body: body ? JSON.stringify(body) : undefined
-  });
+async function requestJsonWithResponse({ fetchImpl, origin, path, method = "GET", body = null, auth = null, idempotencyKey = "", headers = {} }) {
+	const response = await fetchImpl(endpoint(origin, path), {
+		method,
+		headers: requestHeaders({ body, auth, idempotencyKey, headers }),
+		body: body ? JSON.stringify(body) : undefined
+	});
   const payload = await readResponse(response);
   if (!response.ok) {
     const message = typeof payload === "string" ? payload : payload.error || JSON.stringify(payload);
@@ -181,11 +182,12 @@ async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
   if (!operatorToken) return null;
   const { payload, response } = await requestJsonWithResponse({
     fetchImpl,
-    origin,
-    path: "/api/auth/operator-login",
-    method: "POST",
-    body: { operatorToken }
-  });
+		origin,
+		path: "/api/auth/operator-login",
+		method: "POST",
+		body: {},
+		headers: { "x-opl-operator-token": operatorToken }
+	});
   return {
     cookie: cookieHeaderFromSetCookie(setCookieHeader(response.headers)),
     csrf: response.headers?.get?.("x-opl-csrf-token") || payload?.csrfToken || ""

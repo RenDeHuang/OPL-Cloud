@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -32,6 +33,7 @@ type runtimeApp struct {
 	usage       []map[string]any
 	walletTx    []map[string]any
 	topups      []map[string]any
+	sessions    map[string]sessionRecord
 }
 
 func newRuntimeApp() *runtimeApp {
@@ -41,14 +43,16 @@ func newRuntimeApp() *runtimeApp {
 func newRuntimeAppWithStore(store ReadModelStore) (*runtimeApp, error) {
 	app := newRuntimeAppEmpty()
 	app.store = store
-	if store == nil {
-		return app, nil
+	if store != nil {
+		snapshot, err := store.Load(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		app.applySnapshot(snapshot)
 	}
-	snapshot, err := store.Load(context.Background())
-	if err != nil {
+	if err := app.importBootstrapUsers(); err != nil {
 		return nil, err
 	}
-	app.applySnapshot(snapshot)
 	return app, nil
 }
 
@@ -62,6 +66,7 @@ func newRuntimeAppEmpty() *runtimeApp {
 		orgs:        map[string]map[string]any{},
 		memberships: map[string]map[string]any{},
 		wallets:     map[string]map[string]any{},
+		sessions:    map[string]sessionRecord{},
 	}
 }
 
@@ -160,9 +165,9 @@ func (app *runtimeApp) state(accountID string) map[string]any {
 
 func (app *runtimeApp) currentUserLocked() map[string]any {
 	if user, ok := app.users["usr-admin"]; ok {
-		return cloneMap(user)
+		return sanitizeUser(user)
 	}
-	return map[string]any{"id": "usr-admin", "email": "owner@example.com", "accountId": "acct-admin", "role": "admin", "status": "active"}
+	return nil
 }
 
 func (app *runtimeApp) createOrganization(input map[string]any) (map[string]any, error) {
@@ -191,9 +196,17 @@ func (app *runtimeApp) createUser(input map[string]any) (map[string]any, error) 
 	defer app.mu.Unlock()
 	email := stringField(input, "email", "owner@example.com")
 	id := "usr-" + compactID(email+"-"+time.Now().UTC().Format("20060102150405.000000000"))
-	user := map[string]any{"id": id, "email": email, "accountId": stringField(input, "accountId", "acct-admin"), "role": stringField(input, "role", "owner"), "status": "active"}
+	password := stringField(input, "password", "")
+	if password == "" {
+		return nil, errors.New("missing_password")
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	user := map[string]any{"id": id, "email": email, "accountId": stringField(input, "accountId", "acct-admin"), "role": stringField(input, "role", "owner"), "status": "active", "passwordHash": passwordHash}
 	app.users[id] = user
-	return cloneMap(user), app.persistLocked()
+	return sanitizeUser(user), app.persistLocked()
 }
 
 func (app *runtimeApp) setUserStatus(input map[string]any, status string) (map[string]any, error) {
@@ -206,7 +219,97 @@ func (app *runtimeApp) setUserStatus(input map[string]any, status string) (map[s
 	}
 	user["status"] = status
 	app.users[id] = user
-	return cloneMap(user), app.persistLocked()
+	return sanitizeUser(user), app.persistLocked()
+}
+
+func (app *runtimeApp) importBootstrapUsers() error {
+	users, err := bootstrapUsersFromEnv()
+	if err != nil {
+		return err
+	}
+	if len(users) == 0 {
+		return nil
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if len(app.users) > 0 {
+		return nil
+	}
+	for _, user := range users {
+		app.users[stringValue(user["id"])] = user
+	}
+	return app.persistLocked()
+}
+
+func (app *runtimeApp) login(input map[string]any) (map[string]any, string, error) {
+	email := strings.ToLower(strings.TrimSpace(stringField(input, "email", "")))
+	password := stringField(input, "password", "")
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	for _, user := range app.users {
+		if strings.ToLower(stringValue(user["email"])) != email {
+			continue
+		}
+		if stringValue(user["status"]) != "active" || !verifyPassword(password, stringValue(user["passwordHash"])) {
+			return nil, "", errors.New("invalid_credentials")
+		}
+		return app.createSessionLocked(user)
+	}
+	return nil, "", errors.New("invalid_credentials")
+}
+
+func (app *runtimeApp) operatorLogin() (map[string]any, string, error) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	for _, user := range app.users {
+		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
+			return app.createSessionLocked(user)
+		}
+	}
+	operator := map[string]any{"id": "usr-operator", "email": "operator@opl.local", "accountId": "acct-operator", "role": "admin", "status": "active"}
+	return app.createSessionLocked(operator)
+}
+
+func (app *runtimeApp) createSessionLocked(user map[string]any) (map[string]any, string, error) {
+	sessionID, err := randomToken(32)
+	if err != nil {
+		return nil, "", err
+	}
+	csrf, err := randomToken(24)
+	if err != nil {
+		return nil, "", err
+	}
+	app.sessions[sessionID] = sessionRecord{ID: sessionID, UserID: stringValue(user["id"]), CSRF: csrf, ExpiresAt: time.Now().UTC().Add(12 * time.Hour)}
+	return map[string]any{"user": sanitizeUser(user), "csrfToken": csrf, "expiresAt": app.sessions[sessionID].ExpiresAt.Format(time.RFC3339)}, sessionID, nil
+}
+
+func (app *runtimeApp) session(r *http.Request) (map[string]any, bool) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return nil, false
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	session, ok := app.sessions[cookie.Value]
+	if !ok || time.Now().UTC().After(session.ExpiresAt) {
+		delete(app.sessions, cookie.Value)
+		return nil, false
+	}
+	user := app.users[session.UserID]
+	if user == nil || stringValue(user["status"]) != "active" {
+		return nil, false
+	}
+	return map[string]any{"user": sanitizeUser(user), "csrfToken": session.CSRF, "expiresAt": session.ExpiresAt.Format(time.RFC3339)}, true
+}
+
+func (app *runtimeApp) logout(r *http.Request) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	delete(app.sessions, cookie.Value)
 }
 
 func (app *runtimeApp) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
@@ -381,7 +484,7 @@ func (app *runtimeApp) managementState() map[string]any {
 	return map[string]any{
 		"organization":           nil,
 		"organizations":          values(app.orgs),
-		"users":                  values(app.users),
+		"users":                  sanitizedValues(app.users),
 		"memberships":            values(app.memberships),
 		"accounts":               app.accountsLocked(),
 		"packages":               packageList(),
@@ -931,6 +1034,19 @@ func values(input map[string]map[string]any) []any {
 	output := make([]any, 0, len(keys))
 	for _, key := range keys {
 		output = append(output, cloneMap(input[key]))
+	}
+	return output
+}
+
+func sanitizedValues(input map[string]map[string]any) []any {
+	keys := make([]string, 0, len(input))
+	for key := range input {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	output := make([]any, 0, len(keys))
+	for _, key := range keys {
+		output = append(output, sanitizeUser(input[key]))
 	}
 	return output
 }

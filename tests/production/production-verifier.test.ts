@@ -226,6 +226,7 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
       key,
       cookie: options.headers?.cookie || "",
       csrf: options.headers?.["x-opl-csrf-token"] || "",
+      operatorToken: options.headers?.["x-opl-operator-token"] || "",
       idempotencyKey: options.headers?.["Idempotency-Key"] || "",
       body: options.body ? JSON.parse(options.body) : null
     });
@@ -1543,6 +1544,8 @@ test("production verifier authenticates as operator and sends CSRF on commercial
     "POST /api/auth/operator-login",
     "POST /api/billing/topups"
   ]);
+  assert.equal(requests[2].operatorToken, "operator-token");
+  assert.deepEqual(requests[2].body, {});
   for (const request of requests.filter((item) => item.key.startsWith("POST /api/") && item.key !== "POST /api/auth/operator-login")) {
     assert.match(request.cookie, /opl_console_session=operator-session/);
     assert.equal(request.csrf, "csrf-auth");
