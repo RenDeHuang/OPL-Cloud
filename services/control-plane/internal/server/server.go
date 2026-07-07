@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"os"
@@ -84,7 +85,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		writeJSON(w, http.StatusOK, app.state(r.URL.Query().Get("accountId")))
 	})
 	mux.HandleFunc("GET /api/management/state", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, app.managementState())
+		writeJSON(w, http.StatusOK, app.managementState(r.URL.Query().Get("includeDeleted") == "true"))
 	})
 	mux.HandleFunc("GET /api/operator/summary", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, app.operatorSummary())
@@ -414,17 +415,21 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		writeJSON(w, http.StatusCreated, body)
 	})
 	mux.HandleFunc("POST /api/users/disable", func(w http.ResponseWriter, r *http.Request) {
-		body, err := app.setUserStatus(decodeJSON(r), "disabled")
+		input := decodeJSON(r)
+		withOperatorUserID(input, app.sessionUserID(r))
+		body, err := app.disableUser(input)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			writeUserLifecycleError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
 	})
 	mux.HandleFunc("POST /api/users/delete", func(w http.ResponseWriter, r *http.Request) {
-		body, err := app.setUserStatus(decodeJSON(r), "deleted")
+		input := decodeJSON(r)
+		withOperatorUserID(input, app.sessionUserID(r))
+		body, err := app.softDeleteUser(input)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+			writeUserLifecycleError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -451,6 +456,23 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeUserLifecycleError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errUserNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, errLastActiveAdmin), errors.Is(err, errUserDeleted):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, "read_model_persist_failed")
+	}
+}
+
+func withOperatorUserID(input map[string]any, userID string) {
+	if userID != "" && stringValue(input["operatorUserId"]) == "" {
+		input["operatorUserId"] = userID
+	}
 }
 
 func decodeJSON(r *http.Request) map[string]any {

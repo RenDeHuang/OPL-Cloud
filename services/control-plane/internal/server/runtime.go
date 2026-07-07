@@ -36,6 +36,12 @@ type runtimeApp struct {
 	sessions    map[string]sessionRecord
 }
 
+var (
+	errUserNotFound    = errors.New("user_not_found")
+	errLastActiveAdmin = errors.New("last_active_admin")
+	errUserDeleted     = errors.New("user_deleted")
+)
+
 func newRuntimeApp() *runtimeApp {
 	return newRuntimeAppEmpty()
 }
@@ -209,17 +215,66 @@ func (app *runtimeApp) createUser(input map[string]any) (map[string]any, error) 
 	return sanitizeUser(user), app.persistLocked()
 }
 
-func (app *runtimeApp) setUserStatus(input map[string]any, status string) (map[string]any, error) {
+func (app *runtimeApp) disableUser(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	id := stringField(input, "userId", "")
 	user := app.users[id]
 	if user == nil {
-		user = map[string]any{"id": id}
+		return nil, errUserNotFound
 	}
-	user["status"] = status
-	app.users[id] = user
+	if stringValue(user["status"]) == "deleted" {
+		return nil, errUserDeleted
+	}
+	if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" && app.activeAdminCountLocked() <= 1 {
+		return nil, errLastActiveAdmin
+	}
+	user["status"] = "disabled"
+	user["disabledAt"] = time.Now().UTC().Format(time.RFC3339)
+	user["disabledBy"] = firstNonEmpty(stringField(input, "operatorUserId", ""), stringField(input, "disabledBy", ""), "usr-admin")
+	user["disabledReason"] = stringField(input, "reason", "admin_disabled")
+	app.revokeUserSessionsLocked(id)
 	return sanitizeUser(user), app.persistLocked()
+}
+
+func (app *runtimeApp) softDeleteUser(input map[string]any) (map[string]any, error) {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	id := stringField(input, "userId", "")
+	user := app.users[id]
+	if user == nil {
+		return nil, errUserNotFound
+	}
+	if stringValue(user["status"]) == "deleted" {
+		return sanitizeUser(user), nil
+	}
+	if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" && app.activeAdminCountLocked() <= 1 {
+		return nil, errLastActiveAdmin
+	}
+	user["status"] = "deleted"
+	user["deletedAt"] = time.Now().UTC().Format(time.RFC3339)
+	user["deletedBy"] = firstNonEmpty(stringField(input, "operatorUserId", ""), stringField(input, "deletedBy", ""), "usr-admin")
+	user["deleteReason"] = stringField(input, "reason", "admin_deleted")
+	app.revokeUserSessionsLocked(id)
+	return sanitizeUser(user), app.persistLocked()
+}
+
+func (app *runtimeApp) activeAdminCountLocked() int {
+	count := 0
+	for _, user := range app.users {
+		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
+			count++
+		}
+	}
+	return count
+}
+
+func (app *runtimeApp) revokeUserSessionsLocked(userID string) {
+	for sessionID, session := range app.sessions {
+		if session.UserID == userID {
+			delete(app.sessions, sessionID)
+		}
+	}
 }
 
 func (app *runtimeApp) importBootstrapUsers() error {
@@ -300,6 +355,15 @@ func (app *runtimeApp) session(r *http.Request) (map[string]any, bool) {
 		return nil, false
 	}
 	return map[string]any{"user": sanitizeUser(user), "csrfToken": session.CSRF, "expiresAt": session.ExpiresAt.Format(time.RFC3339)}, true
+}
+
+func (app *runtimeApp) sessionUserID(r *http.Request) string {
+	payload, ok := app.session(r)
+	if !ok {
+		return ""
+	}
+	user, _ := payload["user"].(map[string]any)
+	return stringValue(user["id"])
 }
 
 func (app *runtimeApp) logout(r *http.Request) {
@@ -478,13 +542,13 @@ func (app *runtimeApp) markWorkspacesStorageDestroyedLocked(storageID string) {
 	}
 }
 
-func (app *runtimeApp) managementState() map[string]any {
+func (app *runtimeApp) managementState(includeDeleted bool) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	return map[string]any{
 		"organization":           nil,
 		"organizations":          values(app.orgs),
-		"users":                  sanitizedValues(app.users),
+		"users":                  sanitizedUserValues(app.users, includeDeleted),
 		"memberships":            values(app.memberships),
 		"accounts":               app.accountsLocked(),
 		"packages":               packageList(),
@@ -1038,7 +1102,7 @@ func values(input map[string]map[string]any) []any {
 	return output
 }
 
-func sanitizedValues(input map[string]map[string]any) []any {
+func sanitizedUserValues(input map[string]map[string]any, includeDeleted bool) []any {
 	keys := make([]string, 0, len(input))
 	for key := range input {
 		keys = append(keys, key)
@@ -1046,6 +1110,9 @@ func sanitizedValues(input map[string]map[string]any) []any {
 	sort.Strings(keys)
 	output := make([]any, 0, len(keys))
 	for _, key := range keys {
+		if !includeDeleted && stringValue(input[key]["status"]) == "deleted" {
+			continue
+		}
 		output = append(output, sanitizeUser(input[key]))
 	}
 	return output

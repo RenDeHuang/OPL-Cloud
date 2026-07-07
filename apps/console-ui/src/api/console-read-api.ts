@@ -19,6 +19,7 @@ export function getProductionReadiness() {
 export function getManagementState(organizationId = "") {
   const params = new URLSearchParams();
   if (organizationId) params.set("organizationId", organizationId);
+  params.set("includeDeleted", "true");
   const query = params.toString();
   return getJson(`/api/management/state${query ? `?${query}` : ""}`);
 }

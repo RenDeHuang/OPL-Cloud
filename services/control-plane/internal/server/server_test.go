@@ -361,7 +361,7 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	wallet := app.walletTx[len(app.walletTx)-1]
 	app.mu.Unlock()
 
-	state := app.managementState()
+	state := app.managementState(true)
 	rows := state["resourceLedgerEvidence"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("resourceLedgerEvidence rows = %d, want 1: %#v", len(rows), rows)
@@ -775,6 +775,137 @@ func TestLoginSessionMeAndLogoutUseStoredPasswordHash(t *testing.T) {
 	managementUser := management["users"].([]any)[0].(map[string]any)
 	if managementUser["passwordHash"] != nil {
 		t.Fatalf("management state leaked password hash: %#v", managementUser)
+	}
+}
+
+func TestUserDeleteLifecycleReturnsNotFoundWithoutStub(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	req := httptest.NewRequest(http.MethodPost, "/api/users/delete", bytes.NewBufferString(`{"userId":"usr-missing","reason":"test"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete missing status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/management/state?includeDeleted=true", nil)
+	stateRec := httptest.NewRecorder()
+	server.ServeHTTP(stateRec, stateReq)
+	var state map[string]any
+	if err := json.NewDecoder(stateRec.Body).Decode(&state); err != nil {
+		t.Fatalf("decode management: %v", err)
+	}
+	for _, item := range state["users"].([]any) {
+		if item.(map[string]any)["id"] == "usr-missing" {
+			t.Fatalf("missing user was created as stub: %#v", state["users"])
+		}
+	}
+}
+
+func TestUserSoftDeleteRevokesSessionsAndHidesByDefault(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	created := createResource(t, server, http.MethodPost, "/api/users", `{"email":"member@lab.example","accountId":"acct-alpha","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	loginRec := loginForTest(t, server, "member@lab.example", "CorrectHorseBatteryStaple!")
+
+	deleteReq := httptest.NewRequest(http.MethodPost, "/api/users/delete", bytes.NewBufferString(`{"userId":"`+stringValue(created["id"])+`","reason":"left_lab"}`))
+	deleteReq.Header.Set("Content-Type", "application/json")
+	for _, cookie := range loginRec.Result().Cookies() {
+		deleteReq.AddCookie(cookie)
+	}
+	deleteRec := httptest.NewRecorder()
+	server.ServeHTTP(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d: %s", deleteRec.Code, deleteRec.Body.String())
+	}
+	var deleted map[string]any
+	if err := json.NewDecoder(deleteRec.Body).Decode(&deleted); err != nil {
+		t.Fatalf("decode deleted user: %v", err)
+	}
+	if deleted["status"] != "deleted" || deleted["deletedAt"] == nil || deleted["deletedBy"] != created["id"] || deleted["deleteReason"] != "left_lab" {
+		t.Fatalf("delete metadata incomplete: %#v", deleted)
+	}
+
+	assertSessionUnauthorized(t, server, loginRec)
+	assertUserAbsentFromManagement(t, server, "/api/management/state", stringValue(created["id"]))
+	assertDeletedUserPresent(t, server, stringValue(created["id"]))
+}
+
+func loginForTest(t *testing.T, server http.Handler, email string, password string) *httptest.ResponseRecorder {
+	t.Helper()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"`+email+`","password":"`+password+`"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	server.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+	return loginRec
+}
+
+func assertSessionUnauthorized(t *testing.T, server http.Handler, loginRec *httptest.ResponseRecorder) {
+	t.Helper()
+	meReq := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	for _, cookie := range loginRec.Result().Cookies() {
+		meReq.AddCookie(cookie)
+	}
+	meRec := httptest.NewRecorder()
+	server.ServeHTTP(meRec, meReq)
+	if meRec.Code != http.StatusUnauthorized {
+		t.Fatalf("deleted user session still works: status=%d body=%s", meRec.Code, meRec.Body.String())
+	}
+}
+
+func assertUserAbsentFromManagement(t *testing.T, server http.Handler, path string, userID string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	var defaultState map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&defaultState); err != nil {
+		t.Fatalf("decode default management: %v", err)
+	}
+	for _, item := range defaultState["users"].([]any) {
+		if item.(map[string]any)["id"] == userID {
+			t.Fatalf("deleted user visible without includeDeleted: %#v", defaultState["users"])
+		}
+	}
+}
+
+func assertDeletedUserPresent(t *testing.T, server http.Handler, userID string) {
+	t.Helper()
+	includeReq := httptest.NewRequest(http.MethodGet, "/api/management/state?includeDeleted=true", nil)
+	includeRec := httptest.NewRecorder()
+	server.ServeHTTP(includeRec, includeReq)
+	var includeState map[string]any
+	if err := json.NewDecoder(includeRec.Body).Decode(&includeState); err != nil {
+		t.Fatalf("decode include deleted management: %v", err)
+	}
+	if !slices.ContainsFunc(includeState["users"].([]any), func(item any) bool {
+		user := item.(map[string]any)
+		return user["id"] == userID && user["status"] == "deleted"
+	}) {
+		t.Fatalf("deleted user missing from includeDeleted state: %#v", includeState["users"])
+	}
+}
+
+func TestUserLifecycleProtectsLastActiveAdmin(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	for _, tc := range []struct {
+		path string
+	}{
+		{"/api/users/disable"},
+		{"/api/users/delete"},
+	} {
+		req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString(`{"userId":"usr-admin","reason":"test"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		server.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "last_active_admin") {
+			t.Fatalf("%s status=%d body=%s, want last admin guard", tc.path, rec.Code, rec.Body.String())
+		}
 	}
 }
 
