@@ -74,8 +74,8 @@ function setDeployment(item, values) {
   if (!podSpec) return;
 
 	podSpec.imagePullSecrets = [{ name: values.OPL_IMAGE_PULL_SECRET_NAME }];
-	for (const container of podSpec.containers || []) {
-		if (["control-plane", "ledger", "fabric"].includes(container.name)) {
+	for (const container of [...(podSpec.initContainers || []), ...(podSpec.containers || [])]) {
+		if (["control-plane", "ledger", "fabric", "ledger-schema-migration"].includes(container.name)) {
 			container.image = values.OPL_CLOUD_IMAGE;
 		}
 	}

@@ -83,6 +83,13 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
 		"tmp"
 	]);
 	const ledger = deployments.find((item) => item.metadata.name === "opl-cloud-ledger");
+	const ledgerMigration = ledger.spec.template.spec.initContainers[0];
+	assert.equal(ledgerMigration.name, "ledger-schema-migration");
+	assert.equal(ledgerMigration.command[0], "node");
+	assert.equal(ledgerMigration.env.find((item) => item.name === "PGSSLMODE").value, "disable");
+	assert.deepEqual(ledgerMigration.env.filter((item) => item.valueFrom).map((item) => `${item.name}->${item.valueFrom.secretKeyRef.name}/${item.valueFrom.secretKeyRef.key}`), [
+		"DATABASE_URL->opl-cloud-database/DATABASE_URL"
+	]);
 	assert.equal(ledger.spec.template.spec.containers[0].command[0], "/usr/local/bin/opl-ledger");
 	assert.equal(ledger.spec.template.spec.containers[0].imagePullPolicy, "Always");
 	assert.equal(ledger.spec.template.spec.containers[0].ports[0].containerPort, 8081);

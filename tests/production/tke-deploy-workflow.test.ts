@@ -242,6 +242,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
   const namespace = items.find((item) => item.kind === "Namespace");
   const config = items.find((item) => item.kind === "ConfigMap");
   const deployment = items.find((item) => item.kind === "Deployment");
+  const ledgerDeployment = items.find((item) => item.kind === "Deployment" && item.metadata.name === "opl-cloud-ledger");
   const fabricDeployment = items.find((item) => item.kind === "Deployment" && item.metadata.name === "opl-cloud-fabric");
   const ingress = items.find((item) => item.kind === "Ingress");
   const serviceConfig = items.find((item) => item.kind === "TkeServiceConfig");
@@ -284,6 +285,7 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
     { name: "deploy-kubeconfig", mountPath: "/var/run/opl-cloud/kubeconfig", readOnly: true }
   ]);
   assert.equal(deployment.spec.template.spec.containers[0].image, "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test");
+  assert.equal(ledgerDeployment.spec.template.spec.initContainers[0].image, "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud:test");
   assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [{ name: "tcr-pull-secret" }]);
   assert.equal(ingress.spec.ingressClassName, "qcloud");
   assert.equal(ingress.metadata.annotations["ingress.cloud.tencent.com/tke-service-config"], "opl-cloud-ingress-config");
