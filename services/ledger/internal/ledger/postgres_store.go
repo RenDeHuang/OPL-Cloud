@@ -58,6 +58,11 @@ ALTER TABLE wallet_transactions ALTER COLUMN ledger_entry_id SET NOT NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN amount_cents SET NOT NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN balance_cents SET NOT NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN currency SET NOT NULL;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS user_id;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS workspace_id;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS transaction_type;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS source_event_id;
+ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS state;
 
 	CREATE TABLE IF NOT EXISTS manual_topups (
   id TEXT PRIMARY KEY,
@@ -107,6 +112,9 @@ ALTER TABLE wallet_transactions ALTER COLUMN currency SET NOT NULL;
 	ALTER TABLE manual_topups ALTER COLUMN wallet_transaction_id SET NOT NULL;
 	ALTER TABLE manual_topups ALTER COLUMN idempotency_key SET NOT NULL;
 	ALTER TABLE manual_topups ALTER COLUMN request_hash SET NOT NULL;
+	ALTER TABLE manual_topups DROP COLUMN IF EXISTS target_user_id;
+	ALTER TABLE manual_topups DROP COLUMN IF EXISTS target_account_id;
+	ALTER TABLE manual_topups DROP COLUMN IF EXISTS state;
 
 	CREATE TABLE IF NOT EXISTS holds (
 	  id TEXT PRIMARY KEY,
