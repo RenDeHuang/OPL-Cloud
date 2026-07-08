@@ -585,6 +585,15 @@
                         "key": "TENCENTCLOUD_SECRET_KEY"
                       }
                     }
+                  },
+                  {
+                    "name": "OPL_AIONUI_ADMIN_PASSWORD_SEED",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-aionui",
+                        "key": "OPL_AIONUI_ADMIN_PASSWORD_SEED"
+                      }
+                    }
                   }
                 ],
                 "readinessProbe": {

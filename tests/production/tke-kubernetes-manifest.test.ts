@@ -111,7 +111,8 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
 	assert.equal(fabric.spec.template.spec.containers[0].ports[0].containerPort, 8082);
 	assert.deepEqual(fabric.spec.template.spec.containers[0].env.map((item) => `${item.name}->${item.valueFrom.secretKeyRef.name}/${item.valueFrom.secretKeyRef.key}`), [
 		"TENCENTCLOUD_SECRET_ID->opl-cloud-tencent-mutation/TENCENTCLOUD_SECRET_ID",
-		"TENCENTCLOUD_SECRET_KEY->opl-cloud-tencent-mutation/TENCENTCLOUD_SECRET_KEY"
+		"TENCENTCLOUD_SECRET_KEY->opl-cloud-tencent-mutation/TENCENTCLOUD_SECRET_KEY",
+		"OPL_AIONUI_ADMIN_PASSWORD_SEED->opl-cloud-aionui/OPL_AIONUI_ADMIN_PASSWORD_SEED"
 	]);
 	assert.deepEqual(fabric.spec.template.spec.containers[0].volumeMounts, [
 		{ name: "deploy-kubeconfig", mountPath: "/var/run/opl-cloud/kubeconfig", readOnly: true }

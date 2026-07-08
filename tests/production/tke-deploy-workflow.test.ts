@@ -289,6 +289,10 @@ test("TKE manifest renderer replaces deploy-time values without rendering secret
     entry.name === "TENCENTCLOUD_SECRET_KEY" &&
     entry.valueFrom?.secretKeyRef?.name === "opl-cloud-tencent-mutation"
   ));
+  assert.ok(fabricDeployment.spec.template.spec.containers[0].env.some((entry) =>
+    entry.name === "OPL_AIONUI_ADMIN_PASSWORD_SEED" &&
+    entry.valueFrom?.secretKeyRef?.name === "opl-cloud-aionui"
+  ));
   assert.deepEqual(fabricDeployment.spec.template.spec.containers[0].volumeMounts, [
     { name: "deploy-kubeconfig", mountPath: "/var/run/opl-cloud/kubeconfig", readOnly: true }
   ]);
