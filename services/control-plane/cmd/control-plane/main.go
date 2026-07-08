@@ -19,7 +19,7 @@ func main() {
 		clients.NewLedgerHTTPClient(ledgerURL, nil),
 		clients.NewFabricHTTPClient(fabricURL, nil),
 	)
-	store, err := controlserver.ReadModelStoreFromEnv()
+	store, err := controlserver.FactStoreFromEnv()
 	if err != nil {
 		log.Fatal(err)
 	}

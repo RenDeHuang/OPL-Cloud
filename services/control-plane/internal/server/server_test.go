@@ -173,16 +173,16 @@ func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	}
 }
 
-func TestPersistentReadModelSurvivesServerRestart(t *testing.T) {
+func TestPersistentFactsSurviveServerRestart(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	server, err := NewPersistentServer(service, NewFileFactStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
 	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 
-	restarted, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestPersistentReadModelSurvivesServerRestart(t *testing.T) {
 func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	server, err := NewPersistentServer(service, NewFileFactStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 	workspace := createResource(t, server, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	createResource(t, server, http.MethodPost, "/api/workspaces/delete-token", `{"workspaceId":"`+stringValue(workspace["id"])+`"}`)
 
-	restarted, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestBootstrapImportsAdminSeedAndDoesNotExposeLegacyOwner(t *testing.T) {
 }
 
 func TestLoginAcceptsLegacyScryptPasswordHash(t *testing.T) {
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.users["usr-admin"]["passwordHash"] = "scrypt:00112233445566778899aabbccddeeff:4904ad313c8dcfe466e3babafef2471d2f5bcc7b0d4d893d5eb6c57666c8c5c1e9a26e8e1b9035f6625718daa983ae2798cbeb16b404e8418c901315147f642f"
 	if _, _, err := app.login(map[string]any{"email": "admin@medopl.cn", "password": "legacy-secret"}); err != nil {
 		t.Fatalf("legacy scrypt password did not verify: %v", err)
@@ -752,7 +752,7 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 }
 
 func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.mu.Lock()
 	app.workspaces["ws-alpha"] = map[string]any{
 		"id":                         "ws-alpha",
@@ -799,7 +799,7 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 }
 
 func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.mu.Lock()
 	app.workspaces["ws-replacement"] = map[string]any{
 		"id":                         "ws-replacement",
@@ -855,7 +855,7 @@ func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 }
 
 func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.workspaces["ws-alpha"] = map[string]any{
 		"id":                         "ws-alpha",
 		"ownerAccountId":             "acct-alpha",
@@ -955,7 +955,7 @@ func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
 }
 
 func TestCleanupWorkspaceAccessDisablesInvalidActiveURL(t *testing.T) {
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.workspaces["ws-alpha"] = map[string]any{
 		"id":             "ws-alpha",
 		"ownerAccountId": "acct-alpha",
@@ -1104,7 +1104,7 @@ func TestResourceSettlementPassesPriceAndEvidenceSnapshotToLedger(t *testing.T) 
 	}
 	priceSnapshot := settlement["priceSnapshot"].(map[string]any)
 	if priceSnapshot["unitPriceCents"] != float64(123) {
-		t.Fatalf("settlement response lost price snapshot: %#v", settlement)
+		t.Fatalf("settlement response lost price facts: %#v", settlement)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
@@ -1121,8 +1121,8 @@ func TestResourceSettlementPassesPriceAndEvidenceSnapshotToLedger(t *testing.T) 
 	ledger := state["billingLedger"].([]any)
 	if !slices.ContainsFunc(ledger, func(row any) bool {
 		entry := row.(map[string]any)
-		snapshot, _ := entry["priceSnapshot"].(map[string]any)
-		return entry["type"] == "compute_debit" && entry["pricingVersion"] == "opl-tencent-v1" && entry["providerCostEvidenceRef"] == "fabric:op-alpha" && snapshot["sku"] == "basic-cvm"
+		facts, _ := entry["priceSnapshot"].(map[string]any)
+		return entry["type"] == "compute_debit" && entry["pricingVersion"] == "opl-tencent-v1" && entry["providerCostEvidenceRef"] == "fabric:op-alpha" && facts["sku"] == "basic-cvm"
 	}) {
 		t.Fatalf("state ledger lost settlement evidence: %#v", ledger)
 	}
@@ -1156,7 +1156,7 @@ func TestStateRefreshesLedgerFactsFromLedgerReads(t *testing.T) {
 	}
 	transactions := state["walletTransactions"].([]any)
 	if len(transactions) != 1 || transactions[0].(map[string]any)["availableCents"] != float64(8700) {
-		t.Fatalf("state missing wallet after snapshot: %#v", transactions)
+		t.Fatalf("state missing wallet after facts: %#v", transactions)
 	}
 	tx := transactions[0].(map[string]any)
 	metadata, _ := tx["metadata"].(map[string]any)
@@ -1224,7 +1224,7 @@ func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]string{"proxied": r.URL.Path})
 	}))
 	defer backend.Close()
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.workspaces["ws-alpha"] = map[string]any{
 		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	}
@@ -1250,7 +1250,7 @@ func TestWorkspaceGatewaySetsActiveCookieForRootRuntimeApi(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]string{"proxied": r.URL.Path})
 	}))
 	defer backend.Close()
-	app := newRuntimeApp()
+	app := newControlPlaneApp()
 	app.workspaces["ws-alpha"] = map[string]any{
 		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	}
@@ -1308,7 +1308,7 @@ func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
 		{name: "access disabled", row: map[string]any{"state": "running", "access": map[string]any{"tokenStatus": "disabled"}, "runtime": map[string]any{"serviceName": "runtime-alpha"}}, want: http.StatusGone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app := newRuntimeApp()
+			app := newControlPlaneApp()
 			app.workspaces["ws-alpha"] = tc.row
 			req := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
 			rec := httptest.NewRecorder()
@@ -1787,7 +1787,7 @@ func TestSupportTicketMappingRequiresExternalTicket(t *testing.T) {
 func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	server, err := NewPersistentServer(service, NewFileFactStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
@@ -1797,7 +1797,7 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 		t.Fatalf("support mapping did not keep external context: %#v", created)
 	}
 
-	restarted, err := NewPersistentServer(service, NewJSONReadModelStore(path))
+	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}

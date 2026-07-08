@@ -19,24 +19,24 @@ import (
 	"opl-cloud/services/control-plane/internal/domain"
 )
 
-type runtimeApp struct {
+type controlPlaneApp struct {
 	mu          sync.Mutex
-	store       ReadModelStore
-	computes    map[string]map[string]any
-	storages    map[string]map[string]any
-	attachments map[string]map[string]any
-	workspaces  map[string]map[string]any
-	users       map[string]map[string]any
-	orgs        map[string]map[string]any
-	memberships map[string]map[string]any
-	support     map[string]map[string]any
-	wallets     map[string]map[string]any
-	ledger      []map[string]any
-	walletTx    []map[string]any
-	topups      []map[string]any
-	runtimeOps  []map[string]any
-	auditEvents []map[string]any
-	reconcile   map[string]any
+	store       FactStore
+	computes    factTable
+	storages    factTable
+	attachments factTable
+	workspaces  factTable
+	users       factTable
+	orgs        factTable
+	memberships factTable
+	support     factTable
+	wallets     factTable
+	ledger      []factRow
+	walletTx    []factRow
+	topups      []factRow
+	runtimeOps  []factRow
+	auditEvents []factRow
+	reconcile   factRow
 	sessions    map[string]sessionRecord
 	// ponytail: per-process limiter; move to Redis when login traffic spans multiple replicas.
 	loginFailures map[string]loginFailure
@@ -54,19 +54,19 @@ var (
 	errUserDeleted     = errors.New("user_deleted")
 )
 
-func newRuntimeApp() *runtimeApp {
-	return newRuntimeAppEmpty()
+func newControlPlaneApp() *controlPlaneApp {
+	return newControlPlaneAppEmpty()
 }
 
-func newRuntimeAppWithStore(store ReadModelStore) (*runtimeApp, error) {
-	app := newRuntimeAppEmpty()
+func newControlPlaneAppWithStore(store FactStore) (*controlPlaneApp, error) {
+	app := newControlPlaneAppEmpty()
 	app.store = store
 	if store != nil {
-		snapshot, err := store.Load(context.Background())
+		facts, err := store.Load(context.Background())
 		if err != nil {
 			return nil, err
 		}
-		app.applySnapshot(snapshot)
+		app.applyFacts(facts)
 	}
 	if err := app.importBootstrapUsers(); err != nil {
 		return nil, err
@@ -74,99 +74,99 @@ func newRuntimeAppWithStore(store ReadModelStore) (*runtimeApp, error) {
 	return app, nil
 }
 
-func newRuntimeAppEmpty() *runtimeApp {
-	return &runtimeApp{
-		computes:      map[string]map[string]any{},
-		storages:      map[string]map[string]any{},
-		attachments:   map[string]map[string]any{},
-		workspaces:    map[string]map[string]any{},
-		users:         map[string]map[string]any{"usr-admin": {"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}},
-		orgs:          map[string]map[string]any{},
-		memberships:   map[string]map[string]any{},
-		support:       map[string]map[string]any{},
-		wallets:       map[string]map[string]any{},
+func newControlPlaneAppEmpty() *controlPlaneApp {
+	return &controlPlaneApp{
+		computes:      factTable{},
+		storages:      factTable{},
+		attachments:   factTable{},
+		workspaces:    factTable{},
+		users:         factTable{"usr-admin": {"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"}},
+		orgs:          factTable{},
+		memberships:   factTable{},
+		support:       factTable{},
+		wallets:       factTable{},
 		sessions:      map[string]sessionRecord{},
 		loginFailures: map[string]loginFailure{},
 	}
 }
 
-func (app *runtimeApp) snapshotLocked() readModelSnapshot {
-	return readModelSnapshot{
+func (app *controlPlaneApp) factsLocked() controlPlaneFacts {
+	return controlPlaneFacts{
 		Version:     1,
-		Computes:    cloneMapMap(app.computes),
-		Storages:    cloneMapMap(app.storages),
-		Attachments: cloneMapMap(app.attachments),
-		Workspaces:  cloneMapMap(app.workspaces),
-		Users:       cloneMapMap(app.users),
-		Orgs:        cloneMapMap(app.orgs),
-		Memberships: cloneMapMap(app.memberships),
-		Support:     cloneMapMap(app.support),
-		Wallets:     cloneMapMap(app.wallets),
-		Ledger:      cloneMapSlice(app.ledger),
-		WalletTx:    cloneMapSlice(app.walletTx),
-		Topups:      cloneMapSlice(app.topups),
-		RuntimeOps:  cloneMapSlice(app.runtimeOps),
-		AuditEvents: cloneMapSlice(app.auditEvents),
+		Computes:    cloneFactTable(app.computes),
+		Storages:    cloneFactTable(app.storages),
+		Attachments: cloneFactTable(app.attachments),
+		Workspaces:  cloneFactTable(app.workspaces),
+		Users:       cloneFactTable(app.users),
+		Orgs:        cloneFactTable(app.orgs),
+		Memberships: cloneFactTable(app.memberships),
+		Support:     cloneFactTable(app.support),
+		Wallets:     cloneFactTable(app.wallets),
+		Ledger:      cloneFactRows(app.ledger),
+		WalletTx:    cloneFactRows(app.walletTx),
+		Topups:      cloneFactRows(app.topups),
+		RuntimeOps:  cloneFactRows(app.runtimeOps),
+		AuditEvents: cloneFactRows(app.auditEvents),
 		Reconcile:   cloneMap(app.reconcile),
 	}
 }
 
-func (app *runtimeApp) applySnapshot(snapshot readModelSnapshot) {
-	if len(snapshot.Computes) > 0 {
-		app.computes = cloneMapMap(snapshot.Computes)
+func (app *controlPlaneApp) applyFacts(facts controlPlaneFacts) {
+	if len(facts.Computes) > 0 {
+		app.computes = cloneFactTable(facts.Computes)
 	}
-	if len(snapshot.Storages) > 0 {
-		app.storages = cloneMapMap(snapshot.Storages)
+	if len(facts.Storages) > 0 {
+		app.storages = cloneFactTable(facts.Storages)
 	}
-	if len(snapshot.Attachments) > 0 {
-		app.attachments = cloneMapMap(snapshot.Attachments)
+	if len(facts.Attachments) > 0 {
+		app.attachments = cloneFactTable(facts.Attachments)
 	}
-	if len(snapshot.Workspaces) > 0 {
-		app.workspaces = cloneMapMap(snapshot.Workspaces)
+	if len(facts.Workspaces) > 0 {
+		app.workspaces = cloneFactTable(facts.Workspaces)
 	}
-	if len(snapshot.Users) > 0 {
-		app.users = cloneMapMap(snapshot.Users)
+	if len(facts.Users) > 0 {
+		app.users = cloneFactTable(facts.Users)
 	}
-	if len(snapshot.Orgs) > 0 {
-		app.orgs = cloneMapMap(snapshot.Orgs)
+	if len(facts.Orgs) > 0 {
+		app.orgs = cloneFactTable(facts.Orgs)
 	}
-	if len(snapshot.Memberships) > 0 {
-		app.memberships = cloneMapMap(snapshot.Memberships)
+	if len(facts.Memberships) > 0 {
+		app.memberships = cloneFactTable(facts.Memberships)
 	}
-	if len(snapshot.Support) > 0 {
-		app.support = cloneMapMap(snapshot.Support)
+	if len(facts.Support) > 0 {
+		app.support = cloneFactTable(facts.Support)
 	}
-	if len(snapshot.Wallets) > 0 {
-		app.wallets = cloneMapMap(snapshot.Wallets)
+	if len(facts.Wallets) > 0 {
+		app.wallets = cloneFactTable(facts.Wallets)
 	}
-	if snapshot.Ledger != nil {
-		app.ledger = cloneMapSlice(snapshot.Ledger)
+	if facts.Ledger != nil {
+		app.ledger = cloneFactRows(facts.Ledger)
 	}
-	if snapshot.WalletTx != nil {
-		app.walletTx = cloneMapSlice(snapshot.WalletTx)
+	if facts.WalletTx != nil {
+		app.walletTx = cloneFactRows(facts.WalletTx)
 	}
-	if snapshot.Topups != nil {
-		app.topups = cloneMapSlice(snapshot.Topups)
+	if facts.Topups != nil {
+		app.topups = cloneFactRows(facts.Topups)
 	}
-	if snapshot.RuntimeOps != nil {
-		app.runtimeOps = cloneMapSlice(snapshot.RuntimeOps)
+	if facts.RuntimeOps != nil {
+		app.runtimeOps = cloneFactRows(facts.RuntimeOps)
 	}
-	if snapshot.AuditEvents != nil {
-		app.auditEvents = cloneMapSlice(snapshot.AuditEvents)
+	if facts.AuditEvents != nil {
+		app.auditEvents = cloneFactRows(facts.AuditEvents)
 	}
-	if snapshot.Reconcile != nil {
-		app.reconcile = cloneMap(snapshot.Reconcile)
+	if facts.Reconcile != nil {
+		app.reconcile = cloneMap(facts.Reconcile)
 	}
 }
 
-func (app *runtimeApp) persistLocked() error {
+func (app *controlPlaneApp) persistLocked() error {
 	if app.store == nil {
 		return nil
 	}
-	return app.store.Save(context.Background(), app.snapshotLocked())
+	return app.store.Save(context.Background(), app.factsLocked())
 }
 
-func (app *runtimeApp) state(accountID string) map[string]any {
+func (app *controlPlaneApp) state(accountID string) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	return map[string]any{
@@ -195,7 +195,7 @@ func (app *runtimeApp) state(accountID string) map[string]any {
 	}
 }
 
-func (app *runtimeApp) currentUserLocked() map[string]any {
+func (app *controlPlaneApp) currentUserLocked() map[string]any {
 	for _, user := range app.users {
 		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
 			return sanitizeUser(user)
@@ -204,7 +204,7 @@ func (app *runtimeApp) currentUserLocked() map[string]any {
 	return nil
 }
 
-func (app *runtimeApp) createOrganization(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) createOrganization(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	name := stringField(input, "name", "Organization")
@@ -214,7 +214,7 @@ func (app *runtimeApp) createOrganization(input map[string]any) (map[string]any,
 	return cloneMap(org), app.persistLocked()
 }
 
-func (app *runtimeApp) createMembership(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) createMembership(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	orgID := stringField(input, "organizationId", "")
@@ -225,7 +225,7 @@ func (app *runtimeApp) createMembership(input map[string]any) (map[string]any, e
 	return cloneMap(membership), app.persistLocked()
 }
 
-func (app *runtimeApp) supportTickets(scopeAll bool, accountID string) []any {
+func (app *controlPlaneApp) supportTickets(scopeAll bool, accountID string) []any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	if scopeAll || accountID == "" {
@@ -236,7 +236,7 @@ func (app *runtimeApp) supportTickets(scopeAll bool, accountID string) []any {
 	})
 }
 
-func (app *runtimeApp) createSupportMapping(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) createSupportMapping(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	externalTicketID := stringField(input, "externalTicketId", "")
@@ -275,7 +275,7 @@ func (app *runtimeApp) createSupportMapping(input map[string]any) (map[string]an
 	return cloneMap(row), app.persistLocked()
 }
 
-func (app *runtimeApp) createUser(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) createUser(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	email := stringField(input, "email", "admin@medopl.cn")
@@ -298,7 +298,7 @@ func (app *runtimeApp) createUser(input map[string]any) (map[string]any, error) 
 	return sanitizeUser(user), app.persistLocked()
 }
 
-func (app *runtimeApp) disableUser(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) disableUser(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	id := stringField(input, "userId", "")
@@ -320,7 +320,7 @@ func (app *runtimeApp) disableUser(input map[string]any) (map[string]any, error)
 	return sanitizeUser(user), app.persistLocked()
 }
 
-func (app *runtimeApp) softDeleteUser(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) softDeleteUser(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	id := stringField(input, "userId", "")
@@ -342,7 +342,7 @@ func (app *runtimeApp) softDeleteUser(input map[string]any) (map[string]any, err
 	return sanitizeUser(user), app.persistLocked()
 }
 
-func (app *runtimeApp) activeAdminCountLocked() int {
+func (app *controlPlaneApp) activeAdminCountLocked() int {
 	count := 0
 	for _, user := range app.users {
 		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
@@ -352,7 +352,7 @@ func (app *runtimeApp) activeAdminCountLocked() int {
 	return count
 }
 
-func (app *runtimeApp) revokeUserSessionsLocked(userID string) {
+func (app *controlPlaneApp) revokeUserSessionsLocked(userID string) {
 	for sessionID, session := range app.sessions {
 		if session.UserID == userID {
 			delete(app.sessions, sessionID)
@@ -360,7 +360,7 @@ func (app *runtimeApp) revokeUserSessionsLocked(userID string) {
 	}
 }
 
-func (app *runtimeApp) importBootstrapUsers() error {
+func (app *controlPlaneApp) importBootstrapUsers() error {
 	users, err := bootstrapUsersFromEnv()
 	if err != nil {
 		return err
@@ -374,7 +374,7 @@ func (app *runtimeApp) importBootstrapUsers() error {
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) dropLegacyOwnerUserLocked() {
+func (app *controlPlaneApp) dropLegacyOwnerUserLocked() {
 	for id, user := range app.users {
 		if strings.EqualFold(stringValue(user["email"]), "owner@example.com") {
 			delete(app.users, id)
@@ -382,7 +382,7 @@ func (app *runtimeApp) dropLegacyOwnerUserLocked() {
 	}
 }
 
-func (app *runtimeApp) upsertBootstrapUserLocked(seed map[string]any) {
+func (app *controlPlaneApp) upsertBootstrapUserLocked(seed map[string]any) {
 	id := stringValue(seed["id"])
 	for existingID, existing := range app.users {
 		if existingID == id || strings.EqualFold(stringValue(existing["email"]), stringValue(seed["email"])) {
@@ -401,7 +401,7 @@ func (app *runtimeApp) upsertBootstrapUserLocked(seed map[string]any) {
 	app.users[id] = seed
 }
 
-func (app *runtimeApp) login(input map[string]any) (map[string]any, string, error) {
+func (app *controlPlaneApp) login(input map[string]any) (map[string]any, string, error) {
 	email := strings.ToLower(strings.TrimSpace(stringField(input, "email", "")))
 	password := stringField(input, "password", "")
 	app.mu.Lock()
@@ -418,7 +418,7 @@ func (app *runtimeApp) login(input map[string]any) (map[string]any, string, erro
 	return nil, "", errors.New("invalid_credentials")
 }
 
-func (app *runtimeApp) loginRateLimited(r *http.Request, input map[string]any) bool {
+func (app *controlPlaneApp) loginRateLimited(r *http.Request, input map[string]any) bool {
 	key := loginFailureKey(r, input)
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -430,7 +430,7 @@ func (app *runtimeApp) loginRateLimited(r *http.Request, input map[string]any) b
 	return failure.Count >= 5
 }
 
-func (app *runtimeApp) recordLoginFailure(r *http.Request, input map[string]any) {
+func (app *controlPlaneApp) recordLoginFailure(r *http.Request, input map[string]any) {
 	key := loginFailureKey(r, input)
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -442,7 +442,7 @@ func (app *runtimeApp) recordLoginFailure(r *http.Request, input map[string]any)
 	app.loginFailures[key] = failure
 }
 
-func (app *runtimeApp) clearLoginFailures(r *http.Request, input map[string]any) {
+func (app *controlPlaneApp) clearLoginFailures(r *http.Request, input map[string]any) {
 	key := loginFailureKey(r, input)
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -458,7 +458,7 @@ func loginFailureKey(r *http.Request, input map[string]any) string {
 	return email + "|" + host
 }
 
-func (app *runtimeApp) operatorLogin() (map[string]any, string, error) {
+func (app *controlPlaneApp) operatorLogin() (map[string]any, string, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	for _, user := range app.users {
@@ -470,7 +470,7 @@ func (app *runtimeApp) operatorLogin() (map[string]any, string, error) {
 	return app.createSessionLocked(operator)
 }
 
-func (app *runtimeApp) createSessionLocked(user map[string]any) (map[string]any, string, error) {
+func (app *controlPlaneApp) createSessionLocked(user map[string]any) (map[string]any, string, error) {
 	sessionID, err := randomToken(32)
 	if err != nil {
 		return nil, "", err
@@ -483,7 +483,7 @@ func (app *runtimeApp) createSessionLocked(user map[string]any) (map[string]any,
 	return map[string]any{"user": sanitizeUser(user), "csrfToken": csrf, "expiresAt": app.sessions[sessionID].ExpiresAt.Format(time.RFC3339)}, sessionID, nil
 }
 
-func (app *runtimeApp) session(r *http.Request) (map[string]any, bool) {
+func (app *controlPlaneApp) session(r *http.Request) (map[string]any, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return nil, false
@@ -502,7 +502,7 @@ func (app *runtimeApp) session(r *http.Request) (map[string]any, bool) {
 	return map[string]any{"user": sanitizeUser(user), "csrfToken": session.CSRF, "expiresAt": session.ExpiresAt.Format(time.RFC3339)}, true
 }
 
-func (app *runtimeApp) sessionUserID(r *http.Request) string {
+func (app *controlPlaneApp) sessionUserID(r *http.Request) string {
 	user, ok := app.sessionUserContext(r)
 	if !ok {
 		return ""
@@ -510,7 +510,7 @@ func (app *runtimeApp) sessionUserID(r *http.Request) string {
 	return stringValue(user["id"])
 }
 
-func (app *runtimeApp) sessionUserContext(r *http.Request) (map[string]any, bool) {
+func (app *controlPlaneApp) sessionUserContext(r *http.Request) (map[string]any, bool) {
 	payload, ok := app.session(r)
 	if !ok {
 		return nil, false
@@ -519,7 +519,7 @@ func (app *runtimeApp) sessionUserContext(r *http.Request) (map[string]any, bool
 	return user, user != nil
 }
 
-func (app *runtimeApp) logout(r *http.Request) {
+func (app *controlPlaneApp) logout(r *http.Request) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return
@@ -529,7 +529,7 @@ func (app *runtimeApp) logout(r *http.Request) {
 	delete(app.sessions, cookie.Value)
 }
 
-func (app *runtimeApp) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
+func (app *controlPlaneApp) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	workspace := app.workspaces[workspaceID]
@@ -544,7 +544,7 @@ func (app *runtimeApp) setWorkspaceAccess(workspaceID string, tokenStatus string
 	return cloneMap(workspace), true, app.persistLocked()
 }
 
-func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspaceProjection) error {
+func (app *controlPlaneApp) rememberWorkspaceProjection(workspace domain.WorkspaceProjection) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
@@ -589,7 +589,7 @@ func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspacePro
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) rememberCompute(allocation any) error {
+func (app *controlPlaneApp) rememberCompute(allocation any) error {
 	if row, ok := allocation.(map[string]any); ok {
 		app.mu.Lock()
 		defer app.mu.Unlock()
@@ -606,7 +606,7 @@ func (app *runtimeApp) rememberCompute(allocation any) error {
 	return nil
 }
 
-func (app *runtimeApp) rememberStorage(volume any) error {
+func (app *controlPlaneApp) rememberStorage(volume any) error {
 	if row, ok := volume.(map[string]any); ok {
 		app.mu.Lock()
 		defer app.mu.Unlock()
@@ -623,7 +623,7 @@ func (app *runtimeApp) rememberStorage(volume any) error {
 	return nil
 }
 
-func (app *runtimeApp) rememberHoldLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
+func (app *controlPlaneApp) rememberHoldLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
 	holdID := stringValue(row["holdId"])
 	if accountID == "" || holdID == "" {
 		return
@@ -640,7 +640,7 @@ func (app *runtimeApp) rememberHoldLocked(accountID string, resourceType string,
 	app.ledger = append(app.ledger, ledger)
 }
 
-func (app *runtimeApp) rememberReleaseLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
+func (app *controlPlaneApp) rememberReleaseLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
 	releaseID := stringValue(row["holdReleaseId"])
 	if accountID == "" || releaseID == "" {
 		return
@@ -657,7 +657,7 @@ func (app *runtimeApp) rememberReleaseLocked(accountID string, resourceType stri
 	app.ledger = append(app.ledger, ledger)
 }
 
-func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) error {
+func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]any) error {
 	if row, ok := attachment.(map[string]any); ok {
 		row["computeAllocationId"] = stringField(input, "computeAllocationId", "")
 		row["storageId"] = firstNonEmpty(stringValue(row["volumeId"]), stringField(input, "storageId", ""))
@@ -685,7 +685,7 @@ func (app *runtimeApp) rememberAttachment(attachment any, input map[string]any) 
 	return nil
 }
 
-func (app *runtimeApp) suspendWorkspacesForComputeLocked(computeID string) {
+func (app *controlPlaneApp) suspendWorkspacesForComputeLocked(computeID string) {
 	for _, workspace := range app.workspaces {
 		if stringValue(workspace["currentComputeAllocationId"]) == computeID || stringValue(workspace["computeAllocationId"]) == computeID {
 			workspace["currentComputeAllocationId"] = ""
@@ -701,7 +701,7 @@ func (app *runtimeApp) suspendWorkspacesForComputeLocked(computeID string) {
 	}
 }
 
-func (app *runtimeApp) clearWorkspacesForAttachmentLocked(attachmentID string) {
+func (app *controlPlaneApp) clearWorkspacesForAttachmentLocked(attachmentID string) {
 	for _, workspace := range app.workspaces {
 		if stringValue(workspace["currentAttachmentId"]) == attachmentID || stringValue(workspace["attachmentId"]) == attachmentID {
 			workspace["currentAttachmentId"] = ""
@@ -714,7 +714,7 @@ func (app *runtimeApp) clearWorkspacesForAttachmentLocked(attachmentID string) {
 	}
 }
 
-func (app *runtimeApp) markWorkspacesStorageDestroyedLocked(storageID string) {
+func (app *controlPlaneApp) markWorkspacesStorageDestroyedLocked(storageID string) {
 	for _, workspace := range app.workspaces {
 		if stringValue(workspace["storageId"]) == storageID {
 			workspace["state"] = "data_deleted"
@@ -732,7 +732,7 @@ func (app *runtimeApp) markWorkspacesStorageDestroyedLocked(storageID string) {
 	}
 }
 
-func (app *runtimeApp) managementState(includeDeleted bool) map[string]any {
+func (app *controlPlaneApp) managementState(includeDeleted bool) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	return map[string]any{
@@ -758,7 +758,7 @@ func (app *runtimeApp) managementState(includeDeleted bool) map[string]any {
 	}
 }
 
-func (app *runtimeApp) operatorSummary() map[string]any {
+func (app *controlPlaneApp) operatorSummary() map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	running := countStatus(app.computes, "running")
@@ -780,14 +780,14 @@ func (app *runtimeApp) operatorSummary() map[string]any {
 	}
 }
 
-func (app *runtimeApp) resourceBelongsToAccount(row map[string]any, accountID string) bool {
+func (app *controlPlaneApp) resourceBelongsToAccount(row map[string]any, accountID string) bool {
 	if accountID == "" {
 		return false
 	}
 	return firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) == accountID
 }
 
-func (app *runtimeApp) appendAuditEvent(r *http.Request, action string, resourceKind string, resourceID string, targetAccountID string, before any, after any, result string) error {
+func (app *controlPlaneApp) appendAuditEvent(r *http.Request, action string, resourceKind string, resourceID string, targetAccountID string, before any, after any, result string) error {
 	user, _ := app.sessionUserContext(r)
 	app.mu.Lock()
 	defer app.mu.Unlock()
@@ -812,7 +812,7 @@ func (app *runtimeApp) appendAuditEvent(r *http.Request, action string, resource
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) reconciliationProjectionLocked() map[string]any {
+func (app *controlPlaneApp) reconciliationProjectionLocked() map[string]any {
 	if app.reconcile == nil {
 		return map[string]any{"reports": 0, "guard": map[string]any{"status": "not_required", "blockNewWorkspaces": false, "reason": "billing_reconciliation_not_required"}}
 	}
@@ -821,7 +821,7 @@ func (app *runtimeApp) reconciliationProjectionLocked() map[string]any {
 	return row
 }
 
-func (app *runtimeApp) reconciliationBlocksNewWorkspaces() (map[string]any, bool) {
+func (app *controlPlaneApp) reconciliationBlocksNewWorkspaces() (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	projection := app.reconciliationProjectionLocked()
@@ -833,7 +833,7 @@ func (app *runtimeApp) reconciliationBlocksNewWorkspaces() (map[string]any, bool
 	return projection, blocked
 }
 
-func (app *runtimeApp) rememberRuntimeOperations(operations []clients.FabricOperation) error {
+func (app *controlPlaneApp) rememberRuntimeOperations(operations []clients.FabricOperation) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	rows := make([]map[string]any, 0, len(operations))
@@ -846,7 +846,7 @@ func (app *runtimeApp) rememberRuntimeOperations(operations []clients.FabricOper
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) rememberRuntimeOperationResourceLocked(operation map[string]any) {
+func (app *controlPlaneApp) rememberRuntimeOperationResourceLocked(operation map[string]any) {
 	status := stringValue(operation["status"])
 	if status != "succeeded" && status != "failed" {
 		return
@@ -878,14 +878,14 @@ func (app *runtimeApp) rememberRuntimeOperationResourceLocked(operation map[stri
 	}
 }
 
-func (app *runtimeApp) rememberReconciliation(result clients.ReconciliationResult) error {
+func (app *controlPlaneApp) rememberReconciliation(result clients.ReconciliationResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	app.reconcile = reconciliationResponse(result)
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) runtimeOperationSummaryLocked() map[string]any {
+func (app *controlPlaneApp) runtimeOperationSummaryLocked() map[string]any {
 	failed := failedRuntimeOperations(app.runtimeOps)
 	return map[string]any{"total": len(app.runtimeOps), "failed": len(failed), "recentFailed": failed}
 }
@@ -900,7 +900,7 @@ func failedRuntimeOperations(operations []map[string]any) []any {
 	return failed
 }
 
-func (app *runtimeApp) accountsLocked() []any {
+func (app *controlPlaneApp) accountsLocked() []any {
 	accountIDs := map[string]bool{}
 	for accountID := range app.wallets {
 		accountIDs[accountID] = true
@@ -936,35 +936,35 @@ func (app *runtimeApp) accountsLocked() []any {
 	return rows
 }
 
-func (app *runtimeApp) getCompute(id string) (map[string]any, bool) {
+func (app *controlPlaneApp) getCompute(id string) (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	compute, ok := app.computes[id]
 	return cloneMap(compute), ok
 }
 
-func (app *runtimeApp) getStorage(id string) (map[string]any, bool) {
+func (app *controlPlaneApp) getStorage(id string) (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	storage, ok := app.storages[id]
 	return cloneMap(storage), ok
 }
 
-func (app *runtimeApp) getAttachment(id string) (map[string]any, bool) {
+func (app *controlPlaneApp) getAttachment(id string) (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	attachment, ok := app.attachments[id]
 	return cloneMap(attachment), ok
 }
 
-func (app *runtimeApp) getWorkspace(id string) (map[string]any, bool) {
+func (app *controlPlaneApp) getWorkspace(id string) (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	workspace, ok := app.workspaces[id]
 	return cloneMap(workspace), ok
 }
 
-func (app *runtimeApp) canAccessResource(r *http.Request, row map[string]any) bool {
+func (app *controlPlaneApp) canAccessResource(r *http.Request, row map[string]any) bool {
 	user, ok := app.sessionUserContext(r)
 	if !ok {
 		return false
@@ -975,7 +975,7 @@ func (app *runtimeApp) canAccessResource(r *http.Request, row map[string]any) bo
 	return app.resourceBelongsToAccount(row, stringValue(user["accountId"]))
 }
 
-func (app *runtimeApp) cleanupWorkspaceAccess(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneApp) cleanupWorkspaceAccess(input map[string]any) (map[string]any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	requested := stringSet(stringSliceField(input, "workspaceIds"))
@@ -1009,7 +1009,7 @@ func (app *runtimeApp) cleanupWorkspaceAccess(input map[string]any) (map[string]
 	return map[string]any{"cleaned": cleaned, "skipped": skipped}, nil
 }
 
-func (app *runtimeApp) workspaceCleanupReasonLocked(workspace map[string]any) string {
+func (app *controlPlaneApp) workspaceCleanupReasonLocked(workspace map[string]any) string {
 	if stringValue(workspace["ownerAccountId"]) == "" && stringValue(workspace["accountId"]) == "" {
 		return "missing_owner"
 	}
@@ -1034,7 +1034,7 @@ func (app *runtimeApp) workspaceCleanupReasonLocked(workspace map[string]any) st
 	return ""
 }
 
-func (app *runtimeApp) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneApp) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromPath(r.URL.Path)
 	if workspaceID == "" {
 		http.NotFound(w, r)
@@ -1053,7 +1053,7 @@ func (app *runtimeApp) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
 	app.proxyWorkspaceTo(w, r, workspaceID, suffix)
 }
 
-func (app *runtimeApp) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneApp) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request) {
 	if !isWorkspaceRequest(r) {
 		http.NotFound(w, r)
 		return
@@ -1066,7 +1066,7 @@ func (app *runtimeApp) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request
 	app.proxyWorkspaceTo(w, r, workspaceID, r.URL.Path)
 }
 
-func (app *runtimeApp) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, workspaceID string, proxyPath string) {
+func (app *controlPlaneApp) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, workspaceID string, proxyPath string) {
 	app.mu.Lock()
 	workspace := cloneMap(app.workspaces[workspaceID])
 	app.mu.Unlock()
@@ -1152,7 +1152,7 @@ func isWorkspaceHost(host string) bool {
 	return strings.Trim(strings.Split(host, ":")[0], " ") == workspaceDomain()
 }
 
-func (app *runtimeApp) addLedgerLocked(accountID string, entryType string, ids map[string]any) map[string]any {
+func (app *controlPlaneApp) addLedgerLocked(accountID string, entryType string, ids map[string]any) map[string]any {
 	entry := map[string]any{"id": "ledger-" + stableID(accountID, entryType, time.Now().UTC().String())[:12], "accountId": accountID, "type": entryType}
 	for key, value := range ids {
 		entry[key] = value
@@ -1161,7 +1161,7 @@ func (app *runtimeApp) addLedgerLocked(accountID string, entryType string, ids m
 	return entry
 }
 
-func (app *runtimeApp) rememberManualTopUp(result clients.ManualTopUpResult) error {
+func (app *controlPlaneApp) rememberManualTopUp(result clients.ManualTopUpResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	app.topups = append(app.topups, structToMap(result.TopUp))
@@ -1171,7 +1171,7 @@ func (app *runtimeApp) rememberManualTopUp(result clients.ManualTopUpResult) err
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) rememberResourceSettlement(result clients.ResourceSettlementResult) error {
+func (app *controlPlaneApp) rememberResourceSettlement(result clients.ResourceSettlementResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
@@ -1216,7 +1216,7 @@ func (app *runtimeApp) rememberResourceSettlement(result clients.ResourceSettlem
 	return app.persistLocked()
 }
 
-func (app *runtimeApp) applyLedgerFacts(accountID string, wallet clients.Wallet, entries []clients.LedgerEntry, transactions []clients.WalletTransaction, topups []clients.ManualTopUp, settlements []clients.ResourceSettlementResult) error {
+func (app *controlPlaneApp) applyLedgerFacts(accountID string, wallet clients.Wallet, entries []clients.LedgerEntry, transactions []clients.WalletTransaction, topups []clients.ManualTopUp, settlements []clients.ResourceSettlementResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
@@ -1358,7 +1358,7 @@ func ledgerEntryAmount(entry clients.LedgerEntry) int64 {
 	return entry.AmountCents
 }
 
-func (app *runtimeApp) resourceLedgerEvidenceLocked() []any {
+func (app *controlPlaneApp) resourceLedgerEvidenceLocked() []any {
 	rows := []any{}
 	for _, workspace := range app.workspaces {
 		workspaceID := stringValue(workspace["id"])
@@ -1393,7 +1393,7 @@ func (app *runtimeApp) resourceLedgerEvidenceLocked() []any {
 	return rows
 }
 
-func (app *runtimeApp) operationEvidenceForResourceLocked(ids ...string) map[string]any {
+func (app *controlPlaneApp) operationEvidenceForResourceLocked(ids ...string) map[string]any {
 	for index := len(app.runtimeOps) - 1; index >= 0; index-- {
 		operation := app.runtimeOps[index]
 		if mapContainsAnyID(operation, ids...) {
@@ -1404,7 +1404,7 @@ func (app *runtimeApp) operationEvidenceForResourceLocked(ids ...string) map[str
 	return map[string]any{}
 }
 
-func (app *runtimeApp) ledgerEntryIDsLocked(ids ...string) []string {
+func (app *controlPlaneApp) ledgerEntryIDsLocked(ids ...string) []string {
 	output := []string{}
 	for _, entry := range app.ledger {
 		if mapContainsAnyID(entry, ids...) {
@@ -1414,7 +1414,7 @@ func (app *runtimeApp) ledgerEntryIDsLocked(ids ...string) []string {
 	return uniqueStrings(output)
 }
 
-func (app *runtimeApp) walletTransactionIDsLocked(ids ...string) []string {
+func (app *controlPlaneApp) walletTransactionIDsLocked(ids ...string) []string {
 	output := []string{}
 	for _, tx := range app.walletTx {
 		metadata, _ := tx["metadata"].(map[string]any)
@@ -1425,11 +1425,11 @@ func (app *runtimeApp) walletTransactionIDsLocked(ids ...string) []string {
 	return uniqueStrings(output)
 }
 
-func (app *runtimeApp) addWalletTxLocked(accountID string, txType string, metadata map[string]any) {
+func (app *controlPlaneApp) addWalletTxLocked(accountID string, txType string, metadata map[string]any) {
 	app.walletTx = append(app.walletTx, map[string]any{"id": "wallet-" + stableID(accountID, txType, time.Now().UTC().String())[:12], "accountId": accountID, "type": txType, "metadata": metadata})
 }
 
-func (app *runtimeApp) wallet(accountID string) map[string]any {
+func (app *controlPlaneApp) wallet(accountID string) map[string]any {
 	if accountID == "" {
 		accountID = "acct-local"
 	}
@@ -1562,34 +1562,34 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func cloneMap(input map[string]any) map[string]any {
+func cloneMap(input map[string]any) factRow {
 	if input == nil {
-		return map[string]any{}
+		return factRow{}
 	}
-	output := map[string]any{}
+	output := factRow{}
 	for key, value := range input {
 		output[key] = value
 	}
 	return output
 }
 
-func cloneMapMap(input map[string]map[string]any) map[string]map[string]any {
-	output := map[string]map[string]any{}
+func cloneFactTable(input factTable) factTable {
+	output := factTable{}
 	for key, value := range input {
 		output[key] = cloneMap(value)
 	}
 	return output
 }
 
-func cloneMapSlice(input []map[string]any) []map[string]any {
-	output := make([]map[string]any, 0, len(input))
+func cloneFactRows(input []factRow) []factRow {
+	output := make([]factRow, 0, len(input))
 	for _, item := range input {
 		output = append(output, cloneMap(item))
 	}
 	return output
 }
 
-func copySlice(input []map[string]any) []any {
+func copySlice(input []factRow) []any {
 	output := make([]any, 0, len(input))
 	for _, item := range input {
 		output = append(output, cloneMap(item))
@@ -1597,7 +1597,7 @@ func copySlice(input []map[string]any) []any {
 	return output
 }
 
-func values(input map[string]map[string]any) []any {
+func values(input factTable) []any {
 	keys := make([]string, 0, len(input))
 	for key := range input {
 		keys = append(keys, key)
@@ -1610,7 +1610,7 @@ func values(input map[string]map[string]any) []any {
 	return output
 }
 
-func accountValues(input map[string]map[string]any, accountID string) []any {
+func accountValues(input factTable, accountID string) []any {
 	if accountID == "" {
 		return values(input)
 	}
@@ -1619,7 +1619,7 @@ func accountValues(input map[string]map[string]any, accountID string) []any {
 	})
 }
 
-func auditEventsForAccount(events []map[string]any, accountID string) []any {
+func auditEventsForAccount(events []factRow, accountID string) []any {
 	output := []any{}
 	for _, event := range events {
 		if accountID == "" || stringValue(event["targetAccountId"]) == accountID || stringValue(event["actorAccountId"]) == accountID {
@@ -1629,7 +1629,7 @@ func auditEventsForAccount(events []map[string]any, accountID string) []any {
 	return output
 }
 
-func filteredValues(input map[string]map[string]any, include func(map[string]any) bool) []any {
+func filteredValues(input factTable, include func(map[string]any) bool) []any {
 	rows := values(input)
 	output := make([]any, 0, len(rows))
 	for _, row := range rows {
@@ -1641,7 +1641,7 @@ func filteredValues(input map[string]map[string]any, include func(map[string]any
 	return output
 }
 
-func sanitizedUserValues(input map[string]map[string]any, includeDeleted bool) []any {
+func sanitizedUserValues(input factTable, includeDeleted bool) []any {
 	keys := make([]string, 0, len(input))
 	for key := range input {
 		keys = append(keys, key)
@@ -1717,7 +1717,7 @@ func mapContainsAnyID(input map[string]any, ids ...string) bool {
 	return false
 }
 
-func countStatus(input map[string]map[string]any, status string) int {
+func countStatus(input factTable, status string) int {
 	count := 0
 	for _, item := range input {
 		if item["status"] == status || item["state"] == status {
@@ -1727,7 +1727,7 @@ func countStatus(input map[string]map[string]any, status string) int {
 	return count
 }
 
-func countActiveURLs(input map[string]map[string]any) int {
+func countActiveURLs(input factTable) int {
 	count := 0
 	for _, item := range input {
 		if nested(item, "access", "tokenStatus") == "active" {

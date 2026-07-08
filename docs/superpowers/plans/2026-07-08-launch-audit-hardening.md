@@ -15,7 +15,7 @@
 Before every phase, run:
 
 ```bash
-rg -n "resourceUsageLogs|requestUsageLogs|usage_logs|resource_usage_logs|request_usage_logs|payment order|self-service payment|compat|compatibility|fallback|demo|token=|priceSnapshot|price_snapshot|fabric_operations|control_plane_read_model|one-person-lab-app|TODO|FIXME" docs packages services apps tests tools --glob '!docs/history/**'
+rg -n "resourceUsageLogs|requestUsageLogs|usage_logs|resource_usage_logs|request_usage_logs|payment order|self-service payment|compat|compatibility|fallback|demo|token=|priceSnapshot|price_snapshot|fabric_operations|control_plane_.*read_model|one-person-lab-app|TODO|FIXME" docs packages services apps tests tools --glob '!docs/history/**'
 ```
 
 Classify hits:

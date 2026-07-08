@@ -1,17 +1,20 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { access, readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 const repoRoot = new URL("../../", import.meta.url);
 const contractPath = new URL("../../packages/contracts/opl-cloud-package-boundary-contract.json", import.meta.url);
+const execFileAsync = promisify(execFile);
 
 async function contract() {
   return JSON.parse(await readFile(contractPath, "utf8"));
 }
 
-async function files(dir) {
-  const current = new URL(dir, repoRoot);
+async function files(dir, pattern = /\.(js|jsx|ts|tsx)$/) {
+  const current = new URL(dir.endsWith("/") ? dir : `${dir}/`, repoRoot);
   let entries = [];
   try {
     entries = await readdir(current, { withFileTypes: true });
@@ -24,7 +27,7 @@ async function files(dir) {
     const child = join(current.pathname, entry.name);
     if (entry.isDirectory()) {
       out.push(...await files(relative(repoRoot.pathname, child)));
-    } else if (/\.(js|jsx|ts|tsx)$/.test(entry.name)) {
+    } else if (pattern.test(entry.name)) {
       out.push(relative(repoRoot.pathname, child));
     }
   }
@@ -35,8 +38,22 @@ async function source(relativePath) {
   return readFile(new URL(relativePath, repoRoot), "utf8");
 }
 
+async function sourceIfExists(relativePath) {
+  try {
+    return await source(relativePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function assertFile(relativePath) {
   await access(new URL(relativePath, repoRoot));
+}
+
+async function gitFiles(args) {
+  const { stdout } = await execFileAsync("git", ["ls-files", ...args], { cwd: repoRoot.pathname });
+  return stdout.trim().split("\n").filter(Boolean);
 }
 
 function forbiddenMarkerPattern(marker) {
@@ -118,15 +135,38 @@ test("Console UI is a browser-only app with no persistence or cloud SDK markers"
 });
 
 test("Control Plane does not import Fabric or Ledger internals directly", async () => {
-  const controlPlaneFiles = await files("services/control-plane");
+  const controlPlaneFiles = await gitFiles(["services/control-plane/**/*.go"]);
   assert.ok(controlPlaneFiles.length > 0, "services/control-plane must contain source files");
 
   for (const file of controlPlaneFiles) {
+    const text = await sourceIfExists(file);
+    if (text == null) continue;
     assert.doesNotMatch(
-      await source(file),
+      text,
       /"opl-cloud\/services\/(?:fabric|ledger)\/internal\//,
       `${file} must use clients or contracts instead of service internals`
     );
+  }
+});
+
+test("Control Plane current facts are not backed by retired JSON read model symbols", async () => {
+  const controlPlaneFiles = await gitFiles(["services/control-plane/**/*.go"]);
+  const forbidden = [
+    "ReadModelStore",
+    "readModelSnapshot",
+    "control_plane_read_model",
+    "NewJSONReadModelStore",
+    "OPL_CONTROL_PLANE_STATE_FILE",
+    "runtimeApp",
+    "read_model_persist_failed"
+  ];
+
+  for (const file of controlPlaneFiles) {
+    const text = await sourceIfExists(file);
+    if (text == null) continue;
+    for (const marker of forbidden) {
+      assert.doesNotMatch(text, forbiddenMarkerPattern(marker), `${file} must not keep retired read-model marker ${marker}`);
+    }
   }
 });
 
