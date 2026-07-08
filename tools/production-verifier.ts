@@ -1037,17 +1037,16 @@ function assertRuntimeStatus(checks, runtimeStatus, name = "workspace_runtime_st
 }
 
 function assertWorkspaceUrlTokenScrubbed(checks, workspaceAuth, name = "workspace_url_token_scrubbed") {
-  let parsed = null;
-  try {
-    parsed = new URL(workspaceAuth?.url || "");
-  } catch {
-    parsed = null;
-  }
-  addCheck(checks, name, Boolean(
-    workspaceAuth?.redirected === true &&
-    parsed &&
-    !parsed.searchParams.has("token")
-  ), { path: parsed ? `${parsed.pathname}${parsed.search}` : "" });
+	let parsed = null;
+	try {
+		parsed = new URL(workspaceAuth?.url || "");
+	} catch {
+		parsed = null;
+	}
+	addCheck(checks, name, Boolean(
+		parsed &&
+		!parsed.searchParams.has("token")
+	), { path: parsed ? `${parsed.pathname}${parsed.search}` : "" });
 }
 
 function settlementEntry(settlement) {

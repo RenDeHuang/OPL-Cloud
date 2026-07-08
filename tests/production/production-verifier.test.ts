@@ -1147,6 +1147,22 @@ test("production verifier preserves Workspace gateway cookies after token cleanu
   ));
 });
 
+test("production verifier accepts Workspace URLs that are already token-free", async () => {
+  const chain = tkeChain({ workspaceUrl: "https://workspace.medopl.cn/w/ws-tke-prod001/" });
+  const result = await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    workspaceName: "Production Verification Lab",
+    runId: "prod-run",
+    packageId: "basic",
+    workspaceUrlAttempts: 1,
+    retryDelayMs: 0,
+    fetchImpl: keyedFetch({ responses: chainResponses(chain) })
+  });
+
+  assert.ok(result.checks.some((check) => check.name === "workspace_url_token_scrubbed" && check.ok === true));
+});
+
 test("production verifier uses AionUI login token when Set-Cookie is unavailable", async () => {
   const requests = [];
   const actions = [];
