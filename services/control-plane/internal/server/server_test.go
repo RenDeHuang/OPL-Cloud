@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -233,6 +234,18 @@ type fakeBlockingReconciliationLedgerClient struct {
 
 func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "tencent_bill_reconciliation_failed"}, nil
+}
+
+type failingFabricClient struct {
+	fakeFabricClient
+}
+
+func (failingFabricClient) Readiness(_ context.Context) (map[string]any, error) {
+	return nil, errors.New("provider secret leaked in raw error")
+}
+
+func (failingFabricClient) ListOperations(_ context.Context) ([]clients.FabricOperation, error) {
+	return nil, errors.New("provider operation secret leaked in raw error")
 }
 
 type fakeFabricClient struct {
@@ -738,14 +751,26 @@ func TestWorkspaceGatewaySetsActiveCookieForRootRuntimeApi(t *testing.T) {
 
 	app.proxyWorkspace(entryRec, entryReq)
 
-	if entryRec.Code != http.StatusOK {
-		t.Fatalf("entry status = %d, want %d: %s", entryRec.Code, http.StatusOK, entryRec.Body.String())
+	if entryRec.Code != http.StatusFound {
+		t.Fatalf("entry status = %d, want %d: %s", entryRec.Code, http.StatusFound, entryRec.Body.String())
+	}
+	if entryRec.Header().Get("Location") != "https://workspace.medopl.cn/w/ws-alpha/" {
+		t.Fatalf("token entry must redirect to clean URL, got %q", entryRec.Header().Get("Location"))
 	}
 	cookies := entryRec.Result().Cookies()
 	if !slices.ContainsFunc(cookies, func(cookie *http.Cookie) bool {
 		return cookie.Name == "opl_ws_active" && cookie.Value == "ws-alpha"
 	}) {
 		t.Fatalf("entry response must set active workspace cookie, got %#v", cookies)
+	}
+	cleanReq := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
+	for _, cookie := range cookies {
+		cleanReq.AddCookie(cookie)
+	}
+	cleanRec := httptest.NewRecorder()
+	app.proxyWorkspace(cleanRec, cleanReq)
+	if cleanRec.Code != http.StatusOK {
+		t.Fatalf("clean entry status = %d, want %d: %s", cleanRec.Code, http.StatusOK, cleanRec.Body.String())
 	}
 	apiReq := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/api/auth/user", nil)
 	for _, cookie := range cookies {
@@ -842,6 +867,57 @@ func TestOperatorLoginRejectsInvalidToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestOperatorLoginRateLimitsInvalidToken(t *testing.T) {
+	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
+	server := NewServer(controlplane.NewService(nil, nil))
+
+	var rec *httptest.ResponseRecorder
+	for range 6 {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-opl-operator-token", "wrong")
+		req.RemoteAddr = "203.0.113.10:4242"
+		rec = httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+	}
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("operator login status = %d, want 429: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	session := operatorSessionForTest(t, server)
+	body := `{"accountId":"acct-alpha","packageId":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "oversized-body")
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpstreamErrorsDoNotLeakProviderDetails(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &failingFabricClient{}))
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/readiness", nil)
+	addSessionCookies(req, operatorSessionForTest(t, server))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "upstream_unavailable") || strings.Contains(rec.Body.String(), "secret leaked") {
+		t.Fatalf("upstream error leaked provider details: %s", rec.Body.String())
 	}
 }
 

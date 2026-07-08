@@ -883,6 +883,12 @@ func (app *runtimeApp) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if token := r.URL.Query().Get("token"); token != "" {
 		setWorkspaceGatewayCookies(w, workspaceID, token)
+		cleanURL := *r.URL
+		query := cleanURL.Query()
+		query.Del("token")
+		cleanURL.RawQuery = query.Encode()
+		http.Redirect(w, r, cleanURL.String(), http.StatusFound)
+		return
 	}
 	suffix := strings.TrimPrefix(r.URL.Path, "/w/"+workspaceID)
 	app.proxyWorkspaceTo(w, r, workspaceID, suffix)
@@ -920,7 +926,7 @@ func (app *runtimeApp) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, 
 	}
 	target, err := workspaceServiceTarget(serviceName)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeUpstreamError(w)
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -935,7 +941,7 @@ func (app *runtimeApp) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, 
 		req.Host = target.Host
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeUpstreamError(w)
 	}
 	proxy.ServeHTTP(w, r)
 }

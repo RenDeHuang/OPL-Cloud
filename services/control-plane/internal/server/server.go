@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"os"
@@ -36,6 +38,9 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if !limitJSONBody(w, r) {
+			return
+		}
 		input := decodeJSON(r)
 		if app.loginRateLimited(r, input) {
 			writeError(w, http.StatusTooManyRequests, "login_rate_limited")
@@ -53,8 +58,17 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		writeJSON(w, http.StatusOK, payload)
 	})
 	mux.HandleFunc("POST /api/auth/operator-login", func(w http.ResponseWriter, r *http.Request) {
+		if !limitJSONBody(w, r) {
+			return
+		}
+		input := map[string]any{"email": "operator"}
+		if app.loginRateLimited(r, input) {
+			writeError(w, http.StatusTooManyRequests, "login_rate_limited")
+			return
+		}
 		expectedToken := strings.TrimSpace(os.Getenv("OPL_OPERATOR_SUMMARY_TOKEN"))
 		if expectedToken == "" || r.Header.Get("x-opl-operator-token") != expectedToken {
+			app.recordLoginFailure(r, input)
 			writeError(w, http.StatusUnauthorized, "operator_token_invalid")
 			return
 		}
@@ -63,6 +77,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			writeError(w, http.StatusInternalServerError, "operator_session_failed")
 			return
 		}
+		app.clearLoginFailures(r, input)
 		http.SetCookie(w, sessionCookie(sessionID, 12*60*60))
 		w.Header().Set("x-opl-csrf-token", stringValue(payload["csrfToken"]))
 		writeJSON(w, http.StatusOK, payload)
@@ -109,7 +124,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 	mux.HandleFunc("GET /api/runtime/readiness", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		readiness, err := service.RuntimeReadiness(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		writeJSON(w, http.StatusOK, readiness)
@@ -117,7 +132,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 	mux.HandleFunc("GET /api/production/readiness", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		readiness, err := service.RuntimeReadiness(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		readiness["checks"] = []any{}
@@ -159,7 +174,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		input := decodeJSON(r)
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), stringField(input, "workspaceId", ""))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		writeJSON(w, http.StatusOK, workspaceRuntimeStatusResponse(runtime))
@@ -184,7 +199,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			VolumeID:     storageID,
 		}, mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		if err := app.rememberWorkspaceProjection(workspace); err != nil {
@@ -215,7 +230,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			Reason:         stringField(input, "reason", ""),
 		}, idempotencyKey)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		if err := app.rememberManualTopUp(result); err != nil {
@@ -245,7 +260,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		}
 		result, err := service.SettleResource(r.Context(), settlement, idempotencyKey)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		result = completeSettlementResult(result, settlement)
@@ -272,7 +287,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		}
 		result, err := service.RecordReconciliation(r.Context(), controlplane.ReconciliationInput{Report: report}, idempotencyKey)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		if err := app.rememberReconciliation(result); err != nil {
@@ -300,7 +315,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			HoldAmountCents: computeHoldAmountCents(stringField(input, "packageId", "basic")),
 		}, mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		body := computeResponse(structToMap(compute))
@@ -343,7 +358,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		existing, _ := app.getCompute(id)
 		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		body := computeResponse(structToMap(compute))
@@ -366,7 +381,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			HoldAmountCents: storageHoldAmountCents(stringField(input, "packageId", "basic"), numberField(input, "sizeGb", 10)),
 		}, mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		body := storageResponse(structToMap(storage))
@@ -386,7 +401,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		existing, _ := app.getStorage(id)
 		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		body := storageResponse(structToMap(storage))
@@ -404,7 +419,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			VolumeID:    stringField(input, "storageId", ""),
 		}, mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)
@@ -418,7 +433,7 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		input := decodeJSON(r)
 		attachment, err := service.DetachStorageAttachment(r.Context(), stringField(input, "attachmentId", ""), mutationKey(r, input))
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeUpstreamError(w)
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)
@@ -525,6 +540,9 @@ func (app *runtimeApp) protected(requiresAdmin bool, next http.HandlerFunc) http
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if !limitJSONBody(w, r) {
+				return
+			}
 			if r.Header.Get("x-opl-csrf") != stringValue(payload["csrfToken"]) {
 				writeError(w, http.StatusForbidden, "csrf_token_invalid")
 				return
@@ -542,7 +560,7 @@ func (app *runtimeApp) protected(requiresAdmin bool, next http.HandlerFunc) http
 func (app *runtimeApp) syncRuntimeOperations(w http.ResponseWriter, r *http.Request, service *controlplane.Service) bool {
 	operations, err := service.FabricOperations(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeUpstreamError(w)
 		return false
 	}
 	if err := app.rememberRuntimeOperations(operations); err != nil {
@@ -560,6 +578,29 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeUpstreamError(w http.ResponseWriter) {
+	writeError(w, http.StatusBadGateway, "upstream_unavailable")
+}
+
+const maxJSONBodyBytes int64 = 1 << 20
+
+func limitJSONBody(w http.ResponseWriter, r *http.Request) bool {
+	if r.Body == nil {
+		return true
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBodyBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json_body")
+		return false
+	}
+	if int64(len(data)) > maxJSONBodyBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "request_body_too_large")
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return true
 }
 
 func writeUserLifecycleError(w http.ResponseWriter, err error) {
