@@ -72,10 +72,25 @@
     "conflictBehavior": "Same idempotencyKey with a different release payload fails closed."
   },
   "ledgerEvidencePolicy": {
+    "walletTransactionAfterSnapshotFields": [
+      "balanceCents",
+      "frozenCents",
+      "availableCents",
+      "totalSpentCents"
+    ],
     "priceSnapshotFields": [
       "priceBasis",
       "userPrice",
       "providerCostEstimate"
+    ],
+    "resourceSettlementEvidenceFields": [
+      "pricingVersion",
+      "priceSnapshot",
+      "usagePeriodStart",
+      "usagePeriodEnd",
+      "quantity",
+      "unit",
+      "providerCostEvidenceRef"
     ],
     "resourceOwnerFields": [
       "ownerAccountId",

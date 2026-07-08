@@ -70,13 +70,16 @@ func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (Ma
 		CreatedAt:      now,
 	}
 	tx := WalletTransaction{
-		ID:            s.newID("wtx"),
-		AccountID:     input.AccountID,
-		LedgerEntryID: entry.ID,
-		AmountCents:   input.AmountCents,
-		BalanceCents:  wallet.BalanceCents,
-		Currency:      input.Currency,
-		CreatedAt:     now,
+		ID:              s.newID("wtx"),
+		AccountID:       input.AccountID,
+		LedgerEntryID:   entry.ID,
+		AmountCents:     input.AmountCents,
+		BalanceCents:    wallet.BalanceCents,
+		FrozenCents:     wallet.FrozenCents,
+		AvailableCents:  wallet.AvailableCents,
+		TotalSpentCents: wallet.TotalSpentCents,
+		Currency:        input.Currency,
+		CreatedAt:       now,
 	}
 	topup := ManualTopUp{
 		ID:             s.newID("mtu"),
@@ -147,13 +150,16 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 		CreatedAt:   now,
 	}
 	tx := WalletTransaction{
-		ID:            s.newID("wtx"),
-		AccountID:     input.AccountID,
-		LedgerEntryID: entry.ID,
-		AmountCents:   input.AmountCents,
-		BalanceCents:  wallet.BalanceCents,
-		Currency:      input.Currency,
-		CreatedAt:     now,
+		ID:              s.newID("wtx"),
+		AccountID:       input.AccountID,
+		LedgerEntryID:   entry.ID,
+		AmountCents:     input.AmountCents,
+		BalanceCents:    wallet.BalanceCents,
+		FrozenCents:     wallet.FrozenCents,
+		AvailableCents:  wallet.AvailableCents,
+		TotalSpentCents: wallet.TotalSpentCents,
+		Currency:        input.Currency,
+		CreatedAt:       now,
 	}
 	result := HoldResult{
 		ID:                  s.newID("hold"),
@@ -215,13 +221,16 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 		CreatedAt:   now,
 	}
 	tx := WalletTransaction{
-		ID:            s.newID("wtx"),
-		AccountID:     input.AccountID,
-		LedgerEntryID: entry.ID,
-		AmountCents:   0,
-		BalanceCents:  wallet.BalanceCents,
-		Currency:      input.Currency,
-		CreatedAt:     now,
+		ID:              s.newID("wtx"),
+		AccountID:       input.AccountID,
+		LedgerEntryID:   entry.ID,
+		AmountCents:     0,
+		BalanceCents:    wallet.BalanceCents,
+		FrozenCents:     wallet.FrozenCents,
+		AvailableCents:  wallet.AvailableCents,
+		TotalSpentCents: wallet.TotalSpentCents,
+		Currency:        input.Currency,
+		CreatedAt:       now,
 	}
 	result := HoldReleaseResult{
 		ID:                  s.newID("hrel"),
@@ -283,13 +292,20 @@ func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlement
 	defer s.mu.Unlock()
 
 	payloadHash, err := hashJSON(struct {
-		AccountID    string `json:"accountId"`
-		WorkspaceID  string `json:"workspaceId"`
-		ResourceType string `json:"resourceType"`
-		ResourceID   string `json:"resourceId"`
-		AmountCents  int64  `json:"amountCents"`
-		Currency     string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
+		AccountID               string         `json:"accountId"`
+		WorkspaceID             string         `json:"workspaceId"`
+		ResourceType            string         `json:"resourceType"`
+		ResourceID              string         `json:"resourceId"`
+		AmountCents             int64          `json:"amountCents"`
+		Currency                string         `json:"currency"`
+		PricingVersion          string         `json:"pricingVersion"`
+		PriceSnapshot           map[string]any `json:"priceSnapshot"`
+		UsagePeriodStart        string         `json:"usagePeriodStart"`
+		UsagePeriodEnd          string         `json:"usagePeriodEnd"`
+		Quantity                float64        `json:"quantity"`
+		Unit                    string         `json:"unit"`
+		ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
 	if err != nil {
 		return ResourceSettlementResult{}, err
 	}
@@ -319,8 +335,8 @@ func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlement
 	wallet.UpdatedAt = now
 
 	entry := LedgerEntry{ID: s.newID("le"), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_settlement", Reason: input.WorkspaceID, CreatedAt: now}
-	tx := WalletTransaction{ID: s.newID("wtx"), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, Currency: input.Currency, CreatedAt: now}
-	result := ResourceSettlementResult{ID: s.newID("settle"), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: tx.ID, Wallet: wallet, CreatedAt: now}
+	tx := WalletTransaction{ID: s.newID("wtx"), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
+	result := ResourceSettlementResult{ID: s.newID("settle"), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: tx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
 	s.wallets[input.AccountID] = wallet
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
 	return result, nil
@@ -371,6 +387,17 @@ func (s *MemoryStore) Wallet(_ context.Context, accountID string) (Wallet, error
 func (s *MemoryStore) newID(prefix string) string {
 	s.nextID++
 	return fmt.Sprintf("%s_%06d", prefix, s.nextID)
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }
 
 func hashManualTopUp(input ManualTopUpInput) (string, error) {

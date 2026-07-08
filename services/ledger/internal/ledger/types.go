@@ -42,13 +42,16 @@ type LedgerEntry struct {
 }
 
 type WalletTransaction struct {
-	ID            string    `json:"id"`
-	AccountID     string    `json:"accountId"`
-	LedgerEntryID string    `json:"ledgerEntryId"`
-	AmountCents   int64     `json:"amountCents"`
-	BalanceCents  int64     `json:"balanceCents"`
-	Currency      string    `json:"currency"`
-	CreatedAt     time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	AccountID       string    `json:"accountId"`
+	LedgerEntryID   string    `json:"ledgerEntryId"`
+	AmountCents     int64     `json:"amountCents"`
+	BalanceCents    int64     `json:"balanceCents"`
+	FrozenCents     int64     `json:"frozenCents"`
+	AvailableCents  int64     `json:"availableCents"`
+	TotalSpentCents int64     `json:"totalSpentCents"`
+	Currency        string    `json:"currency"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type ManualTopUp struct {
@@ -144,29 +147,43 @@ type EvidenceReceipt struct {
 }
 
 type ResourceSettlementInput struct {
-	AccountID      string `json:"accountId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ResourceType   string `json:"resourceType"`
-	ResourceID     string `json:"resourceId"`
-	AmountCents    int64  `json:"amountCents"`
-	Currency       string `json:"currency"`
-	IdempotencyKey string `json:"-"`
+	AccountID               string         `json:"accountId"`
+	WorkspaceID             string         `json:"workspaceId"`
+	ResourceType            string         `json:"resourceType"`
+	ResourceID              string         `json:"resourceId"`
+	AmountCents             int64          `json:"amountCents"`
+	Currency                string         `json:"currency"`
+	PricingVersion          string         `json:"pricingVersion"`
+	PriceSnapshot           map[string]any `json:"priceSnapshot"`
+	UsagePeriodStart        string         `json:"usagePeriodStart"`
+	UsagePeriodEnd          string         `json:"usagePeriodEnd"`
+	Quantity                float64        `json:"quantity"`
+	Unit                    string         `json:"unit"`
+	ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
+	IdempotencyKey          string         `json:"-"`
 }
 
 type ResourceSettlementResult struct {
-	ID                  string    `json:"id"`
-	AccountID           string    `json:"accountId"`
-	WorkspaceID         string    `json:"workspaceId"`
-	ResourceType        string    `json:"resourceType"`
-	ResourceID          string    `json:"resourceId"`
-	AmountCents         int64     `json:"amountCents"`
-	Currency            string    `json:"currency"`
-	Status              string    `json:"status"`
-	LedgerEntryID       string    `json:"ledgerEntryId"`
-	WalletTransactionID string    `json:"walletTransactionId"`
-	Wallet              Wallet    `json:"wallet"`
-	CreatedAt           time.Time `json:"createdAt"`
-	Replayed            bool      `json:"replayed"`
+	ID                      string         `json:"id"`
+	AccountID               string         `json:"accountId"`
+	WorkspaceID             string         `json:"workspaceId"`
+	ResourceType            string         `json:"resourceType"`
+	ResourceID              string         `json:"resourceId"`
+	AmountCents             int64          `json:"amountCents"`
+	Currency                string         `json:"currency"`
+	Status                  string         `json:"status"`
+	LedgerEntryID           string         `json:"ledgerEntryId"`
+	WalletTransactionID     string         `json:"walletTransactionId"`
+	PricingVersion          string         `json:"pricingVersion"`
+	PriceSnapshot           map[string]any `json:"priceSnapshot"`
+	UsagePeriodStart        string         `json:"usagePeriodStart"`
+	UsagePeriodEnd          string         `json:"usagePeriodEnd"`
+	Quantity                float64        `json:"quantity"`
+	Unit                    string         `json:"unit"`
+	ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
+	Wallet                  Wallet         `json:"wallet"`
+	CreatedAt               time.Time      `json:"createdAt"`
+	Replayed                bool           `json:"replayed"`
 }
 
 type ReconciliationInput struct {

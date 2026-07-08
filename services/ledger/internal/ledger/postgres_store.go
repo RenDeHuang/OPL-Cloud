@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
   amount_cents BIGINT NOT NULL,
   balance_cents BIGINT NOT NULL,
+  frozen_cents BIGINT NOT NULL DEFAULT 0,
+  available_cents BIGINT NOT NULL DEFAULT 0,
+  total_spent_cents BIGINT NOT NULL DEFAULT 0,
   currency TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -49,14 +52,23 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT;
 ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS amount_cents BIGINT;
 ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_cents BIGINT;
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS frozen_cents BIGINT;
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS available_cents BIGINT;
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS total_spent_cents BIGINT;
 ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS currency TEXT;
 UPDATE wallet_transactions SET ledger_entry_id = id WHERE ledger_entry_id IS NULL;
 UPDATE wallet_transactions SET amount_cents = 0 WHERE amount_cents IS NULL;
 UPDATE wallet_transactions SET balance_cents = 0 WHERE balance_cents IS NULL;
+UPDATE wallet_transactions SET frozen_cents = 0 WHERE frozen_cents IS NULL;
+UPDATE wallet_transactions SET available_cents = balance_cents WHERE available_cents IS NULL;
+UPDATE wallet_transactions SET total_spent_cents = 0 WHERE total_spent_cents IS NULL;
 UPDATE wallet_transactions SET currency = 'CNY' WHERE currency IS NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN ledger_entry_id SET NOT NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN amount_cents SET NOT NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN balance_cents SET NOT NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN frozen_cents SET NOT NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN available_cents SET NOT NULL;
+ALTER TABLE wallet_transactions ALTER COLUMN total_spent_cents SET NOT NULL;
 ALTER TABLE wallet_transactions ALTER COLUMN currency SET NOT NULL;
 ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS user_id;
 ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS workspace_id;
@@ -163,28 +175,56 @@ ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS state;
 	ALTER TABLE evidence_receipts ALTER COLUMN idempotency_key SET NOT NULL;
 	ALTER TABLE evidence_receipts ALTER COLUMN request_hash SET NOT NULL;
 
-	CREATE TABLE IF NOT EXISTS resource_settlements (
-	  id TEXT PRIMARY KEY,
-	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-	  workspace_id TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS resource_settlements (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES wallets(account_id),
+  workspace_id TEXT NOT NULL,
 	  resource_type TEXT NOT NULL,
 	  resource_id TEXT NOT NULL,
 	  amount_cents BIGINT NOT NULL,
 	  currency TEXT NOT NULL,
 	  status TEXT NOT NULL,
 	  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
-	  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
-	  idempotency_key TEXT NOT NULL,
-	  request_hash TEXT NOT NULL,
-	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
+  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
+  pricing_version TEXT NOT NULL DEFAULT '',
+  price_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  usage_period_start TEXT NOT NULL DEFAULT '',
+  usage_period_end TEXT NOT NULL DEFAULT '',
+  quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+  unit TEXT NOT NULL DEFAULT '',
+  provider_cost_evidence_ref TEXT NOT NULL DEFAULT '',
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS request_hash TEXT;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS pricing_version TEXT;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS price_snapshot_json JSONB;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS usage_period_start TEXT;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS usage_period_end TEXT;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS quantity DOUBLE PRECISION;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS unit TEXT;
+	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS provider_cost_evidence_ref TEXT;
 	UPDATE resource_settlements SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
 	UPDATE resource_settlements SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
+	UPDATE resource_settlements SET pricing_version = '' WHERE pricing_version IS NULL;
+	UPDATE resource_settlements SET price_snapshot_json = '{}'::jsonb WHERE price_snapshot_json IS NULL;
+	UPDATE resource_settlements SET usage_period_start = '' WHERE usage_period_start IS NULL;
+	UPDATE resource_settlements SET usage_period_end = '' WHERE usage_period_end IS NULL;
+	UPDATE resource_settlements SET quantity = 0 WHERE quantity IS NULL;
+	UPDATE resource_settlements SET unit = '' WHERE unit IS NULL;
+	UPDATE resource_settlements SET provider_cost_evidence_ref = '' WHERE provider_cost_evidence_ref IS NULL;
 	ALTER TABLE resource_settlements ALTER COLUMN idempotency_key SET NOT NULL;
 	ALTER TABLE resource_settlements ALTER COLUMN request_hash SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN pricing_version SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN price_snapshot_json SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN usage_period_start SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN usage_period_end SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN quantity SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN unit SET NOT NULL;
+	ALTER TABLE resource_settlements ALTER COLUMN provider_cost_evidence_ref SET NOT NULL;
 
 	CREATE TABLE IF NOT EXISTS hold_releases (
 	  id TEXT PRIMARY KEY,
@@ -341,18 +381,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	}
 
 	walletTx := WalletTransaction{
-		ID:            postgresID("wtx", now.Add(time.Nanosecond)),
-		AccountID:     input.AccountID,
-		LedgerEntryID: entry.ID,
-		AmountCents:   input.AmountCents,
-		BalanceCents:  wallet.BalanceCents,
-		Currency:      input.Currency,
-		CreatedAt:     now,
+		ID:              postgresID("wtx", now.Add(time.Nanosecond)),
+		AccountID:       input.AccountID,
+		LedgerEntryID:   entry.ID,
+		AmountCents:     input.AmountCents,
+		BalanceCents:    wallet.BalanceCents,
+		FrozenCents:     wallet.FrozenCents,
+		AvailableCents:  wallet.AvailableCents,
+		TotalSpentCents: wallet.TotalSpentCents,
+		Currency:        input.Currency,
+		CreatedAt:       now,
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, currency, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
+INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, frozen_cents, available_cents, total_spent_cents, currency, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.FrozenCents, walletTx.AvailableCents, walletTx.TotalSpentCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
 		return ManualTopUpResult{}, err
 	}
 
@@ -465,11 +508,11 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 		return HoldResult{}, err
 	}
 
-	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: input.AmountCents, BalanceCents: wallet.BalanceCents, Currency: input.Currency, CreatedAt: now}
+	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: input.AmountCents, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
 	if _, err := tx.ExecContext(ctx, `
-	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, currency, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
+	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, frozen_cents, available_cents, total_spent_cents, currency, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.FrozenCents, walletTx.AvailableCents, walletTx.TotalSpentCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
 		return HoldResult{}, err
 	}
 
@@ -530,11 +573,11 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 	`, entry.ID, entry.AccountID, entry.AmountCents, entry.Currency, entry.Direction, entry.Source, entry.Reason, entry.CreatedAt); err != nil {
 		return HoldReleaseResult{}, err
 	}
-	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: 0, BalanceCents: wallet.BalanceCents, Currency: input.Currency, CreatedAt: now}
+	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: 0, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
 	if _, err := tx.ExecContext(ctx, `
-	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, currency, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
+	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, frozen_cents, available_cents, total_spent_cents, currency, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.FrozenCents, walletTx.AvailableCents, walletTx.TotalSpentCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
 		return HoldReleaseResult{}, err
 	}
 
@@ -589,13 +632,20 @@ func (s *PostgresStore) RecordEvidence(ctx context.Context, input EvidenceInput)
 
 func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
 	requestHash, err := hashJSON(struct {
-		AccountID    string `json:"accountId"`
-		WorkspaceID  string `json:"workspaceId"`
-		ResourceType string `json:"resourceType"`
-		ResourceID   string `json:"resourceId"`
-		AmountCents  int64  `json:"amountCents"`
-		Currency     string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
+		AccountID               string         `json:"accountId"`
+		WorkspaceID             string         `json:"workspaceId"`
+		ResourceType            string         `json:"resourceType"`
+		ResourceID              string         `json:"resourceId"`
+		AmountCents             int64          `json:"amountCents"`
+		Currency                string         `json:"currency"`
+		PricingVersion          string         `json:"pricingVersion"`
+		PriceSnapshot           map[string]any `json:"priceSnapshot"`
+		UsagePeriodStart        string         `json:"usagePeriodStart"`
+		UsagePeriodEnd          string         `json:"usagePeriodEnd"`
+		Quantity                float64        `json:"quantity"`
+		Unit                    string         `json:"unit"`
+		ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
 	if err != nil {
 		return ResourceSettlementResult{}, err
 	}
@@ -643,19 +693,23 @@ func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettle
 	`, entry.ID, entry.AccountID, entry.AmountCents, entry.Currency, entry.Direction, entry.Source, entry.Reason, entry.CreatedAt); err != nil {
 		return ResourceSettlementResult{}, err
 	}
-	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, Currency: input.Currency, CreatedAt: now}
+	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
 	if _, err := tx.ExecContext(ctx, `
-	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, currency, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
+	INSERT INTO wallet_transactions(id, account_id, ledger_entry_id, amount_cents, balance_cents, frozen_cents, available_cents, total_spent_cents, currency, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, walletTx.ID, walletTx.AccountID, walletTx.LedgerEntryID, walletTx.AmountCents, walletTx.BalanceCents, walletTx.FrozenCents, walletTx.AvailableCents, walletTx.TotalSpentCents, walletTx.Currency, walletTx.CreatedAt); err != nil {
 		return ResourceSettlementResult{}, err
 	}
 
-	result := ResourceSettlementResult{ID: postgresID("settle", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
+	result := ResourceSettlementResult{ID: postgresID("settle", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
+	priceSnapshotJSON, err := json.Marshal(result.PriceSnapshot)
+	if err != nil {
+		return ResourceSettlementResult{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
-	INSERT INTO resource_settlements(id, account_id, workspace_id, resource_type, resource_id, amount_cents, currency, status, ledger_entry_id, wallet_transaction_id, idempotency_key, request_hash, created_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, result.ID, result.AccountID, result.WorkspaceID, result.ResourceType, result.ResourceID, result.AmountCents, result.Currency, result.Status, result.LedgerEntryID, result.WalletTransactionID, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
+	INSERT INTO resource_settlements(id, account_id, workspace_id, resource_type, resource_id, amount_cents, currency, status, ledger_entry_id, wallet_transaction_id, pricing_version, price_snapshot_json, usage_period_start, usage_period_end, quantity, unit, provider_cost_evidence_ref, idempotency_key, request_hash, created_at)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17, $18, $19, $20)
+	`, result.ID, result.AccountID, result.WorkspaceID, result.ResourceType, result.ResourceID, result.AmountCents, result.Currency, result.Status, result.LedgerEntryID, result.WalletTransactionID, result.PricingVersion, string(priceSnapshotJSON), result.UsagePeriodStart, result.UsagePeriodEnd, result.Quantity, result.Unit, result.ProviderCostEvidenceRef, input.IdempotencyKey, requestHash, result.CreatedAt); err != nil {
 		return ResourceSettlementResult{}, err
 	}
 	return result, tx.Commit()
@@ -714,7 +768,7 @@ func (s *PostgresStore) manualTopUpByIdempotencyKey(ctx context.Context, tx *sql
 SELECT
 	  mt.id, mt.account_id, mt.amount_cents, mt.currency, mt.operator_user_id, mt.ledger_entry_id, mt.reason, mt.created_at, mt.request_hash,
 	  le.id, le.account_id, le.amount_cents, le.currency, le.direction, le.source, le.operator_user_id, le.reason, le.created_at,
-	  wt.id, wt.account_id, wt.ledger_entry_id, wt.amount_cents, wt.balance_cents, wt.currency, wt.created_at,
+	  wt.id, wt.account_id, wt.ledger_entry_id, wt.amount_cents, wt.balance_cents, wt.frozen_cents, wt.available_cents, wt.total_spent_cents, wt.currency, wt.created_at,
 	  w.account_id, w.balance_cents, w.frozen_cents, w.balance_cents - w.frozen_cents, w.total_spent_cents, w.currency, w.updated_at
 FROM manual_topups mt
 JOIN ledger_entries le ON le.id = mt.ledger_entry_id
@@ -745,6 +799,9 @@ WHERE mt.idempotency_key = $1
 		&result.WalletTransaction.LedgerEntryID,
 		&result.WalletTransaction.AmountCents,
 		&result.WalletTransaction.BalanceCents,
+		&result.WalletTransaction.FrozenCents,
+		&result.WalletTransaction.AvailableCents,
+		&result.WalletTransaction.TotalSpentCents,
 		&result.WalletTransaction.Currency,
 		&result.WalletTransaction.CreatedAt,
 		&result.Wallet.AccountID,
@@ -814,9 +871,11 @@ func (s *PostgresStore) evidenceByIdempotencyKey(ctx context.Context, tx *sql.Tx
 func (s *PostgresStore) settlementByIdempotencyKey(ctx context.Context, tx *sql.Tx, key string) (ResourceSettlementResult, string, error) {
 	result := ResourceSettlementResult{}
 	var requestHash string
+	var priceSnapshotJSON []byte
 	err := tx.QueryRowContext(ctx, `
 	SELECT
-	  rs.id, rs.account_id, rs.workspace_id, rs.resource_type, rs.resource_id, rs.amount_cents, rs.currency, rs.status, rs.ledger_entry_id, rs.wallet_transaction_id, rs.created_at, rs.request_hash,
+	  rs.id, rs.account_id, rs.workspace_id, rs.resource_type, rs.resource_id, rs.amount_cents, rs.currency, rs.status, rs.ledger_entry_id, rs.wallet_transaction_id,
+	  rs.pricing_version, rs.price_snapshot_json, rs.usage_period_start, rs.usage_period_end, rs.quantity, rs.unit, rs.provider_cost_evidence_ref, rs.created_at, rs.request_hash,
 	  w.account_id, w.balance_cents, w.frozen_cents, w.balance_cents - w.frozen_cents, w.total_spent_cents, w.currency, w.updated_at
 	FROM resource_settlements rs
 	JOIN wallets w ON w.account_id = rs.account_id
@@ -832,6 +891,13 @@ func (s *PostgresStore) settlementByIdempotencyKey(ctx context.Context, tx *sql.
 		&result.Status,
 		&result.LedgerEntryID,
 		&result.WalletTransactionID,
+		&result.PricingVersion,
+		&priceSnapshotJSON,
+		&result.UsagePeriodStart,
+		&result.UsagePeriodEnd,
+		&result.Quantity,
+		&result.Unit,
+		&result.ProviderCostEvidenceRef,
 		&result.CreatedAt,
 		&requestHash,
 		&result.Wallet.AccountID,
@@ -842,6 +908,9 @@ func (s *PostgresStore) settlementByIdempotencyKey(ctx context.Context, tx *sql.
 		&result.Wallet.Currency,
 		&result.Wallet.UpdatedAt,
 	)
+	if err == nil && len(priceSnapshotJSON) > 0 {
+		_ = json.Unmarshal(priceSnapshotJSON, &result.PriceSnapshot)
+	}
 	return result, requestHash, err
 }
 
