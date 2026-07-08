@@ -216,7 +216,7 @@
     {
       "status": "implemented",
       "contractLifecycle": "current",
-      "ownerRepo": "opl-fabric",
+      "ownerRepo": "opl-console",
       "capabilities": [
         "list",
         "read",
@@ -230,7 +230,7 @@
       "hiddenInMenu": true,
       "featureFlag": "workspaces",
       "routeKind": "read_model",
-      "objectKind": "ComputePool",
+      "objectKind": "ComputeAllocation",
       "pageModule": "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
       "apiClient": "apps/console-ui/src/api/resources-api.ts",
       "apiRoutes": [
@@ -711,7 +711,7 @@
       "hiddenInMenu": true,
       "featureFlag": "workspaces",
       "routeKind": "read_model",
-      "objectKind": "ResourceRelationship",
+      "objectKind": "Workspace",
       "pageModule": "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [
@@ -880,7 +880,7 @@
       "hiddenInMenu": true,
       "featureFlag": "gatewayExternalLink",
       "routeKind": "external_integration",
-      "objectKind": "GatewayIntegration",
+      "objectKind": "Workspace",
       "externalUrl": "https://gflabtoken.cn/",
       "pageModule": "apps/console-ui/src/pages/gateway/GatewayPage.tsx",
       "serviceBoundary": "OPLGatewayExternalIntegration",
@@ -1078,7 +1078,7 @@
       "hiddenInMenu": true,
       "featureFlag": "alerts",
       "routeKind": "read_model",
-      "objectKind": "RuntimeReadiness",
+      "objectKind": "AdminAuditEvent",
       "pageModule": "apps/console-ui/src/pages/catalog/FabricPages.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [
@@ -1142,6 +1142,7 @@
       "capabilities": [
         "list",
         "read",
+        "write",
         "action",
         "audit"
       ],
@@ -1217,7 +1218,7 @@
       "adminMenu": true,
       "featureFlag": "ledgerAdmin",
       "routeKind": "read_model",
-      "objectKind": "Usage",
+      "objectKind": "LedgerEntry",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/ledger-api.ts",
       "apiRoutes": [
@@ -1231,8 +1232,9 @@
     {
       "status": "implemented",
       "contractLifecycle": "current",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-fabric",
       "capabilities": [
+        "list",
         "read",
         "detail",
         "audit"
@@ -1245,7 +1247,7 @@
       "adminMenu": true,
       "featureFlag": "runtimeAdmin",
       "routeKind": "read_model",
-      "objectKind": "RuntimeReadiness",
+      "objectKind": "FabricOperation",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [
@@ -1260,7 +1262,7 @@
     {
       "status": "implemented",
       "contractLifecycle": "current",
-      "ownerRepo": "opl-console",
+      "ownerRepo": "opl-fabric",
       "capabilities": [
         "read",
         "detail",
@@ -1275,7 +1277,7 @@
       "adminMenu": true,
       "featureFlag": "runtimeAdmin",
       "routeKind": "read_model",
-      "objectKind": "RuntimeReadiness",
+      "objectKind": "FabricOperation",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [
@@ -1305,7 +1307,7 @@
       "adminMenu": true,
       "featureFlag": "runtimeAdmin",
       "routeKind": "read_model",
-      "objectKind": "ProductionVerification",
+      "objectKind": "AdminAuditEvent",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [
@@ -1334,7 +1336,7 @@
       "adminMenu": true,
       "featureFlag": "runtimeAdmin",
       "routeKind": "read_model",
-      "objectKind": "RuntimeReadiness",
+      "objectKind": "AdminAuditEvent",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [

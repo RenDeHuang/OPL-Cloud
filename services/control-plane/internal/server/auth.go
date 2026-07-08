@@ -111,6 +111,11 @@ func sessionCookie(sessionID string, maxAge int) *http.Cookie {
 	return &http.Cookie{Name: sessionCookieName, Value: sessionID, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: maxAge}
 }
 
+func sessionLookupKey(sessionID string) string {
+	sum := sha256.Sum256([]byte("opl-session\x00" + sessionID))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func sanitizeUser(user map[string]any) map[string]any {
 	output := cloneMap(user)
 	delete(output, "password")

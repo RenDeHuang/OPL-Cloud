@@ -34,16 +34,23 @@ test("business object contract defines the current commercial object boundary", 
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
 });
 
-test("business object contract uses compute pools and account allocations as current product truth", async () => {
+test("business object contract contains only current OPL Cloud business facts", async () => {
   const contract = await readJson(businessObjectContractPath);
   const kinds = new Map(contract.objectKinds.map((object) => [object.kind, object]));
 
   for (const [kind, requiredCapabilities] of [
-    ["ComputePool", ["list", "read", "evidence"]],
+    ["Account", ["list", "detail", "read", "audit"]],
+    ["User", ["list", "detail", "read", "write", "action", "audit"]],
+    ["Session", ["detail", "read", "action", "audit"]],
     ["ComputeAllocation", ["list", "detail", "read", "write", "action", "evidence"]],
     ["StorageVolume", ["list", "detail", "read", "write", "action", "evidence"]],
     ["StorageAttachment", ["list", "detail", "read", "write", "action", "evidence"]],
-    ["Workspace", ["list", "detail", "read", "write", "action"]]
+    ["Workspace", ["list", "detail", "read", "write", "action"]],
+    ["Wallet", ["list", "detail", "read", "action", "audit"]],
+    ["LedgerEntry", ["list", "read", "evidence", "audit"]],
+    ["FabricOperation", ["list", "detail", "read", "evidence", "audit"]],
+    ["AdminAuditEvent", ["list", "read", "audit"]],
+    ["SupportTicketMapping", ["list", "detail", "read", "write", "audit"]]
   ]) {
     const object = kinds.get(kind);
     assert.ok(object, `missing object kind ${kind}`);
@@ -53,21 +60,18 @@ test("business object contract uses compute pools and account allocations as cur
   }
 
   assert.deepEqual([...kinds.keys()].sort(), [
+    "Account",
+    "AdminAuditEvent",
     "ComputeAllocation",
-    "ComputePool",
-    "GatewayIntegration",
-    "ProductionVerification",
-    "ResourceRelationship",
-    "RuntimeTemplate",
-    "RuntimeReadiness",
+    "FabricOperation",
+    "LedgerEntry",
+    "Session",
     "StorageAttachment",
     "StorageVolume",
     "SupportTicketMapping",
-    "Usage",
     "User",
     "Wallet",
-    "Workspace",
-    "WorkspaceAccess"
+    "Workspace"
   ].sort());
 });
 
@@ -91,20 +95,6 @@ test("Workspace contract is the stable URL, storage, and current runtime pointer
   ]);
   assert.ok(contract.principles.includes("Destroying compute suspends the Workspace URL and retains storage; rebuilding compute reuses the same Workspace URL and StorageVolume."));
   assert.ok(contract.principles.includes("Destroying storage makes the Workspace unrecoverable because the file body is gone."));
-});
-
-test("ComputePool contract forbids cloud-side self provisioning of account CVMs", async () => {
-  const contract = await readJson(businessObjectContractPath);
-  const computePool = contract.objectKinds.find((object) => object.kind === "ComputePool");
-
-  assert.ok(computePool, "ComputePool must be current object truth");
-  assert.match(computePool.boundary || "", /package-level TKE node pool/i);
-  assert.deepEqual(computePool.selfProvisioningPolicy, {
-    autoscaling: "disabled",
-    autoRepair: "disabled",
-    allocationAuthority: "Console/Fabric explicit ComputeAllocation mutation"
-  });
-  assert.ok(contract.principles.includes("Fabric-managed ComputePools must not auto-scale or auto-repair user nodes; every account CVM must be created, owned, billed, and destroyed as a Console ComputeAllocation."));
 });
 
 test("ComputeAllocation contract requires dedicated CVM or Kubernetes node identity", async () => {
@@ -138,7 +128,7 @@ test("route object kinds map to committed object specs and owner repos", async (
     const objectSpec = objectSpecs.get(route.objectKind);
     assert.ok(objectSpec, `missing object spec for ${route.objectKind} on ${route.path}`);
     assert.equal(objectSpec.ownerRepo, route.ownerRepo, `${route.path} ownerRepo must match ${route.objectKind}`);
-    assert.equal(objectSpec.routeKind, route.routeKind, `${route.path} routeKind must match ${route.objectKind}`);
+    assert.ok((objectSpec.routeKinds || [objectSpec.routeKind]).includes(route.routeKind), `${route.path} routeKind must match ${route.objectKind}`);
   }
 });
 
@@ -188,5 +178,8 @@ test("active business contract excludes future and prune object shells", async (
   ]) {
     assert.equal(activeKinds.has(kind), false, `${kind} must not be active commercial object truth`);
     assert.equal(backlogKinds.has(kind), true, `${kind} must move to business object backlog`);
+  }
+  for (const kind of ["ComputePool", "RuntimeTemplate", "Usage", "ResourceRelationship", "ProductionVerification", "GatewayIntegration", "WorkspaceAccess", "RuntimeReadiness"]) {
+    assert.equal(activeKinds.has(kind), false, `${kind} must not be an active business object`);
   }
 });

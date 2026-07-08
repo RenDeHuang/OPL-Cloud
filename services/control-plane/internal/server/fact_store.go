@@ -29,6 +29,7 @@ type controlPlaneFacts struct {
 	Attachments factTable `json:"attachments,omitempty"`
 	Workspaces  factTable `json:"workspaces,omitempty"`
 	Users       factTable `json:"users,omitempty"`
+	Sessions    factTable `json:"sessions,omitempty"`
 	Orgs        factTable `json:"orgs,omitempty"`
 	Memberships factTable `json:"memberships,omitempty"`
 	Support     factTable `json:"support,omitempty"`
@@ -117,6 +118,7 @@ var postgresFactTables = []string{
 	"control_plane_storage_attachments",
 	"control_plane_workspaces",
 	"control_plane_users",
+	"control_plane_sessions",
 	"control_plane_organizations",
 	"control_plane_memberships",
 	"control_plane_support_ticket_mappings",
@@ -178,6 +180,9 @@ func (s *postgresFactStore) Load(ctx context.Context) (controlPlaneFacts, error)
 	if facts.Users, err = s.loadFactTable(ctx, "control_plane_users"); err != nil {
 		return facts, err
 	}
+	if facts.Sessions, err = s.loadFactTable(ctx, "control_plane_sessions"); err != nil {
+		return facts, err
+	}
 	if facts.Orgs, err = s.loadFactTable(ctx, "control_plane_organizations"); err != nil {
 		return facts, err
 	}
@@ -227,6 +232,9 @@ func (s *postgresFactStore) Save(ctx context.Context, facts controlPlaneFacts) e
 		return rollback(tx, err)
 	}
 	if err := replaceFactTable(ctx, tx, "control_plane_users", facts.Users); err != nil {
+		return rollback(tx, err)
+	}
+	if err := replaceFactTable(ctx, tx, "control_plane_sessions", facts.Sessions); err != nil {
 		return rollback(tx, err)
 	}
 	if err := replaceFactTable(ctx, tx, "control_plane_organizations", facts.Orgs); err != nil {

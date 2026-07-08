@@ -98,6 +98,7 @@ func (app *controlPlaneApp) factsLocked() controlPlaneFacts {
 		Attachments: cloneFactTable(app.attachments),
 		Workspaces:  cloneFactTable(app.workspaces),
 		Users:       cloneFactTable(app.users),
+		Sessions:    app.sessionFactsLocked(),
 		Orgs:        cloneFactTable(app.orgs),
 		Memberships: cloneFactTable(app.memberships),
 		Support:     cloneFactTable(app.support),
@@ -126,6 +127,9 @@ func (app *controlPlaneApp) applyFacts(facts controlPlaneFacts) {
 	}
 	if len(facts.Users) > 0 {
 		app.users = cloneFactTable(facts.Users)
+	}
+	if len(facts.Sessions) > 0 {
+		app.sessions = sessionsFromFacts(facts.Sessions)
 	}
 	if len(facts.Orgs) > 0 {
 		app.orgs = cloneFactTable(facts.Orgs)
@@ -527,8 +531,13 @@ func (app *controlPlaneApp) createSessionLocked(user map[string]any) (map[string
 	if err != nil {
 		return nil, "", err
 	}
-	app.sessions[sessionID] = sessionRecord{ID: sessionID, UserID: stringValue(user["id"]), CSRF: csrf, ExpiresAt: time.Now().UTC().Add(12 * time.Hour)}
-	return map[string]any{"user": sanitizeUser(user), "csrfToken": csrf, "expiresAt": app.sessions[sessionID].ExpiresAt.Format(time.RFC3339)}, sessionID, nil
+	sessionKey := sessionLookupKey(sessionID)
+	app.sessions[sessionKey] = sessionRecord{ID: sessionKey, UserID: stringValue(user["id"]), CSRF: csrf, ExpiresAt: time.Now().UTC().Add(12 * time.Hour)}
+	if err := app.persistLocked(); err != nil {
+		delete(app.sessions, sessionKey)
+		return nil, "", err
+	}
+	return map[string]any{"user": sanitizeUser(user), "csrfToken": csrf, "expiresAt": app.sessions[sessionKey].ExpiresAt.Format(time.RFC3339)}, sessionID, nil
 }
 
 func (app *controlPlaneApp) session(r *http.Request) (map[string]any, bool) {
@@ -538,9 +547,11 @@ func (app *controlPlaneApp) session(r *http.Request) (map[string]any, bool) {
 	}
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	session, ok := app.sessions[cookie.Value]
+	sessionKey := sessionLookupKey(cookie.Value)
+	session, ok := app.sessions[sessionKey]
 	if !ok || time.Now().UTC().After(session.ExpiresAt) {
-		delete(app.sessions, cookie.Value)
+		delete(app.sessions, sessionKey)
+		_ = app.persistLocked()
 		return nil, false
 	}
 	user := app.users[session.UserID]
@@ -567,14 +578,15 @@ func (app *controlPlaneApp) sessionUserContext(r *http.Request) (map[string]any,
 	return user, user != nil
 }
 
-func (app *controlPlaneApp) logout(r *http.Request) {
+func (app *controlPlaneApp) logout(r *http.Request) error {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
-		return
+		return nil
 	}
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	delete(app.sessions, cookie.Value)
+	delete(app.sessions, sessionLookupKey(cookie.Value))
+	return app.persistLocked()
 }
 
 func (app *controlPlaneApp) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
@@ -1633,6 +1645,38 @@ func cloneFactRows(input []factRow) []factRow {
 	output := make([]factRow, 0, len(input))
 	for _, item := range input {
 		output = append(output, cloneMap(item))
+	}
+	return output
+}
+
+func (app *controlPlaneApp) sessionFactsLocked() factTable {
+	output := factTable{}
+	for id, session := range app.sessions {
+		output[id] = factRow{
+			"id":        session.ID,
+			"userId":    session.UserID,
+			"csrf":      session.CSRF,
+			"expiresAt": session.ExpiresAt.UTC().Format(time.RFC3339),
+		}
+	}
+	return output
+}
+
+func sessionsFromFacts(input factTable) map[string]sessionRecord {
+	output := map[string]sessionRecord{}
+	now := time.Now().UTC()
+	for id, row := range input {
+		expiresAt, err := time.Parse(time.RFC3339, stringValue(row["expiresAt"]))
+		if err != nil || now.After(expiresAt) {
+			continue
+		}
+		sessionID := firstNonEmpty(stringValue(row["id"]), id)
+		output[sessionID] = sessionRecord{
+			ID:        sessionID,
+			UserID:    stringValue(row["userId"]),
+			CSRF:      stringValue(row["csrf"]),
+			ExpiresAt: expiresAt,
+		}
 	}
 	return output
 }

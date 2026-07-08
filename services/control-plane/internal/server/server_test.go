@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -146,6 +148,34 @@ func TestPricingPreviewMatchesResourceHoldAmount(t *testing.T) {
 	}
 }
 
+func TestPricingCatalogMatchesContractDefaults(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "packages", "contracts", "opl-cloud-pricing-contract.json"))
+	if err != nil {
+		t.Fatalf("read pricing contract: %v", err)
+	}
+	var contract map[string]any
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatalf("decode pricing contract: %v", err)
+	}
+	computeHourly, _ := contract["computeHourly"].(map[string]any)
+	assertPlanPrice := func(packageID string) {
+		t.Helper()
+		plan := packageByID(packageID)
+		price, _ := plan["price"].(map[string]any)
+		if price["computeHourly"] != computeHourly[packageID] {
+			t.Fatalf("%s compute price = %v, want contract %v", packageID, price["computeHourly"], computeHourly[packageID])
+		}
+		if price["storageGbMonth"] != contract["storageGbMonth"] {
+			t.Fatalf("%s storage price = %v, want contract %v", packageID, price["storageGbMonth"], contract["storageGbMonth"])
+		}
+	}
+	if pricingCatalogVersion != contract["catalogVersion"] || pricingCurrency != contract["currency"] {
+		t.Fatalf("pricing catalog identity drifted from contract")
+	}
+	assertPlanPrice("basic")
+	assertPlanPrice("pro")
+}
+
 func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/runtime-status", bytes.NewBufferString(`{"workspaceId":"ws-alpha"}`))
@@ -208,6 +238,28 @@ func TestPersistentFactsSurviveServerRestart(t *testing.T) {
 	wallet := state["wallet"].(map[string]any)
 	if wallet["frozenCents"].(float64) <= 0 {
 		t.Fatalf("wallet frozen state did not survive restart: %#v", wallet)
+	}
+}
+
+func TestSessionFactSurvivesServerRestart(t *testing.T) {
+	path := t.TempDir() + "/control-plane-state.json"
+	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	server, err := NewPersistentServer(service, NewFileFactStore(path))
+	if err != nil {
+		t.Fatalf("create persistent server: %v", err)
+	}
+	session := operatorSessionForTest(t, server)
+
+	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
+	if err != nil {
+		t.Fatalf("restart persistent server: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookies(req, session)
+	rec := httptest.NewRecorder()
+	restarted.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session did not survive restart: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

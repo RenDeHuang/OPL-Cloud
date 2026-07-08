@@ -109,7 +109,7 @@ test("active route contract models compute pools before account compute allocati
   const activeApiRoutes = new Set(routes.flatMap((route) => route.apiRoutes || []));
 
   for (const [id, objectKind, path] of [
-    ["compute-pools.list", "ComputePool", "/console/compute/pools"],
+    ["compute-pools.list", "ComputeAllocation", "/console/compute/pools"],
     ["compute-allocations.list", "ComputeAllocation", "/console/compute"],
     ["compute-allocations.create", "ComputeAllocation", "/console/compute/new"],
     ["compute-allocations.detail", "ComputeAllocation", "/console/compute/:id"],
@@ -119,13 +119,13 @@ test("active route contract models compute pools before account compute allocati
     ["attachment.list", "StorageAttachment", "/console/attachments"],
     ["attachment.create", "StorageAttachment", "/console/attachments/new"],
     ["attachment.detail", "StorageAttachment", "/console/attachments/:id"],
-    ["resources.relationships", "ResourceRelationship", "/console/resources/relationships"],
+    ["resources.relationships", "Workspace", "/console/resources/relationships"],
     ["workspace.list", "Workspace", "/console/workspaces"],
     ["workspace.create", "Workspace", "/console/workspaces/new"],
     ["workspace.detail", "Workspace", "/console/workspaces/:id"],
-    ["admin.diagnostics", "RuntimeReadiness", "/admin/diagnostics"],
-    ["admin.e2e", "ProductionVerification", "/admin/e2e"],
-    ["admin.cleanup", "RuntimeReadiness", "/admin/cleanup"]
+    ["admin.diagnostics", "FabricOperation", "/admin/diagnostics"],
+    ["admin.e2e", "AdminAuditEvent", "/admin/e2e"],
+    ["admin.cleanup", "AdminAuditEvent", "/admin/cleanup"]
   ]) {
     const route = byId.get(id);
     assert.ok(route, `missing current route ${id}`);

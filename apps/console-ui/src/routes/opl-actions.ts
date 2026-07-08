@@ -24,7 +24,7 @@ export const consoleActions = Object.freeze([
     label: "打开工作区入口",
     type: "external",
     role: "lab_owner",
-    objectKind: "WorkspaceAccess",
+    objectKind: "Workspace",
     requires: ["workspace.url.active"]
   },
   {
@@ -32,7 +32,7 @@ export const consoleActions = Object.freeze([
     label: "复制工作区入口",
     type: "copy",
     role: "lab_owner",
-    objectKind: "WorkspaceAccess",
+    objectKind: "Workspace",
     requires: ["workspace.url.active"]
   },
   {
@@ -40,7 +40,7 @@ export const consoleActions = Object.freeze([
     label: "重置工作区入口",
     type: "api",
     role: "lab_owner",
-    objectKind: "WorkspaceAccess",
+    objectKind: "Workspace",
     apiClient: "apps/console-ui/src/api/workspaces-api.ts",
     apiName: "resetWorkspaceToken",
     requires: ["workspace.url.active"],
@@ -54,7 +54,7 @@ export const consoleActions = Object.freeze([
     label: "停用工作区入口",
     type: "api",
     role: "lab_owner",
-    objectKind: "WorkspaceAccess",
+    objectKind: "Workspace",
     apiClient: "apps/console-ui/src/api/workspaces-api.ts",
     apiName: "deleteWorkspaceToken",
     requires: ["workspace.url.active"],
@@ -174,7 +174,7 @@ export const consoleActions = Object.freeze([
     label: "查看资源关系",
     type: "route",
     role: "lab_owner",
-    objectKind: "ResourceRelationship",
+    objectKind: "Workspace",
     routeId: "resources.relationships"
   },
   {
@@ -206,7 +206,7 @@ export const consoleActions = Object.freeze([
     label: "打开网关",
     type: "route",
     role: "lab_owner",
-    objectKind: "GatewayIntegration",
+    objectKind: "Workspace",
     routeId: "gateway.external"
   },
   {
@@ -257,7 +257,7 @@ export const consoleActions = Object.freeze([
     label: "查看线上诊断",
     type: "route",
     role: "admin",
-    objectKind: "RuntimeReadiness",
+    objectKind: "FabricOperation",
     routeId: "admin.diagnostics"
   },
   {
@@ -265,7 +265,7 @@ export const consoleActions = Object.freeze([
     label: "查看 E2E 记录",
     type: "route",
     role: "admin",
-    objectKind: "ProductionVerification",
+    objectKind: "AdminAuditEvent",
     routeId: "admin.e2e"
   },
   {

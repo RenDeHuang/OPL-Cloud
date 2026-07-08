@@ -27,10 +27,6 @@ test("business object contract keeps runtime template out of billing ownership",
   const contract = await readJson(businessObjectContractPath);
   const runtimeTemplate = contract.objectKinds.find((object) => object.kind === "RuntimeTemplate");
 
-  assert.ok(runtimeTemplate, "RuntimeTemplate must be explicit current read model truth");
-  assert.equal(runtimeTemplate.ownerRepo, "opl-fabric");
-  assert.equal(runtimeTemplate.routeKind, "read_model");
-  assert.equal(runtimeTemplate.evidenceRequired, true);
-  assert.match(runtimeTemplate.boundary, /not a billing object/);
+  assert.equal(runtimeTemplate, undefined, "RuntimeTemplate must not be an active business object");
   assert.ok(contract.principles.includes("RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity."));
 });

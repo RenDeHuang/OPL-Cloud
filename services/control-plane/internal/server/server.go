@@ -91,7 +91,10 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		writeJSON(w, http.StatusOK, payload)
 	}))
 	mux.HandleFunc("POST /api/auth/logout", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		app.logout(r)
+		if err := app.logout(r); err != nil {
+			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			return
+		}
 		http.SetCookie(w, sessionCookie("", -1))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))

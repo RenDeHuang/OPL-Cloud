@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, stable Workspace URL subjects, package-level compute pools, account-owned compute allocations, independent storage volumes, runtime attachments, resource settlement ledger, Fabric operation facts, support, and admin operations.",
+  "currentSlice": "Business-chain closure for account login, wallet, compute allocations, storage volumes, attachments, stable Workspace URL, Ledger entries, Fabric operations, admin audit, and support mappings.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -24,15 +24,16 @@
   "principles": [
     "Active business object contract contains only current commercial objects.",
     "Workspace is the stable commercial object: stable URL, access state, lifecycle, persistent StorageVolume, and current runtime pointer.",
-    "ComputePool is the package-level TKE node pool; ComputeAllocation is one replaceable account-owned dedicated CVM or Kubernetes node in that pool.",
-    "Fabric-managed ComputePools must not auto-scale or auto-repair user nodes; every account CVM must be created, owned, billed, and destroyed as a Console ComputeAllocation.",
+    "ComputeAllocation is one replaceable account-owned dedicated CVM or Kubernetes node selected from the package catalog.",
     "StorageVolume can exist without compute; StorageAttachment mounts one volume to one current ComputeAllocation runtime.",
     "RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity.",
     "Destroying compute suspends the Workspace URL and retains storage; rebuilding compute reuses the same Workspace URL and StorageVolume.",
     "Destroying storage makes the Workspace unrecoverable because the file body is gone.",
-    "Business objects are protected by route ids, action ids, API clients, permission boundaries, and tests.",
-    "Lab Owner sees business outcomes; Admin sees operator evidence and commercial operations.",
-    "Future approval, policy, raw provider diagnostics, snapshot/recovery, and retired runtime lifecycle objects live outside the active contract until implemented."
+    "Ledger owns wallet, top-up, hold, release, settlement, reconciliation, and LedgerEntry money facts.",
+    "Fabric owns provider execution evidence and FabricOperation facts.",
+    "Console owns Account, User, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and read DTO orchestration.",
+    "Frontend displays backend DTOs and must not derive pricing, billing, lifecycle, or provider state locally.",
+    "Future approval, policy, raw provider diagnostics, snapshot/recovery, payment orders, usage logs, and retired runtime lifecycle objects live outside the active contract until implemented."
   ],
   "repoBoundaryRules": [
     "Console owns UI, auth, route contracts, and read-model orchestration.",
@@ -40,6 +41,24 @@
     "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
   ],
   "objectKinds": [
+    {
+      "kind": "Account",
+      "ownerRepo": "opl-console",
+      "routeKinds": [
+        "read_model",
+        "business_object"
+      ],
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "detail",
+        "read",
+        "audit"
+      ],
+      "evidenceRequired": true,
+      "boundary": "Billing and ownership account for users, resources, wallets, workspaces, audit, and support mappings."
+    },
     {
       "kind": "User",
       "ownerRepo": "opl-console",
@@ -49,88 +68,38 @@
         "list",
         "detail",
         "read",
+        "write",
+        "action",
         "audit"
       ],
-      "evidenceRequired": false
+      "evidenceRequired": false,
+      "boundary": "Login user bound to an Account; deletion revokes sessions and preserves audit/resource evidence."
     },
     {
-      "kind": "Wallet",
+      "kind": "Session",
       "ownerRepo": "opl-console",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
-        "list",
         "detail",
         "read",
         "action",
         "audit"
       ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "Workspace",
-      "ownerRepo": "opl-console",
-      "routeKind": "business_object",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "detail",
-        "read",
-        "write",
-        "action"
-      ],
-      "evidenceRequired": true,
-      "boundary": "Stable URL subject backed by one persistent StorageVolume, managed runtime login credentials, access state, lifecycle state, and a current replaceable ComputeAllocation/StorageAttachment runtime pointer.",
-      "requiredFields": [
-        "storageId",
-        "currentComputeAllocationId",
-        "currentAttachmentId",
-        "url",
-        "access.account",
-        "access.password",
-        "access.tokenStatus",
-        "access.credentialStatus",
-        "runtime.status",
-        "state"
-      ]
-    },
-    {
-      "kind": "WorkspaceAccess",
-      "ownerRepo": "opl-console",
-      "routeKind": "business_object",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "detail",
-        "read",
-        "action"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "ComputePool",
-      "ownerRepo": "opl-fabric",
-      "routeKind": "read_model",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "read",
-        "evidence"
-      ],
-      "evidenceRequired": true,
-      "boundary": "Package-level TKE node pool for one compute specification. It is a placement pool, not an account resource identity.",
-      "selfProvisioningPolicy": {
-        "autoscaling": "disabled",
-        "autoRepair": "disabled",
-        "allocationAuthority": "Console/Fabric explicit ComputeAllocation mutation"
-      }
+      "evidenceRequired": false,
+      "boundary": "Authenticated Console session scoped to a user and account."
     },
     {
       "kind": "ComputeAllocation",
       "ownerRepo": "opl-console",
+      "routeKinds": [
+        "business_object",
+        "read_model"
+      ],
       "routeKind": "business_object",
       "lifecycle": "current",
       "evidenceRequired": true,
-      "boundary": "Account-owned dedicated CVM or Kubernetes node allocation inside a package ComputePool; nodePoolId is the placement pool, not the compute resource identity.",
+      "boundary": "Account-owned dedicated CVM or Kubernetes node allocation selected from the package compute catalog; package pool identity is placement metadata, not the billable resource identity.",
       "requiredProviderFields": [
         "nodePoolId",
         "cvmInstanceId",
@@ -186,19 +155,54 @@
       "boundary": "Mounts one StorageVolume to one ComputeAllocation runtime."
     },
     {
-      "kind": "RuntimeTemplate",
-      "ownerRepo": "opl-fabric",
+      "kind": "Workspace",
+      "ownerRepo": "opl-console",
+      "routeKinds": [
+        "business_object",
+        "read_model",
+        "external_integration"
+      ],
+      "routeKind": "business_object",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "detail",
+        "read",
+        "write",
+        "action"
+      ],
+      "evidenceRequired": true,
+      "boundary": "Stable URL subject backed by one persistent StorageVolume, managed runtime login credentials, access state, lifecycle state, and a current replaceable ComputeAllocation/StorageAttachment runtime pointer.",
+      "requiredFields": [
+        "storageId",
+        "currentComputeAllocationId",
+        "currentAttachmentId",
+        "url",
+        "access.account",
+        "access.password",
+        "access.tokenStatus",
+        "access.credentialStatus",
+        "runtime.status",
+        "state"
+      ]
+    },
+    {
+      "kind": "Wallet",
+      "ownerRepo": "opl-console",
       "routeKind": "read_model",
       "lifecycle": "current",
       "requiredCapabilitiesForImplemented": [
         "list",
-        "read"
+        "detail",
+        "read",
+        "action",
+        "audit"
       ],
       "evidenceRequired": true,
-      "boundary": "Deployable application image and runtime contract used by Fabric to create Workspace runtimes. RuntimeTemplate is not a billing object and must not own compute, storage, attachment, or Workspace URL lifecycle."
+      "boundary": "Account wallet DTO sourced from Ledger wallet facts."
     },
     {
-      "kind": "Usage",
+      "kind": "LedgerEntry",
       "ownerRepo": "opl-ledger",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -208,7 +212,36 @@
         "evidence",
         "audit"
       ],
-      "evidenceRequired": true
+      "evidenceRequired": true,
+      "boundary": "Money fact for top-up, hold, release, settlement, reconciliation, and wallet transaction evidence."
+    },
+    {
+      "kind": "FabricOperation",
+      "ownerRepo": "opl-fabric",
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "detail",
+        "read",
+        "evidence",
+        "audit"
+      ],
+      "evidenceRequired": true,
+      "boundary": "Provider execution fact for compute, storage, attachment, runtime, and replayable resource state."
+    },
+    {
+      "kind": "AdminAuditEvent",
+      "ownerRepo": "opl-console",
+      "routeKind": "read_model",
+      "lifecycle": "current",
+      "requiredCapabilitiesForImplemented": [
+        "list",
+        "read",
+        "audit"
+      ],
+      "evidenceRequired": true,
+      "boundary": "Admin/operator action fact with actor, target, result, IP, user agent, before/after, and timestamps."
     },
     {
       "kind": "SupportTicketMapping",
@@ -222,57 +255,8 @@
         "write",
         "audit"
       ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "RuntimeReadiness",
-      "ownerRepo": "opl-console",
-      "routeKind": "read_model",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "detail",
-        "read",
-        "audit"
-      ],
-      "evidenceRequired": true
-    },
-    {
-      "kind": "ResourceRelationship",
-      "ownerRepo": "opl-console",
-      "routeKind": "read_model",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "read",
-        "summary",
-        "evidence"
-      ],
       "evidenceRequired": true,
-      "boundary": "Account-level map of compute allocations, storage volumes, storage attachments, and Workspace URL entries."
-    },
-    {
-      "kind": "ProductionVerification",
-      "ownerRepo": "opl-console",
-      "routeKind": "read_model",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "list",
-        "read",
-        "audit",
-        "evidence"
-      ],
-      "evidenceRequired": true,
-      "boundary": "Safe read-only summary of real production E2E verification records derived from existing ledger and operation evidence."
-    },
-    {
-      "kind": "GatewayIntegration",
-      "ownerRepo": "opl-console",
-      "routeKind": "external_integration",
-      "lifecycle": "current",
-      "requiredCapabilitiesForImplemented": [
-        "read",
-        "external_link"
-      ],
-      "evidenceRequired": false
+      "boundary": "Mapping from OPL account/user/workspace/resource context to external support ticket identity."
     }
   ]
 }
