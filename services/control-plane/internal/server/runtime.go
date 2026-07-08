@@ -1163,6 +1163,7 @@ func (app *runtimeApp) resourceLedgerEvidenceLocked() []any {
 		compute := app.computes[computeID]
 		storage := app.storages[storageID]
 		attachment := app.attachments[attachmentID]
+		operation := app.operationEvidenceForResourceLocked(workspaceID, computeID, storageID, attachmentID)
 		ownerAccountID := firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(compute["ownerAccountId"]), stringValue(storage["ownerAccountId"]), stringValue(attachment["ownerAccountId"]))
 		ownerUserID := firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(compute["ownerUserId"]), stringValue(storage["ownerUserId"]), stringValue(attachment["ownerUserId"]))
 		rows = append(rows, map[string]any{
@@ -1178,11 +1179,24 @@ func (app *runtimeApp) resourceLedgerEvidenceLocked() []any {
 			"cvmInstanceId":        firstNonEmpty(stringValue(compute["cvmInstanceId"]), stringValue(compute["providerResourceId"])),
 			"nodeName":             firstNonEmpty(stringValue(compute["nodeName"]), stringValue(compute["machineName"])),
 			"providerRequestId":    firstNonEmpty(stringValue(compute["providerRequestId"]), stringValue(storage["providerRequestId"]), stringValue(attachment["providerRequestId"])),
+			"operationId":          firstNonEmpty(stringValue(operation["operationId"]), stringValue(compute["operationId"]), stringValue(storage["operationId"]), stringValue(attachment["operationId"])),
+			"costTags":             firstNonNil(operation["costTags"], compute["costTags"], storage["costTags"], attachment["costTags"]),
 			"ledgerEntryIds":       app.ledgerEntryIDsLocked(workspaceID, computeID, storageID, attachmentID),
 			"walletTransactionIds": app.walletTransactionIDsLocked(workspaceID, computeID, storageID, attachmentID),
 		})
 	}
 	return rows
+}
+
+func (app *runtimeApp) operationEvidenceForResourceLocked(ids ...string) map[string]any {
+	for index := len(app.runtimeOps) - 1; index >= 0; index-- {
+		operation := app.runtimeOps[index]
+		if mapContainsAnyID(operation, ids...) {
+			payload, _ := operation["redactedProviderPayload"].(map[string]any)
+			return map[string]any{"operationId": operation["operationId"], "costTags": firstNonNil(operation["costTags"], payload["costTags"])}
+		}
+	}
+	return map[string]any{}
 }
 
 func (app *runtimeApp) ledgerEntryIDsLocked(ids ...string) []string {
@@ -1454,6 +1468,15 @@ func stringSet(input []string) map[string]bool {
 		}
 	}
 	return output
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func mapContainsAnyID(input map[string]any, ids ...string) bool {

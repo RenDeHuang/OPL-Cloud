@@ -305,6 +305,9 @@ test("Admin commercial operations cover organizations, resource settlement, reco
     assert.match(adminSource, new RegExp(signal), `Admin UI must expose ${signal}`);
   }
   assert.match(adminSource, /moneyValue\(row\)/, "Admin Ledger must render Ledger amountCents facts without NaN");
+  for (const signal of ["priceSnapshotLabel", "priceSnapshot", "providerCostEvidenceRef", "walletAfterLabel", "balanceCents", "availableCents", "totalSpentCents"]) {
+    assert.match(adminSource, new RegExp(signal), `Admin billing evidence UI must expose ${signal}`);
+  }
 });
 
 test("Admin resource and support views expose operator-grade lookup fields", async () => {
@@ -486,6 +489,8 @@ test("Admin diagnostics exposes resource ledger evidence chain without operator 
     "resourceLedgerEvidence",
     "ledgerEntryIds",
     "walletTransactionIds",
+    "operationId",
+    "costTags",
     "ownerAccountId",
     "ownerUserId",
     "cvmInstanceId",
@@ -496,6 +501,7 @@ test("Admin diagnostics exposes resource ledger evidence chain without operator 
     assert.match(adminSource, new RegExp(signal), `Admin diagnostics must render ${signal}`);
     assert.match(readModelSource, new RegExp(signal), `Console read model must produce ${signal}`);
   }
+  assert.match(adminSource, /opl_operation_id/, "Admin diagnostics must show provider cost tag identity");
 });
 
 test("Workspace detail links to first-class resources and excludes retired compute lifecycle controls", async () => {

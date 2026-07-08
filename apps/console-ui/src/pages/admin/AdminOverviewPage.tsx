@@ -36,6 +36,29 @@ function firstMessage(ticket: AnyRecord = {}) {
   return (ticket.messages || []).map((message) => message.text).filter(Boolean).join(" / ");
 }
 
+function priceSnapshotLabel(row: AnyRecord = {}) {
+  const snapshot = row.priceSnapshot || {};
+  return [
+    row.pricingVersion,
+    snapshot.unitPriceCents != null ? `unitPriceCents ${snapshot.unitPriceCents}` : "",
+    row.quantity && row.unit ? `${row.quantity} ${row.unit}` : "",
+    row.providerCostEvidenceRef
+  ].filter(Boolean).join(" · ") || "-";
+}
+
+function walletAfterLabel(row: AnyRecord = {}) {
+  return [
+    row.balanceCents != null ? `balanceCents ${row.balanceCents}` : "",
+    row.frozenCents != null ? `frozenCents ${row.frozenCents}` : "",
+    row.availableCents != null ? `availableCents ${row.availableCents}` : "",
+    row.totalSpentCents != null ? `totalSpentCents ${row.totalSpentCents}` : ""
+  ].filter(Boolean).join(" · ") || "-";
+}
+
+function costTagsLabel(tags: AnyRecord = {}) {
+  return [tags.opl_account_id, tags.opl_workspace_id, tags.opl_resource_id, tags.opl_operation_id].filter(Boolean).join(" · ") || "-";
+}
+
 export function AdminOverviewPage({ state, adminOps }: any) {
   const failed = adminOps.operator?.runtimeOperations?.failed ?? 0;
   const totalSpent = adminOps.operator?.accounts?.totalSpent ?? totalDebited(state.walletTransactions || state.billingLedger || []);
@@ -407,7 +430,7 @@ export function AdminBillingPage({ state, adminOps, session, runAction }: any) {
             emptyText="暂无钱包流水"
             items={(state.walletTransactions || []).slice(-8).reverse().map((event) => ({
               title: event.type,
-              description: event.accountId,
+              description: `${event.accountId || ""} · ${walletAfterLabel(event)}`,
               meta: money(event.amount),
               tone: Number(event.amount || 0) < 0 ? "warn" : "good"
             }))}
@@ -503,6 +526,8 @@ export function AdminLedgerPage({ state }: any) {
             { title: "事件", dataIndex: "type" },
             { title: "账号", dataIndex: "accountId", ellipsis: true },
             { title: "工作区", dataIndex: "workspaceId", ellipsis: true },
+            { title: "价格快照", render: (_, row) => <Typography.Text className="inlineCode">{priceSnapshotLabel(row)}</Typography.Text> },
+            { title: "成本证据", dataIndex: "providerCostEvidenceRef", ellipsis: true },
             { title: "金额", render: (_, row) => money(moneyValue(row)) }
           ]}
         />
@@ -582,7 +607,9 @@ function adminResourceEvidenceRows(state: AnyRecord = {}) {
       walletTransactionIds: [],
       status: workspace.state || workspace.runtime?.status || "unknown",
       issue: issue.safeMessage || issue.error || issue.failureReason || "暂无失败",
-      providerRequestId: issue.providerRequestId || issue.operationId || ""
+      providerRequestId: issue.providerRequestId || issue.operationId || "",
+      operationId: issue.operationId || issue.providerRequestId || "",
+      costTags: compute?.costTags || storage?.costTags || attachment?.costTags || {}
     };
   });
 }
@@ -653,6 +680,8 @@ export function AdminDiagnosticsPage({ managementState, adminOps }: any) {
             { title: "存储 provider", dataIndex: "storageProviderId", width: 190, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value || "-"}</Typography.Text> },
             { title: "账本", dataIndex: "ledgerEntryIds", width: 190, ellipsis: true, render: (value) => (value || []).join(", ") || "-" },
             { title: "钱包流水", dataIndex: "walletTransactionIds", width: 190, ellipsis: true, render: (value) => (value || []).join(", ") || "-" },
+            { title: "Operation", dataIndex: "operationId", width: 170, ellipsis: true },
+            { title: "Cost tags", dataIndex: "costTags", width: 260, ellipsis: true, render: (value) => <Typography.Text className="inlineCode">{costTagsLabel(value)}</Typography.Text> },
             { title: "状态", dataIndex: "status", width: 95, render: (value) => <StatusPill label={value} tone={value === "failed" ? "danger" : "info"} /> },
             { title: "问题依据", dataIndex: "issue", width: 190, ellipsis: true },
             { title: "请求/操作", dataIndex: "providerRequestId", width: 170, ellipsis: true }
