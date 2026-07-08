@@ -1,5 +1,6 @@
 import React from "react";
 import { ArrowRight, Database, Headphones, KeyRound, Server, ShieldCheck, WalletCards } from "lucide-react";
+import OplAppLogo from "./shared/OplAppLogo.tsx";
 
 export default function HomePage({ session }: any) {
   const target = session ? "/console/overview" : "/login";
@@ -7,7 +8,7 @@ export default function HomePage({ session }: any) {
     <div className="publicShell">
       <header className="publicNav">
         <a className="wordmark" href="/">
-          <span>OPL</span>
+          <OplAppLogo />
           <strong>OPL Console</strong>
         </a>
         <nav className="publicLinks">

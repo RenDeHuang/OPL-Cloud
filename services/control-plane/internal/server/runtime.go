@@ -1030,9 +1030,29 @@ func (app *runtimeApp) rememberResourceSettlement(result clients.ResourceSettlem
 	for key, value := range ids {
 		ledger[key] = value
 	}
+	ledger["settlementId"] = result.ID
+	ledger["pricingVersion"] = result.PricingVersion
+	ledger["priceSnapshot"] = cloneMap(result.PriceSnapshot)
+	ledger["usagePeriodStart"] = result.UsagePeriodStart
+	ledger["usagePeriodEnd"] = result.UsagePeriodEnd
+	ledger["quantity"] = result.Quantity
+	ledger["unit"] = result.Unit
+	ledger["providerCostEvidenceRef"] = result.ProviderCostEvidenceRef
 	app.ledger = append(app.ledger, ledger)
 
-	app.walletTx = append(app.walletTx, map[string]any{"id": result.WalletTransactionID, "accountId": result.AccountID, "type": debitType, "metadata": ids})
+	app.walletTx = append(app.walletTx, map[string]any{
+		"id":              result.WalletTransactionID,
+		"accountId":       result.AccountID,
+		"ledgerEntryId":   result.LedgerEntryID,
+		"type":            debitType,
+		"metadata":        settlementMetadata(result),
+		"amountCents":     -result.AmountCents,
+		"balanceCents":    result.Wallet.BalanceCents,
+		"frozenCents":     result.Wallet.FrozenCents,
+		"availableCents":  result.Wallet.AvailableCents,
+		"totalSpentCents": result.Wallet.TotalSpentCents,
+		"currency":        result.Wallet.Currency,
+	})
 	app.wallets[result.AccountID] = walletProjection(result.Wallet)
 	return app.persistLocked()
 }
@@ -1058,14 +1078,16 @@ func (app *runtimeApp) applyLedgerFacts(accountID string, wallet clients.Wallet,
 	}
 
 	settlementsByEntry := map[string]clients.ResourceSettlementResult{}
+	settlementsByWalletTx := map[string]clients.ResourceSettlementResult{}
 	for _, settlement := range settlements {
 		settlementsByEntry[settlement.LedgerEntryID] = settlement
+		settlementsByWalletTx[settlement.WalletTransactionID] = settlement
 	}
 	if entries != nil {
 		app.ledger = ledgerEntryProjections(entries, settlementsByEntry)
 	}
 	if transactions != nil {
-		app.walletTx = walletTransactionProjections(transactions)
+		app.walletTx = walletTransactionProjections(transactions, settlementsByWalletTx)
 	}
 	if topups != nil {
 		app.topups = manualTopUpProjections(topups)
@@ -1112,10 +1134,10 @@ func ledgerEntryProjections(entries []clients.LedgerEntry, settlements map[strin
 	return rows
 }
 
-func walletTransactionProjections(transactions []clients.WalletTransaction) []map[string]any {
+func walletTransactionProjections(transactions []clients.WalletTransaction, settlements map[string]clients.ResourceSettlementResult) []map[string]any {
 	rows := make([]map[string]any, 0, len(transactions))
 	for _, tx := range transactions {
-		rows = append(rows, map[string]any{
+		row := map[string]any{
 			"id":              tx.ID,
 			"accountId":       tx.AccountID,
 			"ledgerEntryId":   tx.LedgerEntryID,
@@ -1126,9 +1148,29 @@ func walletTransactionProjections(transactions []clients.WalletTransaction) []ma
 			"totalSpentCents": tx.TotalSpentCents,
 			"currency":        tx.Currency,
 			"createdAt":       tx.CreatedAt,
-		})
+		}
+		if settlement, ok := settlements[tx.ID]; ok {
+			row["type"] = settlement.ResourceType + "_debit"
+			row["metadata"] = settlementMetadata(settlement)
+		}
+		rows = append(rows, row)
 	}
 	return rows
+}
+
+func settlementMetadata(settlement clients.ResourceSettlementResult) map[string]any {
+	metadata := map[string]any{
+		"workspaceId":   settlement.WorkspaceID,
+		"resourceId":    settlement.ResourceID,
+		"settlementId":  settlement.ID,
+		"ledgerEntryId": settlement.LedgerEntryID,
+	}
+	if settlement.ResourceType == "storage" {
+		metadata["storageId"] = settlement.ResourceID
+	} else {
+		metadata["computeAllocationId"] = settlement.ResourceID
+	}
+	return metadata
 }
 
 func manualTopUpProjections(topups []clients.ManualTopUp) []map[string]any {

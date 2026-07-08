@@ -124,6 +124,7 @@ function readyRuntimeStatus(workspace) {
   return {
     provider: "tencent-tke",
     workspaceId: workspace.id,
+    runtimeId: "op-runtime-prod002",
     ready: true,
     checks: [
       { name: "deployment_ready", ok: true },
@@ -1088,6 +1089,14 @@ test("production verifier exercises the public TKE resource provisioning chain",
     { username: "admin", password: expectedAionUiPassword(chain.workspace), remember: false },
     { username: "admin", password: expectedAionUiPassword(chain.replacementWorkspace), remember: false }
   ]);
+  const computeSettlementBody = requests.find((request) => request.key === "POST /api/billing/resource-settlements").body;
+  const storageSettlementBody = requests.find((request) => request.key === "POST /api/billing/resource-settlements#2").body;
+  assert.equal(computeSettlementBody.pricingVersion, "opl-tencent-v1");
+  assert.equal(computeSettlementBody.providerCostEvidenceRef, "fabric:op-runtime-prod002");
+  assert.deepEqual(computeSettlementBody.priceSnapshot, { packageId: "basic", resourceType: "compute", unitPriceCents: 100, currency: "CNY", source: "production_verifier" });
+  assert.equal(storageSettlementBody.pricingVersion, "opl-tencent-v1");
+  assert.equal(storageSettlementBody.providerCostEvidenceRef, "fabric:op-runtime-prod002");
+  assert.deepEqual(storageSettlementBody.priceSnapshot, { packageId: "basic", resourceType: "storage", unitPriceCents: 100, currency: "CNY", source: "production_verifier" });
   assert.equal(result.workspaceId, chain.workspace.id);
   assert.equal(result.url, chain.workspace.url);
   assert.deepEqual(result.checks.map((check) => `${check.name}:${check.ok}`), [

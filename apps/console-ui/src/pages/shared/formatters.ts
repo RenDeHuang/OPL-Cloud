@@ -67,7 +67,7 @@ export function moneyValue(event) {
   return 0;
 }
 
-export function resourceDebitEvents(state = {}, resourceType = "") {
+export function resourceDebitEvents(state: any = {}, resourceType = "") {
   return (state.billingLedger || [])
     .filter((event) => ["compute_debit", "storage_debit"].includes(event.type))
     .filter((event) => !resourceType || event.type === `${resourceType}_debit`);

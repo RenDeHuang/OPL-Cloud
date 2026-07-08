@@ -12,6 +12,7 @@ const DEFAULT_RETRY_DELAY_MS = 5000;
 const DEFAULT_MOUNT_PATH = "/data";
 const WORKSPACE_PERSISTENCE_ROOT = "/data";
 const DEFAULT_AIONUI_ADMIN_USERNAME = "admin";
+const VERIFICATION_PRICING_VERSION = "opl-tencent-v1";
 
 function defaultRunId() {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "Z");
@@ -1083,6 +1084,22 @@ function hasWalletAfterFields(entry) {
   );
 }
 
+function verificationSettlementEvidence({ packageId, resourceType, amountCents, runtimeStatus }) {
+  return {
+    pricingVersion: VERIFICATION_PRICING_VERSION,
+    priceSnapshot: {
+      packageId,
+      resourceType,
+      unitPriceCents: amountCents,
+      currency: "CNY",
+      source: "production_verifier"
+    },
+    quantity: 1,
+    unit: "verification",
+    providerCostEvidenceRef: `fabric:${runtimeStatus?.operationId || runtimeStatus?.runtimeId || runtimeStatus?.workspaceId}`
+  };
+}
+
 function assertResourceBillingSettlement(checks, settlements, { accountId, compute, storage }) {
   const responseEntries = settlements.flatMap((settlement) => settlement?.entries?.length ? settlement.entries : [settlementEntry(settlement)].filter(Boolean));
   const entries = responseEntries.length ? responseEntries : [
@@ -1546,6 +1563,7 @@ export async function verifyProductionChain({
       workspaceAuth: replacementWorkspaceApiAuth
     });
 
+    const computeSettlementAmountCents = 100;
     const computeSettlement = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
@@ -1558,11 +1576,13 @@ export async function verifyProductionChain({
         resourceType: "compute",
         resourceId: replacementCompute.id,
         computeAllocationId: replacementCompute.id,
-        amountCents: 100,
+        amountCents: computeSettlementAmountCents,
+        ...verificationSettlementEvidence({ packageId, resourceType: "compute", amountCents: computeSettlementAmountCents, runtimeStatus: replacementRuntimeStatus }),
         sourceEventId: `production_verification_resource_settlement:compute:${runId}`,
         confirm: true
       }
     });
+    const storageSettlementAmountCents = 100;
     const storageSettlement = await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
@@ -1575,7 +1595,8 @@ export async function verifyProductionChain({
         resourceType: "storage",
         resourceId: storage.id,
         storageId: storage.id,
-        amountCents: 100,
+        amountCents: storageSettlementAmountCents,
+        ...verificationSettlementEvidence({ packageId, resourceType: "storage", amountCents: storageSettlementAmountCents, runtimeStatus: replacementRuntimeStatus }),
         sourceEventId: `production_verification_resource_settlement:storage:${runId}`,
         confirm: true
       }

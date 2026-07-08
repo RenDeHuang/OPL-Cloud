@@ -7,6 +7,7 @@ import { navigate, routeTo } from "../consoleRoutes.ts";
 import { renderConsoleRoute } from "../routes/route-registry.tsx";
 import { useConsoleState } from "../store/console-state.ts";
 import { buildMenu } from "./shared/console-menu.tsx";
+import OplAppLogo from "./shared/OplAppLogo.tsx";
 
 export default function ConsolePage({ route, session, onLogout }: any) {
   const isAdmin = session.user.role === "admin";
@@ -35,7 +36,7 @@ export default function ConsolePage({ route, session, onLogout }: any) {
   return (
     <ProLayout
       title="OPL Console"
-      logo={<div className="proLogo">OPL</div>}
+      logo={<OplAppLogo className="proLogo" />}
       location={{ pathname: path }}
       layout="mix"
       navTheme="light"

@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,8 +31,6 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/w/", app.proxyWorkspace)
-	mux.HandleFunc("/login", app.proxyWorkspaceRoot)
-	mux.HandleFunc("/logout", app.proxyWorkspaceRoot)
 	mux.HandleFunc("/api/", app.proxyWorkspaceRoot)
 	mux.HandleFunc("/ws", app.proxyWorkspaceRoot)
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -260,12 +259,19 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 			return
 		}
 		settlement := controlplane.ResourceSettlementInput{
-			AccountID:    stringField(input, "accountId", "acct-local"),
-			WorkspaceID:  stringField(input, "workspaceId", ""),
-			ResourceType: stringField(input, "resourceType", "compute"),
-			ResourceID:   firstNonEmpty(stringField(input, "resourceId", ""), stringField(input, "computeAllocationId", ""), stringField(input, "storageId", "")),
-			AmountCents:  settlementAmountCents(input),
-			Currency:     stringField(input, "currency", "CNY"),
+			AccountID:               stringField(input, "accountId", "acct-local"),
+			WorkspaceID:             stringField(input, "workspaceId", ""),
+			ResourceType:            stringField(input, "resourceType", "compute"),
+			ResourceID:              firstNonEmpty(stringField(input, "resourceId", ""), stringField(input, "computeAllocationId", ""), stringField(input, "storageId", "")),
+			AmountCents:             settlementAmountCents(input),
+			Currency:                stringField(input, "currency", "CNY"),
+			PricingVersion:          stringField(input, "pricingVersion", ""),
+			PriceSnapshot:           mapField(input, "priceSnapshot"),
+			UsagePeriodStart:        stringField(input, "usagePeriodStart", ""),
+			UsagePeriodEnd:          stringField(input, "usagePeriodEnd", ""),
+			Quantity:                numberField(input, "quantity", 0),
+			Unit:                    stringField(input, "unit", ""),
+			ProviderCostEvidenceRef: stringField(input, "providerCostEvidenceRef", ""),
 		}
 		result, err := service.SettleResource(r.Context(), settlement, idempotencyKey)
 		if err != nil {
@@ -535,10 +541,37 @@ func NewPersistentServer(service *controlplane.Service, store ReadModelStore) (h
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
-	mux.HandleFunc("GET /api/admin/diagnostics", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"service": "control-plane", "status": "ok"})
-	}))
+	mux.HandleFunc("/", app.consoleStatic)
 	return mux, nil
+}
+
+func (app *runtimeApp) consoleStatic(w http.ResponseWriter, r *http.Request) {
+	if isWorkspaceRequest(r) {
+		app.proxyWorkspaceRoot(w, r)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.NotFound(w, r)
+		return
+	}
+	dist := consoleDistDir()
+	if strings.HasPrefix(r.URL.Path, "/assets/") {
+		http.FileServer(http.Dir(dist)).ServeHTTP(w, r)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(dist, "index.html"))
+}
+
+func consoleDistDir() string {
+	for _, dir := range []string{strings.TrimSpace(os.Getenv("OPL_CONSOLE_DIST_DIR")), "dist", "../../dist", "../../../../dist"} {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "index.html")); err == nil {
+			return dir
+		}
+	}
+	return "dist"
 }
 
 func (app *runtimeApp) protected(requiresAdmin bool, next http.HandlerFunc) http.HandlerFunc {
@@ -701,6 +734,11 @@ func numberField(input map[string]any, key string, fallback float64) float64 {
 	default:
 		return fallback
 	}
+}
+
+func mapField(input map[string]any, key string) map[string]any {
+	value, _ := input[key].(map[string]any)
+	return cloneMap(value)
 }
 
 func confirmed(input map[string]any, key string) bool {
@@ -880,17 +918,24 @@ func priceField(plan map[string]any, key string) float64 {
 
 func settlementResponse(result clients.ResourceSettlementResult) map[string]any {
 	return map[string]any{
-		"id":                  result.ID,
-		"accountId":           result.AccountID,
-		"workspaceId":         result.WorkspaceID,
-		"resourceType":        result.ResourceType,
-		"resourceId":          result.ResourceID,
-		"amount":              float64(result.AmountCents) / 100,
-		"amountCents":         result.AmountCents,
-		"status":              result.Status,
-		"ledgerEntryId":       result.LedgerEntryID,
-		"walletTransactionId": result.WalletTransactionID,
-		"wallet":              result.Wallet,
+		"id":                      result.ID,
+		"accountId":               result.AccountID,
+		"workspaceId":             result.WorkspaceID,
+		"resourceType":            result.ResourceType,
+		"resourceId":              result.ResourceID,
+		"amount":                  float64(result.AmountCents) / 100,
+		"amountCents":             result.AmountCents,
+		"status":                  result.Status,
+		"ledgerEntryId":           result.LedgerEntryID,
+		"walletTransactionId":     result.WalletTransactionID,
+		"pricingVersion":          result.PricingVersion,
+		"priceSnapshot":           result.PriceSnapshot,
+		"usagePeriodStart":        result.UsagePeriodStart,
+		"usagePeriodEnd":          result.UsagePeriodEnd,
+		"quantity":                result.Quantity,
+		"unit":                    result.Unit,
+		"providerCostEvidenceRef": result.ProviderCostEvidenceRef,
+		"wallet":                  result.Wallet,
 	}
 }
 
@@ -903,6 +948,17 @@ func completeSettlementResult(result clients.ResourceSettlementResult, input con
 		result.AmountCents = input.AmountCents
 	}
 	result.Currency = firstNonEmpty(result.Currency, input.Currency)
+	result.PricingVersion = firstNonEmpty(result.PricingVersion, input.PricingVersion)
+	if len(result.PriceSnapshot) == 0 {
+		result.PriceSnapshot = cloneMap(input.PriceSnapshot)
+	}
+	result.UsagePeriodStart = firstNonEmpty(result.UsagePeriodStart, input.UsagePeriodStart)
+	result.UsagePeriodEnd = firstNonEmpty(result.UsagePeriodEnd, input.UsagePeriodEnd)
+	if result.Quantity == 0 {
+		result.Quantity = input.Quantity
+	}
+	result.Unit = firstNonEmpty(result.Unit, input.Unit)
+	result.ProviderCostEvidenceRef = firstNonEmpty(result.ProviderCostEvidenceRef, input.ProviderCostEvidenceRef)
 	result.Wallet.AccountID = firstNonEmpty(result.Wallet.AccountID, result.AccountID)
 	result.Wallet.Currency = firstNonEmpty(result.Wallet.Currency, result.Currency)
 	return result

@@ -41,6 +41,34 @@ func TestCreateWorkspaceHTTPUsesMutationKeyWhenHeaderIsAbsent(t *testing.T) {
 	}
 }
 
+func TestConsoleStaticEntryServesLoginAndHome(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	for _, path := range []string{"/", "/login", "/console/overview"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200: %s", path, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `<div id="root"></div>`) {
+			t.Fatalf("%s did not serve Console HTML: %s", path, rec.Body.String())
+		}
+	}
+}
+
+func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/diagnostics", nil)
+	addSessionCookies(req, operatorSessionForTest(t, server))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for uncontracted fake diagnostics route: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	calls := []string{}
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
@@ -213,7 +241,7 @@ func (fakeLedgerClient) RecordEvidence(_ context.Context, input clients.Evidence
 }
 
 func (fakeLedgerClient) SettleResource(_ context.Context, input clients.ResourceSettlementInput, _ string) (clients.ResourceSettlementResult, error) {
-	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, AvailableCents: 8800, Currency: "CNY"}}, nil
+	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger", PricingVersion: input.PricingVersion, PriceSnapshot: input.PriceSnapshot, UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, AvailableCents: 8800, Currency: "CNY"}}, nil
 }
 
 type fakeLedgerClientWithoutSettlementIdentity struct {
@@ -734,6 +762,40 @@ func TestResourceSettlementProjectionKeepsRequestIdentityWhenLedgerOmitsIt(t *te
 	}
 }
 
+func TestResourceSettlementPassesPriceAndEvidenceSnapshotToLedger(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	body := `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123,"currency":"CNY","pricingVersion":"opl-tencent-v1","priceSnapshot":{"unitPriceCents":123,"sku":"basic-cvm"},"usagePeriodStart":"2026-07-08T00:00:00Z","usagePeriodEnd":"2026-07-08T01:00:00Z","quantity":1,"unit":"hour","providerCostEvidenceRef":"fabric:op-alpha","confirm":true}`
+
+	settlement := createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", body)
+	if settlement["pricingVersion"] != "opl-tencent-v1" || settlement["providerCostEvidenceRef"] != "fabric:op-alpha" {
+		t.Fatalf("settlement response lost price/evidence fields: %#v", settlement)
+	}
+	priceSnapshot := settlement["priceSnapshot"].(map[string]any)
+	if priceSnapshot["unitPriceCents"] != float64(123) {
+		t.Fatalf("settlement response lost price snapshot: %#v", settlement)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
+	addSessionCookies(req, operatorSessionForTest(t, server))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var state map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	ledger := state["billingLedger"].([]any)
+	if !slices.ContainsFunc(ledger, func(row any) bool {
+		entry := row.(map[string]any)
+		snapshot, _ := entry["priceSnapshot"].(map[string]any)
+		return entry["type"] == "compute_debit" && entry["pricingVersion"] == "opl-tencent-v1" && entry["providerCostEvidenceRef"] == "fabric:op-alpha" && snapshot["sku"] == "basic-cvm"
+	}) {
+		t.Fatalf("state ledger lost settlement evidence: %#v", ledger)
+	}
+}
+
 func TestStateRefreshesLedgerFactsFromLedgerReads(t *testing.T) {
 	server := NewServer(controlplane.NewService(readBackedLedgerClient{}, &fakeFabricClient{}))
 
@@ -763,6 +825,11 @@ func TestStateRefreshesLedgerFactsFromLedgerReads(t *testing.T) {
 	transactions := state["walletTransactions"].([]any)
 	if len(transactions) != 1 || transactions[0].(map[string]any)["availableCents"] != float64(8700) {
 		t.Fatalf("state missing wallet after snapshot: %#v", transactions)
+	}
+	tx := transactions[0].(map[string]any)
+	metadata, _ := tx["metadata"].(map[string]any)
+	if tx["type"] != "compute_debit" || metadata["computeAllocationId"] != "compute-alpha" || metadata["settlementId"] != "settlement-alpha" {
+		t.Fatalf("state wallet transaction missing settlement metadata: %#v", tx)
 	}
 
 	managementReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)

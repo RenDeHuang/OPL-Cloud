@@ -49,19 +49,13 @@ a {
   gap: 12px;
 }
 
-.wordmark span,
-.brandIcon,
+.appLogoMark,
 .proLogo {
   display: inline-grid;
   width: 38px;
   height: 38px;
   place-items: center;
   border-radius: 8px;
-  background: #101828;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0;
 }
 
 .proLogo {

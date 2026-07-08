@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { ArrowLeft, LogIn, ShieldCheck } from "lucide-react";
 import { login } from "../api/auth-api.ts";
+import OplAppLogo from "./shared/OplAppLogo.tsx";
 
 function errorLabel(value) {
   const labels = {
@@ -39,7 +40,7 @@ export default function LoginPage({ route, onLogin }: any) {
         <a className="backLink" href="/"><ArrowLeft size={16} /> OPL Console</a>
         <main className="loginPanel compactAuth">
           <div className="loginBrand">
-            <div className="brandIcon">OPL</div>
+            <OplAppLogo />
             <div>
               <p className="eyebrow">OPL Console</p>
               <h1>无法访问</h1>
@@ -60,7 +61,7 @@ export default function LoginPage({ route, onLogin }: any) {
       <a className="backLink" href="/"><ArrowLeft size={16} /> OPL Console</a>
       <main className="loginPanel">
         <div className="loginBrand">
-          <div className="brandIcon">OPL</div>
+          <OplAppLogo />
           <div>
             <p className="eyebrow">OPL Console</p>
             <h1>登录</h1>

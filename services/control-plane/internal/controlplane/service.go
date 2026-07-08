@@ -34,12 +34,19 @@ type ManualTopUpInput struct {
 }
 
 type ResourceSettlementInput struct {
-	AccountID    string `json:"accountId"`
-	WorkspaceID  string `json:"workspaceId"`
-	ResourceType string `json:"resourceType"`
-	ResourceID   string `json:"resourceId"`
-	AmountCents  int64  `json:"amountCents"`
-	Currency     string `json:"currency"`
+	AccountID               string         `json:"accountId"`
+	WorkspaceID             string         `json:"workspaceId"`
+	ResourceType            string         `json:"resourceType"`
+	ResourceID              string         `json:"resourceId"`
+	AmountCents             int64          `json:"amountCents"`
+	Currency                string         `json:"currency"`
+	PricingVersion          string         `json:"pricingVersion,omitempty"`
+	PriceSnapshot           map[string]any `json:"priceSnapshot,omitempty"`
+	UsagePeriodStart        string         `json:"usagePeriodStart,omitempty"`
+	UsagePeriodEnd          string         `json:"usagePeriodEnd,omitempty"`
+	Quantity                float64        `json:"quantity,omitempty"`
+	Unit                    string         `json:"unit,omitempty"`
+	ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef,omitempty"`
 }
 
 type ReconciliationInput struct {
@@ -90,12 +97,19 @@ func (s *Service) ManualTopUp(ctx context.Context, input ManualTopUpInput, idemp
 
 func (s *Service) SettleResource(ctx context.Context, input ResourceSettlementInput, idempotencyKey string) (clients.ResourceSettlementResult, error) {
 	return s.ledger.SettleResource(ctx, clients.ResourceSettlementInput{
-		AccountID:    input.AccountID,
-		WorkspaceID:  input.WorkspaceID,
-		ResourceType: input.ResourceType,
-		ResourceID:   input.ResourceID,
-		AmountCents:  input.AmountCents,
-		Currency:     input.Currency,
+		AccountID:               input.AccountID,
+		WorkspaceID:             input.WorkspaceID,
+		ResourceType:            input.ResourceType,
+		ResourceID:              input.ResourceID,
+		AmountCents:             input.AmountCents,
+		Currency:                input.Currency,
+		PricingVersion:          input.PricingVersion,
+		PriceSnapshot:           input.PriceSnapshot,
+		UsagePeriodStart:        input.UsagePeriodStart,
+		UsagePeriodEnd:          input.UsagePeriodEnd,
+		Quantity:                input.Quantity,
+		Unit:                    input.Unit,
+		ProviderCostEvidenceRef: input.ProviderCostEvidenceRef,
 	}, idempotencyKey)
 }
 

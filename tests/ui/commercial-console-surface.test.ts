@@ -84,6 +84,19 @@ test("authenticated shell is branded as OPL Console", async () => {
   assert.doesNotMatch(shellSource, /title="OPL Cloud"/, "authenticated app shell must not retain old OPL Cloud naming");
 });
 
+test("Console chrome uses the one-person-lab-app logo mark", async () => {
+  const logoSource = await source("apps/console-ui/src/pages/shared/OplAppLogo.tsx");
+  for (const page of [
+    "apps/console-ui/src/pages/HomePage.tsx",
+    "apps/console-ui/src/pages/LoginPage.tsx",
+    "apps/console-ui/src/pages/ConsolePage.tsx"
+  ]) {
+    const pageSource = await source(page);
+    assert.match(pageSource, /OplAppLogo/, `${page} must render the shared app logo`);
+  }
+  assert.match(logoSource, /one-person-lab-app logo/, "logo mark must identify the one-person-lab-app runtime brand");
+});
+
 test("visible app chrome does not retain old Cloud or reserved backlog copy", async () => {
   for (const page of [
     "apps/console-ui/src/main.tsx",
