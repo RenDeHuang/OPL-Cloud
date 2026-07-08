@@ -563,6 +563,62 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	}
 }
 
+func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
+	app := newRuntimeApp()
+	app.mu.Lock()
+	app.workspaces["ws-replacement"] = map[string]any{
+		"id":                         "ws-replacement",
+		"ownerAccountId":             "acct-alpha",
+		"currentComputeAllocationId": "compute-replacement",
+		"currentAttachmentId":        "attach-replacement",
+		"storageId":                  "storage-alpha",
+	}
+	app.computes["compute-replacement"] = map[string]any{"id": "compute-replacement", "ownerAccountId": "acct-alpha"}
+	app.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha"}
+	app.attachments["attach-replacement"] = map[string]any{"id": "attach-replacement", "ownerAccountId": "acct-alpha"}
+	app.runtimeOps = []map[string]any{{
+		"operationId":  "op-runtime-replacement",
+		"resourceKind": "workspace_runtime",
+		"resourceId":   "ws-replacement",
+		"workspaceId":  "ws-replacement",
+		"status":       "succeeded",
+		"redactedProviderPayload": map[string]any{
+			"costTags": map[string]any{
+				"opl_account_id":   "acct-alpha",
+				"opl_workspace_id": "ws-replacement",
+				"opl_resource_id":  "ws-replacement",
+				"opl_operation_id": "op-runtime-replacement",
+			},
+		},
+	}}
+	computeLedger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement"})
+	storageLedger := app.addLedgerLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha"})
+	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement"})
+	app.addWalletTxLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha"})
+	app.mu.Unlock()
+
+	state := app.state("acct-alpha")
+	rows := state["resourceLedgerEvidence"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("resourceLedgerEvidence rows = %d, want 1: %#v", len(rows), rows)
+	}
+	row := rows[0].(map[string]any)
+	if row["operationId"] != "op-runtime-replacement" {
+		t.Fatalf("row missing runtime operation id: %#v", row)
+	}
+	tags, _ := row["costTags"].(map[string]any)
+	if tags["opl_account_id"] != "acct-alpha" || tags["opl_workspace_id"] != "ws-replacement" || tags["opl_operation_id"] != "op-runtime-replacement" {
+		t.Fatalf("row missing provider cost tags: %#v", row)
+	}
+	ledgerIDs := row["ledgerEntryIds"].([]string)
+	if !slices.Contains(ledgerIDs, computeLedger["id"].(string)) || !slices.Contains(ledgerIDs, storageLedger["id"].(string)) {
+		t.Fatalf("row missing settlement ledger links: %#v", row)
+	}
+	if len(row["walletTransactionIds"].([]string)) != 2 {
+		t.Fatalf("row missing settlement wallet links: %#v", row)
+	}
+}
+
 func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	app := newRuntimeApp()
 	app.workspaces["ws-alpha"] = map[string]any{

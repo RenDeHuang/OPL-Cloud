@@ -180,6 +180,7 @@ func (app *runtimeApp) state(accountID string) map[string]any {
 		"walletTransactions":    copySlice(app.walletTx),
 		"manualTopups":          copySlice(app.topups),
 		"supportTickets":        values(app.support),
+		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
 		"billingReconciliation": app.reconciliationProjectionLocked(),
 		"notifications":         []any{},
 		"runtimeOperations":     copySlice(app.runtimeOps),

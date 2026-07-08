@@ -574,51 +574,10 @@ export function AdminRuntimePage({ adminOps }: any) {
   );
 }
 
-function adminResourceEvidenceRows(state: AnyRecord = {}) {
-  const computeById = new Map<string, AnyRecord>((state.computeAllocations || []).map((item) => [item.id, item]));
-  const storageById = new Map<string, AnyRecord>((state.storageVolumes || []).map((item) => [item.id, item]));
-  const attachmentById = new Map<string, AnyRecord>((state.storageAttachments || []).map((item) => [item.id, item]));
-  const userById = new Map<string, AnyRecord>((state.users || []).map((item) => [item.id, item]));
-  const accountById = new Map<string, AnyRecord>((state.accounts || []).map((item) => [item.id || item.accountId, item]));
-  return (state.workspaces || []).map((workspace) => {
-    const compute = computeById.get(workspace.currentComputeAllocationId);
-    const storage = storageById.get(workspace.storageId);
-    const attachment = attachmentById.get(workspace.currentAttachmentId);
-    const ownerUser = userById.get(workspace.ownerUserId);
-    const ownerAccount = accountById.get(workspace.ownerAccountId);
-    const issue = [compute, storage, attachment, workspace].find((item) => item?.safeMessage || item?.error || item?.failureReason || item?.providerRequestId || item?.operationId) || {};
-    return {
-      id: workspace.id,
-      workspaceId: workspace.id,
-      workspaceUrl: workspace.url || "",
-      accountId: workspace.ownerAccountId,
-      ownerAccountId: workspace.ownerAccountId,
-      ownerUserId: workspace.ownerUserId || "",
-      ownerEmail: ownerUser?.email || ownerAccount?.email || "",
-      workspaceIds: [workspace.id],
-      computeId: workspace.currentComputeAllocationId || compute?.id || "",
-      computeAllocationId: workspace.currentComputeAllocationId || compute?.id || "",
-      cvmInstanceId: compute?.cvmInstanceId || compute?.providerResourceId || compute?.nodeName || compute?.machineName || "",
-      nodeName: compute?.nodeName || compute?.machineName || "",
-      storageId: workspace.storageId || storage?.id || "",
-      storageProviderId: storage?.providerResourceId || "",
-      attachmentId: workspace.currentAttachmentId || attachment?.id || "",
-      ledgerEntryIds: [],
-      walletTransactionIds: [],
-      status: workspace.state || workspace.runtime?.status || "unknown",
-      issue: issue.safeMessage || issue.error || issue.failureReason || "暂无失败",
-      providerRequestId: issue.providerRequestId || issue.operationId || "",
-      operationId: issue.operationId || issue.providerRequestId || "",
-      costTags: compute?.costTags || storage?.costTags || attachment?.costTags || {}
-    };
-  });
-}
-
 export function AdminDiagnosticsPage({ managementState, adminOps }: any) {
   const failedOperations = adminOps.operator?.failedOperations || adminOps.operator?.runtimeOperations?.recentFailed || [];
   const resourceAnomalies = adminOps.operator?.resourceAnomalies || [];
-  const resourceLedgerEvidence = managementState.resourceLedgerEvidence || [];
-  const resourceEvidence = resourceLedgerEvidence.length ? resourceLedgerEvidence : adminResourceEvidenceRows(managementState);
+  const resourceEvidence = managementState.resourceLedgerEvidence || [];
   return (
     <ConsoleSurface title="线上诊断" eyebrow="管理" subtitle="只读检查、失败操作、资源异常">
       {adminOps.error && <Alert type="error" showIcon message={adminOps.error} />}

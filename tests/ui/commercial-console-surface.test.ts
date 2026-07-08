@@ -482,7 +482,8 @@ test("Admin diagnostics and E2E records are read-only operator surfaces", async 
   assert.match(adminSource, /AdminDiagnosticsPage/, "Admin diagnostics page must exist");
   assert.match(adminSource, /ProductionE2EPanel/, "Admin E2E page must use safe E2E panel");
   assert.match(adminSource, /failedOperations|resourceAnomalies|productionE2E/, "Admin diagnostics must show failed operations, resource anomalies, and E2E records");
-  assert.match(adminSource, /adminResourceEvidenceRows/, "Admin diagnostics must derive resource ownership evidence from management state");
+  assert.doesNotMatch(adminSource, /adminResourceEvidenceRows/, "Admin diagnostics must not guess resource ownership evidence in the UI");
+  assert.match(adminSource, /managementState\.resourceLedgerEvidence/, "Admin diagnostics must consume backend resource ledger evidence");
   assert.match(adminSource, /AdminDiagnosticsPage\(\{ managementState, adminOps \}(?:: any)?\)/, "Admin diagnostics resource evidence must use managementState, not the admin account state");
   for (const signal of ["资源归属证据", "CVM / 节点", "存储 provider", "providerRequestId", "ownerAccountId"]) {
     assert.match(adminSource, new RegExp(signal.replace("/", "\\/")), `Admin diagnostics must expose ${signal}`);
