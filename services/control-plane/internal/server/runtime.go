@@ -170,7 +170,7 @@ func (app *controlPlaneApp) persistLocked() error {
 	return app.store.Save(context.Background(), app.factsLocked())
 }
 
-func (app *controlPlaneApp) state(accountID string) map[string]any {
+func (app *controlPlaneApp) state(accountID string, computePools []any) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	workspaces := app.workspaceStateRowsLocked(accountID)
@@ -178,7 +178,7 @@ func (app *controlPlaneApp) state(accountID string) map[string]any {
 		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
 		"billingPolicy":          map[string]any{"holdDays": 7, "priceBasis": "OPL price list"},
 		"packages":               packageList(),
-		"computePools":           computePools(),
+		"computePools":           computePools,
 		"wallet":                 app.wallet(accountID),
 		"account":                app.wallet(accountID),
 		"user":                   app.currentUserLocked(),
@@ -792,7 +792,7 @@ func (app *controlPlaneApp) markWorkspacesStorageDestroyedLocked(storageID strin
 	}
 }
 
-func (app *controlPlaneApp) managementState(includeDeleted bool) map[string]any {
+func (app *controlPlaneApp) managementState(includeDeleted bool, computePools []any) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	return map[string]any{
@@ -803,7 +803,7 @@ func (app *controlPlaneApp) managementState(includeDeleted bool) map[string]any 
 		"supportTickets":         values(app.support),
 		"accounts":               app.accountsLocked(),
 		"packages":               packageList(),
-		"computePools":           computePools(),
+		"computePools":           computePools,
 		"workspaces":             values(app.workspaces),
 		"computeAllocations":     values(app.computes),
 		"storageVolumes":         values(app.storages),
@@ -1533,11 +1533,21 @@ func packageList() []any {
 	}
 }
 
-func computePools() []any {
-	return []any{
-		map[string]any{"id": "pool-basic", "name": "Basic", "available": true, "provider": "tencent-tke"},
-		map[string]any{"id": "pool-pro", "name": "Pro", "available": true, "provider": "tencent-tke"},
+func computePoolsFromFabricCatalog(catalog clients.FabricCatalog) []any {
+	pools := make([]any, 0, len(catalog.WorkspacePackages))
+	for _, pkg := range catalog.WorkspacePackages {
+		pools = append(pools, map[string]any{
+			"id":        firstNonEmpty(pkg.ComputeProfileID, "pool-"+pkg.ID),
+			"packageId": pkg.ID,
+			"name":      firstNonEmpty(pkg.Name, pkg.ID),
+			"available": pkg.Available,
+			"provider":  pkg.Provider,
+			"cpu":       pkg.CPU,
+			"memoryGb":  pkg.MemoryGB,
+			"diskGb":    pkg.DiskGB,
+		})
 	}
+	return pools
 }
 
 func workspaceDomain() string {

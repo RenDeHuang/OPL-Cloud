@@ -149,6 +149,10 @@ func (s *Service) FabricOperations(ctx context.Context) ([]clients.FabricOperati
 	return s.fabric.ListOperations(ctx)
 }
 
+func (s *Service) FabricCatalog(ctx context.Context) (clients.FabricCatalog, error) {
+	return s.fabric.Catalog(ctx)
+}
+
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (clients.ComputeAllocation, error) {
 	if input.HoldAmountCents <= 0 {
 		return clients.ComputeAllocation{}, fmt.Errorf("compute_hold_amount_required")

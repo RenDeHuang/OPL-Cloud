@@ -176,6 +176,71 @@ func TestPricingCatalogMatchesContractDefaults(t *testing.T) {
 	assertPlanPrice("pro")
 }
 
+func TestBillingSummaryReadsLedgerWallet(t *testing.T) {
+	server := NewServer(controlplane.NewService(walletSummaryLedgerClient{}, &fakeFabricClient{}))
+	session := operatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/billing/summary?accountId=acct-alpha", nil)
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("billing summary status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var summary map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if summary["accountId"] != "acct-alpha" || summary["balanceCents"] != float64(12345) || summary["availableCents"] != float64(12000) || summary["frozenCents"] != float64(345) {
+		t.Fatalf("billing summary must come from Ledger wallet: %#v", summary)
+	}
+}
+
+func TestComputePoolsReadFabricCatalog(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &catalogFabricClient{}))
+	session := operatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/compute-pools", nil)
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compute pools status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var pools []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&pools); err != nil {
+		t.Fatalf("decode pools: %v", err)
+	}
+	if len(pools) != 1 || pools[0]["id"] != "pool-ultra" || pools[0]["packageId"] != "ultra" || pools[0]["provider"] != "fabric-test" {
+		t.Fatalf("compute pools must come from Fabric catalog: %#v", pools)
+	}
+}
+
+func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &catalogFabricClient{}))
+	session := operatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var state map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	pools := state["computePools"].([]any)
+	first := pools[0].(map[string]any)
+	if len(pools) != 1 || first["id"] != "pool-ultra" || first["packageId"] != "ultra" || first["provider"] != "fabric-test" {
+		t.Fatalf("state compute pools must come from Fabric catalog: %#v", pools)
+	}
+}
+
 func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/runtime-status", bytes.NewBufferString(`{"workspaceId":"ws-alpha"}`))
@@ -447,6 +512,14 @@ func (fakeLedgerClientWithoutSettlementIdentity) SettleResource(_ context.Contex
 	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger"}, nil
 }
 
+type walletSummaryLedgerClient struct {
+	fakeLedgerClient
+}
+
+func (walletSummaryLedgerClient) Wallet(_ context.Context, accountID string) (clients.Wallet, error) {
+	return clients.Wallet{AccountID: accountID, BalanceCents: 12345, FrozenCents: 345, AvailableCents: 12000, TotalSpentCents: 6789, Currency: "CNY"}, nil
+}
+
 func (fakeLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "ok", Report: input.Report, BlockNewWorkspaces: false, Reason: "operator_reconciliation"}, nil
 }
@@ -533,6 +606,23 @@ func (failingFabricClient) ListOperations(_ context.Context) ([]clients.FabricOp
 	return nil, errors.New("provider operation secret leaked in raw error")
 }
 
+type catalogFabricClient struct {
+	fakeFabricClient
+}
+
+func (catalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
+	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{{
+		ID:               "ultra",
+		Name:             "Ultra Workspace",
+		ComputeProfileID: "pool-ultra",
+		CPU:              16,
+		MemoryGB:         32,
+		DiskGB:           200,
+		Provider:         "fabric-test",
+		Available:        true,
+	}}}, nil
+}
+
 type fakeFabricClient struct {
 	calls *[]string
 }
@@ -541,6 +631,14 @@ func (f *fakeFabricClient) record(call string) {
 	if f != nil && f.calls != nil {
 		*f.calls = append(*f.calls, call)
 	}
+}
+
+func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
+	f.record("fabric.catalog")
+	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{
+		{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "pool-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: true},
+		{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "pool-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: true},
+	}}, nil
 }
 
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
@@ -830,7 +928,7 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	wallet := app.walletTx[len(app.walletTx)-1]
 	app.mu.Unlock()
 
-	state := app.managementState(true)
+	state := app.managementState(true, nil)
 	rows := state["resourceLedgerEvidence"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("resourceLedgerEvidence rows = %d, want 1: %#v", len(rows), rows)
@@ -884,7 +982,7 @@ func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	app.addWalletTxLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha", "amountCents": -125})
 	app.mu.Unlock()
 
-	state := app.state("acct-alpha")
+	state := app.state("acct-alpha", nil)
 	rows := state["resourceLedgerEvidence"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("resourceLedgerEvidence rows = %d, want 1: %#v", len(rows), rows)

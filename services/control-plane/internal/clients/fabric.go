@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 )
 
 type FabricClient interface {
+	Catalog(ctx context.Context) (FabricCatalog, error)
 	CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (ComputeAllocation, error)
 	GetComputeAllocation(ctx context.Context, id string) (ComputeAllocation, error)
 	DestroyComputeAllocation(ctx context.Context, id string, idempotencyKey string) (ComputeAllocation, error)
@@ -19,6 +22,39 @@ type FabricClient interface {
 	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
 	Readiness(ctx context.Context) (map[string]any, error)
 	ListOperations(ctx context.Context) ([]FabricOperation, error)
+}
+
+type FabricCatalog struct {
+	SchemaVersion     int                      `json:"schemaVersion"`
+	Owner             string                   `json:"owner"`
+	WorkspacePackages []FabricWorkspacePackage `json:"workspacePackages"`
+	StorageClasses    []FabricStorageClass     `json:"storageClasses"`
+	IngressDomains    []FabricIngressDomain    `json:"ingressDomains"`
+}
+
+type FabricWorkspacePackage struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	ComputeProfileID string `json:"computeProfileId"`
+	CPU              int    `json:"cpu"`
+	MemoryGB         int    `json:"memoryGb"`
+	DiskGB           int    `json:"diskGb"`
+	Provider         string `json:"provider"`
+	Available        bool   `json:"available"`
+}
+
+type FabricStorageClass struct {
+	ID               string `json:"id"`
+	StorageClassName string `json:"storageClassName"`
+	Provider         string `json:"provider"`
+	Available        bool   `json:"available"`
+}
+
+type FabricIngressDomain struct {
+	ID          string `json:"id"`
+	Host        string `json:"host"`
+	PathPattern string `json:"pathPattern"`
+	Available   bool   `json:"available"`
 }
 
 type ComputeAllocationInput struct {
@@ -155,6 +191,12 @@ func NewFabricHTTPClient(baseURL string, client *http.Client) FabricClient {
 	return &fabricHTTPClient{baseURL: baseURL, client: client}
 }
 
+func (c *fabricHTTPClient) Catalog(ctx context.Context) (FabricCatalog, error) {
+	var result FabricCatalog
+	err := c.get(ctx, "/fabric/catalog", &result)
+	return result, err
+}
+
 func (c *fabricHTTPClient) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (ComputeAllocation, error) {
 	var result ComputeAllocation
 	err := c.post(ctx, "/fabric/compute-allocations", input, idempotencyKey, &result)
@@ -163,16 +205,8 @@ func (c *fabricHTTPClient) CreateComputeAllocation(ctx context.Context, input Co
 
 func (c *fabricHTTPClient) GetComputeAllocation(ctx context.Context, id string) (ComputeAllocation, error) {
 	var result ComputeAllocation
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/compute-allocations/"+id, nil)
-	if err != nil {
-		return result, err
-	}
-	res, err := c.client.Do(req)
-	if err != nil {
-		return result, err
-	}
-	defer res.Body.Close()
-	return result, json.NewDecoder(res.Body).Decode(&result)
+	err := c.get(ctx, "/fabric/compute-allocations/"+id, &result)
+	return result, err
 }
 
 func (c *fabricHTTPClient) DestroyComputeAllocation(ctx context.Context, id string, idempotencyKey string) (ComputeAllocation, error) {
@@ -213,44 +247,20 @@ func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input Wor
 
 func (c *fabricHTTPClient) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/workspace-runtimes/"+workspaceID+"/status", nil)
-	if err != nil {
-		return result, err
-	}
-	res, err := c.client.Do(req)
-	if err != nil {
-		return result, err
-	}
-	defer res.Body.Close()
-	return result, json.NewDecoder(res.Body).Decode(&result)
+	err := c.get(ctx, "/fabric/workspace-runtimes/"+workspaceID+"/status", &result)
+	return result, err
 }
 
 func (c *fabricHTTPClient) Readiness(ctx context.Context) (map[string]any, error) {
 	result := map[string]any{}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/readiness", nil)
-	if err != nil {
-		return result, err
-	}
-	res, err := c.client.Do(req)
-	if err != nil {
-		return result, err
-	}
-	defer res.Body.Close()
-	return result, json.NewDecoder(res.Body).Decode(&result)
+	err := c.get(ctx, "/fabric/readiness", &result)
+	return result, err
 }
 
 func (c *fabricHTTPClient) ListOperations(ctx context.Context) ([]FabricOperation, error) {
 	var result []FabricOperation
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/operations", nil)
-	if err != nil {
-		return result, err
-	}
-	res, err := c.client.Do(req)
-	if err != nil {
-		return result, err
-	}
-	defer res.Body.Close()
-	return result, json.NewDecoder(res.Body).Decode(&result)
+	err := c.get(ctx, "/fabric/operations", &result)
+	return result, err
 }
 
 func (c *fabricHTTPClient) post(ctx context.Context, path string, input any, idempotencyKey string, output any) error {
@@ -269,5 +279,26 @@ func (c *fabricHTTPClient) post(ctx context.Context, path string, input any, ide
 		return err
 	}
 	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("fabric request failed: status %d: %s", res.StatusCode, string(body))
+	}
+	return json.NewDecoder(res.Body).Decode(output)
+}
+
+func (c *fabricHTTPClient) get(ctx context.Context, path string, output any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	res, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(res.Body)
+		return fmt.Errorf("fabric request failed: status %d: %s", res.StatusCode, string(body))
+	}
 	return json.NewDecoder(res.Body).Decode(output)
 }

@@ -178,6 +178,11 @@ type fakeFabricClient struct {
 	calls *[]string
 }
 
+func (f *fakeFabricClient) Catalog(ctx context.Context) (clients.FabricCatalog, error) {
+	*f.calls = append(*f.calls, "fabric.catalog")
+	return clients.FabricCatalog{}, nil
+}
+
 func (f *fakeFabricClient) CreateComputeAllocation(ctx context.Context, input clients.ComputeAllocationInput, idempotencyKey string) (clients.ComputeAllocation, error) {
 	*f.calls = append(*f.calls, "fabric.compute")
 	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, PackageID: input.PackageID, ProviderRequestID: "compute-request-alpha"}, nil

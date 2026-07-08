@@ -117,7 +117,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		if !app.syncLedgerFacts(w, r, service, accountID) {
 			return
 		}
-		writeJSON(w, http.StatusOK, app.state(accountID))
+		computePools, ok := fabricComputePools(w, r, service)
+		if !ok {
+			return
+		}
+		writeJSON(w, http.StatusOK, app.state(accountID, computePools))
 	}))
 	mux.HandleFunc("GET /api/pricing/catalog", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, pricingCatalogResponse())
@@ -145,7 +149,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		if !app.syncLedgerFacts(w, r, service, "") {
 			return
 		}
-		writeJSON(w, http.StatusOK, app.managementState(r.URL.Query().Get("includeDeleted") == "true"))
+		computePools, ok := fabricComputePools(w, r, service)
+		if !ok {
+			return
+		}
+		writeJSON(w, http.StatusOK, app.managementState(r.URL.Query().Get("includeDeleted") == "true", computePools))
 	}))
 	mux.HandleFunc("GET /api/operator/summary", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		if !app.syncRuntimeOperations(w, r, service) {
@@ -181,7 +189,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		if !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, app.state(accountID)["workspaces"])
+		writeJSON(w, http.StatusOK, app.state(accountID, nil)["workspaces"])
 	}))
 	mux.HandleFunc("POST /api/workspaces/reset-token", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -286,7 +294,20 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		writeJSON(w, http.StatusCreated, body)
 	}))
 	mux.HandleFunc("GET /api/billing/summary", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"currency": "CNY", "balanceCents": 0})
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
+			return
+		}
+		wallet, err := service.Wallet(r.Context(), accountID)
+		if err != nil {
+			writeUpstreamError(w)
+			return
+		}
+		if err := app.applyLedgerFacts(accountID, wallet, nil, nil, nil, nil); err != nil {
+			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, walletProjection(wallet))
 	}))
 	mux.HandleFunc("POST /api/billing/topups", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -394,14 +415,18 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		writeJSON(w, http.StatusCreated, reconciliationResponse(result))
 	}))
 	mux.HandleFunc("GET /api/compute-pools", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, computePools())
+		computePools, ok := fabricComputePools(w, r, service)
+		if !ok {
+			return
+		}
+		writeJSON(w, http.StatusOK, computePools)
 	}))
 	mux.HandleFunc("GET /api/compute-allocations", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		accountID, ok := app.scopedAccountID(w, r, nil)
 		if !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, app.state(accountID)["computeAllocations"])
+		writeJSON(w, http.StatusOK, app.state(accountID, nil)["computeAllocations"])
 	}))
 	mux.HandleFunc("POST /api/compute-allocations", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -831,6 +856,15 @@ func (app *controlPlaneApp) syncLedgerFacts(w http.ResponseWriter, r *http.Reque
 		return false
 	}
 	return true
+}
+
+func fabricComputePools(w http.ResponseWriter, r *http.Request, service *controlplane.Service) ([]any, bool) {
+	catalog, err := service.FabricCatalog(r.Context())
+	if err != nil {
+		writeUpstreamError(w)
+		return nil, false
+	}
+	return computePoolsFromFabricCatalog(catalog), true
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
