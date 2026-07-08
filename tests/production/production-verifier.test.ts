@@ -669,7 +669,7 @@ function fakeAionUiLoginBrowserFactory(actions = []) {
   };
 }
 
-function fakeGuidDomBrowserFactory(actions = [], { firstRun = false } = {}) {
+function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButtonText = "Finish setup" } = {}) {
   const state = {
     setup: firstRun,
     hash: "#/home",
@@ -721,7 +721,7 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false } = {}) {
   };
   const finishButton = {
     disabled: false,
-    innerText: "Finish setup",
+    innerText: setupButtonText,
     click() {
       actions.push(["domClick", "finish-setup"]);
       if (state.accessKey) state.setup = false;
@@ -867,7 +867,9 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false } = {}) {
         },
         async click() {
           actions.push(["roleClick", role, String(options.name || "")]);
-          if (state.setup && /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i.test(String(options.name || ""))) {
+          const name = options.name;
+          const matchesName = name instanceof RegExp ? name.test(setupButtonText) : String(name || "") === setupButtonText;
+          if (state.setup && matchesName) {
             if (state.accessKey) state.setup = false;
             return;
           }
@@ -1486,14 +1488,14 @@ test("production verifier completes first-run model access before file upload", 
     workspaceUrl: "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser",
     runId: "browser-run",
     checks,
-    browserFactory: fakeGuidDomBrowserFactory(actions, { firstRun: true }),
+    browserFactory: fakeGuidDomBrowserFactory(actions, { firstRun: true, setupButtonText: "Configure OPL Gateway" }),
     modelAccessKey: "test-access-key",
     screenshotDir: ""
   });
 
   assert.ok(actions.some((action) => action[0] === "fillLocator" && action[2] === "test-access-key"));
-  assert.ok(actions.some((action) => action[0] === "roleClick" && /Finish setup/i.test(action[2])));
-  assert.ok(actions.findIndex((action) => action[0] === "roleClick" && /Finish setup/i.test(action[2])) < actions.findIndex((action) => action[0] === "setInputFiles"));
+  assert.ok(actions.some((action) => action[0] === "roleClick" && /Configure OPL Gateway/i.test(action[2])));
+  assert.ok(actions.findIndex((action) => action[0] === "roleClick" && /Configure OPL Gateway/i.test(action[2])) < actions.findIndex((action) => action[0] === "setInputFiles"));
   assert.deepEqual(checks.map((check) => `${check.name}:${check.ok}`), [
     "workspace_browser_opened:true",
     "workspace_browser_model_access_configured:true",

@@ -425,7 +425,7 @@ async function configureModelAccessIfNeeded(page, { modelAccessKey = "" } = {}) 
     try {
       const input = page.locator('input[type="password"], input[placeholder*="access" i], input[aria-label*="access" i], textarea').last();
       await input.fill(modelAccessKey, { timeout: 15_000 });
-      await page.getByRole("button", { name: /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i }).first().click({ timeout: 15_000 });
+      await page.getByRole("button", { name: /Configure OPL Gateway|Finish setup|Continue|Start|Save|完成|继续|保存|开始/i }).first().click({ timeout: 15_000 });
       configured = true;
     } catch {
       configured = false;
@@ -459,7 +459,7 @@ async function configureModelAccessIfNeeded(page, { modelAccessKey = "" } = {}) 
 
       const button = Array.from(document.querySelectorAll("button, [role='button']"))
         .filter((element) => !element.disabled && element.getAttribute("aria-disabled") !== "true" && visible(element))
-        .find((element) => /Finish setup|Continue|Start|Save|完成|继续|保存|开始/i.test(element.innerText || element.textContent || ""));
+        .find((element) => /Configure OPL Gateway|Finish setup|Continue|Start|Save|完成|继续|保存|开始/i.test(element.innerText || element.textContent || ""));
       if (!button) return "finish_button_missing";
       button.click();
       return true;
