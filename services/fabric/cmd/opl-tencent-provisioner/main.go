@@ -30,6 +30,7 @@ type Request struct {
 	AccountId  string                 `json:"accountId,omitempty"`
 	UserId     string                 `json:"userId,omitempty"`
 	PackageId  string                 `json:"packageId,omitempty"`
+	Tags       map[string]string      `json:"tags,omitempty"`
 	Pool       ComputePoolInput       `json:"pool,omitempty"`
 	Allocation ComputeAllocationInput `json:"allocation,omitempty"`
 }
@@ -716,7 +717,11 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		{Name: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(request.PackageId)},
 		{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr(request.Pool.InstanceType)},
 	}
+	for key, value := range nodePoolCostLabels(request.Tags) {
+		nodePoolLabels = append(nodePoolLabels, &tke2022.Label{Name: common.StringPtr(key), Value: common.StringPtr(value)})
+	}
 	createRequest.Labels = nodePoolLabels
+	createRequest.Tags = tkeTagSpecifications(request.Tags, "machine")
 	createRequest.Native = &tke2022.CreateNativeNodePoolParam{
 		Scaling: &tke2022.MachineSetScaling{
 			MinReplicas:  common.Int64Ptr(0),
@@ -740,6 +745,37 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		RuntimeRootDir:     common.StringPtr("/var/lib/containerd"),
 	}
 	return createRequest, nil
+}
+
+func tkeTagSpecifications(tags map[string]string, resourceType string) []*tke2022.TagSpecification {
+	if len(tags) == 0 {
+		return nil
+	}
+	items := []*tke2022.Tag{}
+	for key, value := range tags {
+		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
+			items = append(items, &tke2022.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return []*tke2022.TagSpecification{{ResourceType: common.StringPtr(resourceType), Tags: items}}
+}
+
+func nodePoolCostLabels(tags map[string]string) map[string]string {
+	labels := map[string]string{}
+	for key, value := range map[string]string{
+		"oplcloud.cn/account-id":   tags["opl_account_id"],
+		"oplcloud.cn/workspace-id": tags["opl_workspace_id"],
+		"oplcloud.cn/resource-id":  tags["opl_resource_id"],
+		"oplcloud.cn/operation-id": tags["opl_operation_id"],
+	} {
+		if strings.TrimSpace(value) != "" {
+			labels[key] = value
+		}
+	}
+	return labels
 }
 
 func main() {
@@ -875,41 +911,53 @@ func dryRunCreateComputeAllocation(request Request, env map[string]string) Respo
 	if nodeName == "" {
 		nodeName = "node-" + stable[:10]
 	}
+	providerData := map[string]string{
+		"accountId":       request.AccountId,
+		"userId":          request.UserId,
+		"packageId":       request.PackageId,
+		"clusterId":       env["TENCENT_DEPLOY_CLUSTER_ID"],
+		"region":          env["TENCENTCLOUD_REGION"],
+		"instanceType":    request.Pool.InstanceType,
+		"provisionerMode": "dry-run",
+	}
+	for key, value := range request.Tags {
+		if strings.TrimSpace(value) != "" {
+			providerData[key] = value
+		}
+	}
 	return Response{
-		Ok:          true,
-		OperationId: "op-create-compute-" + stable[:12],
-		PoolId:      request.Pool.Id,
-		NodePoolId:  nodePoolId,
-		InstanceId:  instanceId,
-		NodeName:    nodeName,
-		PrivateIp:   "10.0.0." + strconv.Itoa(len(stable)),
-		Status:      "running",
-		ProviderData: map[string]string{
-			"accountId":       request.AccountId,
-			"userId":          request.UserId,
-			"packageId":       request.PackageId,
-			"clusterId":       env["TENCENT_DEPLOY_CLUSTER_ID"],
-			"region":          env["TENCENTCLOUD_REGION"],
-			"instanceType":    request.Pool.InstanceType,
-			"provisionerMode": "dry-run",
-		},
+		Ok:           true,
+		OperationId:  "op-create-compute-" + stable[:12],
+		PoolId:       request.Pool.Id,
+		NodePoolId:   nodePoolId,
+		InstanceId:   instanceId,
+		NodeName:     nodeName,
+		PrivateIp:    "10.0.0." + strconv.Itoa(len(stable)),
+		Status:       "running",
+		ProviderData: providerData,
 	}
 }
 
 func dryRunDestroyComputeAllocation(request Request) Response {
 	stable := stableSuffix(request.AccountId, request.Allocation.Id, request.Allocation.InstanceId)
+	providerData := map[string]string{
+		"accountId":       request.AccountId,
+		"provisionerMode": "dry-run",
+	}
+	for key, value := range request.Tags {
+		if strings.TrimSpace(value) != "" {
+			providerData[key] = value
+		}
+	}
 	return Response{
-		Ok:          true,
-		OperationId: "op-destroy-compute-" + stable[:12],
-		PoolId:      request.Pool.Id,
-		NodePoolId:  request.Pool.NodePoolId,
-		InstanceId:  request.Allocation.InstanceId,
-		NodeName:    request.Allocation.NodeName,
-		Status:      "destroyed",
-		ProviderData: map[string]string{
-			"accountId":       request.AccountId,
-			"provisionerMode": "dry-run",
-		},
+		Ok:           true,
+		OperationId:  "op-destroy-compute-" + stable[:12],
+		PoolId:       request.Pool.Id,
+		NodePoolId:   request.Pool.NodePoolId,
+		InstanceId:   request.Allocation.InstanceId,
+		NodeName:     request.Allocation.NodeName,
+		Status:       "destroyed",
+		ProviderData: providerData,
 	}
 }
 

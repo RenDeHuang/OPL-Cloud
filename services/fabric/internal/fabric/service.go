@@ -63,6 +63,7 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	id := firstNonEmpty(input.ID, fabricID("ca", firstNonEmpty(input.WorkspaceID, input.AccountID, "compute"), now))
 	input.ID = id
 	operation := newOperation("create_compute_allocation", "compute_allocation", id, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), now)
+	input.OperationID = operation.OperationID
 	if err := s.recordOperation(ctx, operation, "started", ComputeAllocation{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: firstNonEmpty(input.PackageID, "basic"), Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: providerRequestID("compute", input.IdempotencyKey), CreatedAt: now}, nil); err != nil {
 		return ComputeAllocation{}, err
 	}
@@ -142,6 +143,7 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 
 func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
 	operation := newOperation("create_storage_volume", "storage_volume", firstNonEmpty(input.ID, "pending"), input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now().UTC())
+	input.OperationID = operation.OperationID
 	if err := s.recordOperation(ctx, operation, "started", StorageVolume{ID: operation.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {
 		return StorageVolume{}, err
 	}
@@ -194,6 +196,7 @@ func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAtta
 	volume := s.volumes[input.VolumeID]
 	s.mu.Unlock()
 	operation := newOperation("create_storage_attachment", "storage_attachment", firstNonEmpty(input.WorkspaceID, input.ComputeID, input.VolumeID, "pending"), compute.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now().UTC())
+	input.OperationID = operation.OperationID
 	if err := s.recordOperation(ctx, operation, "started", StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}, nil); err != nil {
 		return StorageAttachment{}, err
 	}
@@ -243,6 +246,7 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 	volume := s.volumes[input.VolumeID]
 	s.mu.Unlock()
 	operation := newOperation("create_workspace_runtime", "workspace_runtime", input.WorkspaceID, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now().UTC())
+	input.OperationID = operation.OperationID
 	if err := s.recordOperation(ctx, operation, "started", WorkspaceRuntime{WorkspaceID: input.WorkspaceID, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil); err != nil {
 		return WorkspaceRuntime{}, err
 	}
@@ -383,25 +387,25 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
-		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerResourceId": value.ProviderResourceID, "nodeName": value.NodeName, "instanceId": firstNonEmpty(value.CVMInstanceID, value.InstanceID)}
+		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerResourceId": value.ProviderResourceID, "nodeName": value.NodeName, "instanceId": firstNonEmpty(value.CVMInstanceID, value.InstanceID), "costTags": value.CostTags}
 	case StorageVolume:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
 		operation.AccountID = firstNonEmpty(value.AccountID, operation.AccountID)
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
-		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerResourceId": value.ProviderResourceID, "storageClass": value.StorageClass, "sizeGb": value.SizeGB}
+		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerResourceId": value.ProviderResourceID, "storageClass": value.StorageClass, "sizeGb": value.SizeGB, "costTags": value.CostTags}
 	case StorageAttachment:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
-		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerAttachmentId": value.ProviderAttachmentID, "computeId": value.ComputeID, "volumeId": value.VolumeID}
+		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerAttachmentId": value.ProviderAttachmentID, "computeId": value.ComputeID, "volumeId": value.VolumeID, "costTags": value.CostTags}
 	case WorkspaceRuntime:
 		operation.ResourceID = firstNonEmpty(value.WorkspaceID, operation.ResourceID)
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
-		operation.RedactedProviderPayload = map[string]any{"resource": value, "serviceName": value.ServiceName, "ready": value.Ready}
+		operation.RedactedProviderPayload = map[string]any{"resource": value, "serviceName": value.ServiceName, "ready": value.Ready, "costTags": value.CostTags}
 	}
 }
 

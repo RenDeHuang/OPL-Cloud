@@ -258,6 +258,12 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 		AccountId: "pi-alpha",
 		UserId:    "usr-alpha",
 		PackageId: "basic",
+		Tags: map[string]string{
+			"opl_account_id":   "pi-alpha",
+			"opl_workspace_id": "ws-alpha",
+			"opl_resource_id":  "compute-alpha",
+			"opl_operation_id": "op-alpha",
+		},
 		Pool: ComputePoolInput{
 			Id:           "pool-basic-2c4g",
 			InstanceType: "SA5.LARGE4",
@@ -305,6 +311,12 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	}
 	if labels["oplcloud.cn/pool-id"] != "pool-basic-2c4g" || labels["oplcloud.cn/package-id"] != "basic" || labels["oplcloud.cn/instance-type"] != "SA5.LARGE4" {
 		t.Fatalf("unexpected labels: %#v", labels)
+	}
+	if labels["oplcloud.cn/account-id"] != "pi-alpha" || labels["oplcloud.cn/resource-id"] != "compute-alpha" || labels["oplcloud.cn/operation-id"] != "op-alpha" {
+		t.Fatalf("node pool request must carry OPL cost labels: %#v", labels)
+	}
+	if len(createRequest.Tags) != 1 || len(createRequest.Tags[0].Tags) != 4 {
+		t.Fatalf("node pool request must carry Tencent cost tags: %#v", createRequest.Tags)
 	}
 }
 

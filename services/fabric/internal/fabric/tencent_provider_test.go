@@ -31,8 +31,9 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
 	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", NodeSelector: map[string]any{"cloud.tencent.com/node-instance-id": "np-basic-2"}}
 	storage := StorageVolume{ProviderResourceID: "pvc/opl-storage-alpha-data"}
+	tags := map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "op-alpha"}
 	var manifest map[string]any
-	if err := json.Unmarshal(workspaceManifest("ws-alpha", "Alpha", "token", "opl-compute-alpha", compute, storage), &manifest); err != nil {
+	if err := json.Unmarshal(workspaceManifest("ws-alpha", "Alpha", "token", "opl-compute-alpha", compute, storage, tags), &manifest); err != nil {
 		t.Fatalf("decode workspace manifest: %v", err)
 	}
 	var deployment map[string]any
@@ -57,6 +58,12 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	podSpec := nested(deployment, "spec", "template", "spec").(map[string]any)
 	if nested(deployment, "metadata", "labels", "oplcloud.cn/workspace-id") != "ws-alpha" {
 		t.Fatalf("deployment must carry workspace label for stateless runtime lookup: %#v", nested(deployment, "metadata", "labels"))
+	}
+	if nested(deployment, "metadata", "annotations", "opl_operation_id") != "op-alpha" {
+		t.Fatalf("deployment must carry OPL cost tag annotations: %#v", nested(deployment, "metadata", "annotations"))
+	}
+	if nested(deployment, "metadata", "labels", "oplcloud.cn/resource-id") != "compute-alpha" {
+		t.Fatalf("deployment must carry OPL cost labels: %#v", nested(deployment, "metadata", "labels"))
 	}
 	if podSpec["hostNetwork"] != true || podSpec["dnsPolicy"] != "ClusterFirstWithHostNet" {
 		t.Fatalf("workspace pod must use host networking on dedicated TKE nodes: %#v", podSpec)

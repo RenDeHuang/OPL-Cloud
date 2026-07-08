@@ -90,7 +90,7 @@ test("normalizes Tencent billing export rows into Workspace resource bills", () 
       ProductName: "Tencent Kubernetes Engine",
       Cost: "10.00",
       Currency: "CNY",
-      Tags: "product:opl-cloud,workspace_id:ws-alpha",
+      Tags: "product:opl-cloud,opl_account_id:acct-alpha,opl_workspace_id:ws-alpha,opl_resource_id:ca-alpha,opl_operation_id:op-alpha",
       ResourceId: "pod-alpha"
     },
     {
@@ -109,7 +109,7 @@ test("normalizes Tencent billing export rows into Workspace resource bills", () 
   ]);
 
   assert.deepEqual(rows, [
-    { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY", sourceResourceId: "pod-alpha" },
+    { workspaceId: "ws-alpha", resourceType: "server", amount: 10, currency: "CNY", sourceResourceId: "ca-alpha", accountId: "acct-alpha", resourceId: "ca-alpha", operationId: "op-alpha" },
     { workspaceId: "ws-alpha", resourceType: "storage", amount: 2, currency: "CNY", sourceResourceId: "disk-alpha" }
   ]);
 });

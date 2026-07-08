@@ -41,6 +41,7 @@ type ComputeAllocationInput struct {
 	WorkspaceID    string `json:"workspaceId"`
 	PackageID      string `json:"packageId"`
 	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
 	DryRun         bool   `json:"dryRun,omitempty"`
 }
 
@@ -64,6 +65,7 @@ type ComputeAllocation struct {
 	ServiceName        string            `json:"serviceName,omitempty"`
 	NodeSelector       map[string]any    `json:"nodeSelector,omitempty"`
 	ProviderData       map[string]string `json:"providerData,omitempty"`
+	CostTags           map[string]string `json:"costTags,omitempty"`
 	CreatedAt          time.Time         `json:"createdAt"`
 }
 
@@ -73,19 +75,21 @@ type StorageVolumeInput struct {
 	WorkspaceID    string `json:"workspaceId"`
 	SizeGB         int    `json:"sizeGb"`
 	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
 }
 
 type StorageVolume struct {
-	ID                 string    `json:"id"`
-	AccountID          string    `json:"accountId,omitempty"`
-	WorkspaceID        string    `json:"workspaceId"`
-	Status             string    `json:"status"`
-	Provider           string    `json:"provider,omitempty"`
-	ProviderResourceID string    `json:"providerResourceId,omitempty"`
-	ProviderRequestID  string    `json:"providerRequestId"`
-	SizeGB             int       `json:"sizeGb,omitempty"`
-	StorageClass       string    `json:"storageClass,omitempty"`
-	CreatedAt          time.Time `json:"createdAt"`
+	ID                 string            `json:"id"`
+	AccountID          string            `json:"accountId,omitempty"`
+	WorkspaceID        string            `json:"workspaceId"`
+	Status             string            `json:"status"`
+	Provider           string            `json:"provider,omitempty"`
+	ProviderResourceID string            `json:"providerResourceId,omitempty"`
+	ProviderRequestID  string            `json:"providerRequestId"`
+	SizeGB             int               `json:"sizeGb,omitempty"`
+	StorageClass       string            `json:"storageClass,omitempty"`
+	CostTags           map[string]string `json:"costTags,omitempty"`
+	CreatedAt          time.Time         `json:"createdAt"`
 }
 
 type StorageAttachmentInput struct {
@@ -93,18 +97,20 @@ type StorageAttachmentInput struct {
 	ComputeID      string `json:"computeId"`
 	VolumeID       string `json:"volumeId"`
 	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
 }
 
 type StorageAttachment struct {
-	ID                   string    `json:"id"`
-	WorkspaceID          string    `json:"workspaceId"`
-	ComputeID            string    `json:"computeId,omitempty"`
-	VolumeID             string    `json:"volumeId"`
-	Status               string    `json:"status"`
-	Provider             string    `json:"provider,omitempty"`
-	ProviderAttachmentID string    `json:"providerAttachmentId,omitempty"`
-	ProviderRequestID    string    `json:"providerRequestId"`
-	CreatedAt            time.Time `json:"createdAt"`
+	ID                   string            `json:"id"`
+	WorkspaceID          string            `json:"workspaceId"`
+	ComputeID            string            `json:"computeId,omitempty"`
+	VolumeID             string            `json:"volumeId"`
+	Status               string            `json:"status"`
+	Provider             string            `json:"provider,omitempty"`
+	ProviderAttachmentID string            `json:"providerAttachmentId,omitempty"`
+	ProviderRequestID    string            `json:"providerRequestId"`
+	CostTags             map[string]string `json:"costTags,omitempty"`
+	CreatedAt            time.Time         `json:"createdAt"`
 }
 
 type WorkspaceRuntimeInput struct {
@@ -113,18 +119,20 @@ type WorkspaceRuntimeInput struct {
 	VolumeID       string `json:"volumeId"`
 	ImageID        string `json:"imageId"`
 	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
 }
 
 type WorkspaceRuntime struct {
-	ID                string    `json:"id"`
-	WorkspaceID       string    `json:"workspaceId"`
-	URL               string    `json:"url"`
-	Status            string    `json:"status"`
-	ServiceName       string    `json:"serviceName,omitempty"`
-	ProviderRequestID string    `json:"providerRequestId"`
-	Ready             bool      `json:"ready,omitempty"`
-	Checks            []Check   `json:"checks,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
+	ID                string            `json:"id"`
+	WorkspaceID       string            `json:"workspaceId"`
+	URL               string            `json:"url"`
+	Status            string            `json:"status"`
+	ServiceName       string            `json:"serviceName,omitempty"`
+	ProviderRequestID string            `json:"providerRequestId"`
+	Ready             bool              `json:"ready,omitempty"`
+	Checks            []Check           `json:"checks,omitempty"`
+	CostTags          map[string]string `json:"costTags,omitempty"`
+	CreatedAt         time.Time         `json:"createdAt"`
 }
 
 type Check struct {

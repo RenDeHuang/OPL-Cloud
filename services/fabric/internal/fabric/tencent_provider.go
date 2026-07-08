@@ -38,6 +38,7 @@ type provisionerRequest struct {
 	AccountID  string                `json:"accountId,omitempty"`
 	UserID     string                `json:"userId,omitempty"`
 	PackageID  string                `json:"packageId,omitempty"`
+	Tags       map[string]string     `json:"tags,omitempty"`
 	Pool       provisionerPool       `json:"pool,omitempty"`
 	Allocation provisionerAllocation `json:"allocation,omitempty"`
 }
@@ -91,15 +92,16 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 	now := time.Now().UTC()
 	packageID := firstNonEmpty(input.PackageID, "basic")
 	id := firstNonEmpty(input.ID, fabricID("ca", input.WorkspaceID, now))
+	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
 	plan := packagePlan(packageID)
 	pool := provisionerPool{
 		ID:           "pool-" + packageID,
 		PackageID:    packageID,
 		InstanceType: plan.InstanceType,
 		NodePoolID:   plan.NodePoolID,
-		Labels:       map[string]string{"oplcloud.cn/package-id": packageID, "oplcloud.cn/instance-type": plan.InstanceType},
+		Labels:       mergeStringMaps(map[string]string{"oplcloud.cn/package-id": packageID, "oplcloud.cn/instance-type": plan.InstanceType}, k8sCostLabels(tags)),
 	}
-	response, err := p.provision(ctx, provisionerRequest{Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: input.AccountID, PackageID: packageID, Pool: pool, Allocation: provisionerAllocation{ID: id}})
+	response, err := p.provision(ctx, provisionerRequest{Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: input.AccountID, PackageID: packageID, Tags: tags, Pool: pool, Allocation: provisionerAllocation{ID: id}})
 	if err != nil {
 		return ComputeAllocation{}, err
 	}
@@ -129,6 +131,7 @@ func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input Com
 		ServiceName:        serviceName,
 		NodeSelector:       tkeNodeSelector(response.ProviderData, nodeName),
 		ProviderData:       response.ProviderData,
+		CostTags:           tags,
 		CreatedAt:          now,
 	}, nil
 }
@@ -176,10 +179,11 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	sizeGB := int(math.Max(float64(input.SizeGB), 1))
 	id := firstNonEmpty(input.ID, fabricID("vol", input.WorkspaceID, now))
 	name := k8sName(id)
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, pvcManifest(name, id, input.AccountID, sizeGB)); err != nil {
+	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
+	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, pvcManifest(name, id, input.AccountID, sizeGB, tags)); err != nil {
 		return StorageVolume{}, err
 	}
-	return StorageVolume{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "tencent-tke", ProviderResourceID: "pvc/" + name + "-data", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey), SizeGB: sizeGB, StorageClass: os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), CreatedAt: now}, nil
+	return StorageVolume{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "tencent-tke", ProviderResourceID: "pvc/" + name + "-data", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey), SizeGB: sizeGB, StorageClass: os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), CostTags: tags, CreatedAt: now}, nil
 }
 
 func (p *TencentProvider) DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
@@ -204,6 +208,7 @@ func (p *TencentProvider) CreateStorageAttachment(_ context.Context, input Stora
 	}
 	now := time.Now().UTC()
 	id := fabricID("att", input.WorkspaceID, now)
+	tags := oplCostTags(compute.AccountID, input.WorkspaceID, id, input.OperationID)
 	return StorageAttachment{
 		ID:                   id,
 		WorkspaceID:          input.WorkspaceID,
@@ -213,6 +218,7 @@ func (p *TencentProvider) CreateStorageAttachment(_ context.Context, input Stora
 		Provider:             "tencent-tke",
 		ProviderAttachmentID: "deployment/" + compute.ServiceName + ":" + volume.ProviderResourceID,
 		ProviderRequestID:    providerRequestID("storage-attach", input.IdempotencyKey),
+		CostTags:             tags,
 		CreatedAt:            now,
 	}, nil
 }
@@ -230,10 +236,11 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	now := time.Now().UTC()
 	serviceName := firstNonEmpty(compute.ServiceName, k8sName(compute.ID))
 	token := stableID(input.WorkspaceID, input.IdempotencyKey, now.String())[:24]
-	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input.WorkspaceID, input.WorkspaceID, token, serviceName, compute, volume)); err != nil {
+	tags := oplCostTags(compute.AccountID, input.WorkspaceID, input.WorkspaceID, input.OperationID)
+	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input.WorkspaceID, input.WorkspaceID, token, serviceName, compute, volume, tags)); err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	return WorkspaceRuntime{ID: fabricID("rt", input.WorkspaceID, now), WorkspaceID: input.WorkspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID), Status: "running", ServiceName: serviceName, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Ready: true, CreatedAt: now}, nil
+	return WorkspaceRuntime{ID: fabricID("rt", input.WorkspaceID, now), WorkspaceID: input.WorkspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID), Status: "running", ServiceName: serviceName, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Ready: true, CostTags: tags, CreatedAt: now}, nil
 }
 
 func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
@@ -337,17 +344,18 @@ func packagePlan(packageID string) plan {
 	return plan{ID: "basic", Server: "2c4g", CPU: 2, MemoryGB: 4, DiskGB: 10, InstanceType: firstNonEmpty(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"), "SA5.MEDIUM4"), NodePoolID: os.Getenv("OPL_BASIC_COMPUTE_NODE_POOL_ID")}
 }
 
-func pvcManifest(name string, storageID string, accountID string, sizeGB int) []byte {
+func pvcManifest(name string, storageID string, accountID string, sizeGB int, tags map[string]string) []byte {
+	labels := mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-storage-volume", "app.kubernetes.io/instance": name, "oplcloud.cn/storage-id": storageID, "oplcloud.cn/account-id": accountID}, k8sCostLabels(tags))
 	return mustJSON(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "PersistentVolumeClaim",
-		"metadata":   map[string]any{"name": name + "-data", "labels": map[string]any{"app.kubernetes.io/name": "opl-storage-volume", "app.kubernetes.io/instance": name, "oplcloud.cn/storage-id": storageID, "oplcloud.cn/account-id": accountID}},
+		"metadata":   map[string]any{"name": name + "-data", "labels": labels, "annotations": tags},
 		"spec":       map[string]any{"accessModes": []string{"ReadWriteOnce"}, "storageClassName": os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), "resources": map[string]any{"requests": map[string]any{"storage": fmt.Sprintf("%dGi", sizeGB)}}},
 	})
 }
 
-func workspaceManifest(workspaceID string, workspaceName string, token string, serviceName string, compute ComputeAllocation, storage StorageVolume) []byte {
-	labels := map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/compute-allocation-id": compute.ID, "oplcloud.cn/account-id": compute.AccountID, "oplcloud.cn/workspace-id": workspaceID}
+func workspaceManifest(workspaceID string, workspaceName string, token string, serviceName string, compute ComputeAllocation, storage StorageVolume, tags map[string]string) []byte {
+	labels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/compute-allocation-id": compute.ID, "oplcloud.cn/account-id": compute.AccountID, "oplcloud.cn/workspace-id": workspaceID}, k8sCostLabels(tags)))
 	pvcName := resourceName(storage.ProviderResourceID)
 	plan := packagePlan(compute.PackageID)
 	secretData := map[string]any{
@@ -386,10 +394,49 @@ func workspaceManifest(workspaceID string, workspaceName string, token string, s
 	}
 	initContainer := map[string]any{"name": "bootstrap-codex-config", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": serviceName + "-env"}}}, "env": []any{map[string]any{"name": "CODEX_HOME", "value": "/data/codex"}}, "command": []string{"node", "-e"}, "args": []string{codexBootstrapScript()}, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}}, "securityContext": map[string]any{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": false, "capabilities": map[string]any{"drop": []string{"ALL"}}}}
 	workspaceContainer := map[string]any{"name": "workspace", "image": os.Getenv("OPL_WORKSPACE_IMAGE"), "imagePullPolicy": "IfNotPresent", "ports": []any{map[string]any{"name": "http", "containerPort": 3000}}, "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": serviceName + "-env"}}}, "env": workspaceEnv, "lifecycle": map[string]any{"postStart": map[string]any{"exec": map[string]any{"command": []string{"node", "-e", aionUIPasswordBootstrapScript()}}}}, "volumeMounts": []any{map[string]any{"name": "workspace-data", "mountPath": "/data", "subPath": "data"}, map[string]any{"name": "workspace-data", "mountPath": "/projects", "subPath": "projects"}}, "resources": workspaceResources(plan), "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/", "port": 3000}, "initialDelaySeconds": 10, "periodSeconds": 10}}
-	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": map[string]any{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/workspace-id": workspaceID}}, "type": "Opaque", "data": secretData}
-	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": labels}, "template": map[string]any{"metadata": map[string]any{"labels": labels}, "spec": map[string]any{"automountServiceAccountToken": false, "hostNetwork": true, "dnsPolicy": "ClusterFirstWithHostNet", "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": compute.NodeSelector, "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}}, "initContainers": []any{initContainer}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}}}}}}
-	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels}, "spec": map[string]any{"type": "ClusterIP", "selector": labels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
+	secretLabels := stringAnyMap(mergeStringMaps(map[string]string{"app.kubernetes.io/name": "opl-workspace-entry", "app.kubernetes.io/instance": serviceName, "oplcloud.cn/workspace-id": workspaceID}, k8sCostLabels(tags)))
+	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": serviceName + "-env", "labels": secretLabels, "annotations": tags}, "type": "Opaque", "data": secretData}
+	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": labels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": tags}, "spec": map[string]any{"automountServiceAccountToken": false, "hostNetwork": true, "dnsPolicy": "ClusterFirstWithHostNet", "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": compute.NodeSelector, "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}}, "initContainers": []any{initContainer}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}}}}}}
+	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": labels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
 	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{secret, deployment, service}})
+}
+
+func oplCostTags(accountID string, workspaceID string, resourceID string, operationID string) map[string]string {
+	return map[string]string{
+		"opl_account_id":   accountID,
+		"opl_workspace_id": workspaceID,
+		"opl_resource_id":  resourceID,
+		"opl_operation_id": operationID,
+	}
+}
+
+func k8sCostLabels(tags map[string]string) map[string]string {
+	return map[string]string{
+		"oplcloud.cn/account-id":   tags["opl_account_id"],
+		"oplcloud.cn/workspace-id": tags["opl_workspace_id"],
+		"oplcloud.cn/resource-id":  tags["opl_resource_id"],
+		"oplcloud.cn/operation-id": tags["opl_operation_id"],
+	}
+}
+
+func mergeStringMaps(values ...map[string]string) map[string]string {
+	merged := map[string]string{}
+	for _, value := range values {
+		for key, item := range value {
+			if strings.TrimSpace(item) != "" {
+				merged[key] = item
+			}
+		}
+	}
+	return merged
+}
+
+func stringAnyMap(values map[string]string) map[string]any {
+	result := map[string]any{}
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 
 func workspaceResources(plan plan) map[string]any {

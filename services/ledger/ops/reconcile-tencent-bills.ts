@@ -83,11 +83,22 @@ function workspaceIdFrom(row) {
   const direct = firstPresent(row, ["workspaceId", "WorkspaceId", "workspace_id", "WorkspaceID"]);
   if (direct) return String(direct);
   const tags = tagsFrom(row);
-  return tags.workspace_id || tags.workspaceId || tags.WorkspaceId || tags.WorkspaceID || "";
+  return tags.opl_workspace_id || tags.workspace_id || tags.workspaceId || tags.WorkspaceId || tags.WorkspaceID || "";
 }
 
 function resourceIdFrom(row) {
-  return String(firstPresent(row, ["sourceResourceId", "ResourceId", "resourceId", "InstanceId", "DiskId"]) || "");
+  const tags = tagsFrom(row);
+  return String(tags.opl_resource_id || firstPresent(row, ["sourceResourceId", "ResourceId", "resourceId", "InstanceId", "DiskId"]) || "");
+}
+
+function oplTagEvidence(row) {
+  const tags = tagsFrom(row);
+  return {
+    accountId: tags.opl_account_id || "",
+    workspaceId: tags.opl_workspace_id || "",
+    resourceId: tags.opl_resource_id || "",
+    operationId: tags.opl_operation_id || ""
+  };
 }
 
 function productNameFrom(row) {
@@ -123,12 +134,14 @@ export function normalizeTencentBillRows(rows = []) {
       throw new Error(`tencent_bill_workspace_id_missing:${sourceResourceId || "unknown_resource"}`);
     }
 
+    const evidence = oplTagEvidence(row);
     normalized.push({
       workspaceId,
       resourceType,
       amount: money(amountFrom(row)),
       currency: String(firstPresent(row, ["currency", "Currency"]) || "CNY"),
-      sourceResourceId
+      sourceResourceId,
+      ...Object.fromEntries(Object.entries(evidence).filter(([, value]) => value))
     });
   }
   return normalized;
