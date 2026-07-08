@@ -8,18 +8,6 @@ import {
 } from "../shared/commercial-console.tsx";
 import { available, money, moneyValue, resourceDebitEvents } from "../shared/formatters.ts";
 
-type AnyRecord = Record<string, any>;
-
-function activeHourlyEstimate(state: AnyRecord = {}) {
-  const computeHourly = (state.computeAllocations || [])
-    .filter((item) => item.billingStatus === "active" && !["destroyed", "failed"].includes(item.status))
-    .reduce((sum, item) => sum + Number(item.hourlyPrice || 0), 0);
-  const storageHourly = (state.storageVolumes || [])
-    .filter((item) => item.billingStatus === "active" && item.status !== "destroyed")
-    .reduce((sum, item) => sum + Number(item.hourlyEstimate || 0), 0);
-  return computeHourly + storageHourly;
-}
-
 export function BillingPage({ state, wallet }: any) {
   const recent = resourceDebitEvents(state).map((item) => ({
     ...item,
@@ -27,8 +15,9 @@ export function BillingPage({ state, wallet }: any) {
     amount: Math.abs(moneyValue(item))
   })).slice(-12).reverse();
   const usable = available(wallet);
-  const hourlyEstimate = activeHourlyEstimate(state);
-  const spent = recent.reduce((sum, event) => sum + event.amount, 0);
+  const billingSummary = state.billingSummary || {};
+  const hourlyEstimate = Number(billingSummary.activeHourlyEstimate || 0);
+  const spent = Number(billingSummary.recentResourceDebitTotal || 0);
 
   return (
     <ConsoleSurface title="账单" eyebrow="钱包" subtitle="余额、冻结金额和资源费用">

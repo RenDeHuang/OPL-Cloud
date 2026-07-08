@@ -10,7 +10,7 @@ import {
   ObjectTable,
   StatusPill
 } from "../shared/commercial-console.tsx";
-import { available, money, moneyValue, resourceDebitEvents, statusColor, statusLabel } from "../shared/formatters.ts";
+import { available, money, statusColor, statusLabel } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
 
@@ -32,28 +32,11 @@ function workspaceCredential(workspace: AnyRecord = {}) {
   return { account, ready };
 }
 
-function workspaceHourlyEstimate({ workspace, compute, storage }: any) {
-  const computeHourly = Number(compute?.hourlyPrice || compute?.hourlyEstimate || 0);
-  const storageHourly = Number(storage?.hourlyEstimate || workspace?.disk?.hourlyEstimate || 0);
-  return computeHourly + storageHourly;
-}
-
-function workspaceChargeTotal(state: AnyRecord = {}, workspaceId = "") {
-  return resourceDebitEvents(state)
-    .filter((item) => item.workspaceId === workspaceId)
-    .reduce((sum, item) => sum + Math.abs(moneyValue(item)), 0);
-}
-
 export function WorkspacesPage({ state, wallet }: any) {
-  const computeById = new Map((state.computeAllocations || []).map((compute) => [compute.id, compute]));
-  const storageById = new Map((state.storageVolumes || []).map((storage) => [storage.id, storage]));
   const running = state.workspaces.filter((workspace) => workspace.state === "running").length;
-  const billedTotal = state.workspaces.reduce((sum, workspace) => sum + workspaceChargeTotal(state, workspace.id), 0);
-  const hourlyTotal = state.workspaces.reduce((sum, workspace) => {
-    const compute = computeById.get(workspace.currentComputeAllocationId);
-    const storage = storageById.get(workspace.storageId);
-    return sum + workspaceHourlyEstimate({ workspace, compute, storage });
-  }, 0);
+  const billingSummary = state.billingSummary || {};
+  const billedTotal = Number(billingSummary.recentResourceDebitTotal || 0);
+  const hourlyTotal = Number(billingSummary.activeHourlyEstimate || 0);
 
   return (
     <ConsoleSurface
@@ -75,8 +58,6 @@ export function WorkspacesPage({ state, wallet }: any) {
       <InsightPanel title="工作区列表" eyebrow="访问入口、状态、费用">
         <div className="mobileWorkspaceList">
           {state.workspaces.length ? state.workspaces.map((workspace) => {
-            const compute = computeById.get(workspace.currentComputeAllocationId);
-            const storage = storageById.get(workspace.storageId);
             return (
               <article className="mobileWorkspaceCard" key={workspace.id}>
                 <div className="mobileWorkspaceHeader">
@@ -84,8 +65,10 @@ export function WorkspacesPage({ state, wallet }: any) {
                   <StatusPill label={statusLabel(workspace)} tone={statusTone(workspace.state)} />
                 </div>
                 <div className="mobileWorkspaceFacts">
-                  <span>当前费用 <b>{money(workspaceChargeTotal(state, workspace.id))}</b></span>
-                  <span>预计每小时 <b>{money(workspaceHourlyEstimate({ workspace, compute, storage }))}</b></span>
+                  <span>当前费用 <b>{money(workspace.billing?.currentChargeTotal)}</b></span>
+                  <span>预计每小时 <b>{money(workspace.billing?.activeHourlyEstimate)}</b></span>
+                  <span>计算 <b>{workspace.currentComputeAllocationId || "-"}</b></span>
+                  <span>存储 <b>{workspace.storageId || "-"}</b></span>
                   <span>账号 <b>{workspaceCredential(workspace).account}</b></span>
                   <span>状态 <b>{workspace.access?.tokenStatus === "active" ? "可用" : "未启用"}</b></span>
                 </div>
@@ -104,7 +87,7 @@ export function WorkspacesPage({ state, wallet }: any) {
           rowKey="id"
           data={state.workspaces}
           tableLayout="fixed"
-          scroll={{ x: 820 }}
+          scroll={{ x: 980 }}
           emptyText="暂无工作区"
           columns={[
             {
@@ -127,16 +110,22 @@ export function WorkspacesPage({ state, wallet }: any) {
             {
               title: "当前费用",
               width: 105,
-              render: (_, row) => money(workspaceChargeTotal(state, row.id))
+              render: (_, row) => money(row.billing?.currentChargeTotal)
             },
             {
               title: "预计每小时",
               width: 105,
-              render: (_, row) => {
-                const compute = computeById.get(row.currentComputeAllocationId);
-                const storage = storageById.get(row.storageId);
-                return money(workspaceHourlyEstimate({ workspace: row, compute, storage }));
-              }
+              render: (_, row) => money(row.billing?.activeHourlyEstimate)
+            },
+            {
+              title: "计算",
+              width: 120,
+              render: (_, row) => <Typography.Text ellipsis>{row.currentComputeAllocationId || "-"}</Typography.Text>
+            },
+            {
+              title: "存储",
+              width: 120,
+              render: (_, row) => <Typography.Text ellipsis>{row.storageId || "-"}</Typography.Text>
             },
             {
               title: "访问入口",

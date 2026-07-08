@@ -146,7 +146,7 @@ test("Workspace UI treats URL as stable storage subject with current runtime poi
   const cleanupSource = await source("apps/console-ui/src/pages/shared/commercial-console.tsx");
 
   assert.match(listSource, /currentComputeAllocationId/, "Workspace list must show current compute pointer");
-  assert.match(listSource, /workspaceHourlyEstimate/, "Workspace list must use current resource pointers for per-Workspace billing");
+  assert.match(listSource, /workspace\.billing/, "Workspace list must use backend per-Workspace billing facts");
   assert.match(detailSource, /currentAttachmentId/, "Workspace detail must keep the current attachment pointer in code");
   assert.doesNotMatch(`${listSource}\n${detailSource}`, /UI 子账号|等同 UI 子账号/, "customer-facing Workspace copy must not expose the internal subaccount simplification");
   assert.match(routeSource, /currentComputeAllocationId/, "runtime route registry must expose current compute pointer");
@@ -212,7 +212,18 @@ test("resource provisioning UI shows price, hold, balance impact, and operation 
   assert.match(resourceSource, /OperationTimeline/, "resource detail must show operation timeline evidence");
   assert.match(resourceSource, /FailureRecoveryPanel/, "resource detail must expose failed-operation recovery guidance");
   assert.match(resourceSource, /resource\.hourlyEstimate/, "storage detail must show hourlyEstimate instead of compute hourlyPrice");
-  assert.match(billingSource, /item\.hourlyEstimate/, "billing hourly estimate must include storage hourlyEstimate");
+  assert.match(billingSource, /state\.billingSummary/, "billing page must display backend billing summary");
+  assert.doesNotMatch(billingSource, /function activeHourlyEstimate|item\.hourlyEstimate|item\.hourlyPrice/, "billing page must not calculate resource pricing locally");
+});
+
+test("Workspace pages display backend billing facts instead of deriving charges locally", async () => {
+  const listSource = await source("apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx");
+  const detailSource = await source("apps/console-ui/src/pages/workspaces/WorkspaceDetailPage.tsx");
+
+  for (const sourceText of [listSource, detailSource]) {
+    assert.match(sourceText, /(?:workspace|selected)\.billing/, "workspace pages must read backend workspace billing facts");
+    assert.doesNotMatch(sourceText, /function workspaceChargeTotal|function workspaceHourlyEstimate|resourceDebitEvents\(state\)/, "workspace pages must not derive billing from ledger/resource rows");
+  }
 });
 
 test("resource mutations use confirmation, waiting state, result receipts, and concise Chinese copy", async () => {
@@ -375,7 +386,7 @@ test("Owner Billing and Workspace pages use production-safe customer copy", asyn
   for (const signal of ["activeHourlyEstimate", "预计每小时"]) {
     assert.match(billingSource, new RegExp(signal), `billing page must show ${signal}`);
   }
-  for (const signal of ["workspaceCredential", "workspaceChargeTotal", "workspaceHourlyEstimate", "访问入口", "当前费用", "预计每小时"]) {
+  for (const signal of ["workspaceCredential", "workspace.billing", "访问入口", "当前费用", "预计每小时"]) {
     assert.match(listSource, new RegExp(signal), `Workspace list must expose customer-safe access and billing signal ${signal}`);
   }
   for (const forbidden of ["归属账号", "运维归因证据", "URL owner", "CVM owner", "CVM ID", "存储 provider ID", "问题依据", "providerRequestId", "ownerAccountId"]) {
@@ -471,7 +482,7 @@ test("resource pages expose relationship map, wallet risk, and support context w
   assert.doesNotMatch(`${resourceSource}\n${detailSource}`, /DataRetentionPolicyPanel|实验室策略|迁移 \/ rollout|先不做复杂子账号体系|左栏保持三项/, "owner pages must not show internal strategy or policy dumps");
   assert.match(resourceSource, /supportContextPath/, "failed resource support links must carry operation and resource context");
   assert.match(workspaceSource, /workspaceCredential/, "Workspace list may derive credential readiness without printing the password");
-  assert.match(workspaceSource, /workspaceChargeTotal/, "Workspace list must lead with per-Workspace billing");
+  assert.match(workspaceSource, /workspace\.billing/, "Workspace list must lead with backend per-Workspace billing");
   assert.match(supportSource, /URLSearchParams/, "support form must accept failure context from resource pages");
   assert.match(supportSource, /operationId|resourceId/, "support form must carry operationId/resourceId into the ticket description");
   assert.match(surfaceSource, /账号.*计算.*存储.*挂载.*工作区入口/s, "relationship graph must make the account-resource-entry chain visible");

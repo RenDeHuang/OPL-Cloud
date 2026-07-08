@@ -169,6 +169,7 @@ func (app *controlPlaneApp) persistLocked() error {
 func (app *controlPlaneApp) state(accountID string) map[string]any {
 	app.mu.Lock()
 	defer app.mu.Unlock()
+	workspaces := app.workspaceStateRowsLocked(accountID)
 	return map[string]any{
 		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
 		"billingPolicy":          map[string]any{"holdDays": 7, "priceBasis": "OPL price list"},
@@ -177,11 +178,12 @@ func (app *controlPlaneApp) state(accountID string) map[string]any {
 		"wallet":                 app.wallet(accountID),
 		"account":                app.wallet(accountID),
 		"user":                   app.currentUserLocked(),
-		"workspaces":             accountValues(app.workspaces, accountID),
+		"workspaces":             workspaces,
 		"computeAllocations":     accountValues(app.computes, accountID),
 		"storageVolumes":         accountValues(app.storages, accountID),
 		"storageAttachments":     accountValues(app.attachments, accountID),
 		"accounts":               app.accountsLocked(),
+		"billingSummary":         app.billingSummaryLocked(accountID),
 		"billingLedger":          copySlice(app.ledger),
 		"walletTransactions":     copySlice(app.walletTx),
 		"manualTopups":           copySlice(app.topups),
@@ -193,6 +195,52 @@ func (app *controlPlaneApp) state(accountID string) map[string]any {
 		"runtimeOperations":      copySlice(app.runtimeOps),
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+func (app *controlPlaneApp) workspaceStateRowsLocked(accountID string) []any {
+	rows := accountValues(app.workspaces, accountID)
+	output := make([]any, 0, len(rows))
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		workspace := workspaceResponse(cloneMap(row))
+		workspace["billing"] = app.workspaceBillingLocked(workspace)
+		output = append(output, workspace)
+	}
+	return output
+}
+
+func (app *controlPlaneApp) workspaceBillingLocked(workspace map[string]any) map[string]any {
+	workspaceID := stringValue(workspace["id"])
+	compute := app.computes[stringValue(workspace["currentComputeAllocationId"])]
+	storage := app.storages[stringValue(workspace["storageId"])]
+	return map[string]any{
+		"activeHourlyEstimate": activeHourlyForResource(compute) + activeHourlyForResource(storage),
+		"currentChargeTotal":   resourceDebitTotal(app.ledger, firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])), workspaceID),
+	}
+}
+
+func (app *controlPlaneApp) billingSummaryLocked(accountID string) map[string]any {
+	return map[string]any{
+		"activeHourlyEstimate":     app.activeHourlyEstimateLocked(accountID),
+		"recentResourceDebitTotal": resourceDebitTotal(app.ledger, accountID, ""),
+	}
+}
+
+func (app *controlPlaneApp) activeHourlyEstimateLocked(accountID string) float64 {
+	total := float64(0)
+	for _, row := range app.computes {
+		if accountID != "" && firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) != accountID {
+			continue
+		}
+		total += activeHourlyForResource(row)
+	}
+	for _, row := range app.storages {
+		if accountID != "" && firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) != accountID {
+			continue
+		}
+		total += activeHourlyForResource(row)
+	}
+	return total
 }
 
 func (app *controlPlaneApp) currentUserLocked() map[string]any {
@@ -1793,6 +1841,54 @@ func totalDebits(transactions []map[string]any, ledger []map[string]any) float64
 		}
 	}
 	return total
+}
+
+func resourceDebitTotal(ledger []map[string]any, accountID string, workspaceID string) float64 {
+	total := float64(0)
+	for _, entry := range ledger {
+		if !isResourceDebit(entry) {
+			continue
+		}
+		if accountID != "" && stringValue(entry["accountId"]) != accountID {
+			continue
+		}
+		if workspaceID != "" && stringValue(entry["workspaceId"]) != workspaceID {
+			continue
+		}
+		if amount := amountValue(entry); amount < 0 {
+			total += -amount
+		}
+	}
+	return total
+}
+
+func isResourceDebit(row map[string]any) bool {
+	switch stringValue(row["type"]) {
+	case "compute_debit", "storage_debit":
+		return true
+	default:
+		return false
+	}
+}
+
+func activeHourlyForResource(row map[string]any) float64 {
+	if row == nil || billingStatusFor(row) != "active" {
+		return 0
+	}
+	switch stringValue(row["status"]) {
+	case "destroyed", "failed", "detached":
+		return 0
+	}
+	return firstPositive(number(row["hourlyPrice"]), number(row["hourlyEstimate"]))
+}
+
+func firstPositive(values ...float64) float64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func amountValue(row map[string]any) float64 {

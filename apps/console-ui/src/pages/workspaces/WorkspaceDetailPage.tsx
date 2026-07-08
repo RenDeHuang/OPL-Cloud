@@ -13,7 +13,7 @@ import {
   ResourceSplit,
   StatusPill
 } from "../shared/commercial-console.tsx";
-import { money, moneyValue, packageText, resourceDebitEvents, statusColor, statusLabel, valueLabel } from "../shared/formatters.ts";
+import { money, packageText, statusColor, statusLabel, valueLabel } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
 
@@ -37,17 +37,6 @@ function workspaceCredential(workspace: AnyRecord = {}) {
   };
 }
 
-function workspaceChargeTotal(state: AnyRecord = {}, workspaceId = "") {
-  return resourceDebitEvents(state)
-    .filter((item) => item.workspaceId === workspaceId)
-    .reduce((sum, item) => sum + Math.abs(moneyValue(item)), 0);
-}
-
-function workspaceHourlyEstimate({ workspace, compute, storage }: any) {
-  return Number(compute?.hourlyPrice || compute?.hourlyEstimate || 0)
-    + Number(storage?.hourlyEstimate || workspace?.disk?.hourlyEstimate || 0);
-}
-
 export function WorkspaceDetailPage({ selected, selectedPlan, state, session, runAction }: any) {
   if (!selected) {
     return (
@@ -56,12 +45,9 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session, ru
       </ConsoleSurface>
     );
   }
-  const computeAllocationId = selected.currentComputeAllocationId;
-  const compute = (state.computeAllocations || []).find((item) => item.id === computeAllocationId);
-  const storage = (state.storageVolumes || []).find((item) => item.id === selected.storageId);
   const credential = workspaceCredential(selected);
-  const currentCost = workspaceChargeTotal(state, selected.id);
-  const hourlyEstimate = workspaceHourlyEstimate({ workspace: selected, compute, storage });
+  const currentCost = Number(selected.billing?.currentChargeTotal || 0);
+  const hourlyEstimate = Number(selected.billing?.activeHourlyEstimate || 0);
   const supportPath = `${routeTo("support.create")}?category=Workspace&resourceId=${encodeURIComponent(selected.id)}&operationId=${encodeURIComponent(selected.currentAttachmentId || selected.currentComputeAllocationId || "")}`;
   const [showPassword, setShowPassword] = React.useState(false);
   return (

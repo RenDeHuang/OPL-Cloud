@@ -808,8 +808,8 @@ func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 		"currentAttachmentId":        "attach-replacement",
 		"storageId":                  "storage-alpha",
 	}
-	app.computes["compute-replacement"] = map[string]any{"id": "compute-replacement", "ownerAccountId": "acct-alpha"}
-	app.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha"}
+	app.computes["compute-replacement"] = map[string]any{"id": "compute-replacement", "ownerAccountId": "acct-alpha", "status": "running", "billingStatus": "active", "hourlyPrice": 1.25}
+	app.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha", "status": "available", "billingStatus": "active", "hourlyEstimate": 0.25}
 	app.attachments["attach-replacement"] = map[string]any{"id": "attach-replacement", "ownerAccountId": "acct-alpha"}
 	app.runtimeOps = []map[string]any{{
 		"operationId":  "op-runtime-replacement",
@@ -826,10 +826,10 @@ func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 			},
 		},
 	}}
-	computeLedger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement"})
-	storageLedger := app.addLedgerLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha"})
-	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement"})
-	app.addWalletTxLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha"})
+	computeLedger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement", "amountCents": -250})
+	storageLedger := app.addLedgerLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha", "amountCents": -125})
+	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement", "amountCents": -250})
+	app.addWalletTxLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha", "amountCents": -125})
 	app.mu.Unlock()
 
 	state := app.state("acct-alpha")
@@ -851,6 +851,15 @@ func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	}
 	if len(row["walletTransactionIds"].([]string)) != 2 {
 		t.Fatalf("row missing settlement wallet links: %#v", row)
+	}
+	summary := state["billingSummary"].(map[string]any)
+	if summary["activeHourlyEstimate"] != float64(1.5) || summary["recentResourceDebitTotal"] != float64(3.75) {
+		t.Fatalf("state missing backend billing summary: %#v", summary)
+	}
+	workspace := state["workspaces"].([]any)[0].(map[string]any)
+	billing := workspace["billing"].(map[string]any)
+	if billing["activeHourlyEstimate"] != float64(1.5) || billing["currentChargeTotal"] != float64(3.75) {
+		t.Fatalf("workspace missing backend billing facts: %#v", workspace)
 	}
 }
 
