@@ -90,7 +90,7 @@ async function readResponse(response) {
 function authHeaderValues(auth = null) {
   const headers = {};
   if (auth?.cookie) headers.cookie = auth.cookie;
-  if (auth?.csrf) headers["x-opl-csrf-token"] = auth.csrf;
+  if (auth?.csrf) headers["x-opl-csrf"] = auth.csrf;
   return headers;
 }
 

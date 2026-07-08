@@ -36,7 +36,7 @@ function cookieHeaderFromSetCookie(setCookie = "") {
 function authHeaders(auth = null) {
   return {
     ...(auth?.cookie ? { cookie: auth.cookie } : {}),
-    ...(auth?.csrf ? { "x-opl-csrf-token": auth.csrf } : {})
+    ...(auth?.csrf ? { "x-opl-csrf": auth.csrf } : {})
   };
 }
 

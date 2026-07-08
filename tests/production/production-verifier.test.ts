@@ -226,7 +226,7 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
       requests.push({
         key,
         cookie: options.headers?.cookie || "",
-        csrf: options.headers?.["x-opl-csrf-token"] || "",
+        csrf: options.headers?.["x-opl-csrf"] || "",
         operatorToken: options.headers?.["x-opl-operator-token"] || "",
         idempotencyKey: options.headers?.["Idempotency-Key"] || "",
         body: options.body ? JSON.parse(options.body) : null,
@@ -257,7 +257,7 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
     requests.push({
       key,
       cookie: options.headers?.cookie || "",
-      csrf: options.headers?.["x-opl-csrf-token"] || "",
+      csrf: options.headers?.["x-opl-csrf"] || "",
       operatorToken: options.headers?.["x-opl-operator-token"] || "",
       idempotencyKey: options.headers?.["Idempotency-Key"] || "",
       body: options.body ? JSON.parse(options.body) : null
