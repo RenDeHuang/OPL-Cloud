@@ -24,7 +24,7 @@ export default function HomePage({ session }: any) {
           <div className="publicConsoleCopy">
             <p className="eyebrow">OPL Console</p>
             <h1>OPL Console</h1>
-            <p>开通工作区，分发访问 URL，按计算、存储和网关请求扣费。</p>
+            <p>创建工作区，查看余额、费用明细和支持记录。</p>
             <a className="primaryLink" href={target}>进入控制台 <ArrowRight size={16} /></a>
           </div>
 
@@ -51,7 +51,7 @@ export default function HomePage({ session }: any) {
         <section className="homeBand">
           <article>
             <ShieldCheck />
-            <h2>实验室负责人</h2>
+            <h2>用户</h2>
             <p>余额、工作区、URL、工单。</p>
           </article>
           <article>
@@ -61,8 +61,8 @@ export default function HomePage({ session }: any) {
           </article>
           <article>
             <Headphones />
-            <h2>管理员</h2>
-            <p>用户、充值、运行证据。</p>
+            <h2>运维</h2>
+            <p>用户、充值、资源状态。</p>
           </article>
         </section>
       </main>

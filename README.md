@@ -298,7 +298,7 @@ OPL_WORKSPACE_ROOT=/projects
 CODEX_HOME=/data/codex
 ```
 
-OPL Cloud keeps AionUI login enabled. The control-plane derives a per-Workspace admin password from `OPL_AIONUI_ADMIN_PASSWORD_SEED`, stores it only in the Workspace Kubernetes Secret, and the container `postStart` hook sets it through AionUI's local WebUI password API before browser E2E continues.
+OPL Cloud keeps AionUI login enabled. Fabric derives a per-Workspace admin password from `OPL_AIONUI_ADMIN_PASSWORD_SEED`, writes it to the Workspace Kubernetes Secret and the Fabric runtime access business table, then Control Plane returns it through authenticated Console state. The container `postStart` hook sets the same password through AionUI's local WebUI password API before browser E2E continues.
 
 API keys and model credentials must not be injected through CLI arguments, environment variables, or Docker Compose. They are entered inside the WebUI after the Workspace URL is opened.
 

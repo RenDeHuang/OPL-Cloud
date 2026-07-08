@@ -129,10 +129,20 @@ type WorkspaceRuntime struct {
 	Status            string            `json:"status"`
 	ServiceName       string            `json:"serviceName,omitempty"`
 	ProviderRequestID string            `json:"providerRequestId"`
+	Access            RuntimeAccess     `json:"access,omitempty"`
 	Ready             bool              `json:"ready,omitempty"`
 	Checks            []Check           `json:"checks,omitempty"`
 	CostTags          map[string]string `json:"costTags,omitempty"`
 	CreatedAt         time.Time         `json:"createdAt"`
+}
+
+type RuntimeAccess struct {
+	Username          string    `json:"username,omitempty"`
+	Password          string    `json:"password,omitempty"`
+	CredentialStatus  string    `json:"credentialStatus,omitempty"`
+	CredentialVersion string    `json:"credentialVersion,omitempty"`
+	SecretRef         string    `json:"secretRef,omitempty"`
+	UpdatedAt         time.Time `json:"updatedAt,omitempty"`
 }
 
 type Check struct {

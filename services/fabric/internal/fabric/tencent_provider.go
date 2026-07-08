@@ -240,7 +240,8 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, workspaceManifest(input.WorkspaceID, input.WorkspaceID, token, serviceName, compute, volume, tags)); err != nil {
 		return WorkspaceRuntime{}, err
 	}
-	return WorkspaceRuntime{ID: fabricID("rt", input.WorkspaceID, now), WorkspaceID: input.WorkspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID), Status: "running", ServiceName: serviceName, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Ready: true, CostTags: tags, CreatedAt: now}, nil
+	password := deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), input.WorkspaceID, token)
+	return WorkspaceRuntime{ID: fabricID("rt", input.WorkspaceID, now), WorkspaceID: input.WorkspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID), Status: "running", ServiceName: serviceName, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Access: RuntimeAccess{Username: "admin", Password: password, CredentialStatus: firstNonEmpty(passwordStatus(password), "pending"), CredentialVersion: "v1", SecretRef: serviceName + "-env", UpdatedAt: now}, Ready: true, CostTags: tags, CreatedAt: now}, nil
 }
 
 func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
@@ -539,6 +540,13 @@ func deriveAionUIAdminPassword(seed string, workspaceID string, token string) st
 		digest = digest[:24]
 	}
 	return "opl_" + digest + "Aa1!"
+}
+
+func passwordStatus(password string) string {
+	if strings.TrimSpace(password) == "" {
+		return "pending"
+	}
+	return "configured"
 }
 
 func stableID(parts ...string) string {

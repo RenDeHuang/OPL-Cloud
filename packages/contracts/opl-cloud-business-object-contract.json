@@ -80,13 +80,16 @@
         "action"
       ],
       "evidenceRequired": true,
-      "boundary": "Stable URL/token subject backed by one persistent StorageVolume, access state, lifecycle state, and a current replaceable ComputeAllocation/StorageAttachment runtime pointer.",
+      "boundary": "Stable URL subject backed by one persistent StorageVolume, managed runtime login credentials, access state, lifecycle state, and a current replaceable ComputeAllocation/StorageAttachment runtime pointer.",
       "requiredFields": [
         "storageId",
         "currentComputeAllocationId",
         "currentAttachmentId",
         "url",
-        "access.token",
+        "access.account",
+        "access.password",
+        "access.tokenStatus",
+        "access.credentialStatus",
         "runtime.status",
         "state"
       ]

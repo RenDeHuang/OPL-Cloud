@@ -103,13 +103,22 @@ type WorkspaceRuntimeInput struct {
 }
 
 type WorkspaceRuntime struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspaceId"`
-	URL         string `json:"url"`
-	Status      string `json:"status"`
-	ServiceName string `json:"serviceName"`
-	Ready       bool   `json:"ready"`
-	Checks      []any  `json:"checks"`
+	ID          string                 `json:"id"`
+	WorkspaceID string                 `json:"workspaceId"`
+	URL         string                 `json:"url"`
+	Status      string                 `json:"status"`
+	ServiceName string                 `json:"serviceName"`
+	Access      WorkspaceRuntimeAccess `json:"access,omitempty"`
+	Ready       bool                   `json:"ready"`
+	Checks      []any                  `json:"checks"`
+}
+
+type WorkspaceRuntimeAccess struct {
+	Username          string `json:"username,omitempty"`
+	Password          string `json:"password,omitempty"`
+	CredentialStatus  string `json:"credentialStatus,omitempty"`
+	CredentialVersion string `json:"credentialVersion,omitempty"`
+	SecretRef         string `json:"secretRef,omitempty"`
 }
 
 type FabricOperation struct {

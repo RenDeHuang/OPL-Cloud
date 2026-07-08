@@ -14,13 +14,19 @@ type OperationStore interface {
 	List(ctx context.Context) ([]FabricOperation, error)
 }
 
+type RuntimeAccessStore interface {
+	SaveRuntimeAccess(ctx context.Context, runtime WorkspaceRuntime) error
+	RuntimeAccess(ctx context.Context, workspaceID string) (RuntimeAccess, bool, error)
+}
+
 type MemoryOperationStore struct {
 	mu        sync.Mutex
 	operation []FabricOperation
+	access    map[string]RuntimeAccess
 }
 
 func NewMemoryOperationStore() *MemoryOperationStore {
-	return &MemoryOperationStore{}
+	return &MemoryOperationStore{access: map[string]RuntimeAccess{}}
 }
 
 func (s *MemoryOperationStore) Append(_ context.Context, operation FabricOperation) error {
@@ -36,6 +42,26 @@ func (s *MemoryOperationStore) List(_ context.Context) ([]FabricOperation, error
 	operations := make([]FabricOperation, len(s.operation))
 	copy(operations, s.operation)
 	return operations, nil
+}
+
+func (s *MemoryOperationStore) SaveRuntimeAccess(_ context.Context, runtime WorkspaceRuntime) error {
+	if runtime.WorkspaceID == "" || runtime.Access.Username == "" || runtime.Access.Password == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.access == nil {
+		s.access = map[string]RuntimeAccess{}
+	}
+	s.access[runtime.WorkspaceID] = runtime.Access
+	return nil
+}
+
+func (s *MemoryOperationStore) RuntimeAccess(_ context.Context, workspaceID string) (RuntimeAccess, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	access, ok := s.access[workspaceID]
+	return access, ok, nil
 }
 
 type PostgresOperationStore struct {
@@ -68,6 +94,19 @@ CREATE INDEX IF NOT EXISTS fabric_operations_operation_id_idx ON fabric_operatio
 CREATE INDEX IF NOT EXISTS fabric_operations_resource_idx ON fabric_operations(resource_kind, resource_id);
 CREATE INDEX IF NOT EXISTS fabric_operations_workspace_idx ON fabric_operations(workspace_id);
 CREATE INDEX IF NOT EXISTS fabric_operations_created_idx ON fabric_operations(created_at);
+
+CREATE TABLE IF NOT EXISTS fabric_workspace_runtime_access (
+  workspace_id TEXT PRIMARY KEY,
+  runtime_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  service_name TEXT,
+  username TEXT NOT NULL,
+  password TEXT NOT NULL,
+  credential_status TEXT NOT NULL,
+  credential_version TEXT NOT NULL,
+  secret_ref TEXT,
+  updated_at TIMESTAMPTZ NOT NULL
+);
 `
 
 func PostgresOperationSchemaSQL() string {
@@ -148,4 +187,43 @@ ORDER BY created_at, id
 		operations = append(operations, operation)
 	}
 	return operations, rows.Err()
+}
+
+func (s *PostgresOperationStore) SaveRuntimeAccess(ctx context.Context, runtime WorkspaceRuntime) error {
+	if runtime.WorkspaceID == "" || runtime.Access.Username == "" || runtime.Access.Password == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO fabric_workspace_runtime_access(
+  workspace_id, runtime_id, url, service_name, username, password,
+  credential_status, credential_version, secret_ref, updated_at
+) VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, NULLIF($9, ''), $10)
+ON CONFLICT (workspace_id) DO UPDATE SET
+  runtime_id = EXCLUDED.runtime_id,
+  url = EXCLUDED.url,
+  service_name = EXCLUDED.service_name,
+  username = EXCLUDED.username,
+  password = EXCLUDED.password,
+  credential_status = EXCLUDED.credential_status,
+  credential_version = EXCLUDED.credential_version,
+  secret_ref = EXCLUDED.secret_ref,
+  updated_at = EXCLUDED.updated_at
+`, runtime.WorkspaceID, runtime.ID, runtime.URL, runtime.ServiceName, runtime.Access.Username, runtime.Access.Password, runtime.Access.CredentialStatus, runtime.Access.CredentialVersion, runtime.Access.SecretRef, runtime.Access.UpdatedAt)
+	return err
+}
+
+func (s *PostgresOperationStore) RuntimeAccess(ctx context.Context, workspaceID string) (RuntimeAccess, bool, error) {
+	var access RuntimeAccess
+	row := s.db.QueryRowContext(ctx, `
+SELECT username, password, credential_status, credential_version, COALESCE(secret_ref, ''), updated_at
+FROM fabric_workspace_runtime_access
+WHERE workspace_id = $1
+`, workspaceID)
+	if err := row.Scan(&access.Username, &access.Password, &access.CredentialStatus, &access.CredentialVersion, &access.SecretRef, &access.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return RuntimeAccess{}, false, nil
+		}
+		return RuntimeAccess{}, false, err
+	}
+	return access, true, nil
 }

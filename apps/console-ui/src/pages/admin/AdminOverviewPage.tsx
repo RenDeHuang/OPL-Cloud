@@ -21,6 +21,15 @@ import { money, moneyValue } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
 
+function roleLabel(role = "") {
+  return {
+    admin: "运维",
+    pi: "用户",
+    member: "成员",
+    owner: "用户"
+  }[role] || role || "用户";
+}
+
 function manualTopUpIdempotencyKey() {
   return `manual-topup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -59,44 +68,72 @@ function costTagsLabel(tags: AnyRecord = {}) {
   return [tags.opl_account_id, tags.opl_workspace_id, tags.opl_resource_id, tags.opl_operation_id].filter(Boolean).join(" · ") || "-";
 }
 
-export function AdminOverviewPage({ state, adminOps }: any) {
+export function AdminOverviewPage({ state, managementState = {}, adminOps }: any) {
   const failed = adminOps.operator?.runtimeOperations?.failed ?? 0;
   const totalSpent = adminOps.operator?.accounts?.totalSpent ?? totalDebited(state.walletTransactions || state.billingLedger || []);
+  const usersByAccount = new Map<string, AnyRecord>((managementState.users || []).map((user) => [user.accountId, user]));
+  const spendRows = (managementState.accounts || []).slice(0, 8);
+  const resourceLedgerEvidence = managementState.resourceLedgerEvidence || [];
+  const resourceAnomalies = adminOps.operator?.resourceAnomalies || [];
+  const failedOperations = adminOps.operator?.failedOperations || adminOps.operator?.runtimeOperations?.recentFailed || [];
+  const statusRows = [
+    ...resourceAnomalies.map((item) => ({ ...item, kind: item.type || "资源异常" })),
+    ...failedOperations.map((item) => ({ ...item, kind: item.operationType || "失败操作" }))
+  ].slice(0, 8);
   return (
-    <ConsoleSurface title="管理概览" eyebrow="运营" subtitle="账号、工作区入口、运行证据">
+    <ConsoleSurface title="管理概览" eyebrow="运营" subtitle="谁花了钱、买了什么、现在怎样">
       <MetricStrip
         items={[
           { label: "账号", value: adminOps.operator?.accounts?.total ?? 0, caption: "托管计费账号", tone: "info" },
-          { label: "工作区入口", value: adminOps.operator?.workspaces?.total ?? state.workspaces.length, caption: `${adminOps.operator?.workspaces?.running ?? 0} 个运行中`, tone: "good" },
+          { label: "买了什么", value: resourceLedgerEvidence.length || state.workspaces.length, caption: "资源和工作区", tone: "good" },
           { label: "已消费金额", value: money(totalSpent), caption: "debited / totalSpent", tone: totalSpent ? "warn" : "neutral" },
-          { label: "失败操作", value: failed, caption: "运行操作失败", tone: failed ? "danger" : "good" },
-          { label: "冻结总额", value: money(adminOps.operator?.accounts?.frozen), caption: "全部账号", tone: "warn" },
-          { label: "告警", value: adminOps.operator?.notifications?.total ?? 0, caption: "管理员可见", tone: adminOps.operator?.notifications?.error ? "danger" : "neutral" }
+          { label: "现在怎样", value: resourceAnomalies.length + failed, caption: "异常和失败", tone: resourceAnomalies.length + failed ? "danger" : "good" },
+          { label: "冻结总额", value: money(adminOps.operator?.accounts?.frozen), caption: "全部账号", tone: "warn" }
         ]}
       />
       <div className="consoleGrid equal">
-        <InsightPanel title="运行态" eyebrow="运行">
-          <ResourceSplit
-            items={[
-              { label: "运行就绪", value: adminOps.runtime?.ready ? "就绪" : "阻塞", meta: "运行检查", status: adminOps.runtime?.ready ? "通过" : "检查", tone: adminOps.runtime?.ready ? "good" : "warn" },
-              { label: "上线就绪", value: adminOps.launch?.ready ? "就绪" : "阻塞", meta: "生产门禁", status: adminOps.launch?.ready ? "通过" : "检查", tone: adminOps.launch?.ready ? "good" : "warn" },
-              { label: "失败操作", value: failed, meta: "运行操作队列", status: failed ? "待处理" : "清空", tone: failed ? "danger" : "good" },
-              { label: "计算分配", value: adminOps.operator?.computeAllocations?.total ?? adminOps.operator?.compute?.total ?? 0, meta: "CVM 分配证据", status: "已跟踪", tone: "info" }
+        <InsightPanel title="谁花了钱" eyebrow="账号">
+          <ObjectTable
+            rowKey="id"
+            data={spendRows}
+            emptyText="暂无账号"
+            columns={[
+              { title: "用户", render: (_, row) => usersByAccount.get(row.id)?.email || row.ownerEmail || "-" },
+              { title: "账号", dataIndex: "id", ellipsis: true },
+              { title: "已花费", render: (_, row) => money(row.totalSpent ?? row.totalSpentCents ?? 0) },
+              { title: "余额", dataIndex: "balance", render: (value) => money(value) },
+              { title: "冻结", dataIndex: "frozen", render: (value) => money(value) }
             ]}
           />
         </InsightPanel>
-        <InsightPanel title="最近告警" eyebrow="通知">
-          <TimelineList
-            emptyText="暂无运营告警"
-            items={(adminOps.operator?.notifications?.recent || []).map((item) => ({
-              title: item.type,
-              description: item.workspaceId || item.accountId,
-              meta: item.severity,
-              tone: item.severity === "error" ? "danger" : "warn"
-            }))}
+        <InsightPanel title="买了什么" eyebrow="资源">
+          <ObjectTable
+            rowKey={(row) => row.id || `${row.resourceType}-${row.workspaceId}`}
+            data={resourceLedgerEvidence.slice(0, 8)}
+            emptyText="暂无资源记录"
+            columns={[
+              { title: "资源", dataIndex: "resourceType", ellipsis: true },
+              { title: "账号", render: (_, row) => row.ownerAccountId || row.accountId || "-" },
+              { title: "工作区", render: (_, row) => (row.workspaceIds || [row.workspaceId]).filter(Boolean).join(", ") || "-" },
+              { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "tracked"} tone={value === "failed" ? "danger" : "info"} /> }
+            ]}
           />
         </InsightPanel>
       </div>
+      <InsightPanel title="现在怎样" eyebrow="状态">
+        <ObjectTable
+          rowKey={(row) => row.id || `${row.kind}-${row.workspaceId}-${row.resourceId}`}
+          data={statusRows}
+          emptyText="暂无异常或失败操作"
+          columns={[
+            { title: "类型", dataIndex: "kind", ellipsis: true },
+            { title: "账号", dataIndex: "accountId", ellipsis: true },
+            { title: "工作区", dataIndex: "workspaceId", ellipsis: true },
+            { title: "资源", dataIndex: "resourceId", ellipsis: true },
+            { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={value === "failed" ? "danger" : "warn"} /> }
+          ]}
+          />
+      </InsightPanel>
     </ConsoleSurface>
   );
 }
@@ -140,7 +177,7 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
           columns={[
             { title: "组织", dataIndex: "organizationId", ellipsis: true },
             { title: "用户", dataIndex: "userId", ellipsis: true },
-            { title: "角色", dataIndex: "role", render: (value) => <StatusPill label={value || "member"} tone="info" /> },
+            { title: "角色", dataIndex: "role", render: (value) => <StatusPill label={roleLabel(value || "member")} tone="info" /> },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "active"} tone={value === "active" ? "good" : "warn"} /> }
           ]}
         />
@@ -160,7 +197,7 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
           emptyText="暂无用户"
           columns={[
             { title: "用户", dataIndex: "email" },
-            { title: "角色", dataIndex: "role", render: (value) => <StatusPill label={value} tone={value === "admin" ? "info" : "good"} /> },
+            { title: "角色", dataIndex: "role", render: (value) => <StatusPill label={roleLabel(value)} tone={value === "admin" ? "info" : "good"} /> },
             { title: "账号", dataIndex: "accountId", render: (value) => <Typography.Text className="inlineCode">{value}</Typography.Text> },
             { title: "余额", dataIndex: "balance", render: (value) => money(value) },
             { title: "冻结", dataIndex: "frozen", render: (value) => money(value) },
@@ -313,13 +350,13 @@ function CreateUserDrawer({ open, setOpen, form, session, runAction }: any) {
           <Input.Password />
         </Form.Item>
         <Form.Item name="name" label="姓名">
-          <Input placeholder="实验室负责人" />
+          <Input placeholder="用户姓名" />
         </Form.Item>
         <Form.Item name="role" label="角色" rules={[{ required: true, message: "请选择角色" }]}>
           <Select
             options={[
-              { label: "实验室负责人", value: "pi" },
-              { label: "管理员", value: "admin" }
+              { label: "用户", value: "pi" },
+              { label: "运维", value: "admin" }
             ]}
           />
         </Form.Item>

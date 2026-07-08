@@ -508,6 +508,57 @@ button.primary {
   align-items: stretch;
 }
 
+.businessChain {
+  display: grid;
+  grid-template-columns: minmax(105px, 1fr) auto minmax(105px, 1fr) auto minmax(105px, 1fr) auto minmax(105px, 1fr) auto minmax(105px, 1fr) auto minmax(105px, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.businessStep {
+  min-width: 0;
+  border: 1px solid #dce4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.businessStep span {
+  display: block;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.businessStep strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 8px;
+  color: #111827;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.businessStep small {
+  display: block;
+  margin-top: 5px;
+  color: #667085;
+}
+
+.businessStep .ant-btn {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.businessArrow {
+  display: grid;
+  min-width: 16px;
+  place-items: center;
+  color: #758195;
+  font-weight: 800;
+}
+
 .relationshipNode {
   min-height: 82px;
   border: 1px solid #dce4ef;
@@ -579,6 +630,53 @@ button.primary {
   gap: 4px;
 }
 
+.overviewWorkspaceList {
+  display: grid;
+  gap: 10px;
+}
+
+.overviewWorkspaceRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid #eef1f6;
+  padding: 10px 0;
+}
+
+.overviewWorkspaceRow:last-child {
+  border-bottom: 0;
+}
+
+.overviewWorkspaceMain {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.overviewWorkspaceMain strong,
+.overviewWorkspaceMain small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overviewWorkspaceMain strong {
+  color: #111827;
+}
+
+.overviewWorkspaceMain small {
+  color: #667085;
+}
+
+.overviewWorkspaceStatus,
+.overviewWorkspaceActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .workspaceNameCell .ant-btn {
   justify-content: flex-start;
   height: auto;
@@ -600,6 +698,59 @@ button.primary {
 
 .workspaceTable .credentialCell {
   width: 100%;
+}
+
+.mobileWorkspaceList {
+  display: none;
+}
+
+.mobileWorkspaceCard {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid #eef1f6;
+  padding: 12px 0;
+}
+
+.mobileWorkspaceCard:last-child {
+  border-bottom: 0;
+}
+
+.mobileWorkspaceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mobileWorkspaceHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobileWorkspaceFacts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.mobileWorkspaceFacts span {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 12px;
+  color: #667085;
+}
+
+.mobileWorkspaceFacts b {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .timelineList .ant-list-item {
@@ -678,11 +829,13 @@ button.primary {
 }
 
 @media (max-width: 980px) {
-  .relationshipGraph {
+  .relationshipGraph,
+  .businessChain {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .relationshipArrow {
+  .relationshipArrow,
+  .businessArrow {
     min-height: 16px;
     transform: rotate(90deg);
   }
@@ -792,6 +945,44 @@ button.primary {
 
   .objectTable {
     overflow-x: auto;
+  }
+
+  .desktopWorkspaceTable {
+    display: none;
+  }
+
+  .mobileWorkspaceList {
+    display: grid;
+    gap: 4px;
+  }
+
+  .credentialStack .inlineCode {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    position: relative;
+    padding-right: 32px;
+  }
+
+  .credentialStack .ant-typography-copy {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+  }
+
+  .overviewWorkspaceRow {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .overviewWorkspaceStatus,
+  .overviewWorkspaceActions {
+    justify-content: flex-start;
+  }
+
+  .overviewWorkspaceActions .ant-btn {
+    flex: 1 1 120px;
   }
 
   .panelActions {

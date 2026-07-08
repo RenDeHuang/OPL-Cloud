@@ -36,6 +36,9 @@ func TestCreateWorkspaceOrchestratesLedgerAndFabric(t *testing.T) {
 	if workspace.ComputeID != "compute-alpha" || workspace.VolumeID != "volume-alpha" || workspace.AttachmentID != "attachment-alpha" {
 		t.Fatalf("workspace must bind existing resources: %#v", workspace)
 	}
+	if workspace.RuntimeUsername != "admin" || workspace.RuntimePassword != "runtime-password-alpha" {
+		t.Fatalf("workspace must carry runtime credentials from Fabric: %#v", workspace)
+	}
 	wantCalls := []string{"fabric.runtime", "ledger.evidence"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
@@ -212,7 +215,7 @@ func (f *fakeFabricClient) DetachStorageAttachment(ctx context.Context, id strin
 
 func (f *fakeFabricClient) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, idempotencyKey string) (clients.WorkspaceRuntime, error) {
 	*f.calls = append(*f.calls, "fabric.runtime")
-	return clients.WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/", ServiceName: "opl-compute-alpha"}, nil
+	return clients.WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/", ServiceName: "opl-compute-alpha", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-alpha-env"}}, nil
 }
 
 func (f *fakeFabricClient) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {

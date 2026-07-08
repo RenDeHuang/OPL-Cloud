@@ -1,9 +1,9 @@
 import React from "react";
 import { Alert, Button, Form, Input, Select } from "antd";
-import { Link as LinkIcon, Plus } from "lucide-react";
+import { Cable, HardDrive, Link as LinkIcon, Plus, Server } from "lucide-react";
 import { createWorkspace } from "../../api/workspaces-api.ts";
 import { navigate, routeTo } from "../../consoleRoutes.ts";
-import { ConsoleSurface, InsightPanel, OperationTimeline, ResourceSplit, StatusPill } from "../shared/commercial-console.tsx";
+import { ActionGroup, ConsoleSurface, InsightPanel, OperationTimeline, ResourceSplit, StatusPill } from "../shared/commercial-console.tsx";
 import { valueLabel } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
@@ -50,7 +50,16 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
                 })}
               />
             </Form.Item>
-            {!ready && <Alert type="warning" showIcon message="需要先开通计算、开通存储，并完成挂载。" />}
+            {!ready && (
+              <div className="stackList">
+                <Alert type="warning" showIcon message="需要先开通计算、开通存储，并完成挂载。" />
+                <ActionGroup actions={[
+                  { label: "开通计算", icon: <Server size={15} />, onClick: () => navigate(routeTo("compute-allocations.create")) },
+                  { label: "开通存储", icon: <HardDrive size={15} />, onClick: () => navigate(routeTo("storage.create")) },
+                  { label: "挂载存储", icon: <Cable size={15} />, onClick: () => navigate(routeTo("attachment.create")) }
+                ]} />
+              </div>
+            )}
             {ready && <Alert type="success" showIcon message="工作区入口只生成访问 URL，不再开新计算或新存储。" />}
             <OperationTimeline operations={[]} stages={workspaceEntryStages} emptyText="提交后生成访问 URL" />
             <Button className="formSubmit" type="primary" htmlType="submit" icon={<Plus size={15} />} disabled={!ready}>

@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,40 @@ func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 		{"destroy_compute_allocation", "compute_allocation", compute.ID, "succeeded"},
 	} {
 		assertOperationFact(t, operations, expected.action, expected.resourceKind, expected.resourceID, expected.status)
+	}
+}
+
+func TestWorkspaceRuntimeAccessIsBusinessStateNotOperationPayload(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	ctx := context.Background()
+
+	compute, err := service.CreateComputeAllocation(ctx, ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "access-compute"})
+	if err != nil {
+		t.Fatalf("create compute: %v", err)
+	}
+	waitForOperation(t, service, "create_compute_allocation", "compute_allocation", compute.ID, "succeeded")
+	volume, err := service.CreateStorageVolume(ctx, StorageVolumeInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", SizeGB: 10, IdempotencyKey: "access-storage"})
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+	runtime, err := service.CreateWorkspaceRuntime(ctx, WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", ComputeID: compute.ID, VolumeID: volume.ID, ImageID: "one-person-lab-app", IdempotencyKey: "access-runtime"})
+	if err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if runtime.Access.Username != "admin" || runtime.Access.Password != "runtime-password-alpha" {
+		t.Fatalf("runtime access not returned from business state: %#v", runtime.Access)
+	}
+
+	operations, err := service.ListOperations(ctx)
+	if err != nil {
+		t.Fatalf("list operations: %v", err)
+	}
+	for _, operation := range operations {
+		payload := operation.RedactedProviderPayload
+		if strings.Contains(strings.ToLower(fmt.Sprint(payload)), "runtime-password-alpha") {
+			t.Fatalf("fabric operation leaked workspace password: %#v", operation)
+		}
 	}
 }
 
@@ -278,7 +313,7 @@ func (testProvider) DetachStorageAttachment(_ context.Context, attachment Storag
 }
 
 func (testProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
-	return WorkspaceRuntime{ID: "rt-test", WorkspaceID: input.WorkspaceID, Status: "running", ServiceName: "opl-ca-test", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey)}, nil
+	return WorkspaceRuntime{ID: "rt-test", WorkspaceID: input.WorkspaceID, Status: "running", ServiceName: "opl-ca-test", ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Access: RuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-ca-test-env"}}, nil
 }
 
 func (testProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {

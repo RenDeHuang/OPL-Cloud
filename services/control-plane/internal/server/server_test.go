@@ -103,6 +103,9 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	if access, ok := workspace["access"].(map[string]any); !ok || access["tokenStatus"] != "active" {
 		t.Fatalf("workspace response must include active URL access state: %#v", workspace)
 	}
+	if access := workspace["access"].(map[string]any); access["account"] != "admin" || access["password"] != "runtime-password-alpha" {
+		t.Fatalf("workspace response must include runtime login credentials from Fabric: %#v", access)
+	}
 	if slices.Contains(calls[3:], "fabric.compute") || slices.Contains(calls[3:], "fabric.storage") {
 		t.Fatalf("workspace create must not allocate replacement resources: %#v", calls)
 	}
@@ -480,7 +483,7 @@ func (f *fakeFabricClient) DetachStorageAttachment(_ context.Context, id string,
 
 func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, _ string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime")
-	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", ServiceName: "opl-compute-from-fabric"}, nil
+	return clients.WorkspaceRuntime{ID: "runtime-from-fabric", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/ws-from-fabric/", ServiceName: "opl-compute-from-fabric", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha"}}, nil
 }
 
 func (f *fakeFabricClient) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {

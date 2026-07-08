@@ -122,7 +122,10 @@ const workspaceFields = Object.freeze([
   "currentComputeAllocationId",
   "currentAttachmentId",
   "url",
+  "access.account",
+  "access.password",
   "access.tokenStatus",
+  "access.credentialStatus",
   "runtime.status",
   "state"
 ]);
@@ -567,7 +570,7 @@ export const oplRoutes = Object.freeze([
   currentRoute({
     id: "account.overview",
     path: "/console/account",
-    label: "配置",
+    label: "账号",
     area: "console",
     role: "lab_owner",
     menu: true,

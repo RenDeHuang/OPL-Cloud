@@ -52,7 +52,7 @@ export function buildMenu(isAdmin) {
   }));
   const admin = isAdmin ? [{
     path: "/admin",
-    name: "Admin",
+    name: "运维",
     icon: <ShieldCheck size={17} />,
     children: adminMenuRoutes.map((route) => ({
       path: route.path,

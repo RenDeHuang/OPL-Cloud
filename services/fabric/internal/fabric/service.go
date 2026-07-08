@@ -31,6 +31,7 @@ type Service struct {
 	attachments map[string]StorageAttachment
 	runtimes    map[string]WorkspaceRuntime
 	operations  OperationStore
+	access      RuntimeAccessStore
 }
 
 func NewService(provider Provider) *Service {
@@ -42,7 +43,8 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 		operations = NewMemoryOperationStore()
 	}
 	computes, volumes, attachments, runtimes := replayResourceState(context.Background(), operations)
-	return &Service{provider: provider, computes: computes, volumes: volumes, attachments: attachments, runtimes: runtimes, operations: operations}
+	accessStore, _ := operations.(RuntimeAccessStore)
+	return &Service{provider: provider, computes: computes, volumes: volumes, attachments: attachments, runtimes: runtimes, operations: operations, access: accessStore}
 }
 
 func (s *Service) Catalog(_ context.Context) Catalog {
@@ -277,6 +279,9 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 		_ = s.recordOperation(ctx, operation, "failed", runtime, err)
 		return runtime, err
 	}
+	if err := s.saveRuntimeAccess(ctx, &runtime); err != nil {
+		return runtime, err
+	}
 	if err := s.recordOperation(ctx, operation, "succeeded", runtime, nil); err != nil {
 		return runtime, err
 	}
@@ -292,14 +297,16 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 		return runtime, err
 	}
 	if runtime.Status != "not_found" {
+		_ = s.attachRuntimeAccess(ctx, &runtime)
 		return runtime, nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if existing, ok := s.runtimes[workspaceID]; ok {
+		s.mu.Unlock()
+		_ = s.attachRuntimeAccess(ctx, &existing)
 		return existing, nil
 	}
+	s.mu.Unlock()
 	return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, nil
 }
 
@@ -309,6 +316,34 @@ func (s *Service) Readiness(ctx context.Context) (map[string]any, error) {
 
 func (s *Service) ListOperations(ctx context.Context) ([]FabricOperation, error) {
 	return s.operations.List(ctx)
+}
+
+func (s *Service) saveRuntimeAccess(ctx context.Context, runtime *WorkspaceRuntime) error {
+	if runtime.Access.CredentialStatus == "" && runtime.Access.Password != "" {
+		runtime.Access.CredentialStatus = "configured"
+	}
+	if runtime.Access.CredentialVersion == "" && runtime.Access.Password != "" {
+		runtime.Access.CredentialVersion = "v1"
+	}
+	if runtime.Access.UpdatedAt.IsZero() && runtime.Access.Password != "" {
+		runtime.Access.UpdatedAt = time.Now().UTC()
+	}
+	if s.access == nil {
+		return nil
+	}
+	return s.access.SaveRuntimeAccess(ctx, *runtime)
+}
+
+func (s *Service) attachRuntimeAccess(ctx context.Context, runtime *WorkspaceRuntime) error {
+	if runtime.Access.Password != "" || s.access == nil {
+		return nil
+	}
+	access, ok, err := s.access.RuntimeAccess(ctx, runtime.WorkspaceID)
+	if err != nil || !ok {
+		return err
+	}
+	runtime.Access = access
+	return nil
 }
 
 func replayResourceState(ctx context.Context, operations OperationStore) (map[string]ComputeAllocation, map[string]StorageVolume, map[string]StorageAttachment, map[string]WorkspaceRuntime) {
@@ -424,10 +459,15 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
 		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerAttachmentId": value.ProviderAttachmentID, "computeId": value.ComputeID, "volumeId": value.VolumeID, "costTags": value.CostTags}
 	case WorkspaceRuntime:
+		redacted := value
+		if redacted.Access.Password != "" {
+			redacted.Access.Password = ""
+			redacted.Access.CredentialStatus = firstNonEmpty(redacted.Access.CredentialStatus, "configured")
+		}
 		operation.ResourceID = firstNonEmpty(value.WorkspaceID, operation.ResourceID)
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
-		operation.RedactedProviderPayload = map[string]any{"resource": value, "serviceName": value.ServiceName, "ready": value.Ready, "costTags": value.CostTags}
+		operation.RedactedProviderPayload = map[string]any{"resource": redacted, "serviceName": value.ServiceName, "ready": value.Ready, "credentialConfigured": value.Access.Password != "", "credentialVersion": value.Access.CredentialVersion, "secretRef": value.Access.SecretRef, "costTags": value.CostTags}
 	}
 }
 

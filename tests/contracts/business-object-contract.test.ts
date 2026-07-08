@@ -76,13 +76,16 @@ test("Workspace contract is the stable URL, storage, and current runtime pointer
   const workspace = contract.objectKinds.find((object) => object.kind === "Workspace");
 
   assert.ok(workspace, "Workspace must be current object truth");
-  assert.match(workspace.boundary || "", /Stable URL\/token subject/);
+  assert.match(workspace.boundary || "", /Stable URL subject/);
   assert.deepEqual(workspace.requiredFields, [
     "storageId",
     "currentComputeAllocationId",
     "currentAttachmentId",
     "url",
-    "access.token",
+    "access.account",
+    "access.password",
+    "access.tokenStatus",
+    "access.credentialStatus",
     "runtime.status",
     "state"
   ]);

@@ -1,5 +1,4 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -167,16 +166,6 @@ function browserCookiesFromHeader(cookieHeader = "", url = "") {
       } : null;
     })
     .filter(Boolean);
-}
-
-function deriveAionUiAdminPassword(seed, workspaceId, token) {
-  const secret = String(seed || "").trim();
-  if (!secret || !workspaceId || !token) return "";
-  const digest = createHmac("sha256", secret)
-    .update(`${workspaceId}:${token}`)
-    .digest("base64url")
-    .slice(0, 24);
-  return `opl_${digest}Aa1!`;
 }
 
 async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
@@ -1014,7 +1003,10 @@ function assertWorkspaceShape(checks, workspace, { compute, storage, attachment 
     workspace?.storageId === storage?.id &&
     workspace?.attachmentId === attachment?.id &&
     workspace?.url &&
-    workspace?.access?.tokenStatus === "active"
+    workspace?.access?.tokenStatus === "active" &&
+    workspace?.access?.credentialStatus === "configured" &&
+    workspace?.access?.account &&
+    workspace?.access?.password
   ), { workspaceId: workspace?.id });
 }
 
@@ -1425,12 +1417,9 @@ export async function verifyProductionChain({
     });
     addCheck(checks, "workspace_url", true, { url: workspace.url, attempts: workspaceUrlResult.attempts });
     assertWorkspaceUrlTokenScrubbed(checks, workspaceUrlResult);
-    const webuiUsername = DEFAULT_AIONUI_ADMIN_USERNAME;
-    const webuiPassword = deriveAionUiAdminPassword(
-      process.env.OPL_AIONUI_ADMIN_PASSWORD_SEED,
-      workspace.id,
-      workspace.access?.token || ""
-    );
+    const webuiUsername = workspace.access?.account || workspace.access?.username || DEFAULT_AIONUI_ADMIN_USERNAME;
+    const webuiPassword = workspace.access?.password || "";
+    if (!webuiPassword) throw new Error("workspace_access_password_missing");
     const workspaceApiAuth = await requestWorkspaceWebuiLogin({
       fetchImpl,
       workspaceAuth: workspaceUrlResult,
@@ -1549,11 +1538,14 @@ export async function verifyProductionChain({
       attempts: replacementWorkspaceUrlResult.attempts
     });
     assertWorkspaceUrlTokenScrubbed(checks, replacementWorkspaceUrlResult, "replacement_workspace_url_token_scrubbed");
+    const replacementWebuiUsername = replacementWorkspace.access?.account || replacementWorkspace.access?.username || DEFAULT_AIONUI_ADMIN_USERNAME;
+    const replacementWebuiPassword = replacementWorkspace.access?.password || "";
+    if (!replacementWebuiPassword) throw new Error("replacement_workspace_access_password_missing");
     const replacementWorkspaceApiAuth = await requestWorkspaceWebuiLogin({
       fetchImpl,
       workspaceAuth: replacementWorkspaceUrlResult,
-      username: webuiUsername,
-      password: webuiPassword
+      username: replacementWebuiUsername,
+      password: replacementWebuiPassword
     });
     await verifyWorkspacePersistedFile({
       fetchImpl,

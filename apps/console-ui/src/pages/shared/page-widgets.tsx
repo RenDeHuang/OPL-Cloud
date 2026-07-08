@@ -13,7 +13,7 @@ export function ForbiddenPage() {
 export function CatalogCard({ title, items }: any) {
   return (
     <ProCard title={title} colSpan={{ xs: 24, xl: 8 }}>
-      <List size="small" dataSource={items} renderItem={(item) => <List.Item><Tag color="blue">Approved</Tag>{item}</List.Item>} />
+      <List size="small" dataSource={items} renderItem={(item) => <List.Item><Tag color="blue">Approved</Tag>{String(item)}</List.Item>} />
     </ProCard>
   );
 }

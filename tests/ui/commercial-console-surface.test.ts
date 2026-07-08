@@ -82,6 +82,7 @@ test("authenticated shell is branded as OPL Console", async () => {
   const shellSource = await source("apps/console-ui/src/pages/ConsolePage.tsx");
   assert.match(shellSource, /title="OPL Console"/, "authenticated app shell must use OPL Console product naming");
   assert.doesNotMatch(shellSource, /title="OPL Cloud"/, "authenticated app shell must not retain old OPL Cloud naming");
+  assert.doesNotMatch(shellSource, /Lab Owner|>Admin</, "authenticated app shell must not show raw internal role labels");
 });
 
 test("Console chrome uses the one-person-lab-app logo mark", async () => {
@@ -131,9 +132,9 @@ test("shared runAction suppresses duplicate submissions by action key", async ()
   assert.match(stateSource, /pendingActions/, "runAction must track pending action keys");
   assert.match(stateSource, /actionKey/, "runAction must accept an action key");
   assert.match(stateSource, /current\.has\(actionKey\)/, "runAction must suppress duplicate action keys");
-  assert.match(workspaceListSource, /actionKey: `workspace-reset-\$\{row\.id\}`/, "Workspace list reset must key duplicate suppression by Workspace");
-  assert.match(workspaceListSource, /actionKey: `workspace-delete-\$\{row\.id\}`/, "Workspace list delete must key duplicate suppression by Workspace");
+  assert.doesNotMatch(workspaceListSource, /workspace-reset-|workspace-delete-/, "Workspace list should not expose low-frequency reset/delete actions");
   assert.match(workspaceDetailSource, /actionKey: `workspace-reset-\$\{selected\.id\}`/, "Workspace detail reset must key duplicate suppression by Workspace");
+  assert.match(workspaceDetailSource, /actionKey: `workspace-delete-\$\{selected\.id\}`/, "Workspace detail delete must key duplicate suppression by Workspace");
   assert.match(adminSource, /actionKey: "admin-manual-topup"/, "manual top-up must suppress duplicate submit");
   assert.match(adminSource, /actionKey: `admin-create-user-\$\{String\(values\.email \|\| ""\)\.toLowerCase\(\)\.trim\(\)\}`/, "user creation must suppress duplicate submit by email");
 });
@@ -146,8 +147,8 @@ test("Workspace UI treats URL as stable storage subject with current runtime poi
 
   assert.match(listSource, /currentComputeAllocationId/, "Workspace list must show current compute pointer");
   assert.match(listSource, /workspaceHourlyEstimate/, "Workspace list must use current resource pointers for per-Workspace billing");
-  assert.match(detailSource, /currentAttachmentId/, "Workspace detail must show current attachment pointer");
-  assert.match(detailSource, /Workspace 即 UI 子账号/, "Workspace detail must state the simplified UI subaccount model");
+  assert.match(detailSource, /currentAttachmentId/, "Workspace detail must keep the current attachment pointer in code");
+  assert.doesNotMatch(`${listSource}\n${detailSource}`, /UI 子账号|等同 UI 子账号/, "customer-facing Workspace copy must not expose the internal subaccount simplification");
   assert.match(routeSource, /currentComputeAllocationId/, "runtime route registry must expose current compute pointer");
   assert.match(routeSource, /currentAttachmentId/, "runtime route registry must expose current attachment pointer");
   assert.doesNotMatch(cleanupSource, /!compute \|\| compute\.status === "destroyed"/, "cleanup must not invalidate stable URL only because compute is suspended");
@@ -198,8 +199,7 @@ test("resource provisioning UI shows price, hold, balance impact, and operation 
     "storageHourlyEstimate",
     "balanceAfterHold",
     "operationId",
-    "safeMessage",
-    "providerRequestId"
+    "safeMessage"
   ]) {
     assert.match(resourceSource, new RegExp(requiredSignal), `resource UI must expose ${requiredSignal}`);
   }
@@ -324,6 +324,15 @@ test("Admin commercial operations cover organizations, resource settlement, reco
   }
 });
 
+test("Admin overview answers operator spend, purchase, and status questions", async () => {
+  const adminSource = await source("apps/console-ui/src/pages/admin/AdminOverviewPage.tsx");
+
+  for (const signal of ["谁花了钱", "买了什么", "现在怎样", "managementState.accounts", "resourceLedgerEvidence", "resourceAnomalies"]) {
+    assert.match(adminSource, new RegExp(signal), `Admin overview must expose ${signal}`);
+  }
+  assert.doesNotMatch(adminSource, /最近告警|eyebrow="通知"|CVM 分配证据/, "Admin overview should not lead with vague alerts or low-level evidence");
+});
+
 test("Admin resource and support views expose operator-grade lookup fields", async () => {
   const adminSource = await source("apps/console-ui/src/pages/admin/AdminOverviewPage.tsx");
 
@@ -347,53 +356,47 @@ test("Admin workspace detail route is matched before generic admin overview", as
   assert.ok(workspaceIndex < adminIndex, "/admin/workspaces/:id must be checked before generic /admin");
 });
 
-test("Billing and Workspace pages explain commercial charging and URL lifecycle", async () => {
+test("Owner Billing and Workspace pages use production-safe customer copy", async () => {
+  const overviewSource = await source("apps/console-ui/src/pages/OverviewPage.tsx");
   const billingSource = await source("apps/console-ui/src/pages/billing/BillingPage.tsx");
   const listSource = await source("apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx");
   const detailSource = await source("apps/console-ui/src/pages/workspaces/WorkspaceDetailPage.tsx");
+  const accountSource = await source("apps/console-ui/src/pages/account/AccountPage.tsx");
 
-  assert.match(billingSource, /计费规则|billingPolicy/, "billing page must explain holds, release, and resource debit policy");
-  assert.doesNotMatch(billingSource, /request_debit|请求扣费|token|tokens|model pricing/i, "OPL Cloud billing must not expose request-level charging");
-  assert.match(billingSource, /compute_debit|storage_debit|资源扣费|存储扣费|resourceDebitEvents/, "billing page must expose Ledger resource debit evidence");
+  assert.doesNotMatch(billingSource, /计费规则|billingPolicy|billingReconciliation|对账|Ledger|compute_debit|storage_debit|资源账本|人工充值证据/i, "owner billing must not expose pricing policy internals, reconciliation guard, or Ledger event names");
+  assert.doesNotMatch(billingSource, /request_debit|请求扣费|token|tokens|model pricing/i, "owner billing must not expose request-level charging");
+  assert.match(`${overviewSource}\n${billingSource}\n${listSource}`, /开通流程|业务链|开通计算|开通存储|挂载存储|创建工作区|可用余额|费用明细|提交工单/, "owner UI must answer provisioning, create, balance, spend, support, and business-chain questions with production-grade labels");
+  assert.doesNotMatch(`${overviewSource}\n${billingSource}\n${listSource}\n${detailSource}\n${accountSource}`, /东西在这里|钱花在哪里|我有多少钱|开工作区|看余额|看花费|提出疑问|常用入口|下一步|最近通知|告警|外部入口|存储资源|运行时长|下次结算|结算说明|钱包流水|访问生命周期|二级入口|二级资源|数据提醒|查看当前计算|查看存储资源|查看当前挂载/, "owner UI must not show colloquial copy, duplicate action panels, or secondary ops panels by default");
+  assert.match(accountSource, /用户|运维/, "account page must use product role labels instead of lab-specific role names");
+  assert.doesNotMatch(accountSource, /负责人|管理员|实验室/, "account page must not expose lab-specific role framing");
   assert.doesNotMatch(`${billingSource}\n${listSource}\n${detailSource}`, /resourceUsageLogs/, "active UI must not use retired resource usage projection");
-  for (const signal of ["activeHourlyEstimate", "nextSettlementAt", "runningDuration", "下次结算", "运行时长", "预计每小时"]) {
+  for (const signal of ["activeHourlyEstimate", "预计每小时"]) {
     assert.match(billingSource, new RegExp(signal), `billing page must show ${signal}`);
   }
-  for (const signal of ["workspaceCredential", "workspaceChargeTotal", "workspaceHourlyEstimate", "URL、账号、密码", "按 Workspace 汇总", "密码", "归属"]) {
-    assert.match(listSource, new RegExp(signal), `Workspace list must expose first-screen credential and billing signal ${signal}`);
+  for (const signal of ["workspaceCredential", "workspaceChargeTotal", "workspaceHourlyEstimate", "访问入口", "当前费用", "预计每小时"]) {
+    assert.match(listSource, new RegExp(signal), `Workspace list must expose customer-safe access and billing signal ${signal}`);
   }
-  for (const signal of ["currentAttachmentId", "二级资源", "当前挂载", "归属账号", "运维归因证据", "URL owner", "CVM ID", "存储 provider ID", "问题依据"]) {
-    assert.match(detailSource, new RegExp(signal), `Workspace detail must retain secondary resource signal ${signal}`);
+  for (const forbidden of ["归属账号", "运维归因证据", "URL owner", "CVM owner", "CVM ID", "存储 provider ID", "问题依据", "providerRequestId", "ownerAccountId"]) {
+    assert.doesNotMatch(detailSource, new RegExp(forbidden), `Workspace detail must not show operator-only ${forbidden}`);
   }
-  assert.match(detailSource, /WorkspaceLifecyclePanel/, "Workspace detail must expose URL/resource lifecycle state");
+  assert.doesNotMatch(listSource, /title: "归属"|dataIndex: "ownerAccountId"|title: "密码"[\s\S]*credentialCell/, "Workspace list must not expose account ids or plaintext passwords");
+  assert.match(detailSource, /showPassword|显示密码|隐藏密码/, "Workspace detail must hide the Workspace password by default with a reveal control");
+  assert.match(detailSource, /停用访问|访问已停用/, "Workspace detail must label token removal as access disablement, not Workspace deletion");
+  assert.match(detailSource, /提交工单/, "Workspace detail must offer a support path");
   assert.match(detailSource, /tokenStatus/, "Workspace detail must show token lifecycle status");
 });
 
-test("resource UI exposes dedicated node identity and cold-start progress without generic cloud-resource copy", async () => {
+test("owner resource UI hides operator-only resource identity while keeping cold-start progress", async () => {
   const resourceSource = await source("apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx");
   const createWorkspaceSource = await source("apps/console-ui/src/pages/workspaces/CreateWorkspacePage.tsx");
   const surfaceSource = await source("apps/console-ui/src/pages/shared/commercial-console.tsx");
 
-  for (const signal of [
-    "ownerAccountId",
-    "nodePoolId",
-    "nodeName",
-    "privateIp",
-    "cvmInstanceId",
-    "billingStatus",
-    "workspaceId",
-    "节点池",
-    "独占节点",
-    "内网 IP",
-    "公网 IP",
-    "计费状态",
-    "绑定入口",
-    "拥有账号",
-    "预计等待"
-  ]) {
-    assert.match(resourceSource, new RegExp(signal), `resource UI must expose ${signal}`);
+  for (const signal of ["billingStatus", "workspaceId", "计费状态", "绑定入口", "预计等待"]) {
+    assert.match(resourceSource, new RegExp(signal), `resource UI must keep customer-safe ${signal}`);
   }
-  assert.match(resourceSource, /CVM ID 未返回，使用节点身份/, "resource UI must distinguish missing CVM ID from valid node identity");
+  for (const forbidden of ["拥有账号", "节点池", "独占节点", "内网 IP", "公网 IP", "CVM ID 未返回", "providerRequestId"]) {
+    assert.doesNotMatch(resourceSource, new RegExp(forbidden), `owner resource UI must not expose operator-only ${forbidden}`);
+  }
 
   for (const stage of ["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]) {
     assert.match(surfaceSource, new RegExp(stage), `operation timeline must include ${stage}`);
@@ -451,7 +454,7 @@ test("frontend state reads backend account scope and refreshes support mappings 
   assert.match(ticketsSource, /await refresh\(\)/, "support create must reload persisted mappings after mutation");
 });
 
-test("resource pages expose relationship map, wallet risk, support context, and data retention policy", async () => {
+test("resource pages expose relationship map, wallet risk, and support context without policy dumps", async () => {
   const resourceSource = await source("apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx");
   const workspaceSource = await source("apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx");
   const detailSource = await source("apps/console-ui/src/pages/workspaces/WorkspaceDetailPage.tsx");
@@ -463,11 +466,10 @@ test("resource pages expose relationship map, wallet risk, support context, and 
   assert.match(resourceSource, /ResourceRelationshipPage/, "resources module must render the relationship route");
   assert.match(resourceSource, /ResourceRelationshipGraph/, "resource relationship page must use shared graph component");
   assert.match(resourceSource, /WalletRiskPanel/, "resource creation pages must show balance risk before paid mutations");
-  assert.match(resourceSource, /DataRetentionPolicyPanel/, "resource details must show compute/storage retention policy");
+  assert.doesNotMatch(`${resourceSource}\n${detailSource}`, /DataRetentionPolicyPanel|实验室策略|迁移 \/ rollout|先不做复杂子账号体系|左栏保持三项/, "owner pages must not show internal strategy or policy dumps");
   assert.match(resourceSource, /supportContextPath/, "failed resource support links must carry operation and resource context");
-  assert.match(workspaceSource, /workspaceCredential/, "Workspace list must lead with URL/account/password credentials");
+  assert.match(workspaceSource, /workspaceCredential/, "Workspace list may derive credential readiness without printing the password");
   assert.match(workspaceSource, /workspaceChargeTotal/, "Workspace list must lead with per-Workspace billing");
-  assert.match(detailSource, /DataRetentionPolicyPanel/, "Workspace detail must show data retention policy");
   assert.match(supportSource, /URLSearchParams/, "support form must accept failure context from resource pages");
   assert.match(supportSource, /operationId|resourceId/, "support form must carry operationId/resourceId into the ticket description");
   assert.match(surfaceSource, /账号.*计算.*存储.*挂载.*工作区入口/s, "relationship graph must make the account-resource-entry chain visible");
@@ -528,11 +530,8 @@ test("Workspace detail links to first-class resources and excludes retired compu
 
   assert.match(listSource, /详情/, "Workspace list must expose a secondary detail entry");
   assert.match(listSource, /routeTo\("workspace.detail"/, "Workspace list detail entry must route to Workspace detail");
-  assert.match(detailSource, /routeTo\("compute-allocations.detail"/, "detail must link to the attached ComputeAllocation");
-  assert.match(detailSource, /routeTo\("storage.detail"/, "detail must link to the attached StorageVolume");
-  assert.match(detailSource, /routeTo\("attachment.detail"/, "detail must link to the StorageAttachment");
-  assert.match(detailSource, /ownerAccountId/, "detail must show the owner account for maintenance handoff");
-  assert.match(detailSource, /归属账号/, "detail must label the owner account in Chinese");
+  assert.doesNotMatch(detailSource, /routeTo\("compute-allocations\.detail"|routeTo\("storage\.detail"|routeTo\("attachment\.detail"/, "owner Workspace detail should not route users into resource internals");
+  assert.doesNotMatch(detailSource, /ownerAccountId|归属账号/, "owner account handoff belongs in Admin diagnostics, not owner Workspace detail");
 });
 
 test("active UI and docs describe the ComputeAllocation, StorageVolume, attachment, and URL-entry chain", async () => {
@@ -541,14 +540,13 @@ test("active UI and docs describe the ComputeAllocation, StorageVolume, attachme
     "docs/invariants.md",
     "docs/runtime/production-runbook.md",
     "apps/console-ui/src/pages/HomePage.tsx",
-    "apps/console-ui/src/pages/OverviewPage.tsx",
     "apps/console-ui/src/pages/billing/BillingPage.tsx",
     "apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx",
     "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx"
   ]) {
     const text = await source(file);
     assert.match(text, /ComputeAllocation|compute allocation|计算分配|计算/, `${file} must describe compute allocation capability`);
-    assert.match(text, /StorageVolume|storage volume|存储资源|存储/, `${file} must describe storage volume capability`);
+    assert.match(text, /StorageVolume|storage volume|storageVolumes|存储资源|存储/, `${file} must describe storage volume capability`);
     assert.match(text, /Workspace URL|URL entry|Workspace|工作区|访问入口/, `${file} must describe Workspace as an access entry`);
   }
 });

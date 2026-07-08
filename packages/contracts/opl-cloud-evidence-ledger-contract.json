@@ -74,7 +74,7 @@
       ],
       "forbiddenContent": [
         "token=",
-        "workspace.access.token",
+        "workspace.access.password",
         "full workspace.url"
       ]
     }
@@ -90,7 +90,7 @@
       ],
       "forbiddenContent": [
         "token=",
-        "workspace.access.token",
+        "workspace.access.password",
         "full workspace.url"
       ]
     }

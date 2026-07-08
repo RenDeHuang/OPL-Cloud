@@ -71,11 +71,11 @@ test("commercial Console route contract covers current public, auth, owner, and 
   assert.equal(consoleRoutes.some((route) => route.featureGate), false, "runtime route table must not include future feature gates");
 });
 
-test("Lab Owner menu is commercial and excludes operator surfaces", () => {
+test("User menu is commercial and excludes operator surfaces", () => {
   assert.deepEqual(ownerMenuRoutes.map((route) => route.label), [
     "概览",
     "工作区",
-    "配置"
+    "账号"
   ]);
 
   for (const route of ownerMenuRoutes) {
@@ -99,7 +99,7 @@ test("runtime owner menu mirrors the active route contract", async () => {
   assert.deepEqual(ownerMenuRoutes.map((route) => route.label), [
     "概览",
     "工作区",
-    "配置"
+    "账号"
   ]);
 
   for (const id of [

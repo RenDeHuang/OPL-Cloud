@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { basename } from "node:path";
 import test from "node:test";
 
@@ -8,8 +7,6 @@ import {
   verifyProductionChain,
   verifyWorkspaceBrowserUi
 } from "../../tools/production-verifier.ts";
-
-process.env.OPL_AIONUI_ADMIN_PASSWORD_SEED = "workspace-secret-2026-very-long";
 
 function jsonResponse(payload, status = 200, headers = new Headers({ "content-type": "application/json" })) {
   return {
@@ -93,7 +90,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     disk: { id: storage.providerResourceId, status: "attached_retained", billingStatus: "active", sizeGb: 10, mountPath: "/data", storageClass: "cbs" },
     slug: "production-verification-lab",
     url: workspaceUrl,
-    access: { token: "share_tke_prod", tokenStatus: "active", requiresLogin: false }
+    access: { tokenStatus: "active", credentialStatus: "configured", requiresLogin: false, account: "admin", password: "runtime-password-from-console" }
   };
   const replacementCompute = {
     ...compute,
@@ -365,11 +362,7 @@ function scrubbedWorkspaceUrl(baseUrl) {
 }
 
 function expectedAionUiPassword(workspace) {
-  const digest = createHmac("sha256", process.env.OPL_AIONUI_ADMIN_PASSWORD_SEED)
-    .update(`${workspace.id}:${workspace.access.token}`)
-    .digest("base64url")
-    .slice(0, 24);
-  return `opl_${digest}Aa1!`;
+  return workspace.access.password;
 }
 
 function fakeBrowserFactory(actions = [], { failWaitAt = 0 } = {}) {

@@ -48,7 +48,7 @@ export default function ConsolePage({ route, session, onLogout }: any) {
         }} href={item.path}>{dom}</a>
       )}
       actionsRender={() => [
-        <Tag color={isAdmin ? "purple" : "blue"} key="role">{isAdmin ? "Admin" : "Lab Owner"}</Tag>,
+        <Tag color={isAdmin ? "purple" : "blue"} key="role">{isAdmin ? "运维" : "用户"}</Tag>,
         <Button key="logout" icon={<LogOut size={15} />} onClick={logout}>退出</Button>
       ]}
       avatarProps={{

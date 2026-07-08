@@ -548,6 +548,23 @@ func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspacePro
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
+	access := map[string]any{"tokenStatus": "active", "requiresLogin": false}
+	if workspace.RuntimeUsername != "" {
+		access["account"] = workspace.RuntimeUsername
+		access["username"] = workspace.RuntimeUsername
+	}
+	if workspace.RuntimePassword != "" {
+		access["password"] = workspace.RuntimePassword
+	}
+	if workspace.CredentialStatus != "" {
+		access["credentialStatus"] = workspace.CredentialStatus
+	}
+	if workspace.CredentialVersion != "" {
+		access["credentialVersion"] = workspace.CredentialVersion
+	}
+	if workspace.CredentialSecretRef != "" {
+		access["secretRef"] = workspace.CredentialSecretRef
+	}
 	app.workspaces[workspace.ID] = map[string]any{
 		"id":                         workspace.ID,
 		"ownerAccountId":             workspace.AccountID,
@@ -567,7 +584,7 @@ func (app *runtimeApp) rememberWorkspaceProjection(workspace domain.WorkspacePro
 		"runtimeId":                  workspace.RuntimeID,
 		"runtime":                    map[string]any{"serviceName": workspace.RuntimeServiceName},
 		"evidenceId":                 workspace.EvidenceID,
-		"access":                     map[string]any{"tokenStatus": "active", "requiresLogin": false},
+		"access":                     access,
 	}
 	return app.persistLocked()
 }
@@ -675,7 +692,11 @@ func (app *runtimeApp) suspendWorkspacesForComputeLocked(computeID string) {
 			workspace["computeAllocationId"] = ""
 			workspace["state"] = "suspended"
 			workspace["status"] = "suspended"
-			workspace["access"] = map[string]any{"tokenStatus": "suspended", "requiresLogin": false}
+			access, _ := workspace["access"].(map[string]any)
+			access = cloneMap(access)
+			access["tokenStatus"] = "suspended"
+			access["requiresLogin"] = false
+			workspace["access"] = access
 		}
 	}
 }
@@ -702,7 +723,11 @@ func (app *runtimeApp) markWorkspacesStorageDestroyedLocked(storageID string) {
 			workspace["computeAllocationId"] = ""
 			workspace["currentAttachmentId"] = ""
 			workspace["attachmentId"] = ""
-			workspace["access"] = map[string]any{"tokenStatus": "disabled", "requiresLogin": false}
+			access, _ := workspace["access"].(map[string]any)
+			access = cloneMap(access)
+			access["tokenStatus"] = "disabled"
+			access["requiresLogin"] = false
+			workspace["access"] = access
 		}
 	}
 }

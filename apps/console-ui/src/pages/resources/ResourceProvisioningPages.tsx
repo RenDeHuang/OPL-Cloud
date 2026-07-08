@@ -17,7 +17,6 @@ import {
   InsightPanel,
   MetricStrip,
   ObjectTable,
-  DataRetentionPolicyPanel,
   OperationConfirmButton,
   OperationResultPanel,
   OperationTimeline,
@@ -98,7 +97,6 @@ function supportContextPath(resource: AnyRecord = {}, resourceType = "resource")
   params.set("resourceType", resourceType);
   if (resource.id) params.set("resourceId", resource.id);
   if (resource.operationId) params.set("operationId", resource.operationId);
-  if (resource.providerRequestId) params.set("providerRequestId", resource.providerRequestId);
   if (resource.safeMessage) params.set("failureReason", resource.safeMessage);
   return `${routeTo("support.create")}?${params.toString()}`;
 }
@@ -148,12 +146,8 @@ export function ComputeAllocationsPage({ state }: any) {
           emptyText="暂无计算分配"
           columns={[
             { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("compute-allocations.detail", { id: row.id }))}>{row.name || row.id}</Button> },
-            { title: "拥有账号", dataIndex: "ownerAccountId", ellipsis: true },
             { title: "规格", dataIndex: "spec" },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
-            { title: "节点池", dataIndex: "nodePoolId", ellipsis: true },
-            { title: "独占节点", dataIndex: "nodeName", ellipsis: true, render: (value) => value || "等待分配" },
-            { title: "内网 IP", dataIndex: "privateIp", ellipsis: true, render: (value) => value || "-" },
             { title: "计费状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={value === "active" ? "good" : "warn"} /> }
           ]}
         />
@@ -172,7 +166,14 @@ export function ResourceRelationshipPage({ state }: any) {
     >
       <ResourceRelationshipGraph state={state} />
       <div className="consoleGrid equal">
-        <DataRetentionPolicyPanel />
+        <InsightPanel title="数据提醒" eyebrow="安全">
+          <ResourceSplit
+            items={[
+              { label: "停止计算", value: "数据保留", meta: "存储资源和 /data 数据仍保留", status: "安全", tone: "good" },
+              { label: "删除存储", value: "会删除数据", meta: "删除前需要强确认", status: "高风险", tone: "danger" }
+            ]}
+          />
+        </InsightPanel>
         <InsightPanel title="下一步" eyebrow="闭环">
           <ResourceSplit
             items={[
@@ -271,16 +272,11 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction }:
       <InsightPanel title="计算资源" eyebrow="资源">
         <ResourceSplit
           items={[
-            { label: "拥有账号", value: resource.ownerAccountId || "-", meta: resource.ownerUserId || "账号级资源", status: "Owner", tone: "info" },
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "规格", value: resource.spec || "-", meta: resource.packageId },
-            { label: "节点池", value: resource.nodePoolId || "-", meta: "规格资源池", status: resource.poolId || "pool", tone: "info" },
-            { label: "独占节点", value: resource.nodeName || "-", meta: resource.cvmInstanceId || "CVM ID 未返回，使用节点身份", status: "CVM/Node", tone: resource.nodeName ? "good" : "warn" },
-            { label: "内网 IP", value: resource.privateIp || "-", meta: resource.publicIp ? `公网 IP ${resource.publicIp}` : "公网 IP 未开放" },
             { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyPrice)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
             { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
-            { label: "操作", value: resource.operationId || "-", meta: "操作编号", status: resource.providerRequestId || "等待中", tone: resource.safeMessage ? "danger" : "info" },
-            { label: "失败原因", value: resource.safeMessage || "-", meta: "用户可见原因", status: resource.providerRequestId || "请求编号", tone: resource.safeMessage ? "danger" : "neutral" }
+            { label: "失败原因", value: resource.safeMessage || "-", meta: "如需帮助可提交工单", status: resource.safeMessage ? "异常" : "正常", tone: resource.safeMessage ? "danger" : "neutral" }
           ]}
         />
         <ActionGroup
@@ -315,7 +311,9 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction }:
           />
         </InsightPanel>
       </div>
-      <DataRetentionPolicyPanel />
+      <InsightPanel title="数据提醒" eyebrow="安全">
+        <ResourceSplit items={[{ label: "销毁计算", value: "数据保留", meta: "存储资源和 /data 数据不会删除", status: "安全", tone: "good" }]} />
+      </InsightPanel>
     </ConsoleSurface>
   );
 }
@@ -335,10 +333,8 @@ export function StorageVolumesPage({ state }: any) {
           emptyText="暂无存储资源"
           columns={[
             { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("storage.detail", { id: row.id }))}>{row.name || row.id}</Button> },
-            { title: "拥有账号", dataIndex: "ownerAccountId", ellipsis: true },
             { title: "容量", dataIndex: "sizeGb", render: (value) => `${value || 0}GB` },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
-            { title: "存储句柄", dataIndex: "providerResourceId", ellipsis: true },
             { title: "计费状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={value === "active" ? "good" : "warn"} /> }
           ]}
         />
@@ -427,14 +423,11 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }: any
       <InsightPanel title="存储资源" eyebrow="资源">
         <ResourceSplit
           items={[
-            { label: "拥有账号", value: resource.ownerAccountId || "-", meta: resource.ownerUserId || "账号级资源", status: "Owner", tone: "info" },
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
-            { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: resource.storageClassId },
-            { label: "存储句柄", value: resource.providerResourceId || "-", meta: resource.provider || "tencent-tke" },
+            { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: "当前存储容量" },
             { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyEstimate)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
             { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
-            { label: "操作", value: resource.operationId || "-", meta: "操作编号", status: resource.providerRequestId || "等待中", tone: resource.safeMessage ? "danger" : "info" },
-            { label: "失败原因", value: resource.safeMessage || "-", meta: "用户可见原因", status: resource.providerRequestId || "请求编号", tone: resource.safeMessage ? "danger" : "neutral" }
+            { label: "失败原因", value: resource.safeMessage || "-", meta: "如需帮助可提交工单", status: resource.safeMessage ? "异常" : "正常", tone: resource.safeMessage ? "danger" : "neutral" }
           ]}
         />
         <ActionGroup
@@ -471,7 +464,9 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }: any
           />
         </InsightPanel>
       </div>
-      <DataRetentionPolicyPanel />
+      <InsightPanel title="删除提醒" eyebrow="安全">
+        <ResourceSplit items={[{ label: "销毁存储", value: "会删除数据", meta: "删除 /data 用户文件，需要强确认", status: "高风险", tone: "danger" }]} />
+      </InsightPanel>
     </ConsoleSurface>
   );
 }
@@ -491,7 +486,6 @@ export function StorageAttachmentsPage({ state }: any) {
           emptyText="暂无挂载关系"
           columns={[
             { title: "挂载", dataIndex: "id" },
-            { title: "拥有账号", dataIndex: "ownerAccountId", ellipsis: true },
             { title: "计算", dataIndex: "computeAllocationId", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("attachment.detail", { id: row.id }))}>{row.computeAllocationId}</Button> },
             { title: "存储", dataIndex: "storageId" },
             { title: "路径", dataIndex: "mountPath" },
@@ -512,7 +506,6 @@ export function StorageAttachmentDetailPage({ state, path, session, runAction }:
       <InsightPanel title="挂载关系" eyebrow="资源">
         <ResourceSplit
           items={[
-            { label: "拥有账号", value: attachment.ownerAccountId || "-", meta: "账号级挂载", status: "Owner", tone: "info" },
             { label: "状态", value: attachment.status || "-", status: attachment.status || "pending", tone: resourceStatus(attachment.status) },
             { label: "计算", value: attachment.computeAllocationId || "-", meta: "计算资源" },
             { label: "存储", value: attachment.storageId || "-", meta: attachment.mountPath || "/data" }
@@ -574,7 +567,7 @@ export function CreateStorageAttachmentPage({ state, session, runAction }: any) 
           }}
         >
           <Form.Item name="computeAllocationId" label="计算资源" rules={[{ required: true, message: "请选择计算资源" }]}>
-            <Select options={computeAllocations.map((item) => ({ label: `${item.name || item.id} · ${item.nodeName || "等待节点"} · ${item.privateIp || "无内网 IP"}`, value: item.id }))} />
+            <Select options={computeAllocations.map((item) => ({ label: `${item.name || item.id} · ${item.status || "等待中"}`, value: item.id }))} />
           </Form.Item>
           <Form.Item name="storageId" label="存储资源" rules={[{ required: true, message: "请选择存储资源" }]}>
             <Select options={storageVolumes.map((item) => ({ label: `${item.name || item.id} · ${item.sizeGb}GB`, value: item.id }))} />

@@ -1032,7 +1032,27 @@ func workspaceResponse(row map[string]any) map[string]any {
 	if serviceName := stringValue(row["runtimeServiceName"]); serviceName != "" {
 		row["runtime"] = map[string]any{"serviceName": serviceName}
 	}
-	row["access"] = map[string]any{"tokenStatus": "active", "requiresLogin": false}
+	access, _ := row["access"].(map[string]any)
+	access = cloneMap(access)
+	access["tokenStatus"] = firstNonEmpty(stringValue(access["tokenStatus"]), "active")
+	access["requiresLogin"] = false
+	if username := stringValue(row["runtimeUsername"]); username != "" {
+		access["account"] = username
+		access["username"] = username
+	}
+	if password := stringValue(row["runtimePassword"]); password != "" {
+		access["password"] = password
+	}
+	if status := stringValue(row["credentialStatus"]); status != "" {
+		access["credentialStatus"] = status
+	}
+	if version := stringValue(row["credentialVersion"]); version != "" {
+		access["credentialVersion"] = version
+	}
+	if secretRef := stringValue(row["credentialSecretRef"]); secretRef != "" {
+		access["secretRef"] = secretRef
+	}
+	row["access"] = access
 	return row
 }
 
@@ -1185,7 +1205,7 @@ func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime) map[string
 		ready = runtime.Status == "running"
 		checks = []any{map[string]any{"name": "fabric_runtime_running", "ok": ready}}
 	}
-	return map[string]any{
+	body := map[string]any{
 		"provider":    "tencent-tke",
 		"workspaceId": runtime.WorkspaceID,
 		"runtimeId":   runtime.ID,
@@ -1195,4 +1215,15 @@ func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime) map[string
 		"ready":       ready,
 		"checks":      checks,
 	}
+	if runtime.Access.Username != "" || runtime.Access.Password != "" {
+		body["access"] = map[string]any{
+			"account":           runtime.Access.Username,
+			"username":          runtime.Access.Username,
+			"password":          runtime.Access.Password,
+			"credentialStatus":  runtime.Access.CredentialStatus,
+			"credentialVersion": runtime.Access.CredentialVersion,
+			"secretRef":         runtime.Access.SecretRef,
+		}
+	}
+	return body
 }
