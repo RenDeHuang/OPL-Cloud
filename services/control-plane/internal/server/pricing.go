@@ -45,7 +45,6 @@ func pricingPreviewResponse(input map[string]any, wallet map[string]any) map[str
 		"currency":           pricingCurrency,
 		"unit":               unit,
 		"unitPrice":          unitPrice,
-		"unitPriceCents":     cents(unitPrice),
 		"holdDays":           pricingHoldDays,
 		"holdAmountCents":    holdAmountCents,
 		"priceSnapshot":      priceSnapshot,
