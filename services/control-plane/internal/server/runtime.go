@@ -1041,7 +1041,7 @@ func (app *runtimeApp) applyLedgerFacts(accountID string, wallet clients.Wallet,
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
-	if accountID != "" && wallet.AccountID != "" {
+	if accountID != "" && wallet.AccountID != "" && (walletHasMoneyFacts(wallet) || app.wallets[wallet.AccountID] == nil) {
 		app.wallets[wallet.AccountID] = walletProjection(wallet)
 	}
 	for _, tx := range transactions {
@@ -1137,6 +1137,10 @@ func manualTopUpProjections(topups []clients.ManualTopUp) []map[string]any {
 		rows = append(rows, structToMap(topup))
 	}
 	return rows
+}
+
+func walletHasMoneyFacts(wallet clients.Wallet) bool {
+	return wallet.BalanceCents != 0 || wallet.FrozenCents != 0 || wallet.AvailableCents != 0 || wallet.TotalSpentCents != 0
 }
 
 func ledgerEntryType(entry clients.LedgerEntry) string {
