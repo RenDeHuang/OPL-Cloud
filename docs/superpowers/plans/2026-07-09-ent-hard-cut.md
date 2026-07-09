@@ -24,7 +24,7 @@
 - [x] Create Ledger schemas for wallet, ledger entry, wallet transaction, manual topup, hold, hold release, evidence receipt, resource settlement, reconciliation report, and idempotency key.
 - [x] Create Fabric schemas for fabric operation and workspace runtime access.
 - [x] Add versioned SQL migrations.
-- [ ] Generate Ent clients after the Ent generator dependencies are available.
+- [x] Generate Ent clients after the Ent generator dependencies are available.
 - [x] Confirm schema output contains no product fact `payload JSONB`.
 
 ## Phase 3: Control Plane Ent Store
