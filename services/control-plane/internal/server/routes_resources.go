@@ -360,7 +360,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			writeUpstreamError(w, err)
 			return
 		}
-		body := attachmentResponse(structToMap(attachment), input)
+		body := attachmentResponse(mergeMaps(existing, structToMap(attachment)), input)
 		if err := app.rememberAttachment(body, input); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return

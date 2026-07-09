@@ -73,8 +73,8 @@ func (app *controlPlaneApp) rememberReleaseLocked(accountID string, resourceType
 
 func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]any) error {
 	if row, ok := attachment.(map[string]any); ok {
-		row["computeAllocationId"] = stringField(input, "computeAllocationId", "")
-		row["storageId"] = firstNonEmpty(stringValue(row["volumeId"]), stringField(input, "storageId", ""))
+		row["computeAllocationId"] = firstNonEmpty(stringValue(row["computeAllocationId"]), stringValue(row["computeId"]), stringField(input, "computeAllocationId", ""))
+		row["storageId"] = firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"]), stringField(input, "storageId", ""))
 		row["mountPath"] = firstNonEmpty(stringValue(row["mountPath"]), stringField(input, "mountPath", "/data"))
 		app.mu.Lock()
 		defer app.mu.Unlock()

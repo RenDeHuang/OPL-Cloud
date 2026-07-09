@@ -1151,6 +1151,20 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	}
 }
 
+func TestDetachStorageAttachmentPreservesOwnershipFacts(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	admin := operatorSessionForTest(t, server)
+
+	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"compute-alpha"}`)
+	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","name":"storage-alpha"}`)
+	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
+
+	detached := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments/detach", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
+	if detached["status"] != "detached" || detached["accountId"] != "acct-alpha" || detached["computeAllocationId"] != compute["id"] || detached["storageId"] != storage["id"] {
+		t.Fatalf("detach should preserve ownership facts, got %#v", detached)
+	}
+}
+
 func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 
