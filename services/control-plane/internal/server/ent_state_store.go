@@ -619,6 +619,137 @@ func (s *postgresEntStateStore) Load(ctx context.Context) (controlPlaneState, er
 	return facts, nil
 }
 
+func (s *postgresEntStateStore) ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.User.Query().All, userEntFields)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if !includeDeleted && stringValue(row["status"]) == "deleted" {
+			continue
+		}
+		out = append(out, cloneMap(row))
+	}
+	return out, nil
+}
+
+func (s *postgresEntStateStore) SaveUser(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.User.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.User.Create() }, userEntFields)
+}
+
+func (s *postgresEntStateStore) ListSessions(ctx context.Context) (controlPlaneRecordSet, error) {
+	return loadRecordSet(ctx, s.client.Session.Query().All, sessionEntFields)
+}
+
+func (s *postgresEntStateStore) SaveSession(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Session.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Session.Create() }, sessionEntFields)
+}
+
+func (s *postgresEntStateStore) DeleteSession(ctx context.Context, id string) error {
+	err := s.client.Session.DeleteOneID(id).Exec(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func (s *postgresEntStateStore) ListComputes(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.ComputeAllocation.Query().All, computeEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) SaveCompute(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ComputeAllocation.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ComputeAllocation.Create() }, computeEntFields)
+}
+
+func (s *postgresEntStateStore) ListStorages(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.StorageVolume.Query().All, storageEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) SaveStorage(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.StorageVolume.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.StorageVolume.Create() }, storageEntFields)
+}
+
+func (s *postgresEntStateStore) ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.StorageAttachment.Query().All, attachmentEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) SaveAttachment(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.StorageAttachment.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.StorageAttachment.Create() }, attachmentEntFields)
+}
+
+func (s *postgresEntStateStore) ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.Workspace.Query().All, workspaceEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Workspace.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Workspace.Create() }, workspaceEntFields)
+}
+
+func (s *postgresEntStateStore) ListWallets(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.WalletProjection.Query().All, walletEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) SaveWallet(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.WalletProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.WalletProjection.Create() }, walletEntFields)
+}
+
+func (s *postgresEntStateStore) ListLedger(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadEventRows(ctx, s.client.LedgerProjection.Query().Order(controlplaneent.Asc(ledgerprojection.FieldCreatedAt, ledgerprojection.FieldID)).All, ledgerEntFields)
+	return filteredEvents(rows, accountID), err
+}
+
+func (s *postgresEntStateStore) SaveLedgerEntry(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.LedgerProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.LedgerProjection.Create() }, ledgerEntFields)
+}
+
+func (s *postgresEntStateStore) ListWalletTransactions(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadEventRows(ctx, s.client.WalletTransactionProjection.Query().Order(controlplaneent.Asc(wallettransactionprojection.FieldCreatedAt, wallettransactionprojection.FieldID)).All, walletTxEntFields)
+	return filteredEvents(rows, accountID), err
+}
+
+func (s *postgresEntStateStore) SaveWalletTransaction(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.WalletTransactionProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.WalletTransactionProjection.Create() }, walletTxEntFields)
+}
+
+func (s *postgresEntStateStore) ListManualTopups(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadEventRows(ctx, s.client.ManualTopupProjection.Query().Order(controlplaneent.Asc(manualtopupprojection.FieldCreatedAt, manualtopupprojection.FieldID)).All, topupEntFields)
+	return filteredEvents(rows, accountID), err
+}
+
+func (s *postgresEntStateStore) SaveManualTopup(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ManualTopupProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ManualTopupProjection.Create() }, topupEntFields)
+}
+
+func (s *postgresEntStateStore) ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadEventRows(ctx, s.client.AdminAuditEvent.Query().Order(controlplaneent.Asc(adminauditevent.FieldCreatedAt, adminauditevent.FieldID)).All, auditEntFields)
+	return filteredEvents(rows, accountID), err
+}
+
+func (s *postgresEntStateStore) SaveAuditEvent(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.AdminAuditEvent.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.AdminAuditEvent.Create() }, auditEntFields)
+}
+
 func (s *postgresEntStateStore) SettlementResourceRows(ctx context.Context) (controlPlaneRecordSet, controlPlaneRecordSet, error) {
 	computes, err := loadRecordSet(ctx, s.client.ComputeAllocation.Query().All, computeEntFields)
 	if err != nil {
@@ -1138,6 +1269,39 @@ func saveRecord(ctx context.Context, id string, row controlPlaneRecord, builder 
 		}
 	}
 	return execCreate(ctx, builder)
+}
+
+func (s *postgresEntStateStore) replaceRecord(ctx context.Context, row map[string]any, deleteOne func(string) error, create func() any, fields []entRecordField) error {
+	id := stringValue(row["id"])
+	if id == "" {
+		return errors.New("missing_record_id")
+	}
+	if err := deleteOne(id); err != nil && !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	return saveRecord(ctx, id, row, create(), fields)
+}
+
+func filteredRecords(rows controlPlaneRecordSet, accountID string) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if accountID != "" && firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) != accountID {
+			continue
+		}
+		out = append(out, cloneMap(row))
+	}
+	return out, nil
+}
+
+func filteredEvents(rows []controlPlaneRecord, accountID string) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if accountID != "" && firstNonEmpty(stringValue(row["accountId"]), stringValue(row["targetAccountId"]), stringValue(row["actorAccountId"])) != accountID {
+			continue
+		}
+		out = append(out, cloneMap(row))
+	}
+	return out
 }
 
 func saveArchivedResource(ctx context.Context, builder any, kind string, id string, accountID string, workspaceID string, name string, status string, reason string, archivedAt time.Time) error {
