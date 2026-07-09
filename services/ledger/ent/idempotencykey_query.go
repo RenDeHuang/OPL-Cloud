@@ -261,12 +261,12 @@ func (ikq *IdempotencyKeyQuery) Clone() *IdempotencyKeyQuery {
 // Example:
 //
 //	var v []struct {
-//		AccountID string `json:"account_id,omitempty"`
+//		Service string `json:"service,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.IdempotencyKey.Query().
-//		GroupBy(idempotencykey.FieldAccountID).
+//		GroupBy(idempotencykey.FieldService).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (ikq *IdempotencyKeyQuery) GroupBy(field string, fields ...string) *IdempotencyKeyGroupBy {
@@ -284,11 +284,11 @@ func (ikq *IdempotencyKeyQuery) GroupBy(field string, fields ...string) *Idempot
 // Example:
 //
 //	var v []struct {
-//		AccountID string `json:"account_id,omitempty"`
+//		Service string `json:"service,omitempty"`
 //	}
 //
 //	client.IdempotencyKey.Query().
-//		Select(idempotencykey.FieldAccountID).
+//		Select(idempotencykey.FieldService).
 //		Scan(ctx, &v)
 func (ikq *IdempotencyKeyQuery) Select(fields ...string) *IdempotencyKeySelect {
 	ikq.ctx.Fields = append(ikq.ctx.Fields, fields...)

@@ -17,74 +17,16 @@ type IdempotencyKey struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
-	// AccountID holds the value of the "account_id" field.
-	AccountID string `json:"account_id,omitempty"`
-	// BalanceCents holds the value of the "balance_cents" field.
-	BalanceCents int64 `json:"balance_cents,omitempty"`
-	// FrozenCents holds the value of the "frozen_cents" field.
-	FrozenCents int64 `json:"frozen_cents,omitempty"`
-	// AvailableCents holds the value of the "available_cents" field.
-	AvailableCents int64 `json:"available_cents,omitempty"`
-	// TotalSpentCents holds the value of the "total_spent_cents" field.
-	TotalSpentCents int64 `json:"total_spent_cents,omitempty"`
-	// AmountCents holds the value of the "amount_cents" field.
-	AmountCents int64 `json:"amount_cents,omitempty"`
-	// Currency holds the value of the "currency" field.
-	Currency string `json:"currency,omitempty"`
-	// Direction holds the value of the "direction" field.
-	Direction string `json:"direction,omitempty"`
-	// Source holds the value of the "source" field.
-	Source string `json:"source,omitempty"`
-	// OperatorUserID holds the value of the "operator_user_id" field.
-	OperatorUserID string `json:"operator_user_id,omitempty"`
-	// Reason holds the value of the "reason" field.
-	Reason string `json:"reason,omitempty"`
-	// LedgerEntryID holds the value of the "ledger_entry_id" field.
-	LedgerEntryID string `json:"ledger_entry_id,omitempty"`
-	// WalletTransactionID holds the value of the "wallet_transaction_id" field.
-	WalletTransactionID string `json:"wallet_transaction_id,omitempty"`
-	// WorkspaceID holds the value of the "workspace_id" field.
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	// ResourceType holds the value of the "resource_type" field.
-	ResourceType string `json:"resource_type,omitempty"`
-	// ResourceID holds the value of the "resource_id" field.
-	ResourceID string `json:"resource_id,omitempty"`
-	// HoldID holds the value of the "hold_id" field.
-	HoldID string `json:"hold_id,omitempty"`
-	// Status holds the value of the "status" field.
-	Status string `json:"status,omitempty"`
-	// PricingVersion holds the value of the "pricing_version" field.
-	PricingVersion string `json:"pricing_version,omitempty"`
-	// PriceSnapshotJSON holds the value of the "price_snapshot_json" field.
-	PriceSnapshotJSON string `json:"price_snapshot_json,omitempty"`
-	// UsagePeriodStart holds the value of the "usage_period_start" field.
-	UsagePeriodStart string `json:"usage_period_start,omitempty"`
-	// UsagePeriodEnd holds the value of the "usage_period_end" field.
-	UsagePeriodEnd string `json:"usage_period_end,omitempty"`
-	// Quantity holds the value of the "quantity" field.
-	Quantity float64 `json:"quantity,omitempty"`
-	// Unit holds the value of the "unit" field.
-	Unit string `json:"unit,omitempty"`
-	// ProviderCostEvidenceRef holds the value of the "provider_cost_evidence_ref" field.
-	ProviderCostEvidenceRef string `json:"provider_cost_evidence_ref,omitempty"`
-	// ProviderRequestID holds the value of the "provider_request_id" field.
-	ProviderRequestID string `json:"provider_request_id,omitempty"`
-	// RedactedURL holds the value of the "redacted_url" field.
-	RedactedURL string `json:"redacted_url,omitempty"`
-	// TokenVersion holds the value of the "token_version" field.
-	TokenVersion string `json:"token_version,omitempty"`
+	// Service holds the value of the "service" field.
+	Service string `json:"service,omitempty"`
 	// IdempotencyKey holds the value of the "idempotency_key" field.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// RequestHash holds the value of the "request_hash" field.
 	RequestHash string `json:"request_hash,omitempty"`
-	// ReportJSON holds the value of the "report_json" field.
-	ReportJSON string `json:"report_json,omitempty"`
-	// BlockNewWorkspaces holds the value of the "block_new_workspaces" field.
-	BlockNewWorkspaces bool `json:"block_new_workspaces,omitempty"`
+	// ResponseRef holds the value of the "response_ref" field.
+	ResponseRef string `json:"response_ref,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	// UpdatedAt holds the value of the "updated_at" field.
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
 }
 
@@ -93,15 +35,9 @@ func (*IdempotencyKey) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case idempotencykey.FieldBlockNewWorkspaces:
-			values[i] = new(sql.NullBool)
-		case idempotencykey.FieldQuantity:
-			values[i] = new(sql.NullFloat64)
-		case idempotencykey.FieldBalanceCents, idempotencykey.FieldFrozenCents, idempotencykey.FieldAvailableCents, idempotencykey.FieldTotalSpentCents, idempotencykey.FieldAmountCents:
-			values[i] = new(sql.NullInt64)
-		case idempotencykey.FieldID, idempotencykey.FieldAccountID, idempotencykey.FieldCurrency, idempotencykey.FieldDirection, idempotencykey.FieldSource, idempotencykey.FieldOperatorUserID, idempotencykey.FieldReason, idempotencykey.FieldLedgerEntryID, idempotencykey.FieldWalletTransactionID, idempotencykey.FieldWorkspaceID, idempotencykey.FieldResourceType, idempotencykey.FieldResourceID, idempotencykey.FieldHoldID, idempotencykey.FieldStatus, idempotencykey.FieldPricingVersion, idempotencykey.FieldPriceSnapshotJSON, idempotencykey.FieldUsagePeriodStart, idempotencykey.FieldUsagePeriodEnd, idempotencykey.FieldUnit, idempotencykey.FieldProviderCostEvidenceRef, idempotencykey.FieldProviderRequestID, idempotencykey.FieldRedactedURL, idempotencykey.FieldTokenVersion, idempotencykey.FieldIdempotencyKey, idempotencykey.FieldRequestHash, idempotencykey.FieldReportJSON:
+		case idempotencykey.FieldID, idempotencykey.FieldService, idempotencykey.FieldIdempotencyKey, idempotencykey.FieldRequestHash, idempotencykey.FieldResponseRef:
 			values[i] = new(sql.NullString)
-		case idempotencykey.FieldCreatedAt, idempotencykey.FieldUpdatedAt:
+		case idempotencykey.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -124,173 +60,11 @@ func (ik *IdempotencyKey) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				ik.ID = value.String
 			}
-		case idempotencykey.FieldAccountID:
+		case idempotencykey.FieldService:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field account_id", values[i])
+				return fmt.Errorf("unexpected type %T for field service", values[i])
 			} else if value.Valid {
-				ik.AccountID = value.String
-			}
-		case idempotencykey.FieldBalanceCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field balance_cents", values[i])
-			} else if value.Valid {
-				ik.BalanceCents = value.Int64
-			}
-		case idempotencykey.FieldFrozenCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field frozen_cents", values[i])
-			} else if value.Valid {
-				ik.FrozenCents = value.Int64
-			}
-		case idempotencykey.FieldAvailableCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field available_cents", values[i])
-			} else if value.Valid {
-				ik.AvailableCents = value.Int64
-			}
-		case idempotencykey.FieldTotalSpentCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field total_spent_cents", values[i])
-			} else if value.Valid {
-				ik.TotalSpentCents = value.Int64
-			}
-		case idempotencykey.FieldAmountCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field amount_cents", values[i])
-			} else if value.Valid {
-				ik.AmountCents = value.Int64
-			}
-		case idempotencykey.FieldCurrency:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field currency", values[i])
-			} else if value.Valid {
-				ik.Currency = value.String
-			}
-		case idempotencykey.FieldDirection:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field direction", values[i])
-			} else if value.Valid {
-				ik.Direction = value.String
-			}
-		case idempotencykey.FieldSource:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field source", values[i])
-			} else if value.Valid {
-				ik.Source = value.String
-			}
-		case idempotencykey.FieldOperatorUserID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field operator_user_id", values[i])
-			} else if value.Valid {
-				ik.OperatorUserID = value.String
-			}
-		case idempotencykey.FieldReason:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field reason", values[i])
-			} else if value.Valid {
-				ik.Reason = value.String
-			}
-		case idempotencykey.FieldLedgerEntryID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field ledger_entry_id", values[i])
-			} else if value.Valid {
-				ik.LedgerEntryID = value.String
-			}
-		case idempotencykey.FieldWalletTransactionID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field wallet_transaction_id", values[i])
-			} else if value.Valid {
-				ik.WalletTransactionID = value.String
-			}
-		case idempotencykey.FieldWorkspaceID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field workspace_id", values[i])
-			} else if value.Valid {
-				ik.WorkspaceID = value.String
-			}
-		case idempotencykey.FieldResourceType:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field resource_type", values[i])
-			} else if value.Valid {
-				ik.ResourceType = value.String
-			}
-		case idempotencykey.FieldResourceID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field resource_id", values[i])
-			} else if value.Valid {
-				ik.ResourceID = value.String
-			}
-		case idempotencykey.FieldHoldID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_id", values[i])
-			} else if value.Valid {
-				ik.HoldID = value.String
-			}
-		case idempotencykey.FieldStatus:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field status", values[i])
-			} else if value.Valid {
-				ik.Status = value.String
-			}
-		case idempotencykey.FieldPricingVersion:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field pricing_version", values[i])
-			} else if value.Valid {
-				ik.PricingVersion = value.String
-			}
-		case idempotencykey.FieldPriceSnapshotJSON:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_json", values[i])
-			} else if value.Valid {
-				ik.PriceSnapshotJSON = value.String
-			}
-		case idempotencykey.FieldUsagePeriodStart:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field usage_period_start", values[i])
-			} else if value.Valid {
-				ik.UsagePeriodStart = value.String
-			}
-		case idempotencykey.FieldUsagePeriodEnd:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field usage_period_end", values[i])
-			} else if value.Valid {
-				ik.UsagePeriodEnd = value.String
-			}
-		case idempotencykey.FieldQuantity:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field quantity", values[i])
-			} else if value.Valid {
-				ik.Quantity = value.Float64
-			}
-		case idempotencykey.FieldUnit:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field unit", values[i])
-			} else if value.Valid {
-				ik.Unit = value.String
-			}
-		case idempotencykey.FieldProviderCostEvidenceRef:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field provider_cost_evidence_ref", values[i])
-			} else if value.Valid {
-				ik.ProviderCostEvidenceRef = value.String
-			}
-		case idempotencykey.FieldProviderRequestID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field provider_request_id", values[i])
-			} else if value.Valid {
-				ik.ProviderRequestID = value.String
-			}
-		case idempotencykey.FieldRedactedURL:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field redacted_url", values[i])
-			} else if value.Valid {
-				ik.RedactedURL = value.String
-			}
-		case idempotencykey.FieldTokenVersion:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field token_version", values[i])
-			} else if value.Valid {
-				ik.TokenVersion = value.String
+				ik.Service = value.String
 			}
 		case idempotencykey.FieldIdempotencyKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -304,29 +78,17 @@ func (ik *IdempotencyKey) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				ik.RequestHash = value.String
 			}
-		case idempotencykey.FieldReportJSON:
+		case idempotencykey.FieldResponseRef:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field report_json", values[i])
+				return fmt.Errorf("unexpected type %T for field response_ref", values[i])
 			} else if value.Valid {
-				ik.ReportJSON = value.String
-			}
-		case idempotencykey.FieldBlockNewWorkspaces:
-			if value, ok := values[i].(*sql.NullBool); !ok {
-				return fmt.Errorf("unexpected type %T for field block_new_workspaces", values[i])
-			} else if value.Valid {
-				ik.BlockNewWorkspaces = value.Bool
+				ik.ResponseRef = value.String
 			}
 		case idempotencykey.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
 				ik.CreatedAt = value.Time
-			}
-		case idempotencykey.FieldUpdatedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
-			} else if value.Valid {
-				ik.UpdatedAt = value.Time
 			}
 		default:
 			ik.selectValues.Set(columns[i], values[i])
@@ -364,89 +126,8 @@ func (ik *IdempotencyKey) String() string {
 	var builder strings.Builder
 	builder.WriteString("IdempotencyKey(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", ik.ID))
-	builder.WriteString("account_id=")
-	builder.WriteString(ik.AccountID)
-	builder.WriteString(", ")
-	builder.WriteString("balance_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ik.BalanceCents))
-	builder.WriteString(", ")
-	builder.WriteString("frozen_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ik.FrozenCents))
-	builder.WriteString(", ")
-	builder.WriteString("available_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ik.AvailableCents))
-	builder.WriteString(", ")
-	builder.WriteString("total_spent_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ik.TotalSpentCents))
-	builder.WriteString(", ")
-	builder.WriteString("amount_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ik.AmountCents))
-	builder.WriteString(", ")
-	builder.WriteString("currency=")
-	builder.WriteString(ik.Currency)
-	builder.WriteString(", ")
-	builder.WriteString("direction=")
-	builder.WriteString(ik.Direction)
-	builder.WriteString(", ")
-	builder.WriteString("source=")
-	builder.WriteString(ik.Source)
-	builder.WriteString(", ")
-	builder.WriteString("operator_user_id=")
-	builder.WriteString(ik.OperatorUserID)
-	builder.WriteString(", ")
-	builder.WriteString("reason=")
-	builder.WriteString(ik.Reason)
-	builder.WriteString(", ")
-	builder.WriteString("ledger_entry_id=")
-	builder.WriteString(ik.LedgerEntryID)
-	builder.WriteString(", ")
-	builder.WriteString("wallet_transaction_id=")
-	builder.WriteString(ik.WalletTransactionID)
-	builder.WriteString(", ")
-	builder.WriteString("workspace_id=")
-	builder.WriteString(ik.WorkspaceID)
-	builder.WriteString(", ")
-	builder.WriteString("resource_type=")
-	builder.WriteString(ik.ResourceType)
-	builder.WriteString(", ")
-	builder.WriteString("resource_id=")
-	builder.WriteString(ik.ResourceID)
-	builder.WriteString(", ")
-	builder.WriteString("hold_id=")
-	builder.WriteString(ik.HoldID)
-	builder.WriteString(", ")
-	builder.WriteString("status=")
-	builder.WriteString(ik.Status)
-	builder.WriteString(", ")
-	builder.WriteString("pricing_version=")
-	builder.WriteString(ik.PricingVersion)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_json=")
-	builder.WriteString(ik.PriceSnapshotJSON)
-	builder.WriteString(", ")
-	builder.WriteString("usage_period_start=")
-	builder.WriteString(ik.UsagePeriodStart)
-	builder.WriteString(", ")
-	builder.WriteString("usage_period_end=")
-	builder.WriteString(ik.UsagePeriodEnd)
-	builder.WriteString(", ")
-	builder.WriteString("quantity=")
-	builder.WriteString(fmt.Sprintf("%v", ik.Quantity))
-	builder.WriteString(", ")
-	builder.WriteString("unit=")
-	builder.WriteString(ik.Unit)
-	builder.WriteString(", ")
-	builder.WriteString("provider_cost_evidence_ref=")
-	builder.WriteString(ik.ProviderCostEvidenceRef)
-	builder.WriteString(", ")
-	builder.WriteString("provider_request_id=")
-	builder.WriteString(ik.ProviderRequestID)
-	builder.WriteString(", ")
-	builder.WriteString("redacted_url=")
-	builder.WriteString(ik.RedactedURL)
-	builder.WriteString(", ")
-	builder.WriteString("token_version=")
-	builder.WriteString(ik.TokenVersion)
+	builder.WriteString("service=")
+	builder.WriteString(ik.Service)
 	builder.WriteString(", ")
 	builder.WriteString("idempotency_key=")
 	builder.WriteString(ik.IdempotencyKey)
@@ -454,17 +135,11 @@ func (ik *IdempotencyKey) String() string {
 	builder.WriteString("request_hash=")
 	builder.WriteString(ik.RequestHash)
 	builder.WriteString(", ")
-	builder.WriteString("report_json=")
-	builder.WriteString(ik.ReportJSON)
-	builder.WriteString(", ")
-	builder.WriteString("block_new_workspaces=")
-	builder.WriteString(fmt.Sprintf("%v", ik.BlockNewWorkspaces))
+	builder.WriteString("response_ref=")
+	builder.WriteString(ik.ResponseRef)
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(ik.CreatedAt.Format(time.ANSIC))
-	builder.WriteString(", ")
-	builder.WriteString("updated_at=")
-	builder.WriteString(ik.UpdatedAt.Format(time.ANSIC))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -42,209 +42,6 @@ func (rsu *ResourceSettlementUpdate) SetNillableAccountID(s *string) *ResourceSe
 	return rsu
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (rsu *ResourceSettlementUpdate) SetBalanceCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.ResetBalanceCents()
-	rsu.mutation.SetBalanceCents(i)
-	return rsu
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableBalanceCents(i *int64) *ResourceSettlementUpdate {
-	if i != nil {
-		rsu.SetBalanceCents(*i)
-	}
-	return rsu
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (rsu *ResourceSettlementUpdate) AddBalanceCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.AddBalanceCents(i)
-	return rsu
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (rsu *ResourceSettlementUpdate) SetFrozenCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.ResetFrozenCents()
-	rsu.mutation.SetFrozenCents(i)
-	return rsu
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableFrozenCents(i *int64) *ResourceSettlementUpdate {
-	if i != nil {
-		rsu.SetFrozenCents(*i)
-	}
-	return rsu
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (rsu *ResourceSettlementUpdate) AddFrozenCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.AddFrozenCents(i)
-	return rsu
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (rsu *ResourceSettlementUpdate) SetAvailableCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.ResetAvailableCents()
-	rsu.mutation.SetAvailableCents(i)
-	return rsu
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableAvailableCents(i *int64) *ResourceSettlementUpdate {
-	if i != nil {
-		rsu.SetAvailableCents(*i)
-	}
-	return rsu
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (rsu *ResourceSettlementUpdate) AddAvailableCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.AddAvailableCents(i)
-	return rsu
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (rsu *ResourceSettlementUpdate) SetTotalSpentCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.ResetTotalSpentCents()
-	rsu.mutation.SetTotalSpentCents(i)
-	return rsu
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableTotalSpentCents(i *int64) *ResourceSettlementUpdate {
-	if i != nil {
-		rsu.SetTotalSpentCents(*i)
-	}
-	return rsu
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (rsu *ResourceSettlementUpdate) AddTotalSpentCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.AddTotalSpentCents(i)
-	return rsu
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (rsu *ResourceSettlementUpdate) SetAmountCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.ResetAmountCents()
-	rsu.mutation.SetAmountCents(i)
-	return rsu
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableAmountCents(i *int64) *ResourceSettlementUpdate {
-	if i != nil {
-		rsu.SetAmountCents(*i)
-	}
-	return rsu
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (rsu *ResourceSettlementUpdate) AddAmountCents(i int64) *ResourceSettlementUpdate {
-	rsu.mutation.AddAmountCents(i)
-	return rsu
-}
-
-// SetCurrency sets the "currency" field.
-func (rsu *ResourceSettlementUpdate) SetCurrency(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetCurrency(s)
-	return rsu
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableCurrency(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetCurrency(*s)
-	}
-	return rsu
-}
-
-// SetDirection sets the "direction" field.
-func (rsu *ResourceSettlementUpdate) SetDirection(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetDirection(s)
-	return rsu
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableDirection(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetDirection(*s)
-	}
-	return rsu
-}
-
-// SetSource sets the "source" field.
-func (rsu *ResourceSettlementUpdate) SetSource(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetSource(s)
-	return rsu
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableSource(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetSource(*s)
-	}
-	return rsu
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (rsu *ResourceSettlementUpdate) SetOperatorUserID(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetOperatorUserID(s)
-	return rsu
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableOperatorUserID(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetOperatorUserID(*s)
-	}
-	return rsu
-}
-
-// SetReason sets the "reason" field.
-func (rsu *ResourceSettlementUpdate) SetReason(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetReason(s)
-	return rsu
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableReason(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetReason(*s)
-	}
-	return rsu
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (rsu *ResourceSettlementUpdate) SetLedgerEntryID(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetLedgerEntryID(s)
-	return rsu
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableLedgerEntryID(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetLedgerEntryID(*s)
-	}
-	return rsu
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (rsu *ResourceSettlementUpdate) SetWalletTransactionID(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetWalletTransactionID(s)
-	return rsu
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableWalletTransactionID(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetWalletTransactionID(*s)
-	}
-	return rsu
-}
-
 // SetWorkspaceID sets the "workspace_id" field.
 func (rsu *ResourceSettlementUpdate) SetWorkspaceID(s string) *ResourceSettlementUpdate {
 	rsu.mutation.SetWorkspaceID(s)
@@ -287,16 +84,37 @@ func (rsu *ResourceSettlementUpdate) SetNillableResourceID(s *string) *ResourceS
 	return rsu
 }
 
-// SetHoldID sets the "hold_id" field.
-func (rsu *ResourceSettlementUpdate) SetHoldID(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetHoldID(s)
+// SetAmountCents sets the "amount_cents" field.
+func (rsu *ResourceSettlementUpdate) SetAmountCents(i int64) *ResourceSettlementUpdate {
+	rsu.mutation.ResetAmountCents()
+	rsu.mutation.SetAmountCents(i)
 	return rsu
 }
 
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableHoldID(s *string) *ResourceSettlementUpdate {
+// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
+func (rsu *ResourceSettlementUpdate) SetNillableAmountCents(i *int64) *ResourceSettlementUpdate {
+	if i != nil {
+		rsu.SetAmountCents(*i)
+	}
+	return rsu
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (rsu *ResourceSettlementUpdate) AddAmountCents(i int64) *ResourceSettlementUpdate {
+	rsu.mutation.AddAmountCents(i)
+	return rsu
+}
+
+// SetCurrency sets the "currency" field.
+func (rsu *ResourceSettlementUpdate) SetCurrency(s string) *ResourceSettlementUpdate {
+	rsu.mutation.SetCurrency(s)
+	return rsu
+}
+
+// SetNillableCurrency sets the "currency" field if the given value is not nil.
+func (rsu *ResourceSettlementUpdate) SetNillableCurrency(s *string) *ResourceSettlementUpdate {
 	if s != nil {
-		rsu.SetHoldID(*s)
+		rsu.SetCurrency(*s)
 	}
 	return rsu
 }
@@ -311,6 +129,34 @@ func (rsu *ResourceSettlementUpdate) SetStatus(s string) *ResourceSettlementUpda
 func (rsu *ResourceSettlementUpdate) SetNillableStatus(s *string) *ResourceSettlementUpdate {
 	if s != nil {
 		rsu.SetStatus(*s)
+	}
+	return rsu
+}
+
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (rsu *ResourceSettlementUpdate) SetLedgerEntryID(s string) *ResourceSettlementUpdate {
+	rsu.mutation.SetLedgerEntryID(s)
+	return rsu
+}
+
+// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
+func (rsu *ResourceSettlementUpdate) SetNillableLedgerEntryID(s *string) *ResourceSettlementUpdate {
+	if s != nil {
+		rsu.SetLedgerEntryID(*s)
+	}
+	return rsu
+}
+
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (rsu *ResourceSettlementUpdate) SetWalletTransactionID(s string) *ResourceSettlementUpdate {
+	rsu.mutation.SetWalletTransactionID(s)
+	return rsu
+}
+
+// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
+func (rsu *ResourceSettlementUpdate) SetNillableWalletTransactionID(s *string) *ResourceSettlementUpdate {
+	if s != nil {
+		rsu.SetWalletTransactionID(*s)
 	}
 	return rsu
 }
@@ -420,48 +266,6 @@ func (rsu *ResourceSettlementUpdate) SetNillableProviderCostEvidenceRef(s *strin
 	return rsu
 }
 
-// SetProviderRequestID sets the "provider_request_id" field.
-func (rsu *ResourceSettlementUpdate) SetProviderRequestID(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetProviderRequestID(s)
-	return rsu
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableProviderRequestID(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetProviderRequestID(*s)
-	}
-	return rsu
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (rsu *ResourceSettlementUpdate) SetRedactedURL(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetRedactedURL(s)
-	return rsu
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableRedactedURL(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetRedactedURL(*s)
-	}
-	return rsu
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (rsu *ResourceSettlementUpdate) SetTokenVersion(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetTokenVersion(s)
-	return rsu
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableTokenVersion(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetTokenVersion(*s)
-	}
-	return rsu
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (rsu *ResourceSettlementUpdate) SetIdempotencyKey(s string) *ResourceSettlementUpdate {
 	rsu.mutation.SetIdempotencyKey(s)
@@ -490,34 +294,6 @@ func (rsu *ResourceSettlementUpdate) SetNillableRequestHash(s *string) *Resource
 	return rsu
 }
 
-// SetReportJSON sets the "report_json" field.
-func (rsu *ResourceSettlementUpdate) SetReportJSON(s string) *ResourceSettlementUpdate {
-	rsu.mutation.SetReportJSON(s)
-	return rsu
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableReportJSON(s *string) *ResourceSettlementUpdate {
-	if s != nil {
-		rsu.SetReportJSON(*s)
-	}
-	return rsu
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (rsu *ResourceSettlementUpdate) SetBlockNewWorkspaces(b bool) *ResourceSettlementUpdate {
-	rsu.mutation.SetBlockNewWorkspaces(b)
-	return rsu
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (rsu *ResourceSettlementUpdate) SetNillableBlockNewWorkspaces(b *bool) *ResourceSettlementUpdate {
-	if b != nil {
-		rsu.SetBlockNewWorkspaces(*b)
-	}
-	return rsu
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (rsu *ResourceSettlementUpdate) SetCreatedAt(t time.Time) *ResourceSettlementUpdate {
 	rsu.mutation.SetCreatedAt(t)
@@ -532,12 +308,6 @@ func (rsu *ResourceSettlementUpdate) SetNillableCreatedAt(t *time.Time) *Resourc
 	return rsu
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (rsu *ResourceSettlementUpdate) SetUpdatedAt(t time.Time) *ResourceSettlementUpdate {
-	rsu.mutation.SetUpdatedAt(t)
-	return rsu
-}
-
 // Mutation returns the ResourceSettlementMutation object of the builder.
 func (rsu *ResourceSettlementUpdate) Mutation() *ResourceSettlementMutation {
 	return rsu.mutation
@@ -545,7 +315,6 @@ func (rsu *ResourceSettlementUpdate) Mutation() *ResourceSettlementMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (rsu *ResourceSettlementUpdate) Save(ctx context.Context) (int, error) {
-	rsu.defaults()
 	return withHooks(ctx, rsu.sqlSave, rsu.mutation, rsu.hooks)
 }
 
@@ -571,15 +340,60 @@ func (rsu *ResourceSettlementUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (rsu *ResourceSettlementUpdate) defaults() {
-	if _, ok := rsu.mutation.UpdatedAt(); !ok {
-		v := resourcesettlement.UpdateDefaultUpdatedAt()
-		rsu.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (rsu *ResourceSettlementUpdate) check() error {
+	if v, ok := rsu.mutation.AccountID(); ok {
+		if err := resourcesettlement.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.account_id": %w`, err)}
+		}
 	}
+	if v, ok := rsu.mutation.WorkspaceID(); ok {
+		if err := resourcesettlement.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.workspace_id": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.ResourceType(); ok {
+		if err := resourcesettlement.ResourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "resource_type", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_type": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.ResourceID(); ok {
+		if err := resourcesettlement.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_id": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.Status(); ok {
+		if err := resourcesettlement.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.status": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.LedgerEntryID(); ok {
+		if err := resourcesettlement.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.ledger_entry_id": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.WalletTransactionID(); ok {
+		if err := resourcesettlement.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.wallet_transaction_id": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.IdempotencyKey(); ok {
+		if err := resourcesettlement.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := rsu.mutation.RequestHash(); ok {
+		if err := resourcesettlement.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (rsu *ResourceSettlementUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := rsu.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(resourcesettlement.Table, resourcesettlement.Columns, sqlgraph.NewFieldSpec(resourcesettlement.FieldID, field.TypeString))
 	if ps := rsu.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -591,29 +405,14 @@ func (rsu *ResourceSettlementUpdate) sqlSave(ctx context.Context) (n int, err er
 	if value, ok := rsu.mutation.AccountID(); ok {
 		_spec.SetField(resourcesettlement.FieldAccountID, field.TypeString, value)
 	}
-	if value, ok := rsu.mutation.BalanceCents(); ok {
-		_spec.SetField(resourcesettlement.FieldBalanceCents, field.TypeInt64, value)
+	if value, ok := rsu.mutation.WorkspaceID(); ok {
+		_spec.SetField(resourcesettlement.FieldWorkspaceID, field.TypeString, value)
 	}
-	if value, ok := rsu.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(resourcesettlement.FieldBalanceCents, field.TypeInt64, value)
+	if value, ok := rsu.mutation.ResourceType(); ok {
+		_spec.SetField(resourcesettlement.FieldResourceType, field.TypeString, value)
 	}
-	if value, ok := rsu.mutation.FrozenCents(); ok {
-		_spec.SetField(resourcesettlement.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := rsu.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(resourcesettlement.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := rsu.mutation.AvailableCents(); ok {
-		_spec.SetField(resourcesettlement.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := rsu.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(resourcesettlement.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := rsu.mutation.TotalSpentCents(); ok {
-		_spec.SetField(resourcesettlement.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := rsu.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(resourcesettlement.FieldTotalSpentCents, field.TypeInt64, value)
+	if value, ok := rsu.mutation.ResourceID(); ok {
+		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
 	}
 	if value, ok := rsu.mutation.AmountCents(); ok {
 		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)
@@ -624,38 +423,14 @@ func (rsu *ResourceSettlementUpdate) sqlSave(ctx context.Context) (n int, err er
 	if value, ok := rsu.mutation.Currency(); ok {
 		_spec.SetField(resourcesettlement.FieldCurrency, field.TypeString, value)
 	}
-	if value, ok := rsu.mutation.Direction(); ok {
-		_spec.SetField(resourcesettlement.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.Source(); ok {
-		_spec.SetField(resourcesettlement.FieldSource, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.OperatorUserID(); ok {
-		_spec.SetField(resourcesettlement.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.Reason(); ok {
-		_spec.SetField(resourcesettlement.FieldReason, field.TypeString, value)
+	if value, ok := rsu.mutation.Status(); ok {
+		_spec.SetField(resourcesettlement.FieldStatus, field.TypeString, value)
 	}
 	if value, ok := rsu.mutation.LedgerEntryID(); ok {
 		_spec.SetField(resourcesettlement.FieldLedgerEntryID, field.TypeString, value)
 	}
 	if value, ok := rsu.mutation.WalletTransactionID(); ok {
 		_spec.SetField(resourcesettlement.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.WorkspaceID(); ok {
-		_spec.SetField(resourcesettlement.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.ResourceType(); ok {
-		_spec.SetField(resourcesettlement.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.ResourceID(); ok {
-		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.HoldID(); ok {
-		_spec.SetField(resourcesettlement.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.Status(); ok {
-		_spec.SetField(resourcesettlement.FieldStatus, field.TypeString, value)
 	}
 	if value, ok := rsu.mutation.PricingVersion(); ok {
 		_spec.SetField(resourcesettlement.FieldPricingVersion, field.TypeString, value)
@@ -681,32 +456,14 @@ func (rsu *ResourceSettlementUpdate) sqlSave(ctx context.Context) (n int, err er
 	if value, ok := rsu.mutation.ProviderCostEvidenceRef(); ok {
 		_spec.SetField(resourcesettlement.FieldProviderCostEvidenceRef, field.TypeString, value)
 	}
-	if value, ok := rsu.mutation.ProviderRequestID(); ok {
-		_spec.SetField(resourcesettlement.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.RedactedURL(); ok {
-		_spec.SetField(resourcesettlement.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.TokenVersion(); ok {
-		_spec.SetField(resourcesettlement.FieldTokenVersion, field.TypeString, value)
-	}
 	if value, ok := rsu.mutation.IdempotencyKey(); ok {
 		_spec.SetField(resourcesettlement.FieldIdempotencyKey, field.TypeString, value)
 	}
 	if value, ok := rsu.mutation.RequestHash(); ok {
 		_spec.SetField(resourcesettlement.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := rsu.mutation.ReportJSON(); ok {
-		_spec.SetField(resourcesettlement.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := rsu.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(resourcesettlement.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := rsu.mutation.CreatedAt(); ok {
 		_spec.SetField(resourcesettlement.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := rsu.mutation.UpdatedAt(); ok {
-		_spec.SetField(resourcesettlement.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, rsu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -738,209 +495,6 @@ func (rsuo *ResourceSettlementUpdateOne) SetAccountID(s string) *ResourceSettlem
 func (rsuo *ResourceSettlementUpdateOne) SetNillableAccountID(s *string) *ResourceSettlementUpdateOne {
 	if s != nil {
 		rsuo.SetAccountID(*s)
-	}
-	return rsuo
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) SetBalanceCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.ResetBalanceCents()
-	rsuo.mutation.SetBalanceCents(i)
-	return rsuo
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableBalanceCents(i *int64) *ResourceSettlementUpdateOne {
-	if i != nil {
-		rsuo.SetBalanceCents(*i)
-	}
-	return rsuo
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) AddBalanceCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.AddBalanceCents(i)
-	return rsuo
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) SetFrozenCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.ResetFrozenCents()
-	rsuo.mutation.SetFrozenCents(i)
-	return rsuo
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableFrozenCents(i *int64) *ResourceSettlementUpdateOne {
-	if i != nil {
-		rsuo.SetFrozenCents(*i)
-	}
-	return rsuo
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) AddFrozenCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.AddFrozenCents(i)
-	return rsuo
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) SetAvailableCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.ResetAvailableCents()
-	rsuo.mutation.SetAvailableCents(i)
-	return rsuo
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableAvailableCents(i *int64) *ResourceSettlementUpdateOne {
-	if i != nil {
-		rsuo.SetAvailableCents(*i)
-	}
-	return rsuo
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) AddAvailableCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.AddAvailableCents(i)
-	return rsuo
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) SetTotalSpentCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.ResetTotalSpentCents()
-	rsuo.mutation.SetTotalSpentCents(i)
-	return rsuo
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableTotalSpentCents(i *int64) *ResourceSettlementUpdateOne {
-	if i != nil {
-		rsuo.SetTotalSpentCents(*i)
-	}
-	return rsuo
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) AddTotalSpentCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.AddTotalSpentCents(i)
-	return rsuo
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) SetAmountCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.ResetAmountCents()
-	rsuo.mutation.SetAmountCents(i)
-	return rsuo
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableAmountCents(i *int64) *ResourceSettlementUpdateOne {
-	if i != nil {
-		rsuo.SetAmountCents(*i)
-	}
-	return rsuo
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (rsuo *ResourceSettlementUpdateOne) AddAmountCents(i int64) *ResourceSettlementUpdateOne {
-	rsuo.mutation.AddAmountCents(i)
-	return rsuo
-}
-
-// SetCurrency sets the "currency" field.
-func (rsuo *ResourceSettlementUpdateOne) SetCurrency(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetCurrency(s)
-	return rsuo
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableCurrency(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetCurrency(*s)
-	}
-	return rsuo
-}
-
-// SetDirection sets the "direction" field.
-func (rsuo *ResourceSettlementUpdateOne) SetDirection(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetDirection(s)
-	return rsuo
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableDirection(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetDirection(*s)
-	}
-	return rsuo
-}
-
-// SetSource sets the "source" field.
-func (rsuo *ResourceSettlementUpdateOne) SetSource(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetSource(s)
-	return rsuo
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableSource(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetSource(*s)
-	}
-	return rsuo
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (rsuo *ResourceSettlementUpdateOne) SetOperatorUserID(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetOperatorUserID(s)
-	return rsuo
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableOperatorUserID(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetOperatorUserID(*s)
-	}
-	return rsuo
-}
-
-// SetReason sets the "reason" field.
-func (rsuo *ResourceSettlementUpdateOne) SetReason(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetReason(s)
-	return rsuo
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableReason(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetReason(*s)
-	}
-	return rsuo
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (rsuo *ResourceSettlementUpdateOne) SetLedgerEntryID(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetLedgerEntryID(s)
-	return rsuo
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableLedgerEntryID(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetLedgerEntryID(*s)
-	}
-	return rsuo
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (rsuo *ResourceSettlementUpdateOne) SetWalletTransactionID(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetWalletTransactionID(s)
-	return rsuo
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableWalletTransactionID(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetWalletTransactionID(*s)
 	}
 	return rsuo
 }
@@ -987,16 +541,37 @@ func (rsuo *ResourceSettlementUpdateOne) SetNillableResourceID(s *string) *Resou
 	return rsuo
 }
 
-// SetHoldID sets the "hold_id" field.
-func (rsuo *ResourceSettlementUpdateOne) SetHoldID(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetHoldID(s)
+// SetAmountCents sets the "amount_cents" field.
+func (rsuo *ResourceSettlementUpdateOne) SetAmountCents(i int64) *ResourceSettlementUpdateOne {
+	rsuo.mutation.ResetAmountCents()
+	rsuo.mutation.SetAmountCents(i)
 	return rsuo
 }
 
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableHoldID(s *string) *ResourceSettlementUpdateOne {
+// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
+func (rsuo *ResourceSettlementUpdateOne) SetNillableAmountCents(i *int64) *ResourceSettlementUpdateOne {
+	if i != nil {
+		rsuo.SetAmountCents(*i)
+	}
+	return rsuo
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (rsuo *ResourceSettlementUpdateOne) AddAmountCents(i int64) *ResourceSettlementUpdateOne {
+	rsuo.mutation.AddAmountCents(i)
+	return rsuo
+}
+
+// SetCurrency sets the "currency" field.
+func (rsuo *ResourceSettlementUpdateOne) SetCurrency(s string) *ResourceSettlementUpdateOne {
+	rsuo.mutation.SetCurrency(s)
+	return rsuo
+}
+
+// SetNillableCurrency sets the "currency" field if the given value is not nil.
+func (rsuo *ResourceSettlementUpdateOne) SetNillableCurrency(s *string) *ResourceSettlementUpdateOne {
 	if s != nil {
-		rsuo.SetHoldID(*s)
+		rsuo.SetCurrency(*s)
 	}
 	return rsuo
 }
@@ -1011,6 +586,34 @@ func (rsuo *ResourceSettlementUpdateOne) SetStatus(s string) *ResourceSettlement
 func (rsuo *ResourceSettlementUpdateOne) SetNillableStatus(s *string) *ResourceSettlementUpdateOne {
 	if s != nil {
 		rsuo.SetStatus(*s)
+	}
+	return rsuo
+}
+
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (rsuo *ResourceSettlementUpdateOne) SetLedgerEntryID(s string) *ResourceSettlementUpdateOne {
+	rsuo.mutation.SetLedgerEntryID(s)
+	return rsuo
+}
+
+// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
+func (rsuo *ResourceSettlementUpdateOne) SetNillableLedgerEntryID(s *string) *ResourceSettlementUpdateOne {
+	if s != nil {
+		rsuo.SetLedgerEntryID(*s)
+	}
+	return rsuo
+}
+
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (rsuo *ResourceSettlementUpdateOne) SetWalletTransactionID(s string) *ResourceSettlementUpdateOne {
+	rsuo.mutation.SetWalletTransactionID(s)
+	return rsuo
+}
+
+// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
+func (rsuo *ResourceSettlementUpdateOne) SetNillableWalletTransactionID(s *string) *ResourceSettlementUpdateOne {
+	if s != nil {
+		rsuo.SetWalletTransactionID(*s)
 	}
 	return rsuo
 }
@@ -1120,48 +723,6 @@ func (rsuo *ResourceSettlementUpdateOne) SetNillableProviderCostEvidenceRef(s *s
 	return rsuo
 }
 
-// SetProviderRequestID sets the "provider_request_id" field.
-func (rsuo *ResourceSettlementUpdateOne) SetProviderRequestID(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetProviderRequestID(s)
-	return rsuo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableProviderRequestID(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetProviderRequestID(*s)
-	}
-	return rsuo
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (rsuo *ResourceSettlementUpdateOne) SetRedactedURL(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetRedactedURL(s)
-	return rsuo
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableRedactedURL(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetRedactedURL(*s)
-	}
-	return rsuo
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (rsuo *ResourceSettlementUpdateOne) SetTokenVersion(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetTokenVersion(s)
-	return rsuo
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableTokenVersion(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetTokenVersion(*s)
-	}
-	return rsuo
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (rsuo *ResourceSettlementUpdateOne) SetIdempotencyKey(s string) *ResourceSettlementUpdateOne {
 	rsuo.mutation.SetIdempotencyKey(s)
@@ -1190,34 +751,6 @@ func (rsuo *ResourceSettlementUpdateOne) SetNillableRequestHash(s *string) *Reso
 	return rsuo
 }
 
-// SetReportJSON sets the "report_json" field.
-func (rsuo *ResourceSettlementUpdateOne) SetReportJSON(s string) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetReportJSON(s)
-	return rsuo
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableReportJSON(s *string) *ResourceSettlementUpdateOne {
-	if s != nil {
-		rsuo.SetReportJSON(*s)
-	}
-	return rsuo
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (rsuo *ResourceSettlementUpdateOne) SetBlockNewWorkspaces(b bool) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetBlockNewWorkspaces(b)
-	return rsuo
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (rsuo *ResourceSettlementUpdateOne) SetNillableBlockNewWorkspaces(b *bool) *ResourceSettlementUpdateOne {
-	if b != nil {
-		rsuo.SetBlockNewWorkspaces(*b)
-	}
-	return rsuo
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (rsuo *ResourceSettlementUpdateOne) SetCreatedAt(t time.Time) *ResourceSettlementUpdateOne {
 	rsuo.mutation.SetCreatedAt(t)
@@ -1229,12 +762,6 @@ func (rsuo *ResourceSettlementUpdateOne) SetNillableCreatedAt(t *time.Time) *Res
 	if t != nil {
 		rsuo.SetCreatedAt(*t)
 	}
-	return rsuo
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (rsuo *ResourceSettlementUpdateOne) SetUpdatedAt(t time.Time) *ResourceSettlementUpdateOne {
-	rsuo.mutation.SetUpdatedAt(t)
 	return rsuo
 }
 
@@ -1258,7 +785,6 @@ func (rsuo *ResourceSettlementUpdateOne) Select(field string, fields ...string) 
 
 // Save executes the query and returns the updated ResourceSettlement entity.
 func (rsuo *ResourceSettlementUpdateOne) Save(ctx context.Context) (*ResourceSettlement, error) {
-	rsuo.defaults()
 	return withHooks(ctx, rsuo.sqlSave, rsuo.mutation, rsuo.hooks)
 }
 
@@ -1284,15 +810,60 @@ func (rsuo *ResourceSettlementUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (rsuo *ResourceSettlementUpdateOne) defaults() {
-	if _, ok := rsuo.mutation.UpdatedAt(); !ok {
-		v := resourcesettlement.UpdateDefaultUpdatedAt()
-		rsuo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (rsuo *ResourceSettlementUpdateOne) check() error {
+	if v, ok := rsuo.mutation.AccountID(); ok {
+		if err := resourcesettlement.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.account_id": %w`, err)}
+		}
 	}
+	if v, ok := rsuo.mutation.WorkspaceID(); ok {
+		if err := resourcesettlement.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.workspace_id": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.ResourceType(); ok {
+		if err := resourcesettlement.ResourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "resource_type", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_type": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.ResourceID(); ok {
+		if err := resourcesettlement.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_id": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.Status(); ok {
+		if err := resourcesettlement.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.status": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.LedgerEntryID(); ok {
+		if err := resourcesettlement.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.ledger_entry_id": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.WalletTransactionID(); ok {
+		if err := resourcesettlement.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.wallet_transaction_id": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.IdempotencyKey(); ok {
+		if err := resourcesettlement.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := rsuo.mutation.RequestHash(); ok {
+		if err := resourcesettlement.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (rsuo *ResourceSettlementUpdateOne) sqlSave(ctx context.Context) (_node *ResourceSettlement, err error) {
+	if err := rsuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(resourcesettlement.Table, resourcesettlement.Columns, sqlgraph.NewFieldSpec(resourcesettlement.FieldID, field.TypeString))
 	id, ok := rsuo.mutation.ID()
 	if !ok {
@@ -1321,29 +892,14 @@ func (rsuo *ResourceSettlementUpdateOne) sqlSave(ctx context.Context) (_node *Re
 	if value, ok := rsuo.mutation.AccountID(); ok {
 		_spec.SetField(resourcesettlement.FieldAccountID, field.TypeString, value)
 	}
-	if value, ok := rsuo.mutation.BalanceCents(); ok {
-		_spec.SetField(resourcesettlement.FieldBalanceCents, field.TypeInt64, value)
+	if value, ok := rsuo.mutation.WorkspaceID(); ok {
+		_spec.SetField(resourcesettlement.FieldWorkspaceID, field.TypeString, value)
 	}
-	if value, ok := rsuo.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(resourcesettlement.FieldBalanceCents, field.TypeInt64, value)
+	if value, ok := rsuo.mutation.ResourceType(); ok {
+		_spec.SetField(resourcesettlement.FieldResourceType, field.TypeString, value)
 	}
-	if value, ok := rsuo.mutation.FrozenCents(); ok {
-		_spec.SetField(resourcesettlement.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := rsuo.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(resourcesettlement.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := rsuo.mutation.AvailableCents(); ok {
-		_spec.SetField(resourcesettlement.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := rsuo.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(resourcesettlement.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := rsuo.mutation.TotalSpentCents(); ok {
-		_spec.SetField(resourcesettlement.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := rsuo.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(resourcesettlement.FieldTotalSpentCents, field.TypeInt64, value)
+	if value, ok := rsuo.mutation.ResourceID(); ok {
+		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
 	}
 	if value, ok := rsuo.mutation.AmountCents(); ok {
 		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)
@@ -1354,38 +910,14 @@ func (rsuo *ResourceSettlementUpdateOne) sqlSave(ctx context.Context) (_node *Re
 	if value, ok := rsuo.mutation.Currency(); ok {
 		_spec.SetField(resourcesettlement.FieldCurrency, field.TypeString, value)
 	}
-	if value, ok := rsuo.mutation.Direction(); ok {
-		_spec.SetField(resourcesettlement.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.Source(); ok {
-		_spec.SetField(resourcesettlement.FieldSource, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.OperatorUserID(); ok {
-		_spec.SetField(resourcesettlement.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.Reason(); ok {
-		_spec.SetField(resourcesettlement.FieldReason, field.TypeString, value)
+	if value, ok := rsuo.mutation.Status(); ok {
+		_spec.SetField(resourcesettlement.FieldStatus, field.TypeString, value)
 	}
 	if value, ok := rsuo.mutation.LedgerEntryID(); ok {
 		_spec.SetField(resourcesettlement.FieldLedgerEntryID, field.TypeString, value)
 	}
 	if value, ok := rsuo.mutation.WalletTransactionID(); ok {
 		_spec.SetField(resourcesettlement.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.WorkspaceID(); ok {
-		_spec.SetField(resourcesettlement.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.ResourceType(); ok {
-		_spec.SetField(resourcesettlement.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.ResourceID(); ok {
-		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.HoldID(); ok {
-		_spec.SetField(resourcesettlement.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.Status(); ok {
-		_spec.SetField(resourcesettlement.FieldStatus, field.TypeString, value)
 	}
 	if value, ok := rsuo.mutation.PricingVersion(); ok {
 		_spec.SetField(resourcesettlement.FieldPricingVersion, field.TypeString, value)
@@ -1411,32 +943,14 @@ func (rsuo *ResourceSettlementUpdateOne) sqlSave(ctx context.Context) (_node *Re
 	if value, ok := rsuo.mutation.ProviderCostEvidenceRef(); ok {
 		_spec.SetField(resourcesettlement.FieldProviderCostEvidenceRef, field.TypeString, value)
 	}
-	if value, ok := rsuo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(resourcesettlement.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.RedactedURL(); ok {
-		_spec.SetField(resourcesettlement.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.TokenVersion(); ok {
-		_spec.SetField(resourcesettlement.FieldTokenVersion, field.TypeString, value)
-	}
 	if value, ok := rsuo.mutation.IdempotencyKey(); ok {
 		_spec.SetField(resourcesettlement.FieldIdempotencyKey, field.TypeString, value)
 	}
 	if value, ok := rsuo.mutation.RequestHash(); ok {
 		_spec.SetField(resourcesettlement.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := rsuo.mutation.ReportJSON(); ok {
-		_spec.SetField(resourcesettlement.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := rsuo.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(resourcesettlement.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := rsuo.mutation.CreatedAt(); ok {
 		_spec.SetField(resourcesettlement.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := rsuo.mutation.UpdatedAt(); ok {
-		_spec.SetField(resourcesettlement.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &ResourceSettlement{config: rsuo.config}
 	_spec.Assign = _node.assignValues

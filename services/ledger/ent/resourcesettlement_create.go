@@ -26,81 +26,27 @@ func (rsc *ResourceSettlementCreate) SetAccountID(s string) *ResourceSettlementC
 	return rsc
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableAccountID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetAccountID(*s)
-	}
+// SetWorkspaceID sets the "workspace_id" field.
+func (rsc *ResourceSettlementCreate) SetWorkspaceID(s string) *ResourceSettlementCreate {
+	rsc.mutation.SetWorkspaceID(s)
 	return rsc
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (rsc *ResourceSettlementCreate) SetBalanceCents(i int64) *ResourceSettlementCreate {
-	rsc.mutation.SetBalanceCents(i)
+// SetResourceType sets the "resource_type" field.
+func (rsc *ResourceSettlementCreate) SetResourceType(s string) *ResourceSettlementCreate {
+	rsc.mutation.SetResourceType(s)
 	return rsc
 }
 
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableBalanceCents(i *int64) *ResourceSettlementCreate {
-	if i != nil {
-		rsc.SetBalanceCents(*i)
-	}
-	return rsc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (rsc *ResourceSettlementCreate) SetFrozenCents(i int64) *ResourceSettlementCreate {
-	rsc.mutation.SetFrozenCents(i)
-	return rsc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableFrozenCents(i *int64) *ResourceSettlementCreate {
-	if i != nil {
-		rsc.SetFrozenCents(*i)
-	}
-	return rsc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (rsc *ResourceSettlementCreate) SetAvailableCents(i int64) *ResourceSettlementCreate {
-	rsc.mutation.SetAvailableCents(i)
-	return rsc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableAvailableCents(i *int64) *ResourceSettlementCreate {
-	if i != nil {
-		rsc.SetAvailableCents(*i)
-	}
-	return rsc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (rsc *ResourceSettlementCreate) SetTotalSpentCents(i int64) *ResourceSettlementCreate {
-	rsc.mutation.SetTotalSpentCents(i)
-	return rsc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableTotalSpentCents(i *int64) *ResourceSettlementCreate {
-	if i != nil {
-		rsc.SetTotalSpentCents(*i)
-	}
+// SetResourceID sets the "resource_id" field.
+func (rsc *ResourceSettlementCreate) SetResourceID(s string) *ResourceSettlementCreate {
+	rsc.mutation.SetResourceID(s)
 	return rsc
 }
 
 // SetAmountCents sets the "amount_cents" field.
 func (rsc *ResourceSettlementCreate) SetAmountCents(i int64) *ResourceSettlementCreate {
 	rsc.mutation.SetAmountCents(i)
-	return rsc
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableAmountCents(i *int64) *ResourceSettlementCreate {
-	if i != nil {
-		rsc.SetAmountCents(*i)
-	}
 	return rsc
 }
 
@@ -118,59 +64,9 @@ func (rsc *ResourceSettlementCreate) SetNillableCurrency(s *string) *ResourceSet
 	return rsc
 }
 
-// SetDirection sets the "direction" field.
-func (rsc *ResourceSettlementCreate) SetDirection(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetDirection(s)
-	return rsc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableDirection(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetDirection(*s)
-	}
-	return rsc
-}
-
-// SetSource sets the "source" field.
-func (rsc *ResourceSettlementCreate) SetSource(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetSource(s)
-	return rsc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableSource(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetSource(*s)
-	}
-	return rsc
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (rsc *ResourceSettlementCreate) SetOperatorUserID(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetOperatorUserID(s)
-	return rsc
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableOperatorUserID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetOperatorUserID(*s)
-	}
-	return rsc
-}
-
-// SetReason sets the "reason" field.
-func (rsc *ResourceSettlementCreate) SetReason(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetReason(s)
-	return rsc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableReason(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetReason(*s)
-	}
+// SetStatus sets the "status" field.
+func (rsc *ResourceSettlementCreate) SetStatus(s string) *ResourceSettlementCreate {
+	rsc.mutation.SetStatus(s)
 	return rsc
 }
 
@@ -180,95 +76,9 @@ func (rsc *ResourceSettlementCreate) SetLedgerEntryID(s string) *ResourceSettlem
 	return rsc
 }
 
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableLedgerEntryID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetLedgerEntryID(*s)
-	}
-	return rsc
-}
-
 // SetWalletTransactionID sets the "wallet_transaction_id" field.
 func (rsc *ResourceSettlementCreate) SetWalletTransactionID(s string) *ResourceSettlementCreate {
 	rsc.mutation.SetWalletTransactionID(s)
-	return rsc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableWalletTransactionID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetWalletTransactionID(*s)
-	}
-	return rsc
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (rsc *ResourceSettlementCreate) SetWorkspaceID(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetWorkspaceID(s)
-	return rsc
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableWorkspaceID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetWorkspaceID(*s)
-	}
-	return rsc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (rsc *ResourceSettlementCreate) SetResourceType(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetResourceType(s)
-	return rsc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableResourceType(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetResourceType(*s)
-	}
-	return rsc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (rsc *ResourceSettlementCreate) SetResourceID(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetResourceID(s)
-	return rsc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableResourceID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetResourceID(*s)
-	}
-	return rsc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (rsc *ResourceSettlementCreate) SetHoldID(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetHoldID(s)
-	return rsc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableHoldID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetHoldID(*s)
-	}
-	return rsc
-}
-
-// SetStatus sets the "status" field.
-func (rsc *ResourceSettlementCreate) SetStatus(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetStatus(s)
-	return rsc
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableStatus(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetStatus(*s)
-	}
 	return rsc
 }
 
@@ -370,101 +180,15 @@ func (rsc *ResourceSettlementCreate) SetNillableProviderCostEvidenceRef(s *strin
 	return rsc
 }
 
-// SetProviderRequestID sets the "provider_request_id" field.
-func (rsc *ResourceSettlementCreate) SetProviderRequestID(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetProviderRequestID(s)
-	return rsc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableProviderRequestID(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetProviderRequestID(*s)
-	}
-	return rsc
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (rsc *ResourceSettlementCreate) SetRedactedURL(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetRedactedURL(s)
-	return rsc
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableRedactedURL(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetRedactedURL(*s)
-	}
-	return rsc
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (rsc *ResourceSettlementCreate) SetTokenVersion(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetTokenVersion(s)
-	return rsc
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableTokenVersion(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetTokenVersion(*s)
-	}
-	return rsc
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (rsc *ResourceSettlementCreate) SetIdempotencyKey(s string) *ResourceSettlementCreate {
 	rsc.mutation.SetIdempotencyKey(s)
 	return rsc
 }
 
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableIdempotencyKey(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetIdempotencyKey(*s)
-	}
-	return rsc
-}
-
 // SetRequestHash sets the "request_hash" field.
 func (rsc *ResourceSettlementCreate) SetRequestHash(s string) *ResourceSettlementCreate {
 	rsc.mutation.SetRequestHash(s)
-	return rsc
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableRequestHash(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetRequestHash(*s)
-	}
-	return rsc
-}
-
-// SetReportJSON sets the "report_json" field.
-func (rsc *ResourceSettlementCreate) SetReportJSON(s string) *ResourceSettlementCreate {
-	rsc.mutation.SetReportJSON(s)
-	return rsc
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableReportJSON(s *string) *ResourceSettlementCreate {
-	if s != nil {
-		rsc.SetReportJSON(*s)
-	}
-	return rsc
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (rsc *ResourceSettlementCreate) SetBlockNewWorkspaces(b bool) *ResourceSettlementCreate {
-	rsc.mutation.SetBlockNewWorkspaces(b)
-	return rsc
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableBlockNewWorkspaces(b *bool) *ResourceSettlementCreate {
-	if b != nil {
-		rsc.SetBlockNewWorkspaces(*b)
-	}
 	return rsc
 }
 
@@ -478,20 +202,6 @@ func (rsc *ResourceSettlementCreate) SetCreatedAt(t time.Time) *ResourceSettleme
 func (rsc *ResourceSettlementCreate) SetNillableCreatedAt(t *time.Time) *ResourceSettlementCreate {
 	if t != nil {
 		rsc.SetCreatedAt(*t)
-	}
-	return rsc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (rsc *ResourceSettlementCreate) SetUpdatedAt(t time.Time) *ResourceSettlementCreate {
-	rsc.mutation.SetUpdatedAt(t)
-	return rsc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (rsc *ResourceSettlementCreate) SetNillableUpdatedAt(t *time.Time) *ResourceSettlementCreate {
-	if t != nil {
-		rsc.SetUpdatedAt(*t)
 	}
 	return rsc
 }
@@ -537,77 +247,9 @@ func (rsc *ResourceSettlementCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (rsc *ResourceSettlementCreate) defaults() {
-	if _, ok := rsc.mutation.AccountID(); !ok {
-		v := resourcesettlement.DefaultAccountID
-		rsc.mutation.SetAccountID(v)
-	}
-	if _, ok := rsc.mutation.BalanceCents(); !ok {
-		v := resourcesettlement.DefaultBalanceCents
-		rsc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := rsc.mutation.FrozenCents(); !ok {
-		v := resourcesettlement.DefaultFrozenCents
-		rsc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := rsc.mutation.AvailableCents(); !ok {
-		v := resourcesettlement.DefaultAvailableCents
-		rsc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := rsc.mutation.TotalSpentCents(); !ok {
-		v := resourcesettlement.DefaultTotalSpentCents
-		rsc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := rsc.mutation.AmountCents(); !ok {
-		v := resourcesettlement.DefaultAmountCents
-		rsc.mutation.SetAmountCents(v)
-	}
 	if _, ok := rsc.mutation.Currency(); !ok {
 		v := resourcesettlement.DefaultCurrency
 		rsc.mutation.SetCurrency(v)
-	}
-	if _, ok := rsc.mutation.Direction(); !ok {
-		v := resourcesettlement.DefaultDirection
-		rsc.mutation.SetDirection(v)
-	}
-	if _, ok := rsc.mutation.Source(); !ok {
-		v := resourcesettlement.DefaultSource
-		rsc.mutation.SetSource(v)
-	}
-	if _, ok := rsc.mutation.OperatorUserID(); !ok {
-		v := resourcesettlement.DefaultOperatorUserID
-		rsc.mutation.SetOperatorUserID(v)
-	}
-	if _, ok := rsc.mutation.Reason(); !ok {
-		v := resourcesettlement.DefaultReason
-		rsc.mutation.SetReason(v)
-	}
-	if _, ok := rsc.mutation.LedgerEntryID(); !ok {
-		v := resourcesettlement.DefaultLedgerEntryID
-		rsc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := rsc.mutation.WalletTransactionID(); !ok {
-		v := resourcesettlement.DefaultWalletTransactionID
-		rsc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := rsc.mutation.WorkspaceID(); !ok {
-		v := resourcesettlement.DefaultWorkspaceID
-		rsc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := rsc.mutation.ResourceType(); !ok {
-		v := resourcesettlement.DefaultResourceType
-		rsc.mutation.SetResourceType(v)
-	}
-	if _, ok := rsc.mutation.ResourceID(); !ok {
-		v := resourcesettlement.DefaultResourceID
-		rsc.mutation.SetResourceID(v)
-	}
-	if _, ok := rsc.mutation.HoldID(); !ok {
-		v := resourcesettlement.DefaultHoldID
-		rsc.mutation.SetHoldID(v)
-	}
-	if _, ok := rsc.mutation.Status(); !ok {
-		v := resourcesettlement.DefaultStatus
-		rsc.mutation.SetStatus(v)
 	}
 	if _, ok := rsc.mutation.PricingVersion(); !ok {
 		v := resourcesettlement.DefaultPricingVersion
@@ -637,41 +279,9 @@ func (rsc *ResourceSettlementCreate) defaults() {
 		v := resourcesettlement.DefaultProviderCostEvidenceRef
 		rsc.mutation.SetProviderCostEvidenceRef(v)
 	}
-	if _, ok := rsc.mutation.ProviderRequestID(); !ok {
-		v := resourcesettlement.DefaultProviderRequestID
-		rsc.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := rsc.mutation.RedactedURL(); !ok {
-		v := resourcesettlement.DefaultRedactedURL
-		rsc.mutation.SetRedactedURL(v)
-	}
-	if _, ok := rsc.mutation.TokenVersion(); !ok {
-		v := resourcesettlement.DefaultTokenVersion
-		rsc.mutation.SetTokenVersion(v)
-	}
-	if _, ok := rsc.mutation.IdempotencyKey(); !ok {
-		v := resourcesettlement.DefaultIdempotencyKey
-		rsc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := rsc.mutation.RequestHash(); !ok {
-		v := resourcesettlement.DefaultRequestHash
-		rsc.mutation.SetRequestHash(v)
-	}
-	if _, ok := rsc.mutation.ReportJSON(); !ok {
-		v := resourcesettlement.DefaultReportJSON
-		rsc.mutation.SetReportJSON(v)
-	}
-	if _, ok := rsc.mutation.BlockNewWorkspaces(); !ok {
-		v := resourcesettlement.DefaultBlockNewWorkspaces
-		rsc.mutation.SetBlockNewWorkspaces(v)
-	}
 	if _, ok := rsc.mutation.CreatedAt(); !ok {
 		v := resourcesettlement.DefaultCreatedAt()
 		rsc.mutation.SetCreatedAt(v)
-	}
-	if _, ok := rsc.mutation.UpdatedAt(); !ok {
-		v := resourcesettlement.DefaultUpdatedAt()
-		rsc.mutation.SetUpdatedAt(v)
 	}
 }
 
@@ -680,17 +290,34 @@ func (rsc *ResourceSettlementCreate) check() error {
 	if _, ok := rsc.mutation.AccountID(); !ok {
 		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "ResourceSettlement.account_id"`)}
 	}
-	if _, ok := rsc.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "ResourceSettlement.balance_cents"`)}
+	if v, ok := rsc.mutation.AccountID(); ok {
+		if err := resourcesettlement.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.account_id": %w`, err)}
+		}
 	}
-	if _, ok := rsc.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "ResourceSettlement.frozen_cents"`)}
+	if _, ok := rsc.mutation.WorkspaceID(); !ok {
+		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "ResourceSettlement.workspace_id"`)}
 	}
-	if _, ok := rsc.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "ResourceSettlement.available_cents"`)}
+	if v, ok := rsc.mutation.WorkspaceID(); ok {
+		if err := resourcesettlement.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.workspace_id": %w`, err)}
+		}
 	}
-	if _, ok := rsc.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "ResourceSettlement.total_spent_cents"`)}
+	if _, ok := rsc.mutation.ResourceType(); !ok {
+		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "ResourceSettlement.resource_type"`)}
+	}
+	if v, ok := rsc.mutation.ResourceType(); ok {
+		if err := resourcesettlement.ResourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "resource_type", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_type": %w`, err)}
+		}
+	}
+	if _, ok := rsc.mutation.ResourceID(); !ok {
+		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "ResourceSettlement.resource_id"`)}
+	}
+	if v, ok := rsc.mutation.ResourceID(); ok {
+		if err := resourcesettlement.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_id": %w`, err)}
+		}
 	}
 	if _, ok := rsc.mutation.AmountCents(); !ok {
 		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "ResourceSettlement.amount_cents"`)}
@@ -698,38 +325,29 @@ func (rsc *ResourceSettlementCreate) check() error {
 	if _, ok := rsc.mutation.Currency(); !ok {
 		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "ResourceSettlement.currency"`)}
 	}
-	if _, ok := rsc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "ResourceSettlement.direction"`)}
+	if _, ok := rsc.mutation.Status(); !ok {
+		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "ResourceSettlement.status"`)}
 	}
-	if _, ok := rsc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "ResourceSettlement.source"`)}
-	}
-	if _, ok := rsc.mutation.OperatorUserID(); !ok {
-		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "ResourceSettlement.operator_user_id"`)}
-	}
-	if _, ok := rsc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "ResourceSettlement.reason"`)}
+	if v, ok := rsc.mutation.Status(); ok {
+		if err := resourcesettlement.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.status": %w`, err)}
+		}
 	}
 	if _, ok := rsc.mutation.LedgerEntryID(); !ok {
 		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "ResourceSettlement.ledger_entry_id"`)}
 	}
+	if v, ok := rsc.mutation.LedgerEntryID(); ok {
+		if err := resourcesettlement.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.ledger_entry_id": %w`, err)}
+		}
+	}
 	if _, ok := rsc.mutation.WalletTransactionID(); !ok {
 		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "ResourceSettlement.wallet_transaction_id"`)}
 	}
-	if _, ok := rsc.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "ResourceSettlement.workspace_id"`)}
-	}
-	if _, ok := rsc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "ResourceSettlement.resource_type"`)}
-	}
-	if _, ok := rsc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "ResourceSettlement.resource_id"`)}
-	}
-	if _, ok := rsc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "ResourceSettlement.hold_id"`)}
-	}
-	if _, ok := rsc.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "ResourceSettlement.status"`)}
+	if v, ok := rsc.mutation.WalletTransactionID(); ok {
+		if err := resourcesettlement.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.wallet_transaction_id": %w`, err)}
+		}
 	}
 	if _, ok := rsc.mutation.PricingVersion(); !ok {
 		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "ResourceSettlement.pricing_version"`)}
@@ -752,32 +370,24 @@ func (rsc *ResourceSettlementCreate) check() error {
 	if _, ok := rsc.mutation.ProviderCostEvidenceRef(); !ok {
 		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "ResourceSettlement.provider_cost_evidence_ref"`)}
 	}
-	if _, ok := rsc.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "ResourceSettlement.provider_request_id"`)}
-	}
-	if _, ok := rsc.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "ResourceSettlement.redacted_url"`)}
-	}
-	if _, ok := rsc.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "ResourceSettlement.token_version"`)}
-	}
 	if _, ok := rsc.mutation.IdempotencyKey(); !ok {
 		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "ResourceSettlement.idempotency_key"`)}
+	}
+	if v, ok := rsc.mutation.IdempotencyKey(); ok {
+		if err := resourcesettlement.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.idempotency_key": %w`, err)}
+		}
 	}
 	if _, ok := rsc.mutation.RequestHash(); !ok {
 		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "ResourceSettlement.request_hash"`)}
 	}
-	if _, ok := rsc.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "ResourceSettlement.report_json"`)}
-	}
-	if _, ok := rsc.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "ResourceSettlement.block_new_workspaces"`)}
+	if v, ok := rsc.mutation.RequestHash(); ok {
+		if err := resourcesettlement.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.request_hash": %w`, err)}
+		}
 	}
 	if _, ok := rsc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "ResourceSettlement.created_at"`)}
-	}
-	if _, ok := rsc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "ResourceSettlement.updated_at"`)}
 	}
 	if v, ok := rsc.mutation.ID(); ok {
 		if err := resourcesettlement.IDValidator(v); err != nil {
@@ -823,54 +433,6 @@ func (rsc *ResourceSettlementCreate) createSpec() (*ResourceSettlement, *sqlgrap
 		_spec.SetField(resourcesettlement.FieldAccountID, field.TypeString, value)
 		_node.AccountID = value
 	}
-	if value, ok := rsc.mutation.BalanceCents(); ok {
-		_spec.SetField(resourcesettlement.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := rsc.mutation.FrozenCents(); ok {
-		_spec.SetField(resourcesettlement.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := rsc.mutation.AvailableCents(); ok {
-		_spec.SetField(resourcesettlement.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := rsc.mutation.TotalSpentCents(); ok {
-		_spec.SetField(resourcesettlement.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
-	if value, ok := rsc.mutation.AmountCents(); ok {
-		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)
-		_node.AmountCents = value
-	}
-	if value, ok := rsc.mutation.Currency(); ok {
-		_spec.SetField(resourcesettlement.FieldCurrency, field.TypeString, value)
-		_node.Currency = value
-	}
-	if value, ok := rsc.mutation.Direction(); ok {
-		_spec.SetField(resourcesettlement.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := rsc.mutation.Source(); ok {
-		_spec.SetField(resourcesettlement.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
-	if value, ok := rsc.mutation.OperatorUserID(); ok {
-		_spec.SetField(resourcesettlement.FieldOperatorUserID, field.TypeString, value)
-		_node.OperatorUserID = value
-	}
-	if value, ok := rsc.mutation.Reason(); ok {
-		_spec.SetField(resourcesettlement.FieldReason, field.TypeString, value)
-		_node.Reason = value
-	}
-	if value, ok := rsc.mutation.LedgerEntryID(); ok {
-		_spec.SetField(resourcesettlement.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := rsc.mutation.WalletTransactionID(); ok {
-		_spec.SetField(resourcesettlement.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
 	if value, ok := rsc.mutation.WorkspaceID(); ok {
 		_spec.SetField(resourcesettlement.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
@@ -883,13 +445,25 @@ func (rsc *ResourceSettlementCreate) createSpec() (*ResourceSettlement, *sqlgrap
 		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
 		_node.ResourceID = value
 	}
-	if value, ok := rsc.mutation.HoldID(); ok {
-		_spec.SetField(resourcesettlement.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
+	if value, ok := rsc.mutation.AmountCents(); ok {
+		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)
+		_node.AmountCents = value
+	}
+	if value, ok := rsc.mutation.Currency(); ok {
+		_spec.SetField(resourcesettlement.FieldCurrency, field.TypeString, value)
+		_node.Currency = value
 	}
 	if value, ok := rsc.mutation.Status(); ok {
 		_spec.SetField(resourcesettlement.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := rsc.mutation.LedgerEntryID(); ok {
+		_spec.SetField(resourcesettlement.FieldLedgerEntryID, field.TypeString, value)
+		_node.LedgerEntryID = value
+	}
+	if value, ok := rsc.mutation.WalletTransactionID(); ok {
+		_spec.SetField(resourcesettlement.FieldWalletTransactionID, field.TypeString, value)
+		_node.WalletTransactionID = value
 	}
 	if value, ok := rsc.mutation.PricingVersion(); ok {
 		_spec.SetField(resourcesettlement.FieldPricingVersion, field.TypeString, value)
@@ -919,18 +493,6 @@ func (rsc *ResourceSettlementCreate) createSpec() (*ResourceSettlement, *sqlgrap
 		_spec.SetField(resourcesettlement.FieldProviderCostEvidenceRef, field.TypeString, value)
 		_node.ProviderCostEvidenceRef = value
 	}
-	if value, ok := rsc.mutation.ProviderRequestID(); ok {
-		_spec.SetField(resourcesettlement.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := rsc.mutation.RedactedURL(); ok {
-		_spec.SetField(resourcesettlement.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := rsc.mutation.TokenVersion(); ok {
-		_spec.SetField(resourcesettlement.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
-	}
 	if value, ok := rsc.mutation.IdempotencyKey(); ok {
 		_spec.SetField(resourcesettlement.FieldIdempotencyKey, field.TypeString, value)
 		_node.IdempotencyKey = value
@@ -939,21 +501,9 @@ func (rsc *ResourceSettlementCreate) createSpec() (*ResourceSettlement, *sqlgrap
 		_spec.SetField(resourcesettlement.FieldRequestHash, field.TypeString, value)
 		_node.RequestHash = value
 	}
-	if value, ok := rsc.mutation.ReportJSON(); ok {
-		_spec.SetField(resourcesettlement.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := rsc.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(resourcesettlement.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
-	}
 	if value, ok := rsc.mutation.CreatedAt(); ok {
 		_spec.SetField(resourcesettlement.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := rsc.mutation.UpdatedAt(); ok {
-		_spec.SetField(resourcesettlement.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

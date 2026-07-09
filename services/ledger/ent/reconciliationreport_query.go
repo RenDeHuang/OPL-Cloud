@@ -261,12 +261,12 @@ func (rrq *ReconciliationReportQuery) Clone() *ReconciliationReportQuery {
 // Example:
 //
 //	var v []struct {
-//		AccountID string `json:"account_id,omitempty"`
+//		Status string `json:"status,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.ReconciliationReport.Query().
-//		GroupBy(reconciliationreport.FieldAccountID).
+//		GroupBy(reconciliationreport.FieldStatus).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (rrq *ReconciliationReportQuery) GroupBy(field string, fields ...string) *ReconciliationReportGroupBy {
@@ -284,11 +284,11 @@ func (rrq *ReconciliationReportQuery) GroupBy(field string, fields ...string) *R
 // Example:
 //
 //	var v []struct {
-//		AccountID string `json:"account_id,omitempty"`
+//		Status string `json:"status,omitempty"`
 //	}
 //
 //	client.ReconciliationReport.Query().
-//		Select(reconciliationreport.FieldAccountID).
+//		Select(reconciliationreport.FieldStatus).
 //		Scan(ctx, &v)
 func (rrq *ReconciliationReportQuery) Select(fields ...string) *ReconciliationReportSelect {
 	rrq.ctx.Fields = append(rrq.ctx.Fields, fields...)

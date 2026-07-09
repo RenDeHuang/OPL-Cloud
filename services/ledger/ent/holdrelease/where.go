@@ -69,66 +69,6 @@ func AccountID(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldAccountID, v))
 }
 
-// BalanceCents applies equality check predicate on the "balance_cents" field. It's identical to BalanceCentsEQ.
-func BalanceCents(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldBalanceCents, v))
-}
-
-// FrozenCents applies equality check predicate on the "frozen_cents" field. It's identical to FrozenCentsEQ.
-func FrozenCents(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldFrozenCents, v))
-}
-
-// AvailableCents applies equality check predicate on the "available_cents" field. It's identical to AvailableCentsEQ.
-func AvailableCents(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldAvailableCents, v))
-}
-
-// TotalSpentCents applies equality check predicate on the "total_spent_cents" field. It's identical to TotalSpentCentsEQ.
-func TotalSpentCents(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldTotalSpentCents, v))
-}
-
-// AmountCents applies equality check predicate on the "amount_cents" field. It's identical to AmountCentsEQ.
-func AmountCents(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldAmountCents, v))
-}
-
-// Currency applies equality check predicate on the "currency" field. It's identical to CurrencyEQ.
-func Currency(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldCurrency, v))
-}
-
-// Direction applies equality check predicate on the "direction" field. It's identical to DirectionEQ.
-func Direction(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldDirection, v))
-}
-
-// Source applies equality check predicate on the "source" field. It's identical to SourceEQ.
-func Source(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldSource, v))
-}
-
-// OperatorUserID applies equality check predicate on the "operator_user_id" field. It's identical to OperatorUserIDEQ.
-func OperatorUserID(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldOperatorUserID, v))
-}
-
-// Reason applies equality check predicate on the "reason" field. It's identical to ReasonEQ.
-func Reason(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldReason, v))
-}
-
-// LedgerEntryID applies equality check predicate on the "ledger_entry_id" field. It's identical to LedgerEntryIDEQ.
-func LedgerEntryID(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldLedgerEntryID, v))
-}
-
-// WalletTransactionID applies equality check predicate on the "wallet_transaction_id" field. It's identical to WalletTransactionIDEQ.
-func WalletTransactionID(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldWalletTransactionID, v))
-}
-
 // WorkspaceID applies equality check predicate on the "workspace_id" field. It's identical to WorkspaceIDEQ.
 func WorkspaceID(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldWorkspaceID, v))
@@ -149,59 +89,29 @@ func HoldID(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldHoldID, v))
 }
 
+// AmountCents applies equality check predicate on the "amount_cents" field. It's identical to AmountCentsEQ.
+func AmountCents(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldAmountCents, v))
+}
+
+// Currency applies equality check predicate on the "currency" field. It's identical to CurrencyEQ.
+func Currency(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldCurrency, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldStatus, v))
 }
 
-// PricingVersion applies equality check predicate on the "pricing_version" field. It's identical to PricingVersionEQ.
-func PricingVersion(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldPricingVersion, v))
+// LedgerEntryID applies equality check predicate on the "ledger_entry_id" field. It's identical to LedgerEntryIDEQ.
+func LedgerEntryID(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldLedgerEntryID, v))
 }
 
-// PriceSnapshotJSON applies equality check predicate on the "price_snapshot_json" field. It's identical to PriceSnapshotJSONEQ.
-func PriceSnapshotJSON(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldPriceSnapshotJSON, v))
-}
-
-// UsagePeriodStart applies equality check predicate on the "usage_period_start" field. It's identical to UsagePeriodStartEQ.
-func UsagePeriodStart(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodEnd applies equality check predicate on the "usage_period_end" field. It's identical to UsagePeriodEndEQ.
-func UsagePeriodEnd(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUsagePeriodEnd, v))
-}
-
-// Quantity applies equality check predicate on the "quantity" field. It's identical to QuantityEQ.
-func Quantity(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldQuantity, v))
-}
-
-// Unit applies equality check predicate on the "unit" field. It's identical to UnitEQ.
-func Unit(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUnit, v))
-}
-
-// ProviderCostEvidenceRef applies equality check predicate on the "provider_cost_evidence_ref" field. It's identical to ProviderCostEvidenceRefEQ.
-func ProviderCostEvidenceRef(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderRequestID applies equality check predicate on the "provider_request_id" field. It's identical to ProviderRequestIDEQ.
-func ProviderRequestID(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldProviderRequestID, v))
-}
-
-// RedactedURL applies equality check predicate on the "redacted_url" field. It's identical to RedactedURLEQ.
-func RedactedURL(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldRedactedURL, v))
-}
-
-// TokenVersion applies equality check predicate on the "token_version" field. It's identical to TokenVersionEQ.
-func TokenVersion(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldTokenVersion, v))
+// WalletTransactionID applies equality check predicate on the "wallet_transaction_id" field. It's identical to WalletTransactionIDEQ.
+func WalletTransactionID(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldWalletTransactionID, v))
 }
 
 // IdempotencyKey applies equality check predicate on the "idempotency_key" field. It's identical to IdempotencyKeyEQ.
@@ -214,24 +124,9 @@ func RequestHash(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldRequestHash, v))
 }
 
-// ReportJSON applies equality check predicate on the "report_json" field. It's identical to ReportJSONEQ.
-func ReportJSON(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldReportJSON, v))
-}
-
-// BlockNewWorkspaces applies equality check predicate on the "block_new_workspaces" field. It's identical to BlockNewWorkspacesEQ.
-func BlockNewWorkspaces(v bool) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldBlockNewWorkspaces, v))
-}
-
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldCreatedAt, v))
-}
-
-// UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
-func UpdatedAt(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUpdatedAt, v))
 }
 
 // AccountIDEQ applies the EQ predicate on the "account_id" field.
@@ -297,661 +192,6 @@ func AccountIDEqualFold(v string) predicate.HoldRelease {
 // AccountIDContainsFold applies the ContainsFold predicate on the "account_id" field.
 func AccountIDContainsFold(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldContainsFold(FieldAccountID, v))
-}
-
-// BalanceCentsEQ applies the EQ predicate on the "balance_cents" field.
-func BalanceCentsEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldBalanceCents, v))
-}
-
-// BalanceCentsNEQ applies the NEQ predicate on the "balance_cents" field.
-func BalanceCentsNEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldBalanceCents, v))
-}
-
-// BalanceCentsIn applies the In predicate on the "balance_cents" field.
-func BalanceCentsIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldBalanceCents, vs...))
-}
-
-// BalanceCentsNotIn applies the NotIn predicate on the "balance_cents" field.
-func BalanceCentsNotIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldBalanceCents, vs...))
-}
-
-// BalanceCentsGT applies the GT predicate on the "balance_cents" field.
-func BalanceCentsGT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldBalanceCents, v))
-}
-
-// BalanceCentsGTE applies the GTE predicate on the "balance_cents" field.
-func BalanceCentsGTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldBalanceCents, v))
-}
-
-// BalanceCentsLT applies the LT predicate on the "balance_cents" field.
-func BalanceCentsLT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldBalanceCents, v))
-}
-
-// BalanceCentsLTE applies the LTE predicate on the "balance_cents" field.
-func BalanceCentsLTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldBalanceCents, v))
-}
-
-// FrozenCentsEQ applies the EQ predicate on the "frozen_cents" field.
-func FrozenCentsEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldFrozenCents, v))
-}
-
-// FrozenCentsNEQ applies the NEQ predicate on the "frozen_cents" field.
-func FrozenCentsNEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldFrozenCents, v))
-}
-
-// FrozenCentsIn applies the In predicate on the "frozen_cents" field.
-func FrozenCentsIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldFrozenCents, vs...))
-}
-
-// FrozenCentsNotIn applies the NotIn predicate on the "frozen_cents" field.
-func FrozenCentsNotIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldFrozenCents, vs...))
-}
-
-// FrozenCentsGT applies the GT predicate on the "frozen_cents" field.
-func FrozenCentsGT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldFrozenCents, v))
-}
-
-// FrozenCentsGTE applies the GTE predicate on the "frozen_cents" field.
-func FrozenCentsGTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldFrozenCents, v))
-}
-
-// FrozenCentsLT applies the LT predicate on the "frozen_cents" field.
-func FrozenCentsLT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldFrozenCents, v))
-}
-
-// FrozenCentsLTE applies the LTE predicate on the "frozen_cents" field.
-func FrozenCentsLTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldFrozenCents, v))
-}
-
-// AvailableCentsEQ applies the EQ predicate on the "available_cents" field.
-func AvailableCentsEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldAvailableCents, v))
-}
-
-// AvailableCentsNEQ applies the NEQ predicate on the "available_cents" field.
-func AvailableCentsNEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldAvailableCents, v))
-}
-
-// AvailableCentsIn applies the In predicate on the "available_cents" field.
-func AvailableCentsIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldAvailableCents, vs...))
-}
-
-// AvailableCentsNotIn applies the NotIn predicate on the "available_cents" field.
-func AvailableCentsNotIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldAvailableCents, vs...))
-}
-
-// AvailableCentsGT applies the GT predicate on the "available_cents" field.
-func AvailableCentsGT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldAvailableCents, v))
-}
-
-// AvailableCentsGTE applies the GTE predicate on the "available_cents" field.
-func AvailableCentsGTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldAvailableCents, v))
-}
-
-// AvailableCentsLT applies the LT predicate on the "available_cents" field.
-func AvailableCentsLT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldAvailableCents, v))
-}
-
-// AvailableCentsLTE applies the LTE predicate on the "available_cents" field.
-func AvailableCentsLTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldAvailableCents, v))
-}
-
-// TotalSpentCentsEQ applies the EQ predicate on the "total_spent_cents" field.
-func TotalSpentCentsEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsNEQ applies the NEQ predicate on the "total_spent_cents" field.
-func TotalSpentCentsNEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsIn applies the In predicate on the "total_spent_cents" field.
-func TotalSpentCentsIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldTotalSpentCents, vs...))
-}
-
-// TotalSpentCentsNotIn applies the NotIn predicate on the "total_spent_cents" field.
-func TotalSpentCentsNotIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldTotalSpentCents, vs...))
-}
-
-// TotalSpentCentsGT applies the GT predicate on the "total_spent_cents" field.
-func TotalSpentCentsGT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsGTE applies the GTE predicate on the "total_spent_cents" field.
-func TotalSpentCentsGTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsLT applies the LT predicate on the "total_spent_cents" field.
-func TotalSpentCentsLT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsLTE applies the LTE predicate on the "total_spent_cents" field.
-func TotalSpentCentsLTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldTotalSpentCents, v))
-}
-
-// AmountCentsEQ applies the EQ predicate on the "amount_cents" field.
-func AmountCentsEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldAmountCents, v))
-}
-
-// AmountCentsNEQ applies the NEQ predicate on the "amount_cents" field.
-func AmountCentsNEQ(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldAmountCents, v))
-}
-
-// AmountCentsIn applies the In predicate on the "amount_cents" field.
-func AmountCentsIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldAmountCents, vs...))
-}
-
-// AmountCentsNotIn applies the NotIn predicate on the "amount_cents" field.
-func AmountCentsNotIn(vs ...int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldAmountCents, vs...))
-}
-
-// AmountCentsGT applies the GT predicate on the "amount_cents" field.
-func AmountCentsGT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldAmountCents, v))
-}
-
-// AmountCentsGTE applies the GTE predicate on the "amount_cents" field.
-func AmountCentsGTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldAmountCents, v))
-}
-
-// AmountCentsLT applies the LT predicate on the "amount_cents" field.
-func AmountCentsLT(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldAmountCents, v))
-}
-
-// AmountCentsLTE applies the LTE predicate on the "amount_cents" field.
-func AmountCentsLTE(v int64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldAmountCents, v))
-}
-
-// CurrencyEQ applies the EQ predicate on the "currency" field.
-func CurrencyEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldCurrency, v))
-}
-
-// CurrencyNEQ applies the NEQ predicate on the "currency" field.
-func CurrencyNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldCurrency, v))
-}
-
-// CurrencyIn applies the In predicate on the "currency" field.
-func CurrencyIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldCurrency, vs...))
-}
-
-// CurrencyNotIn applies the NotIn predicate on the "currency" field.
-func CurrencyNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldCurrency, vs...))
-}
-
-// CurrencyGT applies the GT predicate on the "currency" field.
-func CurrencyGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldCurrency, v))
-}
-
-// CurrencyGTE applies the GTE predicate on the "currency" field.
-func CurrencyGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldCurrency, v))
-}
-
-// CurrencyLT applies the LT predicate on the "currency" field.
-func CurrencyLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldCurrency, v))
-}
-
-// CurrencyLTE applies the LTE predicate on the "currency" field.
-func CurrencyLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldCurrency, v))
-}
-
-// CurrencyContains applies the Contains predicate on the "currency" field.
-func CurrencyContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldCurrency, v))
-}
-
-// CurrencyHasPrefix applies the HasPrefix predicate on the "currency" field.
-func CurrencyHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldCurrency, v))
-}
-
-// CurrencyHasSuffix applies the HasSuffix predicate on the "currency" field.
-func CurrencyHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldCurrency, v))
-}
-
-// CurrencyEqualFold applies the EqualFold predicate on the "currency" field.
-func CurrencyEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldCurrency, v))
-}
-
-// CurrencyContainsFold applies the ContainsFold predicate on the "currency" field.
-func CurrencyContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldCurrency, v))
-}
-
-// DirectionEQ applies the EQ predicate on the "direction" field.
-func DirectionEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldDirection, v))
-}
-
-// DirectionNEQ applies the NEQ predicate on the "direction" field.
-func DirectionNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldDirection, v))
-}
-
-// DirectionIn applies the In predicate on the "direction" field.
-func DirectionIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldDirection, vs...))
-}
-
-// DirectionNotIn applies the NotIn predicate on the "direction" field.
-func DirectionNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldDirection, vs...))
-}
-
-// DirectionGT applies the GT predicate on the "direction" field.
-func DirectionGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldDirection, v))
-}
-
-// DirectionGTE applies the GTE predicate on the "direction" field.
-func DirectionGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldDirection, v))
-}
-
-// DirectionLT applies the LT predicate on the "direction" field.
-func DirectionLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldDirection, v))
-}
-
-// DirectionLTE applies the LTE predicate on the "direction" field.
-func DirectionLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldDirection, v))
-}
-
-// DirectionContains applies the Contains predicate on the "direction" field.
-func DirectionContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldDirection, v))
-}
-
-// DirectionHasPrefix applies the HasPrefix predicate on the "direction" field.
-func DirectionHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldDirection, v))
-}
-
-// DirectionHasSuffix applies the HasSuffix predicate on the "direction" field.
-func DirectionHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldDirection, v))
-}
-
-// DirectionEqualFold applies the EqualFold predicate on the "direction" field.
-func DirectionEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldDirection, v))
-}
-
-// DirectionContainsFold applies the ContainsFold predicate on the "direction" field.
-func DirectionContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldDirection, v))
-}
-
-// SourceEQ applies the EQ predicate on the "source" field.
-func SourceEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldSource, v))
-}
-
-// SourceNEQ applies the NEQ predicate on the "source" field.
-func SourceNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldSource, v))
-}
-
-// SourceIn applies the In predicate on the "source" field.
-func SourceIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldSource, vs...))
-}
-
-// SourceNotIn applies the NotIn predicate on the "source" field.
-func SourceNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldSource, vs...))
-}
-
-// SourceGT applies the GT predicate on the "source" field.
-func SourceGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldSource, v))
-}
-
-// SourceGTE applies the GTE predicate on the "source" field.
-func SourceGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldSource, v))
-}
-
-// SourceLT applies the LT predicate on the "source" field.
-func SourceLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldSource, v))
-}
-
-// SourceLTE applies the LTE predicate on the "source" field.
-func SourceLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldSource, v))
-}
-
-// SourceContains applies the Contains predicate on the "source" field.
-func SourceContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldSource, v))
-}
-
-// SourceHasPrefix applies the HasPrefix predicate on the "source" field.
-func SourceHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldSource, v))
-}
-
-// SourceHasSuffix applies the HasSuffix predicate on the "source" field.
-func SourceHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldSource, v))
-}
-
-// SourceEqualFold applies the EqualFold predicate on the "source" field.
-func SourceEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldSource, v))
-}
-
-// SourceContainsFold applies the ContainsFold predicate on the "source" field.
-func SourceContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldSource, v))
-}
-
-// OperatorUserIDEQ applies the EQ predicate on the "operator_user_id" field.
-func OperatorUserIDEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDNEQ applies the NEQ predicate on the "operator_user_id" field.
-func OperatorUserIDNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDIn applies the In predicate on the "operator_user_id" field.
-func OperatorUserIDIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldOperatorUserID, vs...))
-}
-
-// OperatorUserIDNotIn applies the NotIn predicate on the "operator_user_id" field.
-func OperatorUserIDNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldOperatorUserID, vs...))
-}
-
-// OperatorUserIDGT applies the GT predicate on the "operator_user_id" field.
-func OperatorUserIDGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDGTE applies the GTE predicate on the "operator_user_id" field.
-func OperatorUserIDGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDLT applies the LT predicate on the "operator_user_id" field.
-func OperatorUserIDLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDLTE applies the LTE predicate on the "operator_user_id" field.
-func OperatorUserIDLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDContains applies the Contains predicate on the "operator_user_id" field.
-func OperatorUserIDContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDHasPrefix applies the HasPrefix predicate on the "operator_user_id" field.
-func OperatorUserIDHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDHasSuffix applies the HasSuffix predicate on the "operator_user_id" field.
-func OperatorUserIDHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDEqualFold applies the EqualFold predicate on the "operator_user_id" field.
-func OperatorUserIDEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDContainsFold applies the ContainsFold predicate on the "operator_user_id" field.
-func OperatorUserIDContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldOperatorUserID, v))
-}
-
-// ReasonEQ applies the EQ predicate on the "reason" field.
-func ReasonEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldReason, v))
-}
-
-// ReasonNEQ applies the NEQ predicate on the "reason" field.
-func ReasonNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldReason, v))
-}
-
-// ReasonIn applies the In predicate on the "reason" field.
-func ReasonIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldReason, vs...))
-}
-
-// ReasonNotIn applies the NotIn predicate on the "reason" field.
-func ReasonNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldReason, vs...))
-}
-
-// ReasonGT applies the GT predicate on the "reason" field.
-func ReasonGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldReason, v))
-}
-
-// ReasonGTE applies the GTE predicate on the "reason" field.
-func ReasonGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldReason, v))
-}
-
-// ReasonLT applies the LT predicate on the "reason" field.
-func ReasonLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldReason, v))
-}
-
-// ReasonLTE applies the LTE predicate on the "reason" field.
-func ReasonLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldReason, v))
-}
-
-// ReasonContains applies the Contains predicate on the "reason" field.
-func ReasonContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldReason, v))
-}
-
-// ReasonHasPrefix applies the HasPrefix predicate on the "reason" field.
-func ReasonHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldReason, v))
-}
-
-// ReasonHasSuffix applies the HasSuffix predicate on the "reason" field.
-func ReasonHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldReason, v))
-}
-
-// ReasonEqualFold applies the EqualFold predicate on the "reason" field.
-func ReasonEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldReason, v))
-}
-
-// ReasonContainsFold applies the ContainsFold predicate on the "reason" field.
-func ReasonContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldReason, v))
-}
-
-// LedgerEntryIDEQ applies the EQ predicate on the "ledger_entry_id" field.
-func LedgerEntryIDEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDNEQ applies the NEQ predicate on the "ledger_entry_id" field.
-func LedgerEntryIDNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDIn applies the In predicate on the "ledger_entry_id" field.
-func LedgerEntryIDIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldLedgerEntryID, vs...))
-}
-
-// LedgerEntryIDNotIn applies the NotIn predicate on the "ledger_entry_id" field.
-func LedgerEntryIDNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldLedgerEntryID, vs...))
-}
-
-// LedgerEntryIDGT applies the GT predicate on the "ledger_entry_id" field.
-func LedgerEntryIDGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDGTE applies the GTE predicate on the "ledger_entry_id" field.
-func LedgerEntryIDGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDLT applies the LT predicate on the "ledger_entry_id" field.
-func LedgerEntryIDLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDLTE applies the LTE predicate on the "ledger_entry_id" field.
-func LedgerEntryIDLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDContains applies the Contains predicate on the "ledger_entry_id" field.
-func LedgerEntryIDContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDHasPrefix applies the HasPrefix predicate on the "ledger_entry_id" field.
-func LedgerEntryIDHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDHasSuffix applies the HasSuffix predicate on the "ledger_entry_id" field.
-func LedgerEntryIDHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDEqualFold applies the EqualFold predicate on the "ledger_entry_id" field.
-func LedgerEntryIDEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDContainsFold applies the ContainsFold predicate on the "ledger_entry_id" field.
-func LedgerEntryIDContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldLedgerEntryID, v))
-}
-
-// WalletTransactionIDEQ applies the EQ predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDNEQ applies the NEQ predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDIn applies the In predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldWalletTransactionID, vs...))
-}
-
-// WalletTransactionIDNotIn applies the NotIn predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldWalletTransactionID, vs...))
-}
-
-// WalletTransactionIDGT applies the GT predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDGTE applies the GTE predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDLT applies the LT predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDLTE applies the LTE predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDContains applies the Contains predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDHasPrefix applies the HasPrefix predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDHasSuffix applies the HasSuffix predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDEqualFold applies the EqualFold predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDContainsFold applies the ContainsFold predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldWalletTransactionID, v))
 }
 
 // WorkspaceIDEQ applies the EQ predicate on the "workspace_id" field.
@@ -1214,6 +454,111 @@ func HoldIDContainsFold(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldContainsFold(FieldHoldID, v))
 }
 
+// AmountCentsEQ applies the EQ predicate on the "amount_cents" field.
+func AmountCentsEQ(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldAmountCents, v))
+}
+
+// AmountCentsNEQ applies the NEQ predicate on the "amount_cents" field.
+func AmountCentsNEQ(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNEQ(FieldAmountCents, v))
+}
+
+// AmountCentsIn applies the In predicate on the "amount_cents" field.
+func AmountCentsIn(vs ...int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldIn(FieldAmountCents, vs...))
+}
+
+// AmountCentsNotIn applies the NotIn predicate on the "amount_cents" field.
+func AmountCentsNotIn(vs ...int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNotIn(FieldAmountCents, vs...))
+}
+
+// AmountCentsGT applies the GT predicate on the "amount_cents" field.
+func AmountCentsGT(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGT(FieldAmountCents, v))
+}
+
+// AmountCentsGTE applies the GTE predicate on the "amount_cents" field.
+func AmountCentsGTE(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGTE(FieldAmountCents, v))
+}
+
+// AmountCentsLT applies the LT predicate on the "amount_cents" field.
+func AmountCentsLT(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLT(FieldAmountCents, v))
+}
+
+// AmountCentsLTE applies the LTE predicate on the "amount_cents" field.
+func AmountCentsLTE(v int64) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLTE(FieldAmountCents, v))
+}
+
+// CurrencyEQ applies the EQ predicate on the "currency" field.
+func CurrencyEQ(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldCurrency, v))
+}
+
+// CurrencyNEQ applies the NEQ predicate on the "currency" field.
+func CurrencyNEQ(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNEQ(FieldCurrency, v))
+}
+
+// CurrencyIn applies the In predicate on the "currency" field.
+func CurrencyIn(vs ...string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldIn(FieldCurrency, vs...))
+}
+
+// CurrencyNotIn applies the NotIn predicate on the "currency" field.
+func CurrencyNotIn(vs ...string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNotIn(FieldCurrency, vs...))
+}
+
+// CurrencyGT applies the GT predicate on the "currency" field.
+func CurrencyGT(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGT(FieldCurrency, v))
+}
+
+// CurrencyGTE applies the GTE predicate on the "currency" field.
+func CurrencyGTE(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGTE(FieldCurrency, v))
+}
+
+// CurrencyLT applies the LT predicate on the "currency" field.
+func CurrencyLT(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLT(FieldCurrency, v))
+}
+
+// CurrencyLTE applies the LTE predicate on the "currency" field.
+func CurrencyLTE(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLTE(FieldCurrency, v))
+}
+
+// CurrencyContains applies the Contains predicate on the "currency" field.
+func CurrencyContains(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldContains(FieldCurrency, v))
+}
+
+// CurrencyHasPrefix applies the HasPrefix predicate on the "currency" field.
+func CurrencyHasPrefix(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldHasPrefix(FieldCurrency, v))
+}
+
+// CurrencyHasSuffix applies the HasSuffix predicate on the "currency" field.
+func CurrencyHasSuffix(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldHasSuffix(FieldCurrency, v))
+}
+
+// CurrencyEqualFold applies the EqualFold predicate on the "currency" field.
+func CurrencyEqualFold(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEqualFold(FieldCurrency, v))
+}
+
+// CurrencyContainsFold applies the ContainsFold predicate on the "currency" field.
+func CurrencyContainsFold(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldContainsFold(FieldCurrency, v))
+}
+
 // StatusEQ applies the EQ predicate on the "status" field.
 func StatusEQ(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldStatus, v))
@@ -1279,629 +624,134 @@ func StatusContainsFold(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldContainsFold(FieldStatus, v))
 }
 
-// PricingVersionEQ applies the EQ predicate on the "pricing_version" field.
-func PricingVersionEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldPricingVersion, v))
+// LedgerEntryIDEQ applies the EQ predicate on the "ledger_entry_id" field.
+func LedgerEntryIDEQ(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldLedgerEntryID, v))
 }
 
-// PricingVersionNEQ applies the NEQ predicate on the "pricing_version" field.
-func PricingVersionNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldPricingVersion, v))
+// LedgerEntryIDNEQ applies the NEQ predicate on the "ledger_entry_id" field.
+func LedgerEntryIDNEQ(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNEQ(FieldLedgerEntryID, v))
 }
 
-// PricingVersionIn applies the In predicate on the "pricing_version" field.
-func PricingVersionIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldPricingVersion, vs...))
+// LedgerEntryIDIn applies the In predicate on the "ledger_entry_id" field.
+func LedgerEntryIDIn(vs ...string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldIn(FieldLedgerEntryID, vs...))
 }
 
-// PricingVersionNotIn applies the NotIn predicate on the "pricing_version" field.
-func PricingVersionNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldPricingVersion, vs...))
+// LedgerEntryIDNotIn applies the NotIn predicate on the "ledger_entry_id" field.
+func LedgerEntryIDNotIn(vs ...string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNotIn(FieldLedgerEntryID, vs...))
 }
 
-// PricingVersionGT applies the GT predicate on the "pricing_version" field.
-func PricingVersionGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldPricingVersion, v))
+// LedgerEntryIDGT applies the GT predicate on the "ledger_entry_id" field.
+func LedgerEntryIDGT(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGT(FieldLedgerEntryID, v))
 }
 
-// PricingVersionGTE applies the GTE predicate on the "pricing_version" field.
-func PricingVersionGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldPricingVersion, v))
+// LedgerEntryIDGTE applies the GTE predicate on the "ledger_entry_id" field.
+func LedgerEntryIDGTE(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGTE(FieldLedgerEntryID, v))
 }
 
-// PricingVersionLT applies the LT predicate on the "pricing_version" field.
-func PricingVersionLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldPricingVersion, v))
+// LedgerEntryIDLT applies the LT predicate on the "ledger_entry_id" field.
+func LedgerEntryIDLT(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLT(FieldLedgerEntryID, v))
 }
 
-// PricingVersionLTE applies the LTE predicate on the "pricing_version" field.
-func PricingVersionLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldPricingVersion, v))
+// LedgerEntryIDLTE applies the LTE predicate on the "ledger_entry_id" field.
+func LedgerEntryIDLTE(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLTE(FieldLedgerEntryID, v))
 }
 
-// PricingVersionContains applies the Contains predicate on the "pricing_version" field.
-func PricingVersionContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldPricingVersion, v))
+// LedgerEntryIDContains applies the Contains predicate on the "ledger_entry_id" field.
+func LedgerEntryIDContains(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldContains(FieldLedgerEntryID, v))
 }
 
-// PricingVersionHasPrefix applies the HasPrefix predicate on the "pricing_version" field.
-func PricingVersionHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldPricingVersion, v))
+// LedgerEntryIDHasPrefix applies the HasPrefix predicate on the "ledger_entry_id" field.
+func LedgerEntryIDHasPrefix(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldHasPrefix(FieldLedgerEntryID, v))
 }
 
-// PricingVersionHasSuffix applies the HasSuffix predicate on the "pricing_version" field.
-func PricingVersionHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldPricingVersion, v))
+// LedgerEntryIDHasSuffix applies the HasSuffix predicate on the "ledger_entry_id" field.
+func LedgerEntryIDHasSuffix(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldHasSuffix(FieldLedgerEntryID, v))
 }
 
-// PricingVersionEqualFold applies the EqualFold predicate on the "pricing_version" field.
-func PricingVersionEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldPricingVersion, v))
+// LedgerEntryIDEqualFold applies the EqualFold predicate on the "ledger_entry_id" field.
+func LedgerEntryIDEqualFold(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEqualFold(FieldLedgerEntryID, v))
 }
 
-// PricingVersionContainsFold applies the ContainsFold predicate on the "pricing_version" field.
-func PricingVersionContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldPricingVersion, v))
+// LedgerEntryIDContainsFold applies the ContainsFold predicate on the "ledger_entry_id" field.
+func LedgerEntryIDContainsFold(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldContainsFold(FieldLedgerEntryID, v))
 }
 
-// PriceSnapshotJSONEQ applies the EQ predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDEQ applies the EQ predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDEQ(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEQ(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONNEQ applies the NEQ predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDNEQ applies the NEQ predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDNEQ(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNEQ(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONIn applies the In predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldPriceSnapshotJSON, vs...))
+// WalletTransactionIDIn applies the In predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDIn(vs ...string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldIn(FieldWalletTransactionID, vs...))
 }
 
-// PriceSnapshotJSONNotIn applies the NotIn predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldPriceSnapshotJSON, vs...))
+// WalletTransactionIDNotIn applies the NotIn predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDNotIn(vs ...string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldNotIn(FieldWalletTransactionID, vs...))
 }
 
-// PriceSnapshotJSONGT applies the GT predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDGT applies the GT predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDGT(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGT(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONGTE applies the GTE predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDGTE applies the GTE predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDGTE(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldGTE(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONLT applies the LT predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDLT applies the LT predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDLT(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLT(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONLTE applies the LTE predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDLTE applies the LTE predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDLTE(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldLTE(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONContains applies the Contains predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDContains applies the Contains predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDContains(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldContains(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONHasPrefix applies the HasPrefix predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDHasPrefix applies the HasPrefix predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDHasPrefix(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldHasPrefix(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONHasSuffix applies the HasSuffix predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDHasSuffix applies the HasSuffix predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDHasSuffix(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldHasSuffix(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONEqualFold applies the EqualFold predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldPriceSnapshotJSON, v))
+// WalletTransactionIDEqualFold applies the EqualFold predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDEqualFold(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldEqualFold(FieldWalletTransactionID, v))
 }
 
-// PriceSnapshotJSONContainsFold applies the ContainsFold predicate on the "price_snapshot_json" field.
-func PriceSnapshotJSONContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldPriceSnapshotJSON, v))
-}
-
-// UsagePeriodStartEQ applies the EQ predicate on the "usage_period_start" field.
-func UsagePeriodStartEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartNEQ applies the NEQ predicate on the "usage_period_start" field.
-func UsagePeriodStartNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartIn applies the In predicate on the "usage_period_start" field.
-func UsagePeriodStartIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldUsagePeriodStart, vs...))
-}
-
-// UsagePeriodStartNotIn applies the NotIn predicate on the "usage_period_start" field.
-func UsagePeriodStartNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldUsagePeriodStart, vs...))
-}
-
-// UsagePeriodStartGT applies the GT predicate on the "usage_period_start" field.
-func UsagePeriodStartGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartGTE applies the GTE predicate on the "usage_period_start" field.
-func UsagePeriodStartGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartLT applies the LT predicate on the "usage_period_start" field.
-func UsagePeriodStartLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartLTE applies the LTE predicate on the "usage_period_start" field.
-func UsagePeriodStartLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartContains applies the Contains predicate on the "usage_period_start" field.
-func UsagePeriodStartContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartHasPrefix applies the HasPrefix predicate on the "usage_period_start" field.
-func UsagePeriodStartHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartHasSuffix applies the HasSuffix predicate on the "usage_period_start" field.
-func UsagePeriodStartHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartEqualFold applies the EqualFold predicate on the "usage_period_start" field.
-func UsagePeriodStartEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodStartContainsFold applies the ContainsFold predicate on the "usage_period_start" field.
-func UsagePeriodStartContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldUsagePeriodStart, v))
-}
-
-// UsagePeriodEndEQ applies the EQ predicate on the "usage_period_end" field.
-func UsagePeriodEndEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndNEQ applies the NEQ predicate on the "usage_period_end" field.
-func UsagePeriodEndNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndIn applies the In predicate on the "usage_period_end" field.
-func UsagePeriodEndIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldUsagePeriodEnd, vs...))
-}
-
-// UsagePeriodEndNotIn applies the NotIn predicate on the "usage_period_end" field.
-func UsagePeriodEndNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldUsagePeriodEnd, vs...))
-}
-
-// UsagePeriodEndGT applies the GT predicate on the "usage_period_end" field.
-func UsagePeriodEndGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndGTE applies the GTE predicate on the "usage_period_end" field.
-func UsagePeriodEndGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndLT applies the LT predicate on the "usage_period_end" field.
-func UsagePeriodEndLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndLTE applies the LTE predicate on the "usage_period_end" field.
-func UsagePeriodEndLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndContains applies the Contains predicate on the "usage_period_end" field.
-func UsagePeriodEndContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndHasPrefix applies the HasPrefix predicate on the "usage_period_end" field.
-func UsagePeriodEndHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndHasSuffix applies the HasSuffix predicate on the "usage_period_end" field.
-func UsagePeriodEndHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndEqualFold applies the EqualFold predicate on the "usage_period_end" field.
-func UsagePeriodEndEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldUsagePeriodEnd, v))
-}
-
-// UsagePeriodEndContainsFold applies the ContainsFold predicate on the "usage_period_end" field.
-func UsagePeriodEndContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldUsagePeriodEnd, v))
-}
-
-// QuantityEQ applies the EQ predicate on the "quantity" field.
-func QuantityEQ(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldQuantity, v))
-}
-
-// QuantityNEQ applies the NEQ predicate on the "quantity" field.
-func QuantityNEQ(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldQuantity, v))
-}
-
-// QuantityIn applies the In predicate on the "quantity" field.
-func QuantityIn(vs ...float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldQuantity, vs...))
-}
-
-// QuantityNotIn applies the NotIn predicate on the "quantity" field.
-func QuantityNotIn(vs ...float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldQuantity, vs...))
-}
-
-// QuantityGT applies the GT predicate on the "quantity" field.
-func QuantityGT(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldQuantity, v))
-}
-
-// QuantityGTE applies the GTE predicate on the "quantity" field.
-func QuantityGTE(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldQuantity, v))
-}
-
-// QuantityLT applies the LT predicate on the "quantity" field.
-func QuantityLT(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldQuantity, v))
-}
-
-// QuantityLTE applies the LTE predicate on the "quantity" field.
-func QuantityLTE(v float64) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldQuantity, v))
-}
-
-// UnitEQ applies the EQ predicate on the "unit" field.
-func UnitEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUnit, v))
-}
-
-// UnitNEQ applies the NEQ predicate on the "unit" field.
-func UnitNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldUnit, v))
-}
-
-// UnitIn applies the In predicate on the "unit" field.
-func UnitIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldUnit, vs...))
-}
-
-// UnitNotIn applies the NotIn predicate on the "unit" field.
-func UnitNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldUnit, vs...))
-}
-
-// UnitGT applies the GT predicate on the "unit" field.
-func UnitGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldUnit, v))
-}
-
-// UnitGTE applies the GTE predicate on the "unit" field.
-func UnitGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldUnit, v))
-}
-
-// UnitLT applies the LT predicate on the "unit" field.
-func UnitLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldUnit, v))
-}
-
-// UnitLTE applies the LTE predicate on the "unit" field.
-func UnitLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldUnit, v))
-}
-
-// UnitContains applies the Contains predicate on the "unit" field.
-func UnitContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldUnit, v))
-}
-
-// UnitHasPrefix applies the HasPrefix predicate on the "unit" field.
-func UnitHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldUnit, v))
-}
-
-// UnitHasSuffix applies the HasSuffix predicate on the "unit" field.
-func UnitHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldUnit, v))
-}
-
-// UnitEqualFold applies the EqualFold predicate on the "unit" field.
-func UnitEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldUnit, v))
-}
-
-// UnitContainsFold applies the ContainsFold predicate on the "unit" field.
-func UnitContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldUnit, v))
-}
-
-// ProviderCostEvidenceRefEQ applies the EQ predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefNEQ applies the NEQ predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefIn applies the In predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldProviderCostEvidenceRef, vs...))
-}
-
-// ProviderCostEvidenceRefNotIn applies the NotIn predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldProviderCostEvidenceRef, vs...))
-}
-
-// ProviderCostEvidenceRefGT applies the GT predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefGTE applies the GTE predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefLT applies the LT predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefLTE applies the LTE predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefContains applies the Contains predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefHasPrefix applies the HasPrefix predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefHasSuffix applies the HasSuffix predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefEqualFold applies the EqualFold predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderCostEvidenceRefContainsFold applies the ContainsFold predicate on the "provider_cost_evidence_ref" field.
-func ProviderCostEvidenceRefContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldProviderCostEvidenceRef, v))
-}
-
-// ProviderRequestIDEQ applies the EQ predicate on the "provider_request_id" field.
-func ProviderRequestIDEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDNEQ applies the NEQ predicate on the "provider_request_id" field.
-func ProviderRequestIDNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDIn applies the In predicate on the "provider_request_id" field.
-func ProviderRequestIDIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldProviderRequestID, vs...))
-}
-
-// ProviderRequestIDNotIn applies the NotIn predicate on the "provider_request_id" field.
-func ProviderRequestIDNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldProviderRequestID, vs...))
-}
-
-// ProviderRequestIDGT applies the GT predicate on the "provider_request_id" field.
-func ProviderRequestIDGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDGTE applies the GTE predicate on the "provider_request_id" field.
-func ProviderRequestIDGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDLT applies the LT predicate on the "provider_request_id" field.
-func ProviderRequestIDLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDLTE applies the LTE predicate on the "provider_request_id" field.
-func ProviderRequestIDLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDContains applies the Contains predicate on the "provider_request_id" field.
-func ProviderRequestIDContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDHasPrefix applies the HasPrefix predicate on the "provider_request_id" field.
-func ProviderRequestIDHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDHasSuffix applies the HasSuffix predicate on the "provider_request_id" field.
-func ProviderRequestIDHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDEqualFold applies the EqualFold predicate on the "provider_request_id" field.
-func ProviderRequestIDEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDContainsFold applies the ContainsFold predicate on the "provider_request_id" field.
-func ProviderRequestIDContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldProviderRequestID, v))
-}
-
-// RedactedURLEQ applies the EQ predicate on the "redacted_url" field.
-func RedactedURLEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldRedactedURL, v))
-}
-
-// RedactedURLNEQ applies the NEQ predicate on the "redacted_url" field.
-func RedactedURLNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldRedactedURL, v))
-}
-
-// RedactedURLIn applies the In predicate on the "redacted_url" field.
-func RedactedURLIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldRedactedURL, vs...))
-}
-
-// RedactedURLNotIn applies the NotIn predicate on the "redacted_url" field.
-func RedactedURLNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldRedactedURL, vs...))
-}
-
-// RedactedURLGT applies the GT predicate on the "redacted_url" field.
-func RedactedURLGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldRedactedURL, v))
-}
-
-// RedactedURLGTE applies the GTE predicate on the "redacted_url" field.
-func RedactedURLGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldRedactedURL, v))
-}
-
-// RedactedURLLT applies the LT predicate on the "redacted_url" field.
-func RedactedURLLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldRedactedURL, v))
-}
-
-// RedactedURLLTE applies the LTE predicate on the "redacted_url" field.
-func RedactedURLLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldRedactedURL, v))
-}
-
-// RedactedURLContains applies the Contains predicate on the "redacted_url" field.
-func RedactedURLContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldRedactedURL, v))
-}
-
-// RedactedURLHasPrefix applies the HasPrefix predicate on the "redacted_url" field.
-func RedactedURLHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldRedactedURL, v))
-}
-
-// RedactedURLHasSuffix applies the HasSuffix predicate on the "redacted_url" field.
-func RedactedURLHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldRedactedURL, v))
-}
-
-// RedactedURLEqualFold applies the EqualFold predicate on the "redacted_url" field.
-func RedactedURLEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldRedactedURL, v))
-}
-
-// RedactedURLContainsFold applies the ContainsFold predicate on the "redacted_url" field.
-func RedactedURLContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldRedactedURL, v))
-}
-
-// TokenVersionEQ applies the EQ predicate on the "token_version" field.
-func TokenVersionEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldTokenVersion, v))
-}
-
-// TokenVersionNEQ applies the NEQ predicate on the "token_version" field.
-func TokenVersionNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldTokenVersion, v))
-}
-
-// TokenVersionIn applies the In predicate on the "token_version" field.
-func TokenVersionIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldTokenVersion, vs...))
-}
-
-// TokenVersionNotIn applies the NotIn predicate on the "token_version" field.
-func TokenVersionNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldTokenVersion, vs...))
-}
-
-// TokenVersionGT applies the GT predicate on the "token_version" field.
-func TokenVersionGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldTokenVersion, v))
-}
-
-// TokenVersionGTE applies the GTE predicate on the "token_version" field.
-func TokenVersionGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldTokenVersion, v))
-}
-
-// TokenVersionLT applies the LT predicate on the "token_version" field.
-func TokenVersionLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldTokenVersion, v))
-}
-
-// TokenVersionLTE applies the LTE predicate on the "token_version" field.
-func TokenVersionLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldTokenVersion, v))
-}
-
-// TokenVersionContains applies the Contains predicate on the "token_version" field.
-func TokenVersionContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldTokenVersion, v))
-}
-
-// TokenVersionHasPrefix applies the HasPrefix predicate on the "token_version" field.
-func TokenVersionHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldTokenVersion, v))
-}
-
-// TokenVersionHasSuffix applies the HasSuffix predicate on the "token_version" field.
-func TokenVersionHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldTokenVersion, v))
-}
-
-// TokenVersionEqualFold applies the EqualFold predicate on the "token_version" field.
-func TokenVersionEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldTokenVersion, v))
-}
-
-// TokenVersionContainsFold applies the ContainsFold predicate on the "token_version" field.
-func TokenVersionContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldTokenVersion, v))
+// WalletTransactionIDContainsFold applies the ContainsFold predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDContainsFold(v string) predicate.HoldRelease {
+	return predicate.HoldRelease(sql.FieldContainsFold(FieldWalletTransactionID, v))
 }
 
 // IdempotencyKeyEQ applies the EQ predicate on the "idempotency_key" field.
@@ -2034,81 +884,6 @@ func RequestHashContainsFold(v string) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldContainsFold(FieldRequestHash, v))
 }
 
-// ReportJSONEQ applies the EQ predicate on the "report_json" field.
-func ReportJSONEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldReportJSON, v))
-}
-
-// ReportJSONNEQ applies the NEQ predicate on the "report_json" field.
-func ReportJSONNEQ(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldReportJSON, v))
-}
-
-// ReportJSONIn applies the In predicate on the "report_json" field.
-func ReportJSONIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldReportJSON, vs...))
-}
-
-// ReportJSONNotIn applies the NotIn predicate on the "report_json" field.
-func ReportJSONNotIn(vs ...string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldReportJSON, vs...))
-}
-
-// ReportJSONGT applies the GT predicate on the "report_json" field.
-func ReportJSONGT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldReportJSON, v))
-}
-
-// ReportJSONGTE applies the GTE predicate on the "report_json" field.
-func ReportJSONGTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldReportJSON, v))
-}
-
-// ReportJSONLT applies the LT predicate on the "report_json" field.
-func ReportJSONLT(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldReportJSON, v))
-}
-
-// ReportJSONLTE applies the LTE predicate on the "report_json" field.
-func ReportJSONLTE(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldReportJSON, v))
-}
-
-// ReportJSONContains applies the Contains predicate on the "report_json" field.
-func ReportJSONContains(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContains(FieldReportJSON, v))
-}
-
-// ReportJSONHasPrefix applies the HasPrefix predicate on the "report_json" field.
-func ReportJSONHasPrefix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasPrefix(FieldReportJSON, v))
-}
-
-// ReportJSONHasSuffix applies the HasSuffix predicate on the "report_json" field.
-func ReportJSONHasSuffix(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldHasSuffix(FieldReportJSON, v))
-}
-
-// ReportJSONEqualFold applies the EqualFold predicate on the "report_json" field.
-func ReportJSONEqualFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEqualFold(FieldReportJSON, v))
-}
-
-// ReportJSONContainsFold applies the ContainsFold predicate on the "report_json" field.
-func ReportJSONContainsFold(v string) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldContainsFold(FieldReportJSON, v))
-}
-
-// BlockNewWorkspacesEQ applies the EQ predicate on the "block_new_workspaces" field.
-func BlockNewWorkspacesEQ(v bool) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldBlockNewWorkspaces, v))
-}
-
-// BlockNewWorkspacesNEQ applies the NEQ predicate on the "block_new_workspaces" field.
-func BlockNewWorkspacesNEQ(v bool) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldBlockNewWorkspaces, v))
-}
-
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldEQ(FieldCreatedAt, v))
@@ -2147,46 +922,6 @@ func CreatedAtLT(v time.Time) predicate.HoldRelease {
 // CreatedAtLTE applies the LTE predicate on the "created_at" field.
 func CreatedAtLTE(v time.Time) predicate.HoldRelease {
 	return predicate.HoldRelease(sql.FieldLTE(FieldCreatedAt, v))
-}
-
-// UpdatedAtEQ applies the EQ predicate on the "updated_at" field.
-func UpdatedAtEQ(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldEQ(FieldUpdatedAt, v))
-}
-
-// UpdatedAtNEQ applies the NEQ predicate on the "updated_at" field.
-func UpdatedAtNEQ(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNEQ(FieldUpdatedAt, v))
-}
-
-// UpdatedAtIn applies the In predicate on the "updated_at" field.
-func UpdatedAtIn(vs ...time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldIn(FieldUpdatedAt, vs...))
-}
-
-// UpdatedAtNotIn applies the NotIn predicate on the "updated_at" field.
-func UpdatedAtNotIn(vs ...time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldNotIn(FieldUpdatedAt, vs...))
-}
-
-// UpdatedAtGT applies the GT predicate on the "updated_at" field.
-func UpdatedAtGT(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGT(FieldUpdatedAt, v))
-}
-
-// UpdatedAtGTE applies the GTE predicate on the "updated_at" field.
-func UpdatedAtGTE(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldGTE(FieldUpdatedAt, v))
-}
-
-// UpdatedAtLT applies the LT predicate on the "updated_at" field.
-func UpdatedAtLT(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLT(FieldUpdatedAt, v))
-}
-
-// UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
-func UpdatedAtLTE(v time.Time) predicate.HoldRelease {
-	return predicate.HoldRelease(sql.FieldLTE(FieldUpdatedAt, v))
 }
 
 // And groups predicates with the AND operator between them.

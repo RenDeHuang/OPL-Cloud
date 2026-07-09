@@ -28,436 +28,16 @@ func (iku *IdempotencyKeyUpdate) Where(ps ...predicate.IdempotencyKey) *Idempote
 	return iku
 }
 
-// SetAccountID sets the "account_id" field.
-func (iku *IdempotencyKeyUpdate) SetAccountID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetAccountID(s)
+// SetService sets the "service" field.
+func (iku *IdempotencyKeyUpdate) SetService(s string) *IdempotencyKeyUpdate {
+	iku.mutation.SetService(s)
 	return iku
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableAccountID(s *string) *IdempotencyKeyUpdate {
+// SetNillableService sets the "service" field if the given value is not nil.
+func (iku *IdempotencyKeyUpdate) SetNillableService(s *string) *IdempotencyKeyUpdate {
 	if s != nil {
-		iku.SetAccountID(*s)
-	}
-	return iku
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (iku *IdempotencyKeyUpdate) SetBalanceCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.ResetBalanceCents()
-	iku.mutation.SetBalanceCents(i)
-	return iku
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableBalanceCents(i *int64) *IdempotencyKeyUpdate {
-	if i != nil {
-		iku.SetBalanceCents(*i)
-	}
-	return iku
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (iku *IdempotencyKeyUpdate) AddBalanceCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.AddBalanceCents(i)
-	return iku
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (iku *IdempotencyKeyUpdate) SetFrozenCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.ResetFrozenCents()
-	iku.mutation.SetFrozenCents(i)
-	return iku
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableFrozenCents(i *int64) *IdempotencyKeyUpdate {
-	if i != nil {
-		iku.SetFrozenCents(*i)
-	}
-	return iku
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (iku *IdempotencyKeyUpdate) AddFrozenCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.AddFrozenCents(i)
-	return iku
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (iku *IdempotencyKeyUpdate) SetAvailableCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.ResetAvailableCents()
-	iku.mutation.SetAvailableCents(i)
-	return iku
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableAvailableCents(i *int64) *IdempotencyKeyUpdate {
-	if i != nil {
-		iku.SetAvailableCents(*i)
-	}
-	return iku
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (iku *IdempotencyKeyUpdate) AddAvailableCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.AddAvailableCents(i)
-	return iku
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (iku *IdempotencyKeyUpdate) SetTotalSpentCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.ResetTotalSpentCents()
-	iku.mutation.SetTotalSpentCents(i)
-	return iku
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableTotalSpentCents(i *int64) *IdempotencyKeyUpdate {
-	if i != nil {
-		iku.SetTotalSpentCents(*i)
-	}
-	return iku
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (iku *IdempotencyKeyUpdate) AddTotalSpentCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.AddTotalSpentCents(i)
-	return iku
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (iku *IdempotencyKeyUpdate) SetAmountCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.ResetAmountCents()
-	iku.mutation.SetAmountCents(i)
-	return iku
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableAmountCents(i *int64) *IdempotencyKeyUpdate {
-	if i != nil {
-		iku.SetAmountCents(*i)
-	}
-	return iku
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (iku *IdempotencyKeyUpdate) AddAmountCents(i int64) *IdempotencyKeyUpdate {
-	iku.mutation.AddAmountCents(i)
-	return iku
-}
-
-// SetCurrency sets the "currency" field.
-func (iku *IdempotencyKeyUpdate) SetCurrency(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetCurrency(s)
-	return iku
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableCurrency(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetCurrency(*s)
-	}
-	return iku
-}
-
-// SetDirection sets the "direction" field.
-func (iku *IdempotencyKeyUpdate) SetDirection(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetDirection(s)
-	return iku
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableDirection(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetDirection(*s)
-	}
-	return iku
-}
-
-// SetSource sets the "source" field.
-func (iku *IdempotencyKeyUpdate) SetSource(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetSource(s)
-	return iku
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableSource(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetSource(*s)
-	}
-	return iku
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (iku *IdempotencyKeyUpdate) SetOperatorUserID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetOperatorUserID(s)
-	return iku
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableOperatorUserID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetOperatorUserID(*s)
-	}
-	return iku
-}
-
-// SetReason sets the "reason" field.
-func (iku *IdempotencyKeyUpdate) SetReason(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetReason(s)
-	return iku
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableReason(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetReason(*s)
-	}
-	return iku
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (iku *IdempotencyKeyUpdate) SetLedgerEntryID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetLedgerEntryID(s)
-	return iku
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableLedgerEntryID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetLedgerEntryID(*s)
-	}
-	return iku
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (iku *IdempotencyKeyUpdate) SetWalletTransactionID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetWalletTransactionID(s)
-	return iku
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableWalletTransactionID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetWalletTransactionID(*s)
-	}
-	return iku
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (iku *IdempotencyKeyUpdate) SetWorkspaceID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetWorkspaceID(s)
-	return iku
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableWorkspaceID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetWorkspaceID(*s)
-	}
-	return iku
-}
-
-// SetResourceType sets the "resource_type" field.
-func (iku *IdempotencyKeyUpdate) SetResourceType(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetResourceType(s)
-	return iku
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableResourceType(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetResourceType(*s)
-	}
-	return iku
-}
-
-// SetResourceID sets the "resource_id" field.
-func (iku *IdempotencyKeyUpdate) SetResourceID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetResourceID(s)
-	return iku
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableResourceID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetResourceID(*s)
-	}
-	return iku
-}
-
-// SetHoldID sets the "hold_id" field.
-func (iku *IdempotencyKeyUpdate) SetHoldID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetHoldID(s)
-	return iku
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableHoldID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetHoldID(*s)
-	}
-	return iku
-}
-
-// SetStatus sets the "status" field.
-func (iku *IdempotencyKeyUpdate) SetStatus(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetStatus(s)
-	return iku
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableStatus(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetStatus(*s)
-	}
-	return iku
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (iku *IdempotencyKeyUpdate) SetPricingVersion(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetPricingVersion(s)
-	return iku
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillablePricingVersion(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetPricingVersion(*s)
-	}
-	return iku
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (iku *IdempotencyKeyUpdate) SetPriceSnapshotJSON(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetPriceSnapshotJSON(s)
-	return iku
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillablePriceSnapshotJSON(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetPriceSnapshotJSON(*s)
-	}
-	return iku
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (iku *IdempotencyKeyUpdate) SetUsagePeriodStart(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetUsagePeriodStart(s)
-	return iku
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableUsagePeriodStart(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetUsagePeriodStart(*s)
-	}
-	return iku
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (iku *IdempotencyKeyUpdate) SetUsagePeriodEnd(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetUsagePeriodEnd(s)
-	return iku
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableUsagePeriodEnd(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetUsagePeriodEnd(*s)
-	}
-	return iku
-}
-
-// SetQuantity sets the "quantity" field.
-func (iku *IdempotencyKeyUpdate) SetQuantity(f float64) *IdempotencyKeyUpdate {
-	iku.mutation.ResetQuantity()
-	iku.mutation.SetQuantity(f)
-	return iku
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableQuantity(f *float64) *IdempotencyKeyUpdate {
-	if f != nil {
-		iku.SetQuantity(*f)
-	}
-	return iku
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (iku *IdempotencyKeyUpdate) AddQuantity(f float64) *IdempotencyKeyUpdate {
-	iku.mutation.AddQuantity(f)
-	return iku
-}
-
-// SetUnit sets the "unit" field.
-func (iku *IdempotencyKeyUpdate) SetUnit(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetUnit(s)
-	return iku
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableUnit(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetUnit(*s)
-	}
-	return iku
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (iku *IdempotencyKeyUpdate) SetProviderCostEvidenceRef(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetProviderCostEvidenceRef(s)
-	return iku
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableProviderCostEvidenceRef(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetProviderCostEvidenceRef(*s)
-	}
-	return iku
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (iku *IdempotencyKeyUpdate) SetProviderRequestID(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetProviderRequestID(s)
-	return iku
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableProviderRequestID(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetProviderRequestID(*s)
-	}
-	return iku
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (iku *IdempotencyKeyUpdate) SetRedactedURL(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetRedactedURL(s)
-	return iku
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableRedactedURL(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetRedactedURL(*s)
-	}
-	return iku
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (iku *IdempotencyKeyUpdate) SetTokenVersion(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetTokenVersion(s)
-	return iku
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableTokenVersion(s *string) *IdempotencyKeyUpdate {
-	if s != nil {
-		iku.SetTokenVersion(*s)
+		iku.SetService(*s)
 	}
 	return iku
 }
@@ -490,30 +70,16 @@ func (iku *IdempotencyKeyUpdate) SetNillableRequestHash(s *string) *IdempotencyK
 	return iku
 }
 
-// SetReportJSON sets the "report_json" field.
-func (iku *IdempotencyKeyUpdate) SetReportJSON(s string) *IdempotencyKeyUpdate {
-	iku.mutation.SetReportJSON(s)
+// SetResponseRef sets the "response_ref" field.
+func (iku *IdempotencyKeyUpdate) SetResponseRef(s string) *IdempotencyKeyUpdate {
+	iku.mutation.SetResponseRef(s)
 	return iku
 }
 
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableReportJSON(s *string) *IdempotencyKeyUpdate {
+// SetNillableResponseRef sets the "response_ref" field if the given value is not nil.
+func (iku *IdempotencyKeyUpdate) SetNillableResponseRef(s *string) *IdempotencyKeyUpdate {
 	if s != nil {
-		iku.SetReportJSON(*s)
-	}
-	return iku
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (iku *IdempotencyKeyUpdate) SetBlockNewWorkspaces(b bool) *IdempotencyKeyUpdate {
-	iku.mutation.SetBlockNewWorkspaces(b)
-	return iku
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (iku *IdempotencyKeyUpdate) SetNillableBlockNewWorkspaces(b *bool) *IdempotencyKeyUpdate {
-	if b != nil {
-		iku.SetBlockNewWorkspaces(*b)
+		iku.SetResponseRef(*s)
 	}
 	return iku
 }
@@ -532,12 +98,6 @@ func (iku *IdempotencyKeyUpdate) SetNillableCreatedAt(t *time.Time) *Idempotency
 	return iku
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (iku *IdempotencyKeyUpdate) SetUpdatedAt(t time.Time) *IdempotencyKeyUpdate {
-	iku.mutation.SetUpdatedAt(t)
-	return iku
-}
-
 // Mutation returns the IdempotencyKeyMutation object of the builder.
 func (iku *IdempotencyKeyUpdate) Mutation() *IdempotencyKeyMutation {
 	return iku.mutation
@@ -545,7 +105,6 @@ func (iku *IdempotencyKeyUpdate) Mutation() *IdempotencyKeyMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (iku *IdempotencyKeyUpdate) Save(ctx context.Context) (int, error) {
-	iku.defaults()
 	return withHooks(ctx, iku.sqlSave, iku.mutation, iku.hooks)
 }
 
@@ -571,15 +130,30 @@ func (iku *IdempotencyKeyUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (iku *IdempotencyKeyUpdate) defaults() {
-	if _, ok := iku.mutation.UpdatedAt(); !ok {
-		v := idempotencykey.UpdateDefaultUpdatedAt()
-		iku.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (iku *IdempotencyKeyUpdate) check() error {
+	if v, ok := iku.mutation.Service(); ok {
+		if err := idempotencykey.ServiceValidator(v); err != nil {
+			return &ValidationError{Name: "service", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.service": %w`, err)}
+		}
 	}
+	if v, ok := iku.mutation.IdempotencyKey(); ok {
+		if err := idempotencykey.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := iku.mutation.RequestHash(); ok {
+		if err := idempotencykey.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (iku *IdempotencyKeyUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := iku.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(idempotencykey.Table, idempotencykey.Columns, sqlgraph.NewFieldSpec(idempotencykey.FieldID, field.TypeString))
 	if ps := iku.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -588,107 +162,8 @@ func (iku *IdempotencyKeyUpdate) sqlSave(ctx context.Context) (n int, err error)
 			}
 		}
 	}
-	if value, ok := iku.mutation.AccountID(); ok {
-		_spec.SetField(idempotencykey.FieldAccountID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.BalanceCents(); ok {
-		_spec.SetField(idempotencykey.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(idempotencykey.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.FrozenCents(); ok {
-		_spec.SetField(idempotencykey.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(idempotencykey.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AvailableCents(); ok {
-		_spec.SetField(idempotencykey.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(idempotencykey.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.TotalSpentCents(); ok {
-		_spec.SetField(idempotencykey.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(idempotencykey.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AmountCents(); ok {
-		_spec.SetField(idempotencykey.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.AddedAmountCents(); ok {
-		_spec.AddField(idempotencykey.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := iku.mutation.Currency(); ok {
-		_spec.SetField(idempotencykey.FieldCurrency, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.Direction(); ok {
-		_spec.SetField(idempotencykey.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.Source(); ok {
-		_spec.SetField(idempotencykey.FieldSource, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.OperatorUserID(); ok {
-		_spec.SetField(idempotencykey.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.Reason(); ok {
-		_spec.SetField(idempotencykey.FieldReason, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.LedgerEntryID(); ok {
-		_spec.SetField(idempotencykey.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.WalletTransactionID(); ok {
-		_spec.SetField(idempotencykey.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.WorkspaceID(); ok {
-		_spec.SetField(idempotencykey.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.ResourceType(); ok {
-		_spec.SetField(idempotencykey.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.ResourceID(); ok {
-		_spec.SetField(idempotencykey.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.HoldID(); ok {
-		_spec.SetField(idempotencykey.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.Status(); ok {
-		_spec.SetField(idempotencykey.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.PricingVersion(); ok {
-		_spec.SetField(idempotencykey.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(idempotencykey.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(idempotencykey.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(idempotencykey.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.Quantity(); ok {
-		_spec.SetField(idempotencykey.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := iku.mutation.AddedQuantity(); ok {
-		_spec.AddField(idempotencykey.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := iku.mutation.Unit(); ok {
-		_spec.SetField(idempotencykey.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(idempotencykey.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.ProviderRequestID(); ok {
-		_spec.SetField(idempotencykey.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.RedactedURL(); ok {
-		_spec.SetField(idempotencykey.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.TokenVersion(); ok {
-		_spec.SetField(idempotencykey.FieldTokenVersion, field.TypeString, value)
+	if value, ok := iku.mutation.Service(); ok {
+		_spec.SetField(idempotencykey.FieldService, field.TypeString, value)
 	}
 	if value, ok := iku.mutation.IdempotencyKey(); ok {
 		_spec.SetField(idempotencykey.FieldIdempotencyKey, field.TypeString, value)
@@ -696,17 +171,11 @@ func (iku *IdempotencyKeyUpdate) sqlSave(ctx context.Context) (n int, err error)
 	if value, ok := iku.mutation.RequestHash(); ok {
 		_spec.SetField(idempotencykey.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := iku.mutation.ReportJSON(); ok {
-		_spec.SetField(idempotencykey.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := iku.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(idempotencykey.FieldBlockNewWorkspaces, field.TypeBool, value)
+	if value, ok := iku.mutation.ResponseRef(); ok {
+		_spec.SetField(idempotencykey.FieldResponseRef, field.TypeString, value)
 	}
 	if value, ok := iku.mutation.CreatedAt(); ok {
 		_spec.SetField(idempotencykey.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := iku.mutation.UpdatedAt(); ok {
-		_spec.SetField(idempotencykey.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, iku.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -728,436 +197,16 @@ type IdempotencyKeyUpdateOne struct {
 	mutation *IdempotencyKeyMutation
 }
 
-// SetAccountID sets the "account_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetAccountID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetAccountID(s)
+// SetService sets the "service" field.
+func (ikuo *IdempotencyKeyUpdateOne) SetService(s string) *IdempotencyKeyUpdateOne {
+	ikuo.mutation.SetService(s)
 	return ikuo
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableAccountID(s *string) *IdempotencyKeyUpdateOne {
+// SetNillableService sets the "service" field if the given value is not nil.
+func (ikuo *IdempotencyKeyUpdateOne) SetNillableService(s *string) *IdempotencyKeyUpdateOne {
 	if s != nil {
-		ikuo.SetAccountID(*s)
-	}
-	return ikuo
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetBalanceCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.ResetBalanceCents()
-	ikuo.mutation.SetBalanceCents(i)
-	return ikuo
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableBalanceCents(i *int64) *IdempotencyKeyUpdateOne {
-	if i != nil {
-		ikuo.SetBalanceCents(*i)
-	}
-	return ikuo
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) AddBalanceCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.AddBalanceCents(i)
-	return ikuo
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetFrozenCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.ResetFrozenCents()
-	ikuo.mutation.SetFrozenCents(i)
-	return ikuo
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableFrozenCents(i *int64) *IdempotencyKeyUpdateOne {
-	if i != nil {
-		ikuo.SetFrozenCents(*i)
-	}
-	return ikuo
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) AddFrozenCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.AddFrozenCents(i)
-	return ikuo
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetAvailableCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.ResetAvailableCents()
-	ikuo.mutation.SetAvailableCents(i)
-	return ikuo
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableAvailableCents(i *int64) *IdempotencyKeyUpdateOne {
-	if i != nil {
-		ikuo.SetAvailableCents(*i)
-	}
-	return ikuo
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) AddAvailableCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.AddAvailableCents(i)
-	return ikuo
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetTotalSpentCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.ResetTotalSpentCents()
-	ikuo.mutation.SetTotalSpentCents(i)
-	return ikuo
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableTotalSpentCents(i *int64) *IdempotencyKeyUpdateOne {
-	if i != nil {
-		ikuo.SetTotalSpentCents(*i)
-	}
-	return ikuo
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) AddTotalSpentCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.AddTotalSpentCents(i)
-	return ikuo
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetAmountCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.ResetAmountCents()
-	ikuo.mutation.SetAmountCents(i)
-	return ikuo
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableAmountCents(i *int64) *IdempotencyKeyUpdateOne {
-	if i != nil {
-		ikuo.SetAmountCents(*i)
-	}
-	return ikuo
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (ikuo *IdempotencyKeyUpdateOne) AddAmountCents(i int64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.AddAmountCents(i)
-	return ikuo
-}
-
-// SetCurrency sets the "currency" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetCurrency(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetCurrency(s)
-	return ikuo
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableCurrency(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetCurrency(*s)
-	}
-	return ikuo
-}
-
-// SetDirection sets the "direction" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetDirection(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetDirection(s)
-	return ikuo
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableDirection(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetDirection(*s)
-	}
-	return ikuo
-}
-
-// SetSource sets the "source" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetSource(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetSource(s)
-	return ikuo
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableSource(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetSource(*s)
-	}
-	return ikuo
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetOperatorUserID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetOperatorUserID(s)
-	return ikuo
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableOperatorUserID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetOperatorUserID(*s)
-	}
-	return ikuo
-}
-
-// SetReason sets the "reason" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetReason(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetReason(s)
-	return ikuo
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableReason(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetReason(*s)
-	}
-	return ikuo
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetLedgerEntryID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetLedgerEntryID(s)
-	return ikuo
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableLedgerEntryID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetLedgerEntryID(*s)
-	}
-	return ikuo
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetWalletTransactionID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetWalletTransactionID(s)
-	return ikuo
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableWalletTransactionID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetWalletTransactionID(*s)
-	}
-	return ikuo
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetWorkspaceID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetWorkspaceID(s)
-	return ikuo
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableWorkspaceID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetWorkspaceID(*s)
-	}
-	return ikuo
-}
-
-// SetResourceType sets the "resource_type" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetResourceType(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetResourceType(s)
-	return ikuo
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableResourceType(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetResourceType(*s)
-	}
-	return ikuo
-}
-
-// SetResourceID sets the "resource_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetResourceID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetResourceID(s)
-	return ikuo
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableResourceID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetResourceID(*s)
-	}
-	return ikuo
-}
-
-// SetHoldID sets the "hold_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetHoldID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetHoldID(s)
-	return ikuo
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableHoldID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetHoldID(*s)
-	}
-	return ikuo
-}
-
-// SetStatus sets the "status" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetStatus(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetStatus(s)
-	return ikuo
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableStatus(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetStatus(*s)
-	}
-	return ikuo
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetPricingVersion(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetPricingVersion(s)
-	return ikuo
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillablePricingVersion(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetPricingVersion(*s)
-	}
-	return ikuo
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetPriceSnapshotJSON(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetPriceSnapshotJSON(s)
-	return ikuo
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillablePriceSnapshotJSON(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetPriceSnapshotJSON(*s)
-	}
-	return ikuo
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetUsagePeriodStart(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetUsagePeriodStart(s)
-	return ikuo
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableUsagePeriodStart(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetUsagePeriodStart(*s)
-	}
-	return ikuo
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetUsagePeriodEnd(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetUsagePeriodEnd(s)
-	return ikuo
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableUsagePeriodEnd(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetUsagePeriodEnd(*s)
-	}
-	return ikuo
-}
-
-// SetQuantity sets the "quantity" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetQuantity(f float64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.ResetQuantity()
-	ikuo.mutation.SetQuantity(f)
-	return ikuo
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableQuantity(f *float64) *IdempotencyKeyUpdateOne {
-	if f != nil {
-		ikuo.SetQuantity(*f)
-	}
-	return ikuo
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (ikuo *IdempotencyKeyUpdateOne) AddQuantity(f float64) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.AddQuantity(f)
-	return ikuo
-}
-
-// SetUnit sets the "unit" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetUnit(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetUnit(s)
-	return ikuo
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableUnit(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetUnit(*s)
-	}
-	return ikuo
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetProviderCostEvidenceRef(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetProviderCostEvidenceRef(s)
-	return ikuo
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableProviderCostEvidenceRef(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetProviderCostEvidenceRef(*s)
-	}
-	return ikuo
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetProviderRequestID(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetProviderRequestID(s)
-	return ikuo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableProviderRequestID(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetProviderRequestID(*s)
-	}
-	return ikuo
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetRedactedURL(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetRedactedURL(s)
-	return ikuo
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableRedactedURL(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetRedactedURL(*s)
-	}
-	return ikuo
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetTokenVersion(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetTokenVersion(s)
-	return ikuo
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableTokenVersion(s *string) *IdempotencyKeyUpdateOne {
-	if s != nil {
-		ikuo.SetTokenVersion(*s)
+		ikuo.SetService(*s)
 	}
 	return ikuo
 }
@@ -1190,30 +239,16 @@ func (ikuo *IdempotencyKeyUpdateOne) SetNillableRequestHash(s *string) *Idempote
 	return ikuo
 }
 
-// SetReportJSON sets the "report_json" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetReportJSON(s string) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetReportJSON(s)
+// SetResponseRef sets the "response_ref" field.
+func (ikuo *IdempotencyKeyUpdateOne) SetResponseRef(s string) *IdempotencyKeyUpdateOne {
+	ikuo.mutation.SetResponseRef(s)
 	return ikuo
 }
 
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableReportJSON(s *string) *IdempotencyKeyUpdateOne {
+// SetNillableResponseRef sets the "response_ref" field if the given value is not nil.
+func (ikuo *IdempotencyKeyUpdateOne) SetNillableResponseRef(s *string) *IdempotencyKeyUpdateOne {
 	if s != nil {
-		ikuo.SetReportJSON(*s)
-	}
-	return ikuo
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetBlockNewWorkspaces(b bool) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetBlockNewWorkspaces(b)
-	return ikuo
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (ikuo *IdempotencyKeyUpdateOne) SetNillableBlockNewWorkspaces(b *bool) *IdempotencyKeyUpdateOne {
-	if b != nil {
-		ikuo.SetBlockNewWorkspaces(*b)
+		ikuo.SetResponseRef(*s)
 	}
 	return ikuo
 }
@@ -1229,12 +264,6 @@ func (ikuo *IdempotencyKeyUpdateOne) SetNillableCreatedAt(t *time.Time) *Idempot
 	if t != nil {
 		ikuo.SetCreatedAt(*t)
 	}
-	return ikuo
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (ikuo *IdempotencyKeyUpdateOne) SetUpdatedAt(t time.Time) *IdempotencyKeyUpdateOne {
-	ikuo.mutation.SetUpdatedAt(t)
 	return ikuo
 }
 
@@ -1258,7 +287,6 @@ func (ikuo *IdempotencyKeyUpdateOne) Select(field string, fields ...string) *Ide
 
 // Save executes the query and returns the updated IdempotencyKey entity.
 func (ikuo *IdempotencyKeyUpdateOne) Save(ctx context.Context) (*IdempotencyKey, error) {
-	ikuo.defaults()
 	return withHooks(ctx, ikuo.sqlSave, ikuo.mutation, ikuo.hooks)
 }
 
@@ -1284,15 +312,30 @@ func (ikuo *IdempotencyKeyUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (ikuo *IdempotencyKeyUpdateOne) defaults() {
-	if _, ok := ikuo.mutation.UpdatedAt(); !ok {
-		v := idempotencykey.UpdateDefaultUpdatedAt()
-		ikuo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (ikuo *IdempotencyKeyUpdateOne) check() error {
+	if v, ok := ikuo.mutation.Service(); ok {
+		if err := idempotencykey.ServiceValidator(v); err != nil {
+			return &ValidationError{Name: "service", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.service": %w`, err)}
+		}
 	}
+	if v, ok := ikuo.mutation.IdempotencyKey(); ok {
+		if err := idempotencykey.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := ikuo.mutation.RequestHash(); ok {
+		if err := idempotencykey.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (ikuo *IdempotencyKeyUpdateOne) sqlSave(ctx context.Context) (_node *IdempotencyKey, err error) {
+	if err := ikuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(idempotencykey.Table, idempotencykey.Columns, sqlgraph.NewFieldSpec(idempotencykey.FieldID, field.TypeString))
 	id, ok := ikuo.mutation.ID()
 	if !ok {
@@ -1318,107 +361,8 @@ func (ikuo *IdempotencyKeyUpdateOne) sqlSave(ctx context.Context) (_node *Idempo
 			}
 		}
 	}
-	if value, ok := ikuo.mutation.AccountID(); ok {
-		_spec.SetField(idempotencykey.FieldAccountID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.BalanceCents(); ok {
-		_spec.SetField(idempotencykey.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(idempotencykey.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.FrozenCents(); ok {
-		_spec.SetField(idempotencykey.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(idempotencykey.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AvailableCents(); ok {
-		_spec.SetField(idempotencykey.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(idempotencykey.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.TotalSpentCents(); ok {
-		_spec.SetField(idempotencykey.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(idempotencykey.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AmountCents(); ok {
-		_spec.SetField(idempotencykey.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.AddedAmountCents(); ok {
-		_spec.AddField(idempotencykey.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := ikuo.mutation.Currency(); ok {
-		_spec.SetField(idempotencykey.FieldCurrency, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.Direction(); ok {
-		_spec.SetField(idempotencykey.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.Source(); ok {
-		_spec.SetField(idempotencykey.FieldSource, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.OperatorUserID(); ok {
-		_spec.SetField(idempotencykey.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.Reason(); ok {
-		_spec.SetField(idempotencykey.FieldReason, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.LedgerEntryID(); ok {
-		_spec.SetField(idempotencykey.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.WalletTransactionID(); ok {
-		_spec.SetField(idempotencykey.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.WorkspaceID(); ok {
-		_spec.SetField(idempotencykey.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.ResourceType(); ok {
-		_spec.SetField(idempotencykey.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.ResourceID(); ok {
-		_spec.SetField(idempotencykey.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.HoldID(); ok {
-		_spec.SetField(idempotencykey.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.Status(); ok {
-		_spec.SetField(idempotencykey.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.PricingVersion(); ok {
-		_spec.SetField(idempotencykey.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(idempotencykey.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(idempotencykey.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(idempotencykey.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.Quantity(); ok {
-		_spec.SetField(idempotencykey.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := ikuo.mutation.AddedQuantity(); ok {
-		_spec.AddField(idempotencykey.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := ikuo.mutation.Unit(); ok {
-		_spec.SetField(idempotencykey.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(idempotencykey.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(idempotencykey.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.RedactedURL(); ok {
-		_spec.SetField(idempotencykey.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.TokenVersion(); ok {
-		_spec.SetField(idempotencykey.FieldTokenVersion, field.TypeString, value)
+	if value, ok := ikuo.mutation.Service(); ok {
+		_spec.SetField(idempotencykey.FieldService, field.TypeString, value)
 	}
 	if value, ok := ikuo.mutation.IdempotencyKey(); ok {
 		_spec.SetField(idempotencykey.FieldIdempotencyKey, field.TypeString, value)
@@ -1426,17 +370,11 @@ func (ikuo *IdempotencyKeyUpdateOne) sqlSave(ctx context.Context) (_node *Idempo
 	if value, ok := ikuo.mutation.RequestHash(); ok {
 		_spec.SetField(idempotencykey.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := ikuo.mutation.ReportJSON(); ok {
-		_spec.SetField(idempotencykey.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := ikuo.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(idempotencykey.FieldBlockNewWorkspaces, field.TypeBool, value)
+	if value, ok := ikuo.mutation.ResponseRef(); ok {
+		_spec.SetField(idempotencykey.FieldResponseRef, field.TypeString, value)
 	}
 	if value, ok := ikuo.mutation.CreatedAt(); ok {
 		_spec.SetField(idempotencykey.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := ikuo.mutation.UpdatedAt(); ok {
-		_spec.SetField(idempotencykey.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &IdempotencyKey{config: ikuo.config}
 	_spec.Assign = _node.assignValues

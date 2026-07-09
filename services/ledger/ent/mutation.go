@@ -48,53 +48,20 @@ const (
 // EvidenceReceiptMutation represents an operation that mutates the EvidenceReceipt nodes in the graph.
 type EvidenceReceiptMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*EvidenceReceipt, error)
-	predicates                 []predicate.EvidenceReceipt
+	op                  Op
+	typ                 string
+	id                  *string
+	workspace_id        *string
+	provider_request_id *string
+	redacted_url        *string
+	token_version       *string
+	idempotency_key     *string
+	request_hash        *string
+	created_at          *time.Time
+	clearedFields       map[string]struct{}
+	done                bool
+	oldValue            func(context.Context) (*EvidenceReceipt, error)
+	predicates          []predicate.EvidenceReceipt
 }
 
 var _ ent.Mutation = (*EvidenceReceiptMutation)(nil)
@@ -201,574 +168,6 @@ func (m *EvidenceReceiptMutation) IDs(ctx context.Context) ([]string, error) {
 	}
 }
 
-// SetAccountID sets the "account_id" field.
-func (m *EvidenceReceiptMutation) SetAccountID(s string) {
-	m.account_id = &s
-}
-
-// AccountID returns the value of the "account_id" field in the mutation.
-func (m *EvidenceReceiptMutation) AccountID() (r string, exists bool) {
-	v := m.account_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAccountID returns the old "account_id" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldAccountID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAccountID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
-	}
-	return oldValue.AccountID, nil
-}
-
-// ResetAccountID resets all changes to the "account_id" field.
-func (m *EvidenceReceiptMutation) ResetAccountID() {
-	m.account_id = nil
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (m *EvidenceReceiptMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *EvidenceReceiptMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *EvidenceReceiptMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *EvidenceReceiptMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *EvidenceReceiptMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *EvidenceReceiptMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *EvidenceReceiptMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *EvidenceReceiptMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *EvidenceReceiptMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *EvidenceReceiptMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *EvidenceReceiptMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *EvidenceReceiptMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *EvidenceReceiptMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *EvidenceReceiptMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *EvidenceReceiptMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *EvidenceReceiptMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *EvidenceReceiptMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *EvidenceReceiptMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *EvidenceReceiptMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *EvidenceReceiptMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (m *EvidenceReceiptMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *EvidenceReceiptMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *EvidenceReceiptMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *EvidenceReceiptMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *EvidenceReceiptMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
-// SetCurrency sets the "currency" field.
-func (m *EvidenceReceiptMutation) SetCurrency(s string) {
-	m.currency = &s
-}
-
-// Currency returns the value of the "currency" field in the mutation.
-func (m *EvidenceReceiptMutation) Currency() (r string, exists bool) {
-	v := m.currency
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCurrency returns the old "currency" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldCurrency(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCurrency requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
-	}
-	return oldValue.Currency, nil
-}
-
-// ResetCurrency resets all changes to the "currency" field.
-func (m *EvidenceReceiptMutation) ResetCurrency() {
-	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *EvidenceReceiptMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *EvidenceReceiptMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *EvidenceReceiptMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *EvidenceReceiptMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *EvidenceReceiptMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *EvidenceReceiptMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *EvidenceReceiptMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *EvidenceReceiptMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *EvidenceReceiptMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *EvidenceReceiptMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *EvidenceReceiptMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *EvidenceReceiptMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *EvidenceReceiptMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *EvidenceReceiptMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *EvidenceReceiptMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *EvidenceReceiptMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *EvidenceReceiptMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *EvidenceReceiptMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
 // SetWorkspaceID sets the "workspace_id" field.
 func (m *EvidenceReceiptMutation) SetWorkspaceID(s string) {
 	m.workspace_id = &s
@@ -803,422 +202,6 @@ func (m *EvidenceReceiptMutation) OldWorkspaceID(ctx context.Context) (v string,
 // ResetWorkspaceID resets all changes to the "workspace_id" field.
 func (m *EvidenceReceiptMutation) ResetWorkspaceID() {
 	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *EvidenceReceiptMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *EvidenceReceiptMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *EvidenceReceiptMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *EvidenceReceiptMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *EvidenceReceiptMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *EvidenceReceiptMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *EvidenceReceiptMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *EvidenceReceiptMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *EvidenceReceiptMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *EvidenceReceiptMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *EvidenceReceiptMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *EvidenceReceiptMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *EvidenceReceiptMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *EvidenceReceiptMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *EvidenceReceiptMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *EvidenceReceiptMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *EvidenceReceiptMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *EvidenceReceiptMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *EvidenceReceiptMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *EvidenceReceiptMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *EvidenceReceiptMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *EvidenceReceiptMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *EvidenceReceiptMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *EvidenceReceiptMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *EvidenceReceiptMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *EvidenceReceiptMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *EvidenceReceiptMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *EvidenceReceiptMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *EvidenceReceiptMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *EvidenceReceiptMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *EvidenceReceiptMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *EvidenceReceiptMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *EvidenceReceiptMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *EvidenceReceiptMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *EvidenceReceiptMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
 }
 
 // SetProviderRequestID sets the "provider_request_id" field.
@@ -1401,78 +384,6 @@ func (m *EvidenceReceiptMutation) ResetRequestHash() {
 	m.request_hash = nil
 }
 
-// SetReportJSON sets the "report_json" field.
-func (m *EvidenceReceiptMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *EvidenceReceiptMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *EvidenceReceiptMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *EvidenceReceiptMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *EvidenceReceiptMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *EvidenceReceiptMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (m *EvidenceReceiptMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -1509,42 +420,6 @@ func (m *EvidenceReceiptMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *EvidenceReceiptMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *EvidenceReceiptMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the EvidenceReceipt entity.
-// If the EvidenceReceipt object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EvidenceReceiptMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *EvidenceReceiptMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the EvidenceReceiptMutation builder.
 func (m *EvidenceReceiptMutation) Where(ps ...predicate.EvidenceReceipt) {
 	m.predicates = append(m.predicates, ps...)
@@ -1579,81 +454,9 @@ func (m *EvidenceReceiptMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *EvidenceReceiptMutation) Fields() []string {
-	fields := make([]string, 0, 34)
-	if m.account_id != nil {
-		fields = append(fields, evidencereceipt.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, evidencereceipt.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, evidencereceipt.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, evidencereceipt.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, evidencereceipt.FieldTotalSpentCents)
-	}
-	if m.amount_cents != nil {
-		fields = append(fields, evidencereceipt.FieldAmountCents)
-	}
-	if m.currency != nil {
-		fields = append(fields, evidencereceipt.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, evidencereceipt.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, evidencereceipt.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, evidencereceipt.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, evidencereceipt.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, evidencereceipt.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, evidencereceipt.FieldWalletTransactionID)
-	}
+	fields := make([]string, 0, 7)
 	if m.workspace_id != nil {
 		fields = append(fields, evidencereceipt.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, evidencereceipt.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, evidencereceipt.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, evidencereceipt.FieldHoldID)
-	}
-	if m.status != nil {
-		fields = append(fields, evidencereceipt.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, evidencereceipt.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, evidencereceipt.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, evidencereceipt.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, evidencereceipt.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, evidencereceipt.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, evidencereceipt.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, evidencereceipt.FieldProviderCostEvidenceRef)
 	}
 	if m.provider_request_id != nil {
 		fields = append(fields, evidencereceipt.FieldProviderRequestID)
@@ -1670,17 +473,8 @@ func (m *EvidenceReceiptMutation) Fields() []string {
 	if m.request_hash != nil {
 		fields = append(fields, evidencereceipt.FieldRequestHash)
 	}
-	if m.report_json != nil {
-		fields = append(fields, evidencereceipt.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, evidencereceipt.FieldBlockNewWorkspaces)
-	}
 	if m.created_at != nil {
 		fields = append(fields, evidencereceipt.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, evidencereceipt.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -1690,56 +484,8 @@ func (m *EvidenceReceiptMutation) Fields() []string {
 // schema.
 func (m *EvidenceReceiptMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case evidencereceipt.FieldAccountID:
-		return m.AccountID()
-	case evidencereceipt.FieldBalanceCents:
-		return m.BalanceCents()
-	case evidencereceipt.FieldFrozenCents:
-		return m.FrozenCents()
-	case evidencereceipt.FieldAvailableCents:
-		return m.AvailableCents()
-	case evidencereceipt.FieldTotalSpentCents:
-		return m.TotalSpentCents()
-	case evidencereceipt.FieldAmountCents:
-		return m.AmountCents()
-	case evidencereceipt.FieldCurrency:
-		return m.Currency()
-	case evidencereceipt.FieldDirection:
-		return m.Direction()
-	case evidencereceipt.FieldSource:
-		return m.Source()
-	case evidencereceipt.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case evidencereceipt.FieldReason:
-		return m.Reason()
-	case evidencereceipt.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case evidencereceipt.FieldWalletTransactionID:
-		return m.WalletTransactionID()
 	case evidencereceipt.FieldWorkspaceID:
 		return m.WorkspaceID()
-	case evidencereceipt.FieldResourceType:
-		return m.ResourceType()
-	case evidencereceipt.FieldResourceID:
-		return m.ResourceID()
-	case evidencereceipt.FieldHoldID:
-		return m.HoldID()
-	case evidencereceipt.FieldStatus:
-		return m.Status()
-	case evidencereceipt.FieldPricingVersion:
-		return m.PricingVersion()
-	case evidencereceipt.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case evidencereceipt.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case evidencereceipt.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case evidencereceipt.FieldQuantity:
-		return m.Quantity()
-	case evidencereceipt.FieldUnit:
-		return m.Unit()
-	case evidencereceipt.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
 	case evidencereceipt.FieldProviderRequestID:
 		return m.ProviderRequestID()
 	case evidencereceipt.FieldRedactedURL:
@@ -1750,14 +496,8 @@ func (m *EvidenceReceiptMutation) Field(name string) (ent.Value, bool) {
 		return m.IdempotencyKey()
 	case evidencereceipt.FieldRequestHash:
 		return m.RequestHash()
-	case evidencereceipt.FieldReportJSON:
-		return m.ReportJSON()
-	case evidencereceipt.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
 	case evidencereceipt.FieldCreatedAt:
 		return m.CreatedAt()
-	case evidencereceipt.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -1767,56 +507,8 @@ func (m *EvidenceReceiptMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *EvidenceReceiptMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case evidencereceipt.FieldAccountID:
-		return m.OldAccountID(ctx)
-	case evidencereceipt.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case evidencereceipt.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case evidencereceipt.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case evidencereceipt.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
-	case evidencereceipt.FieldAmountCents:
-		return m.OldAmountCents(ctx)
-	case evidencereceipt.FieldCurrency:
-		return m.OldCurrency(ctx)
-	case evidencereceipt.FieldDirection:
-		return m.OldDirection(ctx)
-	case evidencereceipt.FieldSource:
-		return m.OldSource(ctx)
-	case evidencereceipt.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case evidencereceipt.FieldReason:
-		return m.OldReason(ctx)
-	case evidencereceipt.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case evidencereceipt.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
 	case evidencereceipt.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
-	case evidencereceipt.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case evidencereceipt.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case evidencereceipt.FieldHoldID:
-		return m.OldHoldID(ctx)
-	case evidencereceipt.FieldStatus:
-		return m.OldStatus(ctx)
-	case evidencereceipt.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case evidencereceipt.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case evidencereceipt.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case evidencereceipt.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case evidencereceipt.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case evidencereceipt.FieldUnit:
-		return m.OldUnit(ctx)
-	case evidencereceipt.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
 	case evidencereceipt.FieldProviderRequestID:
 		return m.OldProviderRequestID(ctx)
 	case evidencereceipt.FieldRedactedURL:
@@ -1827,14 +519,8 @@ func (m *EvidenceReceiptMutation) OldField(ctx context.Context, name string) (en
 		return m.OldIdempotencyKey(ctx)
 	case evidencereceipt.FieldRequestHash:
 		return m.OldRequestHash(ctx)
-	case evidencereceipt.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case evidencereceipt.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
 	case evidencereceipt.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case evidencereceipt.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown EvidenceReceipt field %s", name)
 }
@@ -1844,180 +530,12 @@ func (m *EvidenceReceiptMutation) OldField(ctx context.Context, name string) (en
 // type.
 func (m *EvidenceReceiptMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case evidencereceipt.FieldAccountID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAccountID(v)
-		return nil
-	case evidencereceipt.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case evidencereceipt.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case evidencereceipt.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case evidencereceipt.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
-	case evidencereceipt.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
-	case evidencereceipt.FieldCurrency:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCurrency(v)
-		return nil
-	case evidencereceipt.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case evidencereceipt.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case evidencereceipt.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case evidencereceipt.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case evidencereceipt.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case evidencereceipt.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
-		return nil
 	case evidencereceipt.FieldWorkspaceID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetWorkspaceID(v)
-		return nil
-	case evidencereceipt.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case evidencereceipt.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case evidencereceipt.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
-	case evidencereceipt.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case evidencereceipt.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case evidencereceipt.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case evidencereceipt.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case evidencereceipt.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case evidencereceipt.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case evidencereceipt.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case evidencereceipt.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
 		return nil
 	case evidencereceipt.FieldProviderRequestID:
 		v, ok := value.(string)
@@ -2054,33 +572,12 @@ func (m *EvidenceReceiptMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRequestHash(v)
 		return nil
-	case evidencereceipt.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case evidencereceipt.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
 	case evidencereceipt.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case evidencereceipt.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown EvidenceReceipt field %s", name)
@@ -2089,46 +586,13 @@ func (m *EvidenceReceiptMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *EvidenceReceiptMutation) AddedFields() []string {
-	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, evidencereceipt.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, evidencereceipt.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, evidencereceipt.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, evidencereceipt.FieldTotalSpentCents)
-	}
-	if m.addamount_cents != nil {
-		fields = append(fields, evidencereceipt.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, evidencereceipt.FieldQuantity)
-	}
-	return fields
+	return nil
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *EvidenceReceiptMutation) AddedField(name string) (ent.Value, bool) {
-	switch name {
-	case evidencereceipt.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case evidencereceipt.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case evidencereceipt.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case evidencereceipt.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
-	case evidencereceipt.FieldAmountCents:
-		return m.AddedAmountCents()
-	case evidencereceipt.FieldQuantity:
-		return m.AddedQuantity()
-	}
 	return nil, false
 }
 
@@ -2137,48 +601,6 @@ func (m *EvidenceReceiptMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *EvidenceReceiptMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case evidencereceipt.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case evidencereceipt.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case evidencereceipt.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case evidencereceipt.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
-	case evidencereceipt.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAmountCents(v)
-		return nil
-	case evidencereceipt.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
-		return nil
 	}
 	return fmt.Errorf("unknown EvidenceReceipt numeric field %s", name)
 }
@@ -2206,80 +628,8 @@ func (m *EvidenceReceiptMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *EvidenceReceiptMutation) ResetField(name string) error {
 	switch name {
-	case evidencereceipt.FieldAccountID:
-		m.ResetAccountID()
-		return nil
-	case evidencereceipt.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case evidencereceipt.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case evidencereceipt.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case evidencereceipt.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
-	case evidencereceipt.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
-	case evidencereceipt.FieldCurrency:
-		m.ResetCurrency()
-		return nil
-	case evidencereceipt.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case evidencereceipt.FieldSource:
-		m.ResetSource()
-		return nil
-	case evidencereceipt.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case evidencereceipt.FieldReason:
-		m.ResetReason()
-		return nil
-	case evidencereceipt.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case evidencereceipt.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
 	case evidencereceipt.FieldWorkspaceID:
 		m.ResetWorkspaceID()
-		return nil
-	case evidencereceipt.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case evidencereceipt.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case evidencereceipt.FieldHoldID:
-		m.ResetHoldID()
-		return nil
-	case evidencereceipt.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case evidencereceipt.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case evidencereceipt.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case evidencereceipt.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case evidencereceipt.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case evidencereceipt.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case evidencereceipt.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case evidencereceipt.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
 		return nil
 	case evidencereceipt.FieldProviderRequestID:
 		m.ResetProviderRequestID()
@@ -2296,17 +646,8 @@ func (m *EvidenceReceiptMutation) ResetField(name string) error {
 	case evidencereceipt.FieldRequestHash:
 		m.ResetRequestHash()
 		return nil
-	case evidencereceipt.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case evidencereceipt.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
 	case evidencereceipt.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case evidencereceipt.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown EvidenceReceipt field %s", name)
@@ -2363,53 +704,26 @@ func (m *EvidenceReceiptMutation) ResetEdge(name string) error {
 // HoldMutation represents an operation that mutates the Hold nodes in the graph.
 type HoldMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*Hold, error)
-	predicates                 []predicate.Hold
+	op                    Op
+	typ                   string
+	id                    *string
+	account_id            *string
+	workspace_id          *string
+	resource_type         *string
+	resource_id           *string
+	amount_cents          *int64
+	addamount_cents       *int64
+	currency              *string
+	status                *string
+	ledger_entry_id       *string
+	wallet_transaction_id *string
+	idempotency_key       *string
+	request_hash          *string
+	created_at            *time.Time
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*Hold, error)
+	predicates            []predicate.Hold
 }
 
 var _ ent.Mutation = (*HoldMutation)(nil)
@@ -2552,538 +866,6 @@ func (m *HoldMutation) ResetAccountID() {
 	m.account_id = nil
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (m *HoldMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *HoldMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *HoldMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *HoldMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *HoldMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *HoldMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *HoldMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *HoldMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *HoldMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *HoldMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *HoldMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *HoldMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *HoldMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *HoldMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *HoldMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *HoldMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *HoldMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *HoldMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *HoldMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *HoldMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (m *HoldMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *HoldMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *HoldMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *HoldMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *HoldMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
-// SetCurrency sets the "currency" field.
-func (m *HoldMutation) SetCurrency(s string) {
-	m.currency = &s
-}
-
-// Currency returns the value of the "currency" field in the mutation.
-func (m *HoldMutation) Currency() (r string, exists bool) {
-	v := m.currency
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCurrency returns the old "currency" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldCurrency(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCurrency requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
-	}
-	return oldValue.Currency, nil
-}
-
-// ResetCurrency resets all changes to the "currency" field.
-func (m *HoldMutation) ResetCurrency() {
-	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *HoldMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *HoldMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *HoldMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *HoldMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *HoldMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *HoldMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *HoldMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *HoldMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *HoldMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *HoldMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *HoldMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *HoldMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *HoldMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *HoldMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *HoldMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *HoldMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *HoldMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *HoldMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
 // SetWorkspaceID sets the "workspace_id" field.
 func (m *HoldMutation) SetWorkspaceID(s string) {
 	m.workspace_id = &s
@@ -3192,40 +974,96 @@ func (m *HoldMutation) ResetResourceID() {
 	m.resource_id = nil
 }
 
-// SetHoldID sets the "hold_id" field.
-func (m *HoldMutation) SetHoldID(s string) {
-	m.hold_id = &s
+// SetAmountCents sets the "amount_cents" field.
+func (m *HoldMutation) SetAmountCents(i int64) {
+	m.amount_cents = &i
+	m.addamount_cents = nil
 }
 
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *HoldMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
+// AmountCents returns the value of the "amount_cents" field in the mutation.
+func (m *HoldMutation) AmountCents() (r int64, exists bool) {
+	v := m.amount_cents
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldHoldID returns the old "hold_id" field's value of the Hold entity.
+// OldAmountCents returns the old "amount_cents" field's value of the Hold entity.
 // If the Hold object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldHoldID(ctx context.Context) (v string, err error) {
+func (m *HoldMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
+		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
+		return v, errors.New("OldAmountCents requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
+		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
 	}
-	return oldValue.HoldID, nil
+	return oldValue.AmountCents, nil
 }
 
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *HoldMutation) ResetHoldID() {
-	m.hold_id = nil
+// AddAmountCents adds i to the "amount_cents" field.
+func (m *HoldMutation) AddAmountCents(i int64) {
+	if m.addamount_cents != nil {
+		*m.addamount_cents += i
+	} else {
+		m.addamount_cents = &i
+	}
+}
+
+// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
+func (m *HoldMutation) AddedAmountCents() (r int64, exists bool) {
+	v := m.addamount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountCents resets all changes to the "amount_cents" field.
+func (m *HoldMutation) ResetAmountCents() {
+	m.amount_cents = nil
+	m.addamount_cents = nil
+}
+
+// SetCurrency sets the "currency" field.
+func (m *HoldMutation) SetCurrency(s string) {
+	m.currency = &s
+}
+
+// Currency returns the value of the "currency" field in the mutation.
+func (m *HoldMutation) Currency() (r string, exists bool) {
+	v := m.currency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrency returns the old "currency" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldCurrency(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
+	}
+	return oldValue.Currency, nil
+}
+
+// ResetCurrency resets all changes to the "currency" field.
+func (m *HoldMutation) ResetCurrency() {
+	m.currency = nil
 }
 
 // SetStatus sets the "status" field.
@@ -3264,384 +1102,76 @@ func (m *HoldMutation) ResetStatus() {
 	m.status = nil
 }
 
-// SetPricingVersion sets the "pricing_version" field.
-func (m *HoldMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (m *HoldMutation) SetLedgerEntryID(s string) {
+	m.ledger_entry_id = &s
 }
 
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *HoldMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
+// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
+func (m *HoldMutation) LedgerEntryID() (r string, exists bool) {
+	v := m.ledger_entry_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldPricingVersion returns the old "pricing_version" field's value of the Hold entity.
+// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the Hold entity.
 // If the Hold object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
+func (m *HoldMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
+		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
+		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
+		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
 	}
-	return oldValue.PricingVersion, nil
+	return oldValue.LedgerEntryID, nil
 }
 
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *HoldMutation) ResetPricingVersion() {
-	m.pricing_version = nil
+// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
+func (m *HoldMutation) ResetLedgerEntryID() {
+	m.ledger_entry_id = nil
 }
 
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *HoldMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (m *HoldMutation) SetWalletTransactionID(s string) {
+	m.wallet_transaction_id = &s
 }
 
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *HoldMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
+// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
+func (m *HoldMutation) WalletTransactionID() (r string, exists bool) {
+	v := m.wallet_transaction_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the Hold entity.
+// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the Hold entity.
 // If the Hold object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
+func (m *HoldMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
+		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
+		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
+		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
 	}
-	return oldValue.PriceSnapshotJSON, nil
+	return oldValue.WalletTransactionID, nil
 }
 
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *HoldMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *HoldMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *HoldMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *HoldMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *HoldMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *HoldMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *HoldMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *HoldMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *HoldMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *HoldMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *HoldMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *HoldMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *HoldMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *HoldMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *HoldMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *HoldMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *HoldMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *HoldMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *HoldMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *HoldMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *HoldMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *HoldMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *HoldMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *HoldMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *HoldMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *HoldMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *HoldMutation) ResetTokenVersion() {
-	m.token_version = nil
+// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
+func (m *HoldMutation) ResetWalletTransactionID() {
+	m.wallet_transaction_id = nil
 }
 
 // SetIdempotencyKey sets the "idempotency_key" field.
@@ -3716,78 +1246,6 @@ func (m *HoldMutation) ResetRequestHash() {
 	m.request_hash = nil
 }
 
-// SetReportJSON sets the "report_json" field.
-func (m *HoldMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *HoldMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *HoldMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *HoldMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *HoldMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *HoldMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (m *HoldMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -3824,42 +1282,6 @@ func (m *HoldMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *HoldMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *HoldMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the Hold entity.
-// If the Hold object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *HoldMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the HoldMutation builder.
 func (m *HoldMutation) Where(ps ...predicate.Hold) {
 	m.predicates = append(m.predicates, ps...)
@@ -3894,45 +1316,9 @@ func (m *HoldMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *HoldMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 12)
 	if m.account_id != nil {
 		fields = append(fields, hold.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, hold.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, hold.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, hold.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, hold.FieldTotalSpentCents)
-	}
-	if m.amount_cents != nil {
-		fields = append(fields, hold.FieldAmountCents)
-	}
-	if m.currency != nil {
-		fields = append(fields, hold.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, hold.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, hold.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, hold.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, hold.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, hold.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, hold.FieldWalletTransactionID)
 	}
 	if m.workspace_id != nil {
 		fields = append(fields, hold.FieldWorkspaceID)
@@ -3943,41 +1329,20 @@ func (m *HoldMutation) Fields() []string {
 	if m.resource_id != nil {
 		fields = append(fields, hold.FieldResourceID)
 	}
-	if m.hold_id != nil {
-		fields = append(fields, hold.FieldHoldID)
+	if m.amount_cents != nil {
+		fields = append(fields, hold.FieldAmountCents)
+	}
+	if m.currency != nil {
+		fields = append(fields, hold.FieldCurrency)
 	}
 	if m.status != nil {
 		fields = append(fields, hold.FieldStatus)
 	}
-	if m.pricing_version != nil {
-		fields = append(fields, hold.FieldPricingVersion)
+	if m.ledger_entry_id != nil {
+		fields = append(fields, hold.FieldLedgerEntryID)
 	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, hold.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, hold.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, hold.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, hold.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, hold.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, hold.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, hold.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, hold.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, hold.FieldTokenVersion)
+	if m.wallet_transaction_id != nil {
+		fields = append(fields, hold.FieldWalletTransactionID)
 	}
 	if m.idempotency_key != nil {
 		fields = append(fields, hold.FieldIdempotencyKey)
@@ -3985,17 +1350,8 @@ func (m *HoldMutation) Fields() []string {
 	if m.request_hash != nil {
 		fields = append(fields, hold.FieldRequestHash)
 	}
-	if m.report_json != nil {
-		fields = append(fields, hold.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, hold.FieldBlockNewWorkspaces)
-	}
 	if m.created_at != nil {
 		fields = append(fields, hold.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, hold.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -4007,72 +1363,28 @@ func (m *HoldMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case hold.FieldAccountID:
 		return m.AccountID()
-	case hold.FieldBalanceCents:
-		return m.BalanceCents()
-	case hold.FieldFrozenCents:
-		return m.FrozenCents()
-	case hold.FieldAvailableCents:
-		return m.AvailableCents()
-	case hold.FieldTotalSpentCents:
-		return m.TotalSpentCents()
-	case hold.FieldAmountCents:
-		return m.AmountCents()
-	case hold.FieldCurrency:
-		return m.Currency()
-	case hold.FieldDirection:
-		return m.Direction()
-	case hold.FieldSource:
-		return m.Source()
-	case hold.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case hold.FieldReason:
-		return m.Reason()
-	case hold.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case hold.FieldWalletTransactionID:
-		return m.WalletTransactionID()
 	case hold.FieldWorkspaceID:
 		return m.WorkspaceID()
 	case hold.FieldResourceType:
 		return m.ResourceType()
 	case hold.FieldResourceID:
 		return m.ResourceID()
-	case hold.FieldHoldID:
-		return m.HoldID()
+	case hold.FieldAmountCents:
+		return m.AmountCents()
+	case hold.FieldCurrency:
+		return m.Currency()
 	case hold.FieldStatus:
 		return m.Status()
-	case hold.FieldPricingVersion:
-		return m.PricingVersion()
-	case hold.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case hold.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case hold.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case hold.FieldQuantity:
-		return m.Quantity()
-	case hold.FieldUnit:
-		return m.Unit()
-	case hold.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case hold.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case hold.FieldRedactedURL:
-		return m.RedactedURL()
-	case hold.FieldTokenVersion:
-		return m.TokenVersion()
+	case hold.FieldLedgerEntryID:
+		return m.LedgerEntryID()
+	case hold.FieldWalletTransactionID:
+		return m.WalletTransactionID()
 	case hold.FieldIdempotencyKey:
 		return m.IdempotencyKey()
 	case hold.FieldRequestHash:
 		return m.RequestHash()
-	case hold.FieldReportJSON:
-		return m.ReportJSON()
-	case hold.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
 	case hold.FieldCreatedAt:
 		return m.CreatedAt()
-	case hold.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -4084,72 +1396,28 @@ func (m *HoldMutation) OldField(ctx context.Context, name string) (ent.Value, er
 	switch name {
 	case hold.FieldAccountID:
 		return m.OldAccountID(ctx)
-	case hold.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case hold.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case hold.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case hold.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
-	case hold.FieldAmountCents:
-		return m.OldAmountCents(ctx)
-	case hold.FieldCurrency:
-		return m.OldCurrency(ctx)
-	case hold.FieldDirection:
-		return m.OldDirection(ctx)
-	case hold.FieldSource:
-		return m.OldSource(ctx)
-	case hold.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case hold.FieldReason:
-		return m.OldReason(ctx)
-	case hold.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case hold.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
 	case hold.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
 	case hold.FieldResourceType:
 		return m.OldResourceType(ctx)
 	case hold.FieldResourceID:
 		return m.OldResourceID(ctx)
-	case hold.FieldHoldID:
-		return m.OldHoldID(ctx)
+	case hold.FieldAmountCents:
+		return m.OldAmountCents(ctx)
+	case hold.FieldCurrency:
+		return m.OldCurrency(ctx)
 	case hold.FieldStatus:
 		return m.OldStatus(ctx)
-	case hold.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case hold.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case hold.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case hold.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case hold.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case hold.FieldUnit:
-		return m.OldUnit(ctx)
-	case hold.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case hold.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case hold.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case hold.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
+	case hold.FieldLedgerEntryID:
+		return m.OldLedgerEntryID(ctx)
+	case hold.FieldWalletTransactionID:
+		return m.OldWalletTransactionID(ctx)
 	case hold.FieldIdempotencyKey:
 		return m.OldIdempotencyKey(ctx)
 	case hold.FieldRequestHash:
 		return m.OldRequestHash(ctx)
-	case hold.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case hold.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
 	case hold.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case hold.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown Hold field %s", name)
 }
@@ -4165,90 +1433,6 @@ func (m *HoldMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAccountID(v)
-		return nil
-	case hold.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case hold.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case hold.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case hold.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
-	case hold.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
-	case hold.FieldCurrency:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCurrency(v)
-		return nil
-	case hold.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case hold.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case hold.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case hold.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case hold.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case hold.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
 		return nil
 	case hold.FieldWorkspaceID:
 		v, ok := value.(string)
@@ -4271,12 +1455,19 @@ func (m *HoldMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetResourceID(v)
 		return nil
-	case hold.FieldHoldID:
+	case hold.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountCents(v)
+		return nil
+	case hold.FieldCurrency:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetHoldID(v)
+		m.SetCurrency(v)
 		return nil
 	case hold.FieldStatus:
 		v, ok := value.(string)
@@ -4285,75 +1476,19 @@ func (m *HoldMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetStatus(v)
 		return nil
-	case hold.FieldPricingVersion:
+	case hold.FieldLedgerEntryID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetPricingVersion(v)
+		m.SetLedgerEntryID(v)
 		return nil
-	case hold.FieldPriceSnapshotJSON:
+	case hold.FieldWalletTransactionID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case hold.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case hold.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case hold.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case hold.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case hold.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case hold.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case hold.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case hold.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
+		m.SetWalletTransactionID(v)
 		return nil
 	case hold.FieldIdempotencyKey:
 		v, ok := value.(string)
@@ -4369,33 +1504,12 @@ func (m *HoldMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRequestHash(v)
 		return nil
-	case hold.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case hold.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
 	case hold.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case hold.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Hold field %s", name)
@@ -4405,23 +1519,8 @@ func (m *HoldMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *HoldMutation) AddedFields() []string {
 	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, hold.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, hold.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, hold.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, hold.FieldTotalSpentCents)
-	}
 	if m.addamount_cents != nil {
 		fields = append(fields, hold.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, hold.FieldQuantity)
 	}
 	return fields
 }
@@ -4431,18 +1530,8 @@ func (m *HoldMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *HoldMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case hold.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case hold.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case hold.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case hold.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
 	case hold.FieldAmountCents:
 		return m.AddedAmountCents()
-	case hold.FieldQuantity:
-		return m.AddedQuantity()
 	}
 	return nil, false
 }
@@ -4452,47 +1541,12 @@ func (m *HoldMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *HoldMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case hold.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case hold.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case hold.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case hold.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
 	case hold.FieldAmountCents:
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAmountCents(v)
-		return nil
-	case hold.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Hold numeric field %s", name)
@@ -4524,42 +1578,6 @@ func (m *HoldMutation) ResetField(name string) error {
 	case hold.FieldAccountID:
 		m.ResetAccountID()
 		return nil
-	case hold.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case hold.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case hold.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case hold.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
-	case hold.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
-	case hold.FieldCurrency:
-		m.ResetCurrency()
-		return nil
-	case hold.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case hold.FieldSource:
-		m.ResetSource()
-		return nil
-	case hold.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case hold.FieldReason:
-		m.ResetReason()
-		return nil
-	case hold.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case hold.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
 	case hold.FieldWorkspaceID:
 		m.ResetWorkspaceID()
 		return nil
@@ -4569,41 +1587,20 @@ func (m *HoldMutation) ResetField(name string) error {
 	case hold.FieldResourceID:
 		m.ResetResourceID()
 		return nil
-	case hold.FieldHoldID:
-		m.ResetHoldID()
+	case hold.FieldAmountCents:
+		m.ResetAmountCents()
+		return nil
+	case hold.FieldCurrency:
+		m.ResetCurrency()
 		return nil
 	case hold.FieldStatus:
 		m.ResetStatus()
 		return nil
-	case hold.FieldPricingVersion:
-		m.ResetPricingVersion()
+	case hold.FieldLedgerEntryID:
+		m.ResetLedgerEntryID()
 		return nil
-	case hold.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case hold.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case hold.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case hold.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case hold.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case hold.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case hold.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case hold.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case hold.FieldTokenVersion:
-		m.ResetTokenVersion()
+	case hold.FieldWalletTransactionID:
+		m.ResetWalletTransactionID()
 		return nil
 	case hold.FieldIdempotencyKey:
 		m.ResetIdempotencyKey()
@@ -4611,17 +1608,8 @@ func (m *HoldMutation) ResetField(name string) error {
 	case hold.FieldRequestHash:
 		m.ResetRequestHash()
 		return nil
-	case hold.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case hold.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
 	case hold.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case hold.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown Hold field %s", name)
@@ -4678,53 +1666,27 @@ func (m *HoldMutation) ResetEdge(name string) error {
 // HoldReleaseMutation represents an operation that mutates the HoldRelease nodes in the graph.
 type HoldReleaseMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*HoldRelease, error)
-	predicates                 []predicate.HoldRelease
+	op                    Op
+	typ                   string
+	id                    *string
+	account_id            *string
+	workspace_id          *string
+	resource_type         *string
+	resource_id           *string
+	hold_id               *string
+	amount_cents          *int64
+	addamount_cents       *int64
+	currency              *string
+	status                *string
+	ledger_entry_id       *string
+	wallet_transaction_id *string
+	idempotency_key       *string
+	request_hash          *string
+	created_at            *time.Time
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*HoldRelease, error)
+	predicates            []predicate.HoldRelease
 }
 
 var _ ent.Mutation = (*HoldReleaseMutation)(nil)
@@ -4865,538 +1827,6 @@ func (m *HoldReleaseMutation) OldAccountID(ctx context.Context) (v string, err e
 // ResetAccountID resets all changes to the "account_id" field.
 func (m *HoldReleaseMutation) ResetAccountID() {
 	m.account_id = nil
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (m *HoldReleaseMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *HoldReleaseMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *HoldReleaseMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *HoldReleaseMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *HoldReleaseMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *HoldReleaseMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *HoldReleaseMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *HoldReleaseMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *HoldReleaseMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *HoldReleaseMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *HoldReleaseMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *HoldReleaseMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *HoldReleaseMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *HoldReleaseMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *HoldReleaseMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *HoldReleaseMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *HoldReleaseMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *HoldReleaseMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *HoldReleaseMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *HoldReleaseMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (m *HoldReleaseMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *HoldReleaseMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *HoldReleaseMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *HoldReleaseMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *HoldReleaseMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
-// SetCurrency sets the "currency" field.
-func (m *HoldReleaseMutation) SetCurrency(s string) {
-	m.currency = &s
-}
-
-// Currency returns the value of the "currency" field in the mutation.
-func (m *HoldReleaseMutation) Currency() (r string, exists bool) {
-	v := m.currency
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCurrency returns the old "currency" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldCurrency(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCurrency requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
-	}
-	return oldValue.Currency, nil
-}
-
-// ResetCurrency resets all changes to the "currency" field.
-func (m *HoldReleaseMutation) ResetCurrency() {
-	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *HoldReleaseMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *HoldReleaseMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *HoldReleaseMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *HoldReleaseMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *HoldReleaseMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *HoldReleaseMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *HoldReleaseMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *HoldReleaseMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *HoldReleaseMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *HoldReleaseMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *HoldReleaseMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *HoldReleaseMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *HoldReleaseMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *HoldReleaseMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *HoldReleaseMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *HoldReleaseMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *HoldReleaseMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *HoldReleaseMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
 }
 
 // SetWorkspaceID sets the "workspace_id" field.
@@ -5543,6 +1973,98 @@ func (m *HoldReleaseMutation) ResetHoldID() {
 	m.hold_id = nil
 }
 
+// SetAmountCents sets the "amount_cents" field.
+func (m *HoldReleaseMutation) SetAmountCents(i int64) {
+	m.amount_cents = &i
+	m.addamount_cents = nil
+}
+
+// AmountCents returns the value of the "amount_cents" field in the mutation.
+func (m *HoldReleaseMutation) AmountCents() (r int64, exists bool) {
+	v := m.amount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountCents returns the old "amount_cents" field's value of the HoldRelease entity.
+// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldReleaseMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
+	}
+	return oldValue.AmountCents, nil
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (m *HoldReleaseMutation) AddAmountCents(i int64) {
+	if m.addamount_cents != nil {
+		*m.addamount_cents += i
+	} else {
+		m.addamount_cents = &i
+	}
+}
+
+// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
+func (m *HoldReleaseMutation) AddedAmountCents() (r int64, exists bool) {
+	v := m.addamount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountCents resets all changes to the "amount_cents" field.
+func (m *HoldReleaseMutation) ResetAmountCents() {
+	m.amount_cents = nil
+	m.addamount_cents = nil
+}
+
+// SetCurrency sets the "currency" field.
+func (m *HoldReleaseMutation) SetCurrency(s string) {
+	m.currency = &s
+}
+
+// Currency returns the value of the "currency" field in the mutation.
+func (m *HoldReleaseMutation) Currency() (r string, exists bool) {
+	v := m.currency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrency returns the old "currency" field's value of the HoldRelease entity.
+// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldReleaseMutation) OldCurrency(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
+	}
+	return oldValue.Currency, nil
+}
+
+// ResetCurrency resets all changes to the "currency" field.
+func (m *HoldReleaseMutation) ResetCurrency() {
+	m.currency = nil
+}
+
 // SetStatus sets the "status" field.
 func (m *HoldReleaseMutation) SetStatus(s string) {
 	m.status = &s
@@ -5579,384 +2101,76 @@ func (m *HoldReleaseMutation) ResetStatus() {
 	m.status = nil
 }
 
-// SetPricingVersion sets the "pricing_version" field.
-func (m *HoldReleaseMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (m *HoldReleaseMutation) SetLedgerEntryID(s string) {
+	m.ledger_entry_id = &s
 }
 
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *HoldReleaseMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
+// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
+func (m *HoldReleaseMutation) LedgerEntryID() (r string, exists bool) {
+	v := m.ledger_entry_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldPricingVersion returns the old "pricing_version" field's value of the HoldRelease entity.
+// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the HoldRelease entity.
 // If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
+func (m *HoldReleaseMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
+		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
+		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
+		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
 	}
-	return oldValue.PricingVersion, nil
+	return oldValue.LedgerEntryID, nil
 }
 
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *HoldReleaseMutation) ResetPricingVersion() {
-	m.pricing_version = nil
+// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
+func (m *HoldReleaseMutation) ResetLedgerEntryID() {
+	m.ledger_entry_id = nil
 }
 
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *HoldReleaseMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (m *HoldReleaseMutation) SetWalletTransactionID(s string) {
+	m.wallet_transaction_id = &s
 }
 
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *HoldReleaseMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
+// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
+func (m *HoldReleaseMutation) WalletTransactionID() (r string, exists bool) {
+	v := m.wallet_transaction_id
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the HoldRelease entity.
+// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the HoldRelease entity.
 // If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
+func (m *HoldReleaseMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
+		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
+		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
+		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
 	}
-	return oldValue.PriceSnapshotJSON, nil
+	return oldValue.WalletTransactionID, nil
 }
 
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *HoldReleaseMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *HoldReleaseMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *HoldReleaseMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *HoldReleaseMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *HoldReleaseMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *HoldReleaseMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *HoldReleaseMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *HoldReleaseMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *HoldReleaseMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *HoldReleaseMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *HoldReleaseMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *HoldReleaseMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *HoldReleaseMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *HoldReleaseMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *HoldReleaseMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *HoldReleaseMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *HoldReleaseMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *HoldReleaseMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *HoldReleaseMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *HoldReleaseMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *HoldReleaseMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *HoldReleaseMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *HoldReleaseMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *HoldReleaseMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *HoldReleaseMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *HoldReleaseMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *HoldReleaseMutation) ResetTokenVersion() {
-	m.token_version = nil
+// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
+func (m *HoldReleaseMutation) ResetWalletTransactionID() {
+	m.wallet_transaction_id = nil
 }
 
 // SetIdempotencyKey sets the "idempotency_key" field.
@@ -6031,78 +2245,6 @@ func (m *HoldReleaseMutation) ResetRequestHash() {
 	m.request_hash = nil
 }
 
-// SetReportJSON sets the "report_json" field.
-func (m *HoldReleaseMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *HoldReleaseMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *HoldReleaseMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *HoldReleaseMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *HoldReleaseMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *HoldReleaseMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (m *HoldReleaseMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -6139,42 +2281,6 @@ func (m *HoldReleaseMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *HoldReleaseMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *HoldReleaseMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the HoldRelease entity.
-// If the HoldRelease object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *HoldReleaseMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *HoldReleaseMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the HoldReleaseMutation builder.
 func (m *HoldReleaseMutation) Where(ps ...predicate.HoldRelease) {
 	m.predicates = append(m.predicates, ps...)
@@ -6209,45 +2315,9 @@ func (m *HoldReleaseMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *HoldReleaseMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 13)
 	if m.account_id != nil {
 		fields = append(fields, holdrelease.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, holdrelease.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, holdrelease.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, holdrelease.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, holdrelease.FieldTotalSpentCents)
-	}
-	if m.amount_cents != nil {
-		fields = append(fields, holdrelease.FieldAmountCents)
-	}
-	if m.currency != nil {
-		fields = append(fields, holdrelease.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, holdrelease.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, holdrelease.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, holdrelease.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, holdrelease.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, holdrelease.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, holdrelease.FieldWalletTransactionID)
 	}
 	if m.workspace_id != nil {
 		fields = append(fields, holdrelease.FieldWorkspaceID)
@@ -6261,38 +2331,20 @@ func (m *HoldReleaseMutation) Fields() []string {
 	if m.hold_id != nil {
 		fields = append(fields, holdrelease.FieldHoldID)
 	}
+	if m.amount_cents != nil {
+		fields = append(fields, holdrelease.FieldAmountCents)
+	}
+	if m.currency != nil {
+		fields = append(fields, holdrelease.FieldCurrency)
+	}
 	if m.status != nil {
 		fields = append(fields, holdrelease.FieldStatus)
 	}
-	if m.pricing_version != nil {
-		fields = append(fields, holdrelease.FieldPricingVersion)
+	if m.ledger_entry_id != nil {
+		fields = append(fields, holdrelease.FieldLedgerEntryID)
 	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, holdrelease.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, holdrelease.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, holdrelease.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, holdrelease.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, holdrelease.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, holdrelease.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, holdrelease.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, holdrelease.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, holdrelease.FieldTokenVersion)
+	if m.wallet_transaction_id != nil {
+		fields = append(fields, holdrelease.FieldWalletTransactionID)
 	}
 	if m.idempotency_key != nil {
 		fields = append(fields, holdrelease.FieldIdempotencyKey)
@@ -6300,17 +2352,8 @@ func (m *HoldReleaseMutation) Fields() []string {
 	if m.request_hash != nil {
 		fields = append(fields, holdrelease.FieldRequestHash)
 	}
-	if m.report_json != nil {
-		fields = append(fields, holdrelease.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, holdrelease.FieldBlockNewWorkspaces)
-	}
 	if m.created_at != nil {
 		fields = append(fields, holdrelease.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, holdrelease.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -6322,30 +2365,6 @@ func (m *HoldReleaseMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case holdrelease.FieldAccountID:
 		return m.AccountID()
-	case holdrelease.FieldBalanceCents:
-		return m.BalanceCents()
-	case holdrelease.FieldFrozenCents:
-		return m.FrozenCents()
-	case holdrelease.FieldAvailableCents:
-		return m.AvailableCents()
-	case holdrelease.FieldTotalSpentCents:
-		return m.TotalSpentCents()
-	case holdrelease.FieldAmountCents:
-		return m.AmountCents()
-	case holdrelease.FieldCurrency:
-		return m.Currency()
-	case holdrelease.FieldDirection:
-		return m.Direction()
-	case holdrelease.FieldSource:
-		return m.Source()
-	case holdrelease.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case holdrelease.FieldReason:
-		return m.Reason()
-	case holdrelease.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case holdrelease.FieldWalletTransactionID:
-		return m.WalletTransactionID()
 	case holdrelease.FieldWorkspaceID:
 		return m.WorkspaceID()
 	case holdrelease.FieldResourceType:
@@ -6354,40 +2373,22 @@ func (m *HoldReleaseMutation) Field(name string) (ent.Value, bool) {
 		return m.ResourceID()
 	case holdrelease.FieldHoldID:
 		return m.HoldID()
+	case holdrelease.FieldAmountCents:
+		return m.AmountCents()
+	case holdrelease.FieldCurrency:
+		return m.Currency()
 	case holdrelease.FieldStatus:
 		return m.Status()
-	case holdrelease.FieldPricingVersion:
-		return m.PricingVersion()
-	case holdrelease.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case holdrelease.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case holdrelease.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case holdrelease.FieldQuantity:
-		return m.Quantity()
-	case holdrelease.FieldUnit:
-		return m.Unit()
-	case holdrelease.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case holdrelease.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case holdrelease.FieldRedactedURL:
-		return m.RedactedURL()
-	case holdrelease.FieldTokenVersion:
-		return m.TokenVersion()
+	case holdrelease.FieldLedgerEntryID:
+		return m.LedgerEntryID()
+	case holdrelease.FieldWalletTransactionID:
+		return m.WalletTransactionID()
 	case holdrelease.FieldIdempotencyKey:
 		return m.IdempotencyKey()
 	case holdrelease.FieldRequestHash:
 		return m.RequestHash()
-	case holdrelease.FieldReportJSON:
-		return m.ReportJSON()
-	case holdrelease.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
 	case holdrelease.FieldCreatedAt:
 		return m.CreatedAt()
-	case holdrelease.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -6399,30 +2400,6 @@ func (m *HoldReleaseMutation) OldField(ctx context.Context, name string) (ent.Va
 	switch name {
 	case holdrelease.FieldAccountID:
 		return m.OldAccountID(ctx)
-	case holdrelease.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case holdrelease.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case holdrelease.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case holdrelease.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
-	case holdrelease.FieldAmountCents:
-		return m.OldAmountCents(ctx)
-	case holdrelease.FieldCurrency:
-		return m.OldCurrency(ctx)
-	case holdrelease.FieldDirection:
-		return m.OldDirection(ctx)
-	case holdrelease.FieldSource:
-		return m.OldSource(ctx)
-	case holdrelease.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case holdrelease.FieldReason:
-		return m.OldReason(ctx)
-	case holdrelease.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case holdrelease.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
 	case holdrelease.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
 	case holdrelease.FieldResourceType:
@@ -6431,40 +2408,22 @@ func (m *HoldReleaseMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldResourceID(ctx)
 	case holdrelease.FieldHoldID:
 		return m.OldHoldID(ctx)
+	case holdrelease.FieldAmountCents:
+		return m.OldAmountCents(ctx)
+	case holdrelease.FieldCurrency:
+		return m.OldCurrency(ctx)
 	case holdrelease.FieldStatus:
 		return m.OldStatus(ctx)
-	case holdrelease.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case holdrelease.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case holdrelease.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case holdrelease.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case holdrelease.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case holdrelease.FieldUnit:
-		return m.OldUnit(ctx)
-	case holdrelease.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case holdrelease.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case holdrelease.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case holdrelease.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
+	case holdrelease.FieldLedgerEntryID:
+		return m.OldLedgerEntryID(ctx)
+	case holdrelease.FieldWalletTransactionID:
+		return m.OldWalletTransactionID(ctx)
 	case holdrelease.FieldIdempotencyKey:
 		return m.OldIdempotencyKey(ctx)
 	case holdrelease.FieldRequestHash:
 		return m.OldRequestHash(ctx)
-	case holdrelease.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case holdrelease.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
 	case holdrelease.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case holdrelease.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown HoldRelease field %s", name)
 }
@@ -6480,90 +2439,6 @@ func (m *HoldReleaseMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAccountID(v)
-		return nil
-	case holdrelease.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case holdrelease.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case holdrelease.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case holdrelease.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
-	case holdrelease.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
-	case holdrelease.FieldCurrency:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCurrency(v)
-		return nil
-	case holdrelease.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case holdrelease.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case holdrelease.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case holdrelease.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case holdrelease.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case holdrelease.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
 		return nil
 	case holdrelease.FieldWorkspaceID:
 		v, ok := value.(string)
@@ -6593,6 +2468,20 @@ func (m *HoldReleaseMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetHoldID(v)
 		return nil
+	case holdrelease.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountCents(v)
+		return nil
+	case holdrelease.FieldCurrency:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCurrency(v)
+		return nil
 	case holdrelease.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
@@ -6600,75 +2489,19 @@ func (m *HoldReleaseMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetStatus(v)
 		return nil
-	case holdrelease.FieldPricingVersion:
+	case holdrelease.FieldLedgerEntryID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetPricingVersion(v)
+		m.SetLedgerEntryID(v)
 		return nil
-	case holdrelease.FieldPriceSnapshotJSON:
+	case holdrelease.FieldWalletTransactionID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case holdrelease.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case holdrelease.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case holdrelease.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case holdrelease.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case holdrelease.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case holdrelease.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case holdrelease.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case holdrelease.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
+		m.SetWalletTransactionID(v)
 		return nil
 	case holdrelease.FieldIdempotencyKey:
 		v, ok := value.(string)
@@ -6684,33 +2517,12 @@ func (m *HoldReleaseMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRequestHash(v)
 		return nil
-	case holdrelease.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case holdrelease.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
 	case holdrelease.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case holdrelease.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown HoldRelease field %s", name)
@@ -6720,23 +2532,8 @@ func (m *HoldReleaseMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *HoldReleaseMutation) AddedFields() []string {
 	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, holdrelease.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, holdrelease.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, holdrelease.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, holdrelease.FieldTotalSpentCents)
-	}
 	if m.addamount_cents != nil {
 		fields = append(fields, holdrelease.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, holdrelease.FieldQuantity)
 	}
 	return fields
 }
@@ -6746,18 +2543,8 @@ func (m *HoldReleaseMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *HoldReleaseMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case holdrelease.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case holdrelease.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case holdrelease.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case holdrelease.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
 	case holdrelease.FieldAmountCents:
 		return m.AddedAmountCents()
-	case holdrelease.FieldQuantity:
-		return m.AddedQuantity()
 	}
 	return nil, false
 }
@@ -6767,47 +2554,12 @@ func (m *HoldReleaseMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *HoldReleaseMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case holdrelease.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case holdrelease.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case holdrelease.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case holdrelease.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
 	case holdrelease.FieldAmountCents:
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAmountCents(v)
-		return nil
-	case holdrelease.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
 		return nil
 	}
 	return fmt.Errorf("unknown HoldRelease numeric field %s", name)
@@ -6839,42 +2591,6 @@ func (m *HoldReleaseMutation) ResetField(name string) error {
 	case holdrelease.FieldAccountID:
 		m.ResetAccountID()
 		return nil
-	case holdrelease.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case holdrelease.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case holdrelease.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case holdrelease.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
-	case holdrelease.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
-	case holdrelease.FieldCurrency:
-		m.ResetCurrency()
-		return nil
-	case holdrelease.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case holdrelease.FieldSource:
-		m.ResetSource()
-		return nil
-	case holdrelease.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case holdrelease.FieldReason:
-		m.ResetReason()
-		return nil
-	case holdrelease.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case holdrelease.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
 	case holdrelease.FieldWorkspaceID:
 		m.ResetWorkspaceID()
 		return nil
@@ -6887,38 +2603,20 @@ func (m *HoldReleaseMutation) ResetField(name string) error {
 	case holdrelease.FieldHoldID:
 		m.ResetHoldID()
 		return nil
+	case holdrelease.FieldAmountCents:
+		m.ResetAmountCents()
+		return nil
+	case holdrelease.FieldCurrency:
+		m.ResetCurrency()
+		return nil
 	case holdrelease.FieldStatus:
 		m.ResetStatus()
 		return nil
-	case holdrelease.FieldPricingVersion:
-		m.ResetPricingVersion()
+	case holdrelease.FieldLedgerEntryID:
+		m.ResetLedgerEntryID()
 		return nil
-	case holdrelease.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case holdrelease.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case holdrelease.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case holdrelease.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case holdrelease.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case holdrelease.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case holdrelease.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case holdrelease.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case holdrelease.FieldTokenVersion:
-		m.ResetTokenVersion()
+	case holdrelease.FieldWalletTransactionID:
+		m.ResetWalletTransactionID()
 		return nil
 	case holdrelease.FieldIdempotencyKey:
 		m.ResetIdempotencyKey()
@@ -6926,17 +2624,8 @@ func (m *HoldReleaseMutation) ResetField(name string) error {
 	case holdrelease.FieldRequestHash:
 		m.ResetRequestHash()
 		return nil
-	case holdrelease.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case holdrelease.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
 	case holdrelease.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case holdrelease.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown HoldRelease field %s", name)
@@ -6993,53 +2682,18 @@ func (m *HoldReleaseMutation) ResetEdge(name string) error {
 // IdempotencyKeyMutation represents an operation that mutates the IdempotencyKey nodes in the graph.
 type IdempotencyKeyMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*IdempotencyKey, error)
-	predicates                 []predicate.IdempotencyKey
+	op              Op
+	typ             string
+	id              *string
+	service         *string
+	idempotency_key *string
+	request_hash    *string
+	response_ref    *string
+	created_at      *time.Time
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*IdempotencyKey, error)
+	predicates      []predicate.IdempotencyKey
 }
 
 var _ ent.Mutation = (*IdempotencyKeyMutation)(nil)
@@ -7146,1132 +2800,40 @@ func (m *IdempotencyKeyMutation) IDs(ctx context.Context) ([]string, error) {
 	}
 }
 
-// SetAccountID sets the "account_id" field.
-func (m *IdempotencyKeyMutation) SetAccountID(s string) {
-	m.account_id = &s
+// SetService sets the "service" field.
+func (m *IdempotencyKeyMutation) SetService(s string) {
+	m.service = &s
 }
 
-// AccountID returns the value of the "account_id" field in the mutation.
-func (m *IdempotencyKeyMutation) AccountID() (r string, exists bool) {
-	v := m.account_id
+// Service returns the value of the "service" field in the mutation.
+func (m *IdempotencyKeyMutation) Service() (r string, exists bool) {
+	v := m.service
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldAccountID returns the old "account_id" field's value of the IdempotencyKey entity.
+// OldService returns the old "service" field's value of the IdempotencyKey entity.
 // If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldAccountID(ctx context.Context) (v string, err error) {
+func (m *IdempotencyKeyMutation) OldService(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+		return v, errors.New("OldService is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAccountID requires an ID field in the mutation")
+		return v, errors.New("OldService requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+		return v, fmt.Errorf("querying old value for OldService: %w", err)
 	}
-	return oldValue.AccountID, nil
+	return oldValue.Service, nil
 }
 
-// ResetAccountID resets all changes to the "account_id" field.
-func (m *IdempotencyKeyMutation) ResetAccountID() {
-	m.account_id = nil
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (m *IdempotencyKeyMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *IdempotencyKeyMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *IdempotencyKeyMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *IdempotencyKeyMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *IdempotencyKeyMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *IdempotencyKeyMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *IdempotencyKeyMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *IdempotencyKeyMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *IdempotencyKeyMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *IdempotencyKeyMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *IdempotencyKeyMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *IdempotencyKeyMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *IdempotencyKeyMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *IdempotencyKeyMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *IdempotencyKeyMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *IdempotencyKeyMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *IdempotencyKeyMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *IdempotencyKeyMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *IdempotencyKeyMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *IdempotencyKeyMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (m *IdempotencyKeyMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *IdempotencyKeyMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *IdempotencyKeyMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *IdempotencyKeyMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *IdempotencyKeyMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
-// SetCurrency sets the "currency" field.
-func (m *IdempotencyKeyMutation) SetCurrency(s string) {
-	m.currency = &s
-}
-
-// Currency returns the value of the "currency" field in the mutation.
-func (m *IdempotencyKeyMutation) Currency() (r string, exists bool) {
-	v := m.currency
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCurrency returns the old "currency" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldCurrency(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCurrency requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
-	}
-	return oldValue.Currency, nil
-}
-
-// ResetCurrency resets all changes to the "currency" field.
-func (m *IdempotencyKeyMutation) ResetCurrency() {
-	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *IdempotencyKeyMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *IdempotencyKeyMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *IdempotencyKeyMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *IdempotencyKeyMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *IdempotencyKeyMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *IdempotencyKeyMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *IdempotencyKeyMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *IdempotencyKeyMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *IdempotencyKeyMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *IdempotencyKeyMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *IdempotencyKeyMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *IdempotencyKeyMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *IdempotencyKeyMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *IdempotencyKeyMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *IdempotencyKeyMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *IdempotencyKeyMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *IdempotencyKeyMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *IdempotencyKeyMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *IdempotencyKeyMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *IdempotencyKeyMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *IdempotencyKeyMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *IdempotencyKeyMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *IdempotencyKeyMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *IdempotencyKeyMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *IdempotencyKeyMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *IdempotencyKeyMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *IdempotencyKeyMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *IdempotencyKeyMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *IdempotencyKeyMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *IdempotencyKeyMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *IdempotencyKeyMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *IdempotencyKeyMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *IdempotencyKeyMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *IdempotencyKeyMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *IdempotencyKeyMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *IdempotencyKeyMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *IdempotencyKeyMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *IdempotencyKeyMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *IdempotencyKeyMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *IdempotencyKeyMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *IdempotencyKeyMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *IdempotencyKeyMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *IdempotencyKeyMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *IdempotencyKeyMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *IdempotencyKeyMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *IdempotencyKeyMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *IdempotencyKeyMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *IdempotencyKeyMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *IdempotencyKeyMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *IdempotencyKeyMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *IdempotencyKeyMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *IdempotencyKeyMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *IdempotencyKeyMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *IdempotencyKeyMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *IdempotencyKeyMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *IdempotencyKeyMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *IdempotencyKeyMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *IdempotencyKeyMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *IdempotencyKeyMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *IdempotencyKeyMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *IdempotencyKeyMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *IdempotencyKeyMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *IdempotencyKeyMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *IdempotencyKeyMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *IdempotencyKeyMutation) ResetTokenVersion() {
-	m.token_version = nil
+// ResetService resets all changes to the "service" field.
+func (m *IdempotencyKeyMutation) ResetService() {
+	m.service = nil
 }
 
 // SetIdempotencyKey sets the "idempotency_key" field.
@@ -8346,76 +2908,40 @@ func (m *IdempotencyKeyMutation) ResetRequestHash() {
 	m.request_hash = nil
 }
 
-// SetReportJSON sets the "report_json" field.
-func (m *IdempotencyKeyMutation) SetReportJSON(s string) {
-	m.report_json = &s
+// SetResponseRef sets the "response_ref" field.
+func (m *IdempotencyKeyMutation) SetResponseRef(s string) {
+	m.response_ref = &s
 }
 
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *IdempotencyKeyMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
+// ResponseRef returns the value of the "response_ref" field in the mutation.
+func (m *IdempotencyKeyMutation) ResponseRef() (r string, exists bool) {
+	v := m.response_ref
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldReportJSON returns the old "report_json" field's value of the IdempotencyKey entity.
+// OldResponseRef returns the old "response_ref" field's value of the IdempotencyKey entity.
 // If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldReportJSON(ctx context.Context) (v string, err error) {
+func (m *IdempotencyKeyMutation) OldResponseRef(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
+		return v, errors.New("OldResponseRef is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
+		return v, errors.New("OldResponseRef requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
+		return v, fmt.Errorf("querying old value for OldResponseRef: %w", err)
 	}
-	return oldValue.ReportJSON, nil
+	return oldValue.ResponseRef, nil
 }
 
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *IdempotencyKeyMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *IdempotencyKeyMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *IdempotencyKeyMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *IdempotencyKeyMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
+// ResetResponseRef resets all changes to the "response_ref" field.
+func (m *IdempotencyKeyMutation) ResetResponseRef() {
+	m.response_ref = nil
 }
 
 // SetCreatedAt sets the "created_at" field.
@@ -8454,42 +2980,6 @@ func (m *IdempotencyKeyMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *IdempotencyKeyMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *IdempotencyKeyMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the IdempotencyKey entity.
-// If the IdempotencyKey object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *IdempotencyKeyMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *IdempotencyKeyMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the IdempotencyKeyMutation builder.
 func (m *IdempotencyKeyMutation) Where(ps ...predicate.IdempotencyKey) {
 	m.predicates = append(m.predicates, ps...)
@@ -8524,90 +3014,9 @@ func (m *IdempotencyKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *IdempotencyKeyMutation) Fields() []string {
-	fields := make([]string, 0, 34)
-	if m.account_id != nil {
-		fields = append(fields, idempotencykey.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, idempotencykey.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, idempotencykey.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, idempotencykey.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, idempotencykey.FieldTotalSpentCents)
-	}
-	if m.amount_cents != nil {
-		fields = append(fields, idempotencykey.FieldAmountCents)
-	}
-	if m.currency != nil {
-		fields = append(fields, idempotencykey.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, idempotencykey.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, idempotencykey.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, idempotencykey.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, idempotencykey.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, idempotencykey.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, idempotencykey.FieldWalletTransactionID)
-	}
-	if m.workspace_id != nil {
-		fields = append(fields, idempotencykey.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, idempotencykey.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, idempotencykey.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, idempotencykey.FieldHoldID)
-	}
-	if m.status != nil {
-		fields = append(fields, idempotencykey.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, idempotencykey.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, idempotencykey.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, idempotencykey.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, idempotencykey.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, idempotencykey.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, idempotencykey.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, idempotencykey.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, idempotencykey.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, idempotencykey.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, idempotencykey.FieldTokenVersion)
+	fields := make([]string, 0, 5)
+	if m.service != nil {
+		fields = append(fields, idempotencykey.FieldService)
 	}
 	if m.idempotency_key != nil {
 		fields = append(fields, idempotencykey.FieldIdempotencyKey)
@@ -8615,17 +3024,11 @@ func (m *IdempotencyKeyMutation) Fields() []string {
 	if m.request_hash != nil {
 		fields = append(fields, idempotencykey.FieldRequestHash)
 	}
-	if m.report_json != nil {
-		fields = append(fields, idempotencykey.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, idempotencykey.FieldBlockNewWorkspaces)
+	if m.response_ref != nil {
+		fields = append(fields, idempotencykey.FieldResponseRef)
 	}
 	if m.created_at != nil {
 		fields = append(fields, idempotencykey.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, idempotencykey.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -8635,74 +3038,16 @@ func (m *IdempotencyKeyMutation) Fields() []string {
 // schema.
 func (m *IdempotencyKeyMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case idempotencykey.FieldAccountID:
-		return m.AccountID()
-	case idempotencykey.FieldBalanceCents:
-		return m.BalanceCents()
-	case idempotencykey.FieldFrozenCents:
-		return m.FrozenCents()
-	case idempotencykey.FieldAvailableCents:
-		return m.AvailableCents()
-	case idempotencykey.FieldTotalSpentCents:
-		return m.TotalSpentCents()
-	case idempotencykey.FieldAmountCents:
-		return m.AmountCents()
-	case idempotencykey.FieldCurrency:
-		return m.Currency()
-	case idempotencykey.FieldDirection:
-		return m.Direction()
-	case idempotencykey.FieldSource:
-		return m.Source()
-	case idempotencykey.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case idempotencykey.FieldReason:
-		return m.Reason()
-	case idempotencykey.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case idempotencykey.FieldWalletTransactionID:
-		return m.WalletTransactionID()
-	case idempotencykey.FieldWorkspaceID:
-		return m.WorkspaceID()
-	case idempotencykey.FieldResourceType:
-		return m.ResourceType()
-	case idempotencykey.FieldResourceID:
-		return m.ResourceID()
-	case idempotencykey.FieldHoldID:
-		return m.HoldID()
-	case idempotencykey.FieldStatus:
-		return m.Status()
-	case idempotencykey.FieldPricingVersion:
-		return m.PricingVersion()
-	case idempotencykey.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case idempotencykey.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case idempotencykey.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case idempotencykey.FieldQuantity:
-		return m.Quantity()
-	case idempotencykey.FieldUnit:
-		return m.Unit()
-	case idempotencykey.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case idempotencykey.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case idempotencykey.FieldRedactedURL:
-		return m.RedactedURL()
-	case idempotencykey.FieldTokenVersion:
-		return m.TokenVersion()
+	case idempotencykey.FieldService:
+		return m.Service()
 	case idempotencykey.FieldIdempotencyKey:
 		return m.IdempotencyKey()
 	case idempotencykey.FieldRequestHash:
 		return m.RequestHash()
-	case idempotencykey.FieldReportJSON:
-		return m.ReportJSON()
-	case idempotencykey.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
+	case idempotencykey.FieldResponseRef:
+		return m.ResponseRef()
 	case idempotencykey.FieldCreatedAt:
 		return m.CreatedAt()
-	case idempotencykey.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -8712,74 +3057,16 @@ func (m *IdempotencyKeyMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *IdempotencyKeyMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case idempotencykey.FieldAccountID:
-		return m.OldAccountID(ctx)
-	case idempotencykey.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case idempotencykey.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case idempotencykey.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case idempotencykey.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
-	case idempotencykey.FieldAmountCents:
-		return m.OldAmountCents(ctx)
-	case idempotencykey.FieldCurrency:
-		return m.OldCurrency(ctx)
-	case idempotencykey.FieldDirection:
-		return m.OldDirection(ctx)
-	case idempotencykey.FieldSource:
-		return m.OldSource(ctx)
-	case idempotencykey.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case idempotencykey.FieldReason:
-		return m.OldReason(ctx)
-	case idempotencykey.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case idempotencykey.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
-	case idempotencykey.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
-	case idempotencykey.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case idempotencykey.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case idempotencykey.FieldHoldID:
-		return m.OldHoldID(ctx)
-	case idempotencykey.FieldStatus:
-		return m.OldStatus(ctx)
-	case idempotencykey.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case idempotencykey.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case idempotencykey.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case idempotencykey.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case idempotencykey.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case idempotencykey.FieldUnit:
-		return m.OldUnit(ctx)
-	case idempotencykey.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case idempotencykey.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case idempotencykey.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case idempotencykey.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
+	case idempotencykey.FieldService:
+		return m.OldService(ctx)
 	case idempotencykey.FieldIdempotencyKey:
 		return m.OldIdempotencyKey(ctx)
 	case idempotencykey.FieldRequestHash:
 		return m.OldRequestHash(ctx)
-	case idempotencykey.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case idempotencykey.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
+	case idempotencykey.FieldResponseRef:
+		return m.OldResponseRef(ctx)
 	case idempotencykey.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case idempotencykey.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown IdempotencyKey field %s", name)
 }
@@ -8789,201 +3076,12 @@ func (m *IdempotencyKeyMutation) OldField(ctx context.Context, name string) (ent
 // type.
 func (m *IdempotencyKeyMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case idempotencykey.FieldAccountID:
+	case idempotencykey.FieldService:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetAccountID(v)
-		return nil
-	case idempotencykey.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case idempotencykey.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case idempotencykey.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case idempotencykey.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
-	case idempotencykey.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
-	case idempotencykey.FieldCurrency:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCurrency(v)
-		return nil
-	case idempotencykey.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case idempotencykey.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case idempotencykey.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case idempotencykey.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case idempotencykey.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case idempotencykey.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
-		return nil
-	case idempotencykey.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
-	case idempotencykey.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case idempotencykey.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case idempotencykey.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
-	case idempotencykey.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case idempotencykey.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case idempotencykey.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case idempotencykey.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case idempotencykey.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case idempotencykey.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case idempotencykey.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case idempotencykey.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case idempotencykey.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case idempotencykey.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case idempotencykey.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
+		m.SetService(v)
 		return nil
 	case idempotencykey.FieldIdempotencyKey:
 		v, ok := value.(string)
@@ -8999,19 +3097,12 @@ func (m *IdempotencyKeyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRequestHash(v)
 		return nil
-	case idempotencykey.FieldReportJSON:
+	case idempotencykey.FieldResponseRef:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetReportJSON(v)
-		return nil
-	case idempotencykey.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
+		m.SetResponseRef(v)
 		return nil
 	case idempotencykey.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -9020,13 +3111,6 @@ func (m *IdempotencyKeyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCreatedAt(v)
 		return nil
-	case idempotencykey.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
-		return nil
 	}
 	return fmt.Errorf("unknown IdempotencyKey field %s", name)
 }
@@ -9034,46 +3118,13 @@ func (m *IdempotencyKeyMutation) SetField(name string, value ent.Value) error {
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *IdempotencyKeyMutation) AddedFields() []string {
-	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, idempotencykey.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, idempotencykey.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, idempotencykey.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, idempotencykey.FieldTotalSpentCents)
-	}
-	if m.addamount_cents != nil {
-		fields = append(fields, idempotencykey.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, idempotencykey.FieldQuantity)
-	}
-	return fields
+	return nil
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *IdempotencyKeyMutation) AddedField(name string) (ent.Value, bool) {
-	switch name {
-	case idempotencykey.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case idempotencykey.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case idempotencykey.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case idempotencykey.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
-	case idempotencykey.FieldAmountCents:
-		return m.AddedAmountCents()
-	case idempotencykey.FieldQuantity:
-		return m.AddedQuantity()
-	}
 	return nil, false
 }
 
@@ -9082,48 +3133,6 @@ func (m *IdempotencyKeyMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *IdempotencyKeyMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case idempotencykey.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case idempotencykey.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case idempotencykey.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case idempotencykey.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
-	case idempotencykey.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAmountCents(v)
-		return nil
-	case idempotencykey.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
-		return nil
 	}
 	return fmt.Errorf("unknown IdempotencyKey numeric field %s", name)
 }
@@ -9151,89 +3160,8 @@ func (m *IdempotencyKeyMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *IdempotencyKeyMutation) ResetField(name string) error {
 	switch name {
-	case idempotencykey.FieldAccountID:
-		m.ResetAccountID()
-		return nil
-	case idempotencykey.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case idempotencykey.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case idempotencykey.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case idempotencykey.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
-	case idempotencykey.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
-	case idempotencykey.FieldCurrency:
-		m.ResetCurrency()
-		return nil
-	case idempotencykey.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case idempotencykey.FieldSource:
-		m.ResetSource()
-		return nil
-	case idempotencykey.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case idempotencykey.FieldReason:
-		m.ResetReason()
-		return nil
-	case idempotencykey.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case idempotencykey.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
-	case idempotencykey.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
-	case idempotencykey.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case idempotencykey.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case idempotencykey.FieldHoldID:
-		m.ResetHoldID()
-		return nil
-	case idempotencykey.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case idempotencykey.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case idempotencykey.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case idempotencykey.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case idempotencykey.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case idempotencykey.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case idempotencykey.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case idempotencykey.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case idempotencykey.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case idempotencykey.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case idempotencykey.FieldTokenVersion:
-		m.ResetTokenVersion()
+	case idempotencykey.FieldService:
+		m.ResetService()
 		return nil
 	case idempotencykey.FieldIdempotencyKey:
 		m.ResetIdempotencyKey()
@@ -9241,17 +3169,11 @@ func (m *IdempotencyKeyMutation) ResetField(name string) error {
 	case idempotencykey.FieldRequestHash:
 		m.ResetRequestHash()
 		return nil
-	case idempotencykey.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case idempotencykey.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
+	case idempotencykey.FieldResponseRef:
+		m.ResetResponseRef()
 		return nil
 	case idempotencykey.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case idempotencykey.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown IdempotencyKey field %s", name)
@@ -9308,53 +3230,22 @@ func (m *IdempotencyKeyMutation) ResetEdge(name string) error {
 // LedgerEntryMutation represents an operation that mutates the LedgerEntry nodes in the graph.
 type LedgerEntryMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*LedgerEntry, error)
-	predicates                 []predicate.LedgerEntry
+	op               Op
+	typ              string
+	id               *string
+	account_id       *string
+	amount_cents     *int64
+	addamount_cents  *int64
+	currency         *string
+	direction        *string
+	source           *string
+	operator_user_id *string
+	reason           *string
+	created_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*LedgerEntry, error)
+	predicates       []predicate.LedgerEntry
 }
 
 var _ ent.Mutation = (*LedgerEntryMutation)(nil)
@@ -9495,230 +3386,6 @@ func (m *LedgerEntryMutation) OldAccountID(ctx context.Context) (v string, err e
 // ResetAccountID resets all changes to the "account_id" field.
 func (m *LedgerEntryMutation) ResetAccountID() {
 	m.account_id = nil
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (m *LedgerEntryMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *LedgerEntryMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *LedgerEntryMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *LedgerEntryMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *LedgerEntryMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *LedgerEntryMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *LedgerEntryMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *LedgerEntryMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *LedgerEntryMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *LedgerEntryMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *LedgerEntryMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *LedgerEntryMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *LedgerEntryMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *LedgerEntryMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *LedgerEntryMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *LedgerEntryMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *LedgerEntryMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *LedgerEntryMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *LedgerEntryMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *LedgerEntryMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
 }
 
 // SetAmountCents sets the "amount_cents" field.
@@ -9957,782 +3624,6 @@ func (m *LedgerEntryMutation) ResetReason() {
 	m.reason = nil
 }
 
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *LedgerEntryMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *LedgerEntryMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *LedgerEntryMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *LedgerEntryMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *LedgerEntryMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *LedgerEntryMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *LedgerEntryMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *LedgerEntryMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *LedgerEntryMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *LedgerEntryMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *LedgerEntryMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *LedgerEntryMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *LedgerEntryMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *LedgerEntryMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *LedgerEntryMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *LedgerEntryMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *LedgerEntryMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *LedgerEntryMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *LedgerEntryMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *LedgerEntryMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *LedgerEntryMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *LedgerEntryMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *LedgerEntryMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *LedgerEntryMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *LedgerEntryMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *LedgerEntryMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *LedgerEntryMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *LedgerEntryMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *LedgerEntryMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *LedgerEntryMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *LedgerEntryMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *LedgerEntryMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *LedgerEntryMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *LedgerEntryMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *LedgerEntryMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *LedgerEntryMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *LedgerEntryMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *LedgerEntryMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *LedgerEntryMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *LedgerEntryMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *LedgerEntryMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *LedgerEntryMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *LedgerEntryMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *LedgerEntryMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *LedgerEntryMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *LedgerEntryMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *LedgerEntryMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *LedgerEntryMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *LedgerEntryMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *LedgerEntryMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *LedgerEntryMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *LedgerEntryMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *LedgerEntryMutation) ResetTokenVersion() {
-	m.token_version = nil
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (m *LedgerEntryMutation) SetIdempotencyKey(s string) {
-	m.idempotency_key = &s
-}
-
-// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
-func (m *LedgerEntryMutation) IdempotencyKey() (r string, exists bool) {
-	v := m.idempotency_key
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIdempotencyKey returns the old "idempotency_key" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
-	}
-	return oldValue.IdempotencyKey, nil
-}
-
-// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
-func (m *LedgerEntryMutation) ResetIdempotencyKey() {
-	m.idempotency_key = nil
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (m *LedgerEntryMutation) SetRequestHash(s string) {
-	m.request_hash = &s
-}
-
-// RequestHash returns the value of the "request_hash" field in the mutation.
-func (m *LedgerEntryMutation) RequestHash() (r string, exists bool) {
-	v := m.request_hash
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRequestHash returns the old "request_hash" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldRequestHash(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRequestHash requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
-	}
-	return oldValue.RequestHash, nil
-}
-
-// ResetRequestHash resets all changes to the "request_hash" field.
-func (m *LedgerEntryMutation) ResetRequestHash() {
-	m.request_hash = nil
-}
-
-// SetReportJSON sets the "report_json" field.
-func (m *LedgerEntryMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *LedgerEntryMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *LedgerEntryMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *LedgerEntryMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *LedgerEntryMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *LedgerEntryMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (m *LedgerEntryMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -10769,42 +3660,6 @@ func (m *LedgerEntryMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *LedgerEntryMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *LedgerEntryMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the LedgerEntry entity.
-// If the LedgerEntry object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *LedgerEntryMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *LedgerEntryMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the LedgerEntryMutation builder.
 func (m *LedgerEntryMutation) Where(ps ...predicate.LedgerEntry) {
 	m.predicates = append(m.predicates, ps...)
@@ -10839,21 +3694,9 @@ func (m *LedgerEntryMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *LedgerEntryMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 8)
 	if m.account_id != nil {
 		fields = append(fields, ledgerentry.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, ledgerentry.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, ledgerentry.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, ledgerentry.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, ledgerentry.FieldTotalSpentCents)
 	}
 	if m.amount_cents != nil {
 		fields = append(fields, ledgerentry.FieldAmountCents)
@@ -10873,74 +3716,8 @@ func (m *LedgerEntryMutation) Fields() []string {
 	if m.reason != nil {
 		fields = append(fields, ledgerentry.FieldReason)
 	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, ledgerentry.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, ledgerentry.FieldWalletTransactionID)
-	}
-	if m.workspace_id != nil {
-		fields = append(fields, ledgerentry.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, ledgerentry.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, ledgerentry.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, ledgerentry.FieldHoldID)
-	}
-	if m.status != nil {
-		fields = append(fields, ledgerentry.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, ledgerentry.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, ledgerentry.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, ledgerentry.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, ledgerentry.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, ledgerentry.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, ledgerentry.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, ledgerentry.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, ledgerentry.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, ledgerentry.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, ledgerentry.FieldTokenVersion)
-	}
-	if m.idempotency_key != nil {
-		fields = append(fields, ledgerentry.FieldIdempotencyKey)
-	}
-	if m.request_hash != nil {
-		fields = append(fields, ledgerentry.FieldRequestHash)
-	}
-	if m.report_json != nil {
-		fields = append(fields, ledgerentry.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, ledgerentry.FieldBlockNewWorkspaces)
-	}
 	if m.created_at != nil {
 		fields = append(fields, ledgerentry.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, ledgerentry.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -10952,14 +3729,6 @@ func (m *LedgerEntryMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case ledgerentry.FieldAccountID:
 		return m.AccountID()
-	case ledgerentry.FieldBalanceCents:
-		return m.BalanceCents()
-	case ledgerentry.FieldFrozenCents:
-		return m.FrozenCents()
-	case ledgerentry.FieldAvailableCents:
-		return m.AvailableCents()
-	case ledgerentry.FieldTotalSpentCents:
-		return m.TotalSpentCents()
 	case ledgerentry.FieldAmountCents:
 		return m.AmountCents()
 	case ledgerentry.FieldCurrency:
@@ -10972,52 +3741,8 @@ func (m *LedgerEntryMutation) Field(name string) (ent.Value, bool) {
 		return m.OperatorUserID()
 	case ledgerentry.FieldReason:
 		return m.Reason()
-	case ledgerentry.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case ledgerentry.FieldWalletTransactionID:
-		return m.WalletTransactionID()
-	case ledgerentry.FieldWorkspaceID:
-		return m.WorkspaceID()
-	case ledgerentry.FieldResourceType:
-		return m.ResourceType()
-	case ledgerentry.FieldResourceID:
-		return m.ResourceID()
-	case ledgerentry.FieldHoldID:
-		return m.HoldID()
-	case ledgerentry.FieldStatus:
-		return m.Status()
-	case ledgerentry.FieldPricingVersion:
-		return m.PricingVersion()
-	case ledgerentry.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case ledgerentry.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case ledgerentry.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case ledgerentry.FieldQuantity:
-		return m.Quantity()
-	case ledgerentry.FieldUnit:
-		return m.Unit()
-	case ledgerentry.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case ledgerentry.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case ledgerentry.FieldRedactedURL:
-		return m.RedactedURL()
-	case ledgerentry.FieldTokenVersion:
-		return m.TokenVersion()
-	case ledgerentry.FieldIdempotencyKey:
-		return m.IdempotencyKey()
-	case ledgerentry.FieldRequestHash:
-		return m.RequestHash()
-	case ledgerentry.FieldReportJSON:
-		return m.ReportJSON()
-	case ledgerentry.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
 	case ledgerentry.FieldCreatedAt:
 		return m.CreatedAt()
-	case ledgerentry.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -11029,14 +3754,6 @@ func (m *LedgerEntryMutation) OldField(ctx context.Context, name string) (ent.Va
 	switch name {
 	case ledgerentry.FieldAccountID:
 		return m.OldAccountID(ctx)
-	case ledgerentry.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case ledgerentry.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case ledgerentry.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case ledgerentry.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
 	case ledgerentry.FieldAmountCents:
 		return m.OldAmountCents(ctx)
 	case ledgerentry.FieldCurrency:
@@ -11049,52 +3766,8 @@ func (m *LedgerEntryMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldOperatorUserID(ctx)
 	case ledgerentry.FieldReason:
 		return m.OldReason(ctx)
-	case ledgerentry.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case ledgerentry.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
-	case ledgerentry.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
-	case ledgerentry.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case ledgerentry.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case ledgerentry.FieldHoldID:
-		return m.OldHoldID(ctx)
-	case ledgerentry.FieldStatus:
-		return m.OldStatus(ctx)
-	case ledgerentry.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case ledgerentry.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case ledgerentry.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case ledgerentry.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case ledgerentry.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case ledgerentry.FieldUnit:
-		return m.OldUnit(ctx)
-	case ledgerentry.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case ledgerentry.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case ledgerentry.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case ledgerentry.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
-	case ledgerentry.FieldIdempotencyKey:
-		return m.OldIdempotencyKey(ctx)
-	case ledgerentry.FieldRequestHash:
-		return m.OldRequestHash(ctx)
-	case ledgerentry.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case ledgerentry.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
 	case ledgerentry.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case ledgerentry.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown LedgerEntry field %s", name)
 }
@@ -11110,34 +3783,6 @@ func (m *LedgerEntryMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAccountID(v)
-		return nil
-	case ledgerentry.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case ledgerentry.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case ledgerentry.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case ledgerentry.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
 		return nil
 	case ledgerentry.FieldAmountCents:
 		v, ok := value.(int64)
@@ -11181,166 +3826,12 @@ func (m *LedgerEntryMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetReason(v)
 		return nil
-	case ledgerentry.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case ledgerentry.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
-		return nil
-	case ledgerentry.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
-	case ledgerentry.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case ledgerentry.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case ledgerentry.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
-	case ledgerentry.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case ledgerentry.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case ledgerentry.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case ledgerentry.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case ledgerentry.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case ledgerentry.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case ledgerentry.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case ledgerentry.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case ledgerentry.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case ledgerentry.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case ledgerentry.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
-		return nil
-	case ledgerentry.FieldIdempotencyKey:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIdempotencyKey(v)
-		return nil
-	case ledgerentry.FieldRequestHash:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRequestHash(v)
-		return nil
-	case ledgerentry.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case ledgerentry.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
 	case ledgerentry.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case ledgerentry.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown LedgerEntry field %s", name)
@@ -11350,23 +3841,8 @@ func (m *LedgerEntryMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *LedgerEntryMutation) AddedFields() []string {
 	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, ledgerentry.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, ledgerentry.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, ledgerentry.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, ledgerentry.FieldTotalSpentCents)
-	}
 	if m.addamount_cents != nil {
 		fields = append(fields, ledgerentry.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, ledgerentry.FieldQuantity)
 	}
 	return fields
 }
@@ -11376,18 +3852,8 @@ func (m *LedgerEntryMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *LedgerEntryMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case ledgerentry.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case ledgerentry.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case ledgerentry.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case ledgerentry.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
 	case ledgerentry.FieldAmountCents:
 		return m.AddedAmountCents()
-	case ledgerentry.FieldQuantity:
-		return m.AddedQuantity()
 	}
 	return nil, false
 }
@@ -11397,47 +3863,12 @@ func (m *LedgerEntryMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *LedgerEntryMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case ledgerentry.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case ledgerentry.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case ledgerentry.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case ledgerentry.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
 	case ledgerentry.FieldAmountCents:
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAmountCents(v)
-		return nil
-	case ledgerentry.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
 		return nil
 	}
 	return fmt.Errorf("unknown LedgerEntry numeric field %s", name)
@@ -11469,18 +3900,6 @@ func (m *LedgerEntryMutation) ResetField(name string) error {
 	case ledgerentry.FieldAccountID:
 		m.ResetAccountID()
 		return nil
-	case ledgerentry.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case ledgerentry.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case ledgerentry.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case ledgerentry.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
 	case ledgerentry.FieldAmountCents:
 		m.ResetAmountCents()
 		return nil
@@ -11499,74 +3918,8 @@ func (m *LedgerEntryMutation) ResetField(name string) error {
 	case ledgerentry.FieldReason:
 		m.ResetReason()
 		return nil
-	case ledgerentry.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case ledgerentry.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
-	case ledgerentry.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
-	case ledgerentry.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case ledgerentry.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case ledgerentry.FieldHoldID:
-		m.ResetHoldID()
-		return nil
-	case ledgerentry.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case ledgerentry.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case ledgerentry.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case ledgerentry.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case ledgerentry.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case ledgerentry.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case ledgerentry.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case ledgerentry.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case ledgerentry.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case ledgerentry.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case ledgerentry.FieldTokenVersion:
-		m.ResetTokenVersion()
-		return nil
-	case ledgerentry.FieldIdempotencyKey:
-		m.ResetIdempotencyKey()
-		return nil
-	case ledgerentry.FieldRequestHash:
-		m.ResetRequestHash()
-		return nil
-	case ledgerentry.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case ledgerentry.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
 	case ledgerentry.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case ledgerentry.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown LedgerEntry field %s", name)
@@ -11623,53 +3976,24 @@ func (m *LedgerEntryMutation) ResetEdge(name string) error {
 // ManualTopupMutation represents an operation that mutates the ManualTopup nodes in the graph.
 type ManualTopupMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*ManualTopup, error)
-	predicates                 []predicate.ManualTopup
+	op                    Op
+	typ                   string
+	id                    *string
+	account_id            *string
+	amount_cents          *int64
+	addamount_cents       *int64
+	currency              *string
+	operator_user_id      *string
+	ledger_entry_id       *string
+	wallet_transaction_id *string
+	idempotency_key       *string
+	request_hash          *string
+	reason                *string
+	created_at            *time.Time
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*ManualTopup, error)
+	predicates            []predicate.ManualTopup
 }
 
 var _ ent.Mutation = (*ManualTopupMutation)(nil)
@@ -11812,230 +4136,6 @@ func (m *ManualTopupMutation) ResetAccountID() {
 	m.account_id = nil
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (m *ManualTopupMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *ManualTopupMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *ManualTopupMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *ManualTopupMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *ManualTopupMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *ManualTopupMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *ManualTopupMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *ManualTopupMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *ManualTopupMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *ManualTopupMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *ManualTopupMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *ManualTopupMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *ManualTopupMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *ManualTopupMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *ManualTopupMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *ManualTopupMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *ManualTopupMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *ManualTopupMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *ManualTopupMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *ManualTopupMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
 // SetAmountCents sets the "amount_cents" field.
 func (m *ManualTopupMutation) SetAmountCents(i int64) {
 	m.amount_cents = &i
@@ -12128,78 +4228,6 @@ func (m *ManualTopupMutation) ResetCurrency() {
 	m.currency = nil
 }
 
-// SetDirection sets the "direction" field.
-func (m *ManualTopupMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *ManualTopupMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *ManualTopupMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *ManualTopupMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *ManualTopupMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *ManualTopupMutation) ResetSource() {
-	m.source = nil
-}
-
 // SetOperatorUserID sets the "operator_user_id" field.
 func (m *ManualTopupMutation) SetOperatorUserID(s string) {
 	m.operator_user_id = &s
@@ -12234,42 +4262,6 @@ func (m *ManualTopupMutation) OldOperatorUserID(ctx context.Context) (v string, 
 // ResetOperatorUserID resets all changes to the "operator_user_id" field.
 func (m *ManualTopupMutation) ResetOperatorUserID() {
 	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *ManualTopupMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *ManualTopupMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *ManualTopupMutation) ResetReason() {
-	m.reason = nil
 }
 
 // SetLedgerEntryID sets the "ledger_entry_id" field.
@@ -12344,566 +4336,6 @@ func (m *ManualTopupMutation) ResetWalletTransactionID() {
 	m.wallet_transaction_id = nil
 }
 
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *ManualTopupMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *ManualTopupMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *ManualTopupMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *ManualTopupMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *ManualTopupMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *ManualTopupMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *ManualTopupMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *ManualTopupMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *ManualTopupMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *ManualTopupMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *ManualTopupMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *ManualTopupMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *ManualTopupMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *ManualTopupMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *ManualTopupMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *ManualTopupMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *ManualTopupMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *ManualTopupMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *ManualTopupMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *ManualTopupMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *ManualTopupMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *ManualTopupMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *ManualTopupMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *ManualTopupMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *ManualTopupMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *ManualTopupMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *ManualTopupMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *ManualTopupMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *ManualTopupMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *ManualTopupMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *ManualTopupMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *ManualTopupMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *ManualTopupMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *ManualTopupMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *ManualTopupMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *ManualTopupMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *ManualTopupMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *ManualTopupMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *ManualTopupMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *ManualTopupMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *ManualTopupMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *ManualTopupMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *ManualTopupMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *ManualTopupMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *ManualTopupMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *ManualTopupMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *ManualTopupMutation) ResetTokenVersion() {
-	m.token_version = nil
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (m *ManualTopupMutation) SetIdempotencyKey(s string) {
 	m.idempotency_key = &s
@@ -12976,76 +4408,40 @@ func (m *ManualTopupMutation) ResetRequestHash() {
 	m.request_hash = nil
 }
 
-// SetReportJSON sets the "report_json" field.
-func (m *ManualTopupMutation) SetReportJSON(s string) {
-	m.report_json = &s
+// SetReason sets the "reason" field.
+func (m *ManualTopupMutation) SetReason(s string) {
+	m.reason = &s
 }
 
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *ManualTopupMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
+// Reason returns the value of the "reason" field in the mutation.
+func (m *ManualTopupMutation) Reason() (r string, exists bool) {
+	v := m.reason
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldReportJSON returns the old "report_json" field's value of the ManualTopup entity.
+// OldReason returns the old "reason" field's value of the ManualTopup entity.
 // If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldReportJSON(ctx context.Context) (v string, err error) {
+func (m *ManualTopupMutation) OldReason(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
+		return v, errors.New("OldReason is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
+		return v, errors.New("OldReason requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
+		return v, fmt.Errorf("querying old value for OldReason: %w", err)
 	}
-	return oldValue.ReportJSON, nil
+	return oldValue.Reason, nil
 }
 
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *ManualTopupMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *ManualTopupMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *ManualTopupMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *ManualTopupMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
+// ResetReason resets all changes to the "reason" field.
+func (m *ManualTopupMutation) ResetReason() {
+	m.reason = nil
 }
 
 // SetCreatedAt sets the "created_at" field.
@@ -13084,42 +4480,6 @@ func (m *ManualTopupMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *ManualTopupMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *ManualTopupMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the ManualTopup entity.
-// If the ManualTopup object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ManualTopupMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *ManualTopupMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the ManualTopupMutation builder.
 func (m *ManualTopupMutation) Where(ps ...predicate.ManualTopup) {
 	m.predicates = append(m.predicates, ps...)
@@ -13154,21 +4514,9 @@ func (m *ManualTopupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ManualTopupMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 10)
 	if m.account_id != nil {
 		fields = append(fields, manualtopup.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, manualtopup.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, manualtopup.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, manualtopup.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, manualtopup.FieldTotalSpentCents)
 	}
 	if m.amount_cents != nil {
 		fields = append(fields, manualtopup.FieldAmountCents)
@@ -13176,17 +4524,8 @@ func (m *ManualTopupMutation) Fields() []string {
 	if m.currency != nil {
 		fields = append(fields, manualtopup.FieldCurrency)
 	}
-	if m.direction != nil {
-		fields = append(fields, manualtopup.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, manualtopup.FieldSource)
-	}
 	if m.operator_user_id != nil {
 		fields = append(fields, manualtopup.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, manualtopup.FieldReason)
 	}
 	if m.ledger_entry_id != nil {
 		fields = append(fields, manualtopup.FieldLedgerEntryID)
@@ -13194,68 +4533,17 @@ func (m *ManualTopupMutation) Fields() []string {
 	if m.wallet_transaction_id != nil {
 		fields = append(fields, manualtopup.FieldWalletTransactionID)
 	}
-	if m.workspace_id != nil {
-		fields = append(fields, manualtopup.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, manualtopup.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, manualtopup.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, manualtopup.FieldHoldID)
-	}
-	if m.status != nil {
-		fields = append(fields, manualtopup.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, manualtopup.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, manualtopup.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, manualtopup.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, manualtopup.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, manualtopup.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, manualtopup.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, manualtopup.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, manualtopup.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, manualtopup.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, manualtopup.FieldTokenVersion)
-	}
 	if m.idempotency_key != nil {
 		fields = append(fields, manualtopup.FieldIdempotencyKey)
 	}
 	if m.request_hash != nil {
 		fields = append(fields, manualtopup.FieldRequestHash)
 	}
-	if m.report_json != nil {
-		fields = append(fields, manualtopup.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, manualtopup.FieldBlockNewWorkspaces)
+	if m.reason != nil {
+		fields = append(fields, manualtopup.FieldReason)
 	}
 	if m.created_at != nil {
 		fields = append(fields, manualtopup.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, manualtopup.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -13267,72 +4555,24 @@ func (m *ManualTopupMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case manualtopup.FieldAccountID:
 		return m.AccountID()
-	case manualtopup.FieldBalanceCents:
-		return m.BalanceCents()
-	case manualtopup.FieldFrozenCents:
-		return m.FrozenCents()
-	case manualtopup.FieldAvailableCents:
-		return m.AvailableCents()
-	case manualtopup.FieldTotalSpentCents:
-		return m.TotalSpentCents()
 	case manualtopup.FieldAmountCents:
 		return m.AmountCents()
 	case manualtopup.FieldCurrency:
 		return m.Currency()
-	case manualtopup.FieldDirection:
-		return m.Direction()
-	case manualtopup.FieldSource:
-		return m.Source()
 	case manualtopup.FieldOperatorUserID:
 		return m.OperatorUserID()
-	case manualtopup.FieldReason:
-		return m.Reason()
 	case manualtopup.FieldLedgerEntryID:
 		return m.LedgerEntryID()
 	case manualtopup.FieldWalletTransactionID:
 		return m.WalletTransactionID()
-	case manualtopup.FieldWorkspaceID:
-		return m.WorkspaceID()
-	case manualtopup.FieldResourceType:
-		return m.ResourceType()
-	case manualtopup.FieldResourceID:
-		return m.ResourceID()
-	case manualtopup.FieldHoldID:
-		return m.HoldID()
-	case manualtopup.FieldStatus:
-		return m.Status()
-	case manualtopup.FieldPricingVersion:
-		return m.PricingVersion()
-	case manualtopup.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case manualtopup.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case manualtopup.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case manualtopup.FieldQuantity:
-		return m.Quantity()
-	case manualtopup.FieldUnit:
-		return m.Unit()
-	case manualtopup.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case manualtopup.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case manualtopup.FieldRedactedURL:
-		return m.RedactedURL()
-	case manualtopup.FieldTokenVersion:
-		return m.TokenVersion()
 	case manualtopup.FieldIdempotencyKey:
 		return m.IdempotencyKey()
 	case manualtopup.FieldRequestHash:
 		return m.RequestHash()
-	case manualtopup.FieldReportJSON:
-		return m.ReportJSON()
-	case manualtopup.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
+	case manualtopup.FieldReason:
+		return m.Reason()
 	case manualtopup.FieldCreatedAt:
 		return m.CreatedAt()
-	case manualtopup.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -13344,72 +4584,24 @@ func (m *ManualTopupMutation) OldField(ctx context.Context, name string) (ent.Va
 	switch name {
 	case manualtopup.FieldAccountID:
 		return m.OldAccountID(ctx)
-	case manualtopup.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case manualtopup.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case manualtopup.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case manualtopup.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
 	case manualtopup.FieldAmountCents:
 		return m.OldAmountCents(ctx)
 	case manualtopup.FieldCurrency:
 		return m.OldCurrency(ctx)
-	case manualtopup.FieldDirection:
-		return m.OldDirection(ctx)
-	case manualtopup.FieldSource:
-		return m.OldSource(ctx)
 	case manualtopup.FieldOperatorUserID:
 		return m.OldOperatorUserID(ctx)
-	case manualtopup.FieldReason:
-		return m.OldReason(ctx)
 	case manualtopup.FieldLedgerEntryID:
 		return m.OldLedgerEntryID(ctx)
 	case manualtopup.FieldWalletTransactionID:
 		return m.OldWalletTransactionID(ctx)
-	case manualtopup.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
-	case manualtopup.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case manualtopup.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case manualtopup.FieldHoldID:
-		return m.OldHoldID(ctx)
-	case manualtopup.FieldStatus:
-		return m.OldStatus(ctx)
-	case manualtopup.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case manualtopup.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case manualtopup.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case manualtopup.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case manualtopup.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case manualtopup.FieldUnit:
-		return m.OldUnit(ctx)
-	case manualtopup.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case manualtopup.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case manualtopup.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case manualtopup.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
 	case manualtopup.FieldIdempotencyKey:
 		return m.OldIdempotencyKey(ctx)
 	case manualtopup.FieldRequestHash:
 		return m.OldRequestHash(ctx)
-	case manualtopup.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case manualtopup.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
+	case manualtopup.FieldReason:
+		return m.OldReason(ctx)
 	case manualtopup.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case manualtopup.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown ManualTopup field %s", name)
 }
@@ -13426,34 +4618,6 @@ func (m *ManualTopupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAccountID(v)
 		return nil
-	case manualtopup.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case manualtopup.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case manualtopup.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case manualtopup.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
 	case manualtopup.FieldAmountCents:
 		v, ok := value.(int64)
 		if !ok {
@@ -13468,33 +4632,12 @@ func (m *ManualTopupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCurrency(v)
 		return nil
-	case manualtopup.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case manualtopup.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
 	case manualtopup.FieldOperatorUserID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetOperatorUserID(v)
-		return nil
-	case manualtopup.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
 		return nil
 	case manualtopup.FieldLedgerEntryID:
 		v, ok := value.(string)
@@ -13510,111 +4653,6 @@ func (m *ManualTopupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetWalletTransactionID(v)
 		return nil
-	case manualtopup.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
-	case manualtopup.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case manualtopup.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case manualtopup.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
-	case manualtopup.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case manualtopup.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case manualtopup.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case manualtopup.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case manualtopup.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case manualtopup.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case manualtopup.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case manualtopup.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case manualtopup.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case manualtopup.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case manualtopup.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
-		return nil
 	case manualtopup.FieldIdempotencyKey:
 		v, ok := value.(string)
 		if !ok {
@@ -13629,19 +4667,12 @@ func (m *ManualTopupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRequestHash(v)
 		return nil
-	case manualtopup.FieldReportJSON:
+	case manualtopup.FieldReason:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetReportJSON(v)
-		return nil
-	case manualtopup.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
+		m.SetReason(v)
 		return nil
 	case manualtopup.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -13649,13 +4680,6 @@ func (m *ManualTopupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case manualtopup.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ManualTopup field %s", name)
@@ -13665,23 +4689,8 @@ func (m *ManualTopupMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *ManualTopupMutation) AddedFields() []string {
 	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, manualtopup.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, manualtopup.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, manualtopup.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, manualtopup.FieldTotalSpentCents)
-	}
 	if m.addamount_cents != nil {
 		fields = append(fields, manualtopup.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, manualtopup.FieldQuantity)
 	}
 	return fields
 }
@@ -13691,18 +4700,8 @@ func (m *ManualTopupMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *ManualTopupMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case manualtopup.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case manualtopup.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case manualtopup.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case manualtopup.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
 	case manualtopup.FieldAmountCents:
 		return m.AddedAmountCents()
-	case manualtopup.FieldQuantity:
-		return m.AddedQuantity()
 	}
 	return nil, false
 }
@@ -13712,47 +4711,12 @@ func (m *ManualTopupMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *ManualTopupMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case manualtopup.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case manualtopup.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case manualtopup.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case manualtopup.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
 	case manualtopup.FieldAmountCents:
 		v, ok := value.(int64)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAmountCents(v)
-		return nil
-	case manualtopup.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ManualTopup numeric field %s", name)
@@ -13784,35 +4748,14 @@ func (m *ManualTopupMutation) ResetField(name string) error {
 	case manualtopup.FieldAccountID:
 		m.ResetAccountID()
 		return nil
-	case manualtopup.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case manualtopup.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case manualtopup.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case manualtopup.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
 	case manualtopup.FieldAmountCents:
 		m.ResetAmountCents()
 		return nil
 	case manualtopup.FieldCurrency:
 		m.ResetCurrency()
 		return nil
-	case manualtopup.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case manualtopup.FieldSource:
-		m.ResetSource()
-		return nil
 	case manualtopup.FieldOperatorUserID:
 		m.ResetOperatorUserID()
-		return nil
-	case manualtopup.FieldReason:
-		m.ResetReason()
 		return nil
 	case manualtopup.FieldLedgerEntryID:
 		m.ResetLedgerEntryID()
@@ -13820,68 +4763,17 @@ func (m *ManualTopupMutation) ResetField(name string) error {
 	case manualtopup.FieldWalletTransactionID:
 		m.ResetWalletTransactionID()
 		return nil
-	case manualtopup.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
-	case manualtopup.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case manualtopup.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case manualtopup.FieldHoldID:
-		m.ResetHoldID()
-		return nil
-	case manualtopup.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case manualtopup.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case manualtopup.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case manualtopup.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case manualtopup.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case manualtopup.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case manualtopup.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case manualtopup.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case manualtopup.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case manualtopup.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case manualtopup.FieldTokenVersion:
-		m.ResetTokenVersion()
-		return nil
 	case manualtopup.FieldIdempotencyKey:
 		m.ResetIdempotencyKey()
 		return nil
 	case manualtopup.FieldRequestHash:
 		m.ResetRequestHash()
 		return nil
-	case manualtopup.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case manualtopup.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
+	case manualtopup.FieldReason:
+		m.ResetReason()
 		return nil
 	case manualtopup.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case manualtopup.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown ManualTopup field %s", name)
@@ -13938,53 +4830,20 @@ func (m *ManualTopupMutation) ResetEdge(name string) error {
 // ReconciliationReportMutation represents an operation that mutates the ReconciliationReport nodes in the graph.
 type ReconciliationReportMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*ReconciliationReport, error)
-	predicates                 []predicate.ReconciliationReport
+	op                   Op
+	typ                  string
+	id                   *string
+	status               *string
+	report_json          *string
+	block_new_workspaces *bool
+	reason               *string
+	idempotency_key      *string
+	request_hash         *string
+	created_at           *time.Time
+	clearedFields        map[string]struct{}
+	done                 bool
+	oldValue             func(context.Context) (*ReconciliationReport, error)
+	predicates           []predicate.ReconciliationReport
 }
 
 var _ ent.Mutation = (*ReconciliationReportMutation)(nil)
@@ -14091,718 +4950,6 @@ func (m *ReconciliationReportMutation) IDs(ctx context.Context) ([]string, error
 	}
 }
 
-// SetAccountID sets the "account_id" field.
-func (m *ReconciliationReportMutation) SetAccountID(s string) {
-	m.account_id = &s
-}
-
-// AccountID returns the value of the "account_id" field in the mutation.
-func (m *ReconciliationReportMutation) AccountID() (r string, exists bool) {
-	v := m.account_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAccountID returns the old "account_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldAccountID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAccountID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
-	}
-	return oldValue.AccountID, nil
-}
-
-// ResetAccountID resets all changes to the "account_id" field.
-func (m *ReconciliationReportMutation) ResetAccountID() {
-	m.account_id = nil
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (m *ReconciliationReportMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *ReconciliationReportMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *ReconciliationReportMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *ReconciliationReportMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *ReconciliationReportMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *ReconciliationReportMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *ReconciliationReportMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *ReconciliationReportMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *ReconciliationReportMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *ReconciliationReportMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *ReconciliationReportMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *ReconciliationReportMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *ReconciliationReportMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *ReconciliationReportMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *ReconciliationReportMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *ReconciliationReportMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *ReconciliationReportMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *ReconciliationReportMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *ReconciliationReportMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *ReconciliationReportMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (m *ReconciliationReportMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *ReconciliationReportMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *ReconciliationReportMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *ReconciliationReportMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *ReconciliationReportMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
-// SetCurrency sets the "currency" field.
-func (m *ReconciliationReportMutation) SetCurrency(s string) {
-	m.currency = &s
-}
-
-// Currency returns the value of the "currency" field in the mutation.
-func (m *ReconciliationReportMutation) Currency() (r string, exists bool) {
-	v := m.currency
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCurrency returns the old "currency" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldCurrency(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCurrency requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
-	}
-	return oldValue.Currency, nil
-}
-
-// ResetCurrency resets all changes to the "currency" field.
-func (m *ReconciliationReportMutation) ResetCurrency() {
-	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *ReconciliationReportMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *ReconciliationReportMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *ReconciliationReportMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *ReconciliationReportMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *ReconciliationReportMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *ReconciliationReportMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *ReconciliationReportMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *ReconciliationReportMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *ReconciliationReportMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *ReconciliationReportMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *ReconciliationReportMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *ReconciliationReportMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *ReconciliationReportMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *ReconciliationReportMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *ReconciliationReportMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *ReconciliationReportMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *ReconciliationReportMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *ReconciliationReportMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *ReconciliationReportMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *ReconciliationReportMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *ReconciliationReportMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *ReconciliationReportMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *ReconciliationReportMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *ReconciliationReportMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *ReconciliationReportMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *ReconciliationReportMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *ReconciliationReportMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *ReconciliationReportMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *ReconciliationReportMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *ReconciliationReportMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
 // SetStatus sets the "status" field.
 func (m *ReconciliationReportMutation) SetStatus(s string) {
 	m.status = &s
@@ -14837,458 +4984,6 @@ func (m *ReconciliationReportMutation) OldStatus(ctx context.Context) (v string,
 // ResetStatus resets all changes to the "status" field.
 func (m *ReconciliationReportMutation) ResetStatus() {
 	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *ReconciliationReportMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *ReconciliationReportMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *ReconciliationReportMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *ReconciliationReportMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *ReconciliationReportMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *ReconciliationReportMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *ReconciliationReportMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *ReconciliationReportMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *ReconciliationReportMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *ReconciliationReportMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *ReconciliationReportMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *ReconciliationReportMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *ReconciliationReportMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *ReconciliationReportMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *ReconciliationReportMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *ReconciliationReportMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *ReconciliationReportMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *ReconciliationReportMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *ReconciliationReportMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *ReconciliationReportMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *ReconciliationReportMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *ReconciliationReportMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *ReconciliationReportMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *ReconciliationReportMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *ReconciliationReportMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *ReconciliationReportMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *ReconciliationReportMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *ReconciliationReportMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *ReconciliationReportMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *ReconciliationReportMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *ReconciliationReportMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *ReconciliationReportMutation) ResetTokenVersion() {
-	m.token_version = nil
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (m *ReconciliationReportMutation) SetIdempotencyKey(s string) {
-	m.idempotency_key = &s
-}
-
-// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
-func (m *ReconciliationReportMutation) IdempotencyKey() (r string, exists bool) {
-	v := m.idempotency_key
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIdempotencyKey returns the old "idempotency_key" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
-	}
-	return oldValue.IdempotencyKey, nil
-}
-
-// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
-func (m *ReconciliationReportMutation) ResetIdempotencyKey() {
-	m.idempotency_key = nil
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (m *ReconciliationReportMutation) SetRequestHash(s string) {
-	m.request_hash = &s
-}
-
-// RequestHash returns the value of the "request_hash" field in the mutation.
-func (m *ReconciliationReportMutation) RequestHash() (r string, exists bool) {
-	v := m.request_hash
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRequestHash returns the old "request_hash" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldRequestHash(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRequestHash requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
-	}
-	return oldValue.RequestHash, nil
-}
-
-// ResetRequestHash resets all changes to the "request_hash" field.
-func (m *ReconciliationReportMutation) ResetRequestHash() {
-	m.request_hash = nil
 }
 
 // SetReportJSON sets the "report_json" field.
@@ -15363,6 +5058,114 @@ func (m *ReconciliationReportMutation) ResetBlockNewWorkspaces() {
 	m.block_new_workspaces = nil
 }
 
+// SetReason sets the "reason" field.
+func (m *ReconciliationReportMutation) SetReason(s string) {
+	m.reason = &s
+}
+
+// Reason returns the value of the "reason" field in the mutation.
+func (m *ReconciliationReportMutation) Reason() (r string, exists bool) {
+	v := m.reason
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReason returns the old "reason" field's value of the ReconciliationReport entity.
+// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ReconciliationReportMutation) OldReason(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReason is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReason requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReason: %w", err)
+	}
+	return oldValue.Reason, nil
+}
+
+// ResetReason resets all changes to the "reason" field.
+func (m *ReconciliationReportMutation) ResetReason() {
+	m.reason = nil
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (m *ReconciliationReportMutation) SetIdempotencyKey(s string) {
+	m.idempotency_key = &s
+}
+
+// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
+func (m *ReconciliationReportMutation) IdempotencyKey() (r string, exists bool) {
+	v := m.idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdempotencyKey returns the old "idempotency_key" field's value of the ReconciliationReport entity.
+// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ReconciliationReportMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
+	}
+	return oldValue.IdempotencyKey, nil
+}
+
+// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
+func (m *ReconciliationReportMutation) ResetIdempotencyKey() {
+	m.idempotency_key = nil
+}
+
+// SetRequestHash sets the "request_hash" field.
+func (m *ReconciliationReportMutation) SetRequestHash(s string) {
+	m.request_hash = &s
+}
+
+// RequestHash returns the value of the "request_hash" field in the mutation.
+func (m *ReconciliationReportMutation) RequestHash() (r string, exists bool) {
+	v := m.request_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestHash returns the old "request_hash" field's value of the ReconciliationReport entity.
+// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ReconciliationReportMutation) OldRequestHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
+	}
+	return oldValue.RequestHash, nil
+}
+
+// ResetRequestHash resets all changes to the "request_hash" field.
+func (m *ReconciliationReportMutation) ResetRequestHash() {
+	m.request_hash = nil
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *ReconciliationReportMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -15399,42 +5202,6 @@ func (m *ReconciliationReportMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *ReconciliationReportMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *ReconciliationReportMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the ReconciliationReport entity.
-// If the ReconciliationReport object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ReconciliationReportMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *ReconciliationReportMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the ReconciliationReportMutation builder.
 func (m *ReconciliationReportMutation) Where(ps ...predicate.ReconciliationReport) {
 	m.predicates = append(m.predicates, ps...)
@@ -15469,96 +5236,9 @@ func (m *ReconciliationReportMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ReconciliationReportMutation) Fields() []string {
-	fields := make([]string, 0, 34)
-	if m.account_id != nil {
-		fields = append(fields, reconciliationreport.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, reconciliationreport.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, reconciliationreport.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, reconciliationreport.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, reconciliationreport.FieldTotalSpentCents)
-	}
-	if m.amount_cents != nil {
-		fields = append(fields, reconciliationreport.FieldAmountCents)
-	}
-	if m.currency != nil {
-		fields = append(fields, reconciliationreport.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, reconciliationreport.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, reconciliationreport.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, reconciliationreport.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, reconciliationreport.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, reconciliationreport.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, reconciliationreport.FieldWalletTransactionID)
-	}
-	if m.workspace_id != nil {
-		fields = append(fields, reconciliationreport.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, reconciliationreport.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, reconciliationreport.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, reconciliationreport.FieldHoldID)
-	}
+	fields := make([]string, 0, 7)
 	if m.status != nil {
 		fields = append(fields, reconciliationreport.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, reconciliationreport.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, reconciliationreport.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, reconciliationreport.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, reconciliationreport.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, reconciliationreport.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, reconciliationreport.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, reconciliationreport.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, reconciliationreport.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, reconciliationreport.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, reconciliationreport.FieldTokenVersion)
-	}
-	if m.idempotency_key != nil {
-		fields = append(fields, reconciliationreport.FieldIdempotencyKey)
-	}
-	if m.request_hash != nil {
-		fields = append(fields, reconciliationreport.FieldRequestHash)
 	}
 	if m.report_json != nil {
 		fields = append(fields, reconciliationreport.FieldReportJSON)
@@ -15566,11 +5246,17 @@ func (m *ReconciliationReportMutation) Fields() []string {
 	if m.block_new_workspaces != nil {
 		fields = append(fields, reconciliationreport.FieldBlockNewWorkspaces)
 	}
+	if m.reason != nil {
+		fields = append(fields, reconciliationreport.FieldReason)
+	}
+	if m.idempotency_key != nil {
+		fields = append(fields, reconciliationreport.FieldIdempotencyKey)
+	}
+	if m.request_hash != nil {
+		fields = append(fields, reconciliationreport.FieldRequestHash)
+	}
 	if m.created_at != nil {
 		fields = append(fields, reconciliationreport.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, reconciliationreport.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -15580,74 +5266,20 @@ func (m *ReconciliationReportMutation) Fields() []string {
 // schema.
 func (m *ReconciliationReportMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case reconciliationreport.FieldAccountID:
-		return m.AccountID()
-	case reconciliationreport.FieldBalanceCents:
-		return m.BalanceCents()
-	case reconciliationreport.FieldFrozenCents:
-		return m.FrozenCents()
-	case reconciliationreport.FieldAvailableCents:
-		return m.AvailableCents()
-	case reconciliationreport.FieldTotalSpentCents:
-		return m.TotalSpentCents()
-	case reconciliationreport.FieldAmountCents:
-		return m.AmountCents()
-	case reconciliationreport.FieldCurrency:
-		return m.Currency()
-	case reconciliationreport.FieldDirection:
-		return m.Direction()
-	case reconciliationreport.FieldSource:
-		return m.Source()
-	case reconciliationreport.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case reconciliationreport.FieldReason:
-		return m.Reason()
-	case reconciliationreport.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case reconciliationreport.FieldWalletTransactionID:
-		return m.WalletTransactionID()
-	case reconciliationreport.FieldWorkspaceID:
-		return m.WorkspaceID()
-	case reconciliationreport.FieldResourceType:
-		return m.ResourceType()
-	case reconciliationreport.FieldResourceID:
-		return m.ResourceID()
-	case reconciliationreport.FieldHoldID:
-		return m.HoldID()
 	case reconciliationreport.FieldStatus:
 		return m.Status()
-	case reconciliationreport.FieldPricingVersion:
-		return m.PricingVersion()
-	case reconciliationreport.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case reconciliationreport.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case reconciliationreport.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case reconciliationreport.FieldQuantity:
-		return m.Quantity()
-	case reconciliationreport.FieldUnit:
-		return m.Unit()
-	case reconciliationreport.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case reconciliationreport.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case reconciliationreport.FieldRedactedURL:
-		return m.RedactedURL()
-	case reconciliationreport.FieldTokenVersion:
-		return m.TokenVersion()
-	case reconciliationreport.FieldIdempotencyKey:
-		return m.IdempotencyKey()
-	case reconciliationreport.FieldRequestHash:
-		return m.RequestHash()
 	case reconciliationreport.FieldReportJSON:
 		return m.ReportJSON()
 	case reconciliationreport.FieldBlockNewWorkspaces:
 		return m.BlockNewWorkspaces()
+	case reconciliationreport.FieldReason:
+		return m.Reason()
+	case reconciliationreport.FieldIdempotencyKey:
+		return m.IdempotencyKey()
+	case reconciliationreport.FieldRequestHash:
+		return m.RequestHash()
 	case reconciliationreport.FieldCreatedAt:
 		return m.CreatedAt()
-	case reconciliationreport.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -15657,74 +5289,20 @@ func (m *ReconciliationReportMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *ReconciliationReportMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case reconciliationreport.FieldAccountID:
-		return m.OldAccountID(ctx)
-	case reconciliationreport.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case reconciliationreport.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case reconciliationreport.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case reconciliationreport.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
-	case reconciliationreport.FieldAmountCents:
-		return m.OldAmountCents(ctx)
-	case reconciliationreport.FieldCurrency:
-		return m.OldCurrency(ctx)
-	case reconciliationreport.FieldDirection:
-		return m.OldDirection(ctx)
-	case reconciliationreport.FieldSource:
-		return m.OldSource(ctx)
-	case reconciliationreport.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case reconciliationreport.FieldReason:
-		return m.OldReason(ctx)
-	case reconciliationreport.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case reconciliationreport.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
-	case reconciliationreport.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
-	case reconciliationreport.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case reconciliationreport.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case reconciliationreport.FieldHoldID:
-		return m.OldHoldID(ctx)
 	case reconciliationreport.FieldStatus:
 		return m.OldStatus(ctx)
-	case reconciliationreport.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case reconciliationreport.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case reconciliationreport.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case reconciliationreport.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case reconciliationreport.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case reconciliationreport.FieldUnit:
-		return m.OldUnit(ctx)
-	case reconciliationreport.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case reconciliationreport.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case reconciliationreport.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case reconciliationreport.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
-	case reconciliationreport.FieldIdempotencyKey:
-		return m.OldIdempotencyKey(ctx)
-	case reconciliationreport.FieldRequestHash:
-		return m.OldRequestHash(ctx)
 	case reconciliationreport.FieldReportJSON:
 		return m.OldReportJSON(ctx)
 	case reconciliationreport.FieldBlockNewWorkspaces:
 		return m.OldBlockNewWorkspaces(ctx)
+	case reconciliationreport.FieldReason:
+		return m.OldReason(ctx)
+	case reconciliationreport.FieldIdempotencyKey:
+		return m.OldIdempotencyKey(ctx)
+	case reconciliationreport.FieldRequestHash:
+		return m.OldRequestHash(ctx)
 	case reconciliationreport.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case reconciliationreport.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown ReconciliationReport field %s", name)
 }
@@ -15734,215 +5312,12 @@ func (m *ReconciliationReportMutation) OldField(ctx context.Context, name string
 // type.
 func (m *ReconciliationReportMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case reconciliationreport.FieldAccountID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAccountID(v)
-		return nil
-	case reconciliationreport.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case reconciliationreport.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case reconciliationreport.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case reconciliationreport.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
-	case reconciliationreport.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
-	case reconciliationreport.FieldCurrency:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCurrency(v)
-		return nil
-	case reconciliationreport.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case reconciliationreport.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case reconciliationreport.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case reconciliationreport.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case reconciliationreport.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case reconciliationreport.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
-		return nil
-	case reconciliationreport.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
-	case reconciliationreport.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case reconciliationreport.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case reconciliationreport.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
 	case reconciliationreport.FieldStatus:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStatus(v)
-		return nil
-	case reconciliationreport.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case reconciliationreport.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case reconciliationreport.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case reconciliationreport.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case reconciliationreport.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case reconciliationreport.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case reconciliationreport.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case reconciliationreport.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case reconciliationreport.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case reconciliationreport.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
-		return nil
-	case reconciliationreport.FieldIdempotencyKey:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIdempotencyKey(v)
-		return nil
-	case reconciliationreport.FieldRequestHash:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRequestHash(v)
 		return nil
 	case reconciliationreport.FieldReportJSON:
 		v, ok := value.(string)
@@ -15958,19 +5333,33 @@ func (m *ReconciliationReportMutation) SetField(name string, value ent.Value) er
 		}
 		m.SetBlockNewWorkspaces(v)
 		return nil
+	case reconciliationreport.FieldReason:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReason(v)
+		return nil
+	case reconciliationreport.FieldIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdempotencyKey(v)
+		return nil
+	case reconciliationreport.FieldRequestHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestHash(v)
+		return nil
 	case reconciliationreport.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case reconciliationreport.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ReconciliationReport field %s", name)
@@ -15979,46 +5368,13 @@ func (m *ReconciliationReportMutation) SetField(name string, value ent.Value) er
 // AddedFields returns all numeric fields that were incremented/decremented during
 // this mutation.
 func (m *ReconciliationReportMutation) AddedFields() []string {
-	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, reconciliationreport.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, reconciliationreport.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, reconciliationreport.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, reconciliationreport.FieldTotalSpentCents)
-	}
-	if m.addamount_cents != nil {
-		fields = append(fields, reconciliationreport.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, reconciliationreport.FieldQuantity)
-	}
-	return fields
+	return nil
 }
 
 // AddedField returns the numeric value that was incremented/decremented on a field
 // with the given name. The second boolean return value indicates that this field
 // was not set, or was not defined in the schema.
 func (m *ReconciliationReportMutation) AddedField(name string) (ent.Value, bool) {
-	switch name {
-	case reconciliationreport.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case reconciliationreport.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case reconciliationreport.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case reconciliationreport.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
-	case reconciliationreport.FieldAmountCents:
-		return m.AddedAmountCents()
-	case reconciliationreport.FieldQuantity:
-		return m.AddedQuantity()
-	}
 	return nil, false
 }
 
@@ -16027,48 +5383,6 @@ func (m *ReconciliationReportMutation) AddedField(name string) (ent.Value, bool)
 // type.
 func (m *ReconciliationReportMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case reconciliationreport.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case reconciliationreport.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case reconciliationreport.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case reconciliationreport.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
-	case reconciliationreport.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAmountCents(v)
-		return nil
-	case reconciliationreport.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
-		return nil
 	}
 	return fmt.Errorf("unknown ReconciliationReport numeric field %s", name)
 }
@@ -16096,95 +5410,8 @@ func (m *ReconciliationReportMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *ReconciliationReportMutation) ResetField(name string) error {
 	switch name {
-	case reconciliationreport.FieldAccountID:
-		m.ResetAccountID()
-		return nil
-	case reconciliationreport.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case reconciliationreport.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case reconciliationreport.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case reconciliationreport.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
-	case reconciliationreport.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
-	case reconciliationreport.FieldCurrency:
-		m.ResetCurrency()
-		return nil
-	case reconciliationreport.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case reconciliationreport.FieldSource:
-		m.ResetSource()
-		return nil
-	case reconciliationreport.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case reconciliationreport.FieldReason:
-		m.ResetReason()
-		return nil
-	case reconciliationreport.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case reconciliationreport.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
-	case reconciliationreport.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
-	case reconciliationreport.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case reconciliationreport.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case reconciliationreport.FieldHoldID:
-		m.ResetHoldID()
-		return nil
 	case reconciliationreport.FieldStatus:
 		m.ResetStatus()
-		return nil
-	case reconciliationreport.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case reconciliationreport.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case reconciliationreport.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case reconciliationreport.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case reconciliationreport.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case reconciliationreport.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case reconciliationreport.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case reconciliationreport.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case reconciliationreport.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case reconciliationreport.FieldTokenVersion:
-		m.ResetTokenVersion()
-		return nil
-	case reconciliationreport.FieldIdempotencyKey:
-		m.ResetIdempotencyKey()
-		return nil
-	case reconciliationreport.FieldRequestHash:
-		m.ResetRequestHash()
 		return nil
 	case reconciliationreport.FieldReportJSON:
 		m.ResetReportJSON()
@@ -16192,11 +5419,17 @@ func (m *ReconciliationReportMutation) ResetField(name string) error {
 	case reconciliationreport.FieldBlockNewWorkspaces:
 		m.ResetBlockNewWorkspaces()
 		return nil
+	case reconciliationreport.FieldReason:
+		m.ResetReason()
+		return nil
+	case reconciliationreport.FieldIdempotencyKey:
+		m.ResetIdempotencyKey()
+		return nil
+	case reconciliationreport.FieldRequestHash:
+		m.ResetRequestHash()
+		return nil
 	case reconciliationreport.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case reconciliationreport.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown ReconciliationReport field %s", name)
@@ -16257,28 +5490,15 @@ type ResourceSettlementMutation struct {
 	typ                        string
 	id                         *string
 	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
 	workspace_id               *string
 	resource_type              *string
 	resource_id                *string
-	hold_id                    *string
+	amount_cents               *int64
+	addamount_cents            *int64
+	currency                   *string
 	status                     *string
+	ledger_entry_id            *string
+	wallet_transaction_id      *string
 	pricing_version            *string
 	price_snapshot_json        *string
 	usage_period_start         *string
@@ -16287,15 +5507,9 @@ type ResourceSettlementMutation struct {
 	addquantity                *float64
 	unit                       *string
 	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
 	idempotency_key            *string
 	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
 	created_at                 *time.Time
-	updated_at                 *time.Time
 	clearedFields              map[string]struct{}
 	done                       bool
 	oldValue                   func(context.Context) (*ResourceSettlement, error)
@@ -16442,538 +5656,6 @@ func (m *ResourceSettlementMutation) ResetAccountID() {
 	m.account_id = nil
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (m *ResourceSettlementMutation) SetBalanceCents(i int64) {
-	m.balance_cents = &i
-	m.addbalance_cents = nil
-}
-
-// BalanceCents returns the value of the "balance_cents" field in the mutation.
-func (m *ResourceSettlementMutation) BalanceCents() (r int64, exists bool) {
-	v := m.balance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBalanceCents returns the old "balance_cents" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldBalanceCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBalanceCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBalanceCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBalanceCents: %w", err)
-	}
-	return oldValue.BalanceCents, nil
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (m *ResourceSettlementMutation) AddBalanceCents(i int64) {
-	if m.addbalance_cents != nil {
-		*m.addbalance_cents += i
-	} else {
-		m.addbalance_cents = &i
-	}
-}
-
-// AddedBalanceCents returns the value that was added to the "balance_cents" field in this mutation.
-func (m *ResourceSettlementMutation) AddedBalanceCents() (r int64, exists bool) {
-	v := m.addbalance_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetBalanceCents resets all changes to the "balance_cents" field.
-func (m *ResourceSettlementMutation) ResetBalanceCents() {
-	m.balance_cents = nil
-	m.addbalance_cents = nil
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (m *ResourceSettlementMutation) SetFrozenCents(i int64) {
-	m.frozen_cents = &i
-	m.addfrozen_cents = nil
-}
-
-// FrozenCents returns the value of the "frozen_cents" field in the mutation.
-func (m *ResourceSettlementMutation) FrozenCents() (r int64, exists bool) {
-	v := m.frozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFrozenCents returns the old "frozen_cents" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldFrozenCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFrozenCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFrozenCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFrozenCents: %w", err)
-	}
-	return oldValue.FrozenCents, nil
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (m *ResourceSettlementMutation) AddFrozenCents(i int64) {
-	if m.addfrozen_cents != nil {
-		*m.addfrozen_cents += i
-	} else {
-		m.addfrozen_cents = &i
-	}
-}
-
-// AddedFrozenCents returns the value that was added to the "frozen_cents" field in this mutation.
-func (m *ResourceSettlementMutation) AddedFrozenCents() (r int64, exists bool) {
-	v := m.addfrozen_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetFrozenCents resets all changes to the "frozen_cents" field.
-func (m *ResourceSettlementMutation) ResetFrozenCents() {
-	m.frozen_cents = nil
-	m.addfrozen_cents = nil
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (m *ResourceSettlementMutation) SetAvailableCents(i int64) {
-	m.available_cents = &i
-	m.addavailable_cents = nil
-}
-
-// AvailableCents returns the value of the "available_cents" field in the mutation.
-func (m *ResourceSettlementMutation) AvailableCents() (r int64, exists bool) {
-	v := m.available_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAvailableCents returns the old "available_cents" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldAvailableCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAvailableCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAvailableCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAvailableCents: %w", err)
-	}
-	return oldValue.AvailableCents, nil
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (m *ResourceSettlementMutation) AddAvailableCents(i int64) {
-	if m.addavailable_cents != nil {
-		*m.addavailable_cents += i
-	} else {
-		m.addavailable_cents = &i
-	}
-}
-
-// AddedAvailableCents returns the value that was added to the "available_cents" field in this mutation.
-func (m *ResourceSettlementMutation) AddedAvailableCents() (r int64, exists bool) {
-	v := m.addavailable_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAvailableCents resets all changes to the "available_cents" field.
-func (m *ResourceSettlementMutation) ResetAvailableCents() {
-	m.available_cents = nil
-	m.addavailable_cents = nil
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (m *ResourceSettlementMutation) SetTotalSpentCents(i int64) {
-	m.total_spent_cents = &i
-	m.addtotal_spent_cents = nil
-}
-
-// TotalSpentCents returns the value of the "total_spent_cents" field in the mutation.
-func (m *ResourceSettlementMutation) TotalSpentCents() (r int64, exists bool) {
-	v := m.total_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTotalSpentCents returns the old "total_spent_cents" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldTotalSpentCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTotalSpentCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTotalSpentCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTotalSpentCents: %w", err)
-	}
-	return oldValue.TotalSpentCents, nil
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (m *ResourceSettlementMutation) AddTotalSpentCents(i int64) {
-	if m.addtotal_spent_cents != nil {
-		*m.addtotal_spent_cents += i
-	} else {
-		m.addtotal_spent_cents = &i
-	}
-}
-
-// AddedTotalSpentCents returns the value that was added to the "total_spent_cents" field in this mutation.
-func (m *ResourceSettlementMutation) AddedTotalSpentCents() (r int64, exists bool) {
-	v := m.addtotal_spent_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetTotalSpentCents resets all changes to the "total_spent_cents" field.
-func (m *ResourceSettlementMutation) ResetTotalSpentCents() {
-	m.total_spent_cents = nil
-	m.addtotal_spent_cents = nil
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (m *ResourceSettlementMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *ResourceSettlementMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *ResourceSettlementMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *ResourceSettlementMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *ResourceSettlementMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
-// SetCurrency sets the "currency" field.
-func (m *ResourceSettlementMutation) SetCurrency(s string) {
-	m.currency = &s
-}
-
-// Currency returns the value of the "currency" field in the mutation.
-func (m *ResourceSettlementMutation) Currency() (r string, exists bool) {
-	v := m.currency
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCurrency returns the old "currency" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldCurrency(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCurrency requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
-	}
-	return oldValue.Currency, nil
-}
-
-// ResetCurrency resets all changes to the "currency" field.
-func (m *ResourceSettlementMutation) ResetCurrency() {
-	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *ResourceSettlementMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *ResourceSettlementMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *ResourceSettlementMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *ResourceSettlementMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *ResourceSettlementMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *ResourceSettlementMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *ResourceSettlementMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *ResourceSettlementMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *ResourceSettlementMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *ResourceSettlementMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *ResourceSettlementMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *ResourceSettlementMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *ResourceSettlementMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *ResourceSettlementMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *ResourceSettlementMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *ResourceSettlementMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *ResourceSettlementMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *ResourceSettlementMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
 // SetWorkspaceID sets the "workspace_id" field.
 func (m *ResourceSettlementMutation) SetWorkspaceID(s string) {
 	m.workspace_id = &s
@@ -17082,40 +5764,96 @@ func (m *ResourceSettlementMutation) ResetResourceID() {
 	m.resource_id = nil
 }
 
-// SetHoldID sets the "hold_id" field.
-func (m *ResourceSettlementMutation) SetHoldID(s string) {
-	m.hold_id = &s
+// SetAmountCents sets the "amount_cents" field.
+func (m *ResourceSettlementMutation) SetAmountCents(i int64) {
+	m.amount_cents = &i
+	m.addamount_cents = nil
 }
 
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *ResourceSettlementMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
+// AmountCents returns the value of the "amount_cents" field in the mutation.
+func (m *ResourceSettlementMutation) AmountCents() (r int64, exists bool) {
+	v := m.amount_cents
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldHoldID returns the old "hold_id" field's value of the ResourceSettlement entity.
+// OldAmountCents returns the old "amount_cents" field's value of the ResourceSettlement entity.
 // If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldHoldID(ctx context.Context) (v string, err error) {
+func (m *ResourceSettlementMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
+		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
+		return v, errors.New("OldAmountCents requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
+		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
 	}
-	return oldValue.HoldID, nil
+	return oldValue.AmountCents, nil
 }
 
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *ResourceSettlementMutation) ResetHoldID() {
-	m.hold_id = nil
+// AddAmountCents adds i to the "amount_cents" field.
+func (m *ResourceSettlementMutation) AddAmountCents(i int64) {
+	if m.addamount_cents != nil {
+		*m.addamount_cents += i
+	} else {
+		m.addamount_cents = &i
+	}
+}
+
+// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
+func (m *ResourceSettlementMutation) AddedAmountCents() (r int64, exists bool) {
+	v := m.addamount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountCents resets all changes to the "amount_cents" field.
+func (m *ResourceSettlementMutation) ResetAmountCents() {
+	m.amount_cents = nil
+	m.addamount_cents = nil
+}
+
+// SetCurrency sets the "currency" field.
+func (m *ResourceSettlementMutation) SetCurrency(s string) {
+	m.currency = &s
+}
+
+// Currency returns the value of the "currency" field in the mutation.
+func (m *ResourceSettlementMutation) Currency() (r string, exists bool) {
+	v := m.currency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrency returns the old "currency" field's value of the ResourceSettlement entity.
+// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ResourceSettlementMutation) OldCurrency(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
+	}
+	return oldValue.Currency, nil
+}
+
+// ResetCurrency resets all changes to the "currency" field.
+func (m *ResourceSettlementMutation) ResetCurrency() {
+	m.currency = nil
 }
 
 // SetStatus sets the "status" field.
@@ -17152,6 +5890,78 @@ func (m *ResourceSettlementMutation) OldStatus(ctx context.Context) (v string, e
 // ResetStatus resets all changes to the "status" field.
 func (m *ResourceSettlementMutation) ResetStatus() {
 	m.status = nil
+}
+
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (m *ResourceSettlementMutation) SetLedgerEntryID(s string) {
+	m.ledger_entry_id = &s
+}
+
+// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
+func (m *ResourceSettlementMutation) LedgerEntryID() (r string, exists bool) {
+	v := m.ledger_entry_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the ResourceSettlement entity.
+// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ResourceSettlementMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
+	}
+	return oldValue.LedgerEntryID, nil
+}
+
+// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
+func (m *ResourceSettlementMutation) ResetLedgerEntryID() {
+	m.ledger_entry_id = nil
+}
+
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (m *ResourceSettlementMutation) SetWalletTransactionID(s string) {
+	m.wallet_transaction_id = &s
+}
+
+// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
+func (m *ResourceSettlementMutation) WalletTransactionID() (r string, exists bool) {
+	v := m.wallet_transaction_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the ResourceSettlement entity.
+// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ResourceSettlementMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
+	}
+	return oldValue.WalletTransactionID, nil
+}
+
+// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
+func (m *ResourceSettlementMutation) ResetWalletTransactionID() {
+	m.wallet_transaction_id = nil
 }
 
 // SetPricingVersion sets the "pricing_version" field.
@@ -17426,114 +6236,6 @@ func (m *ResourceSettlementMutation) ResetProviderCostEvidenceRef() {
 	m.provider_cost_evidence_ref = nil
 }
 
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *ResourceSettlementMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *ResourceSettlementMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *ResourceSettlementMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *ResourceSettlementMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *ResourceSettlementMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *ResourceSettlementMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *ResourceSettlementMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *ResourceSettlementMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *ResourceSettlementMutation) ResetTokenVersion() {
-	m.token_version = nil
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (m *ResourceSettlementMutation) SetIdempotencyKey(s string) {
 	m.idempotency_key = &s
@@ -17606,78 +6308,6 @@ func (m *ResourceSettlementMutation) ResetRequestHash() {
 	m.request_hash = nil
 }
 
-// SetReportJSON sets the "report_json" field.
-func (m *ResourceSettlementMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *ResourceSettlementMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *ResourceSettlementMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *ResourceSettlementMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *ResourceSettlementMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *ResourceSettlementMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (m *ResourceSettlementMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -17714,42 +6344,6 @@ func (m *ResourceSettlementMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *ResourceSettlementMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *ResourceSettlementMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the ResourceSettlement entity.
-// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ResourceSettlementMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *ResourceSettlementMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the ResourceSettlementMutation builder.
 func (m *ResourceSettlementMutation) Where(ps ...predicate.ResourceSettlement) {
 	m.predicates = append(m.predicates, ps...)
@@ -17784,45 +6378,9 @@ func (m *ResourceSettlementMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ResourceSettlementMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 19)
 	if m.account_id != nil {
 		fields = append(fields, resourcesettlement.FieldAccountID)
-	}
-	if m.balance_cents != nil {
-		fields = append(fields, resourcesettlement.FieldBalanceCents)
-	}
-	if m.frozen_cents != nil {
-		fields = append(fields, resourcesettlement.FieldFrozenCents)
-	}
-	if m.available_cents != nil {
-		fields = append(fields, resourcesettlement.FieldAvailableCents)
-	}
-	if m.total_spent_cents != nil {
-		fields = append(fields, resourcesettlement.FieldTotalSpentCents)
-	}
-	if m.amount_cents != nil {
-		fields = append(fields, resourcesettlement.FieldAmountCents)
-	}
-	if m.currency != nil {
-		fields = append(fields, resourcesettlement.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, resourcesettlement.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, resourcesettlement.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, resourcesettlement.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, resourcesettlement.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, resourcesettlement.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, resourcesettlement.FieldWalletTransactionID)
 	}
 	if m.workspace_id != nil {
 		fields = append(fields, resourcesettlement.FieldWorkspaceID)
@@ -17833,11 +6391,20 @@ func (m *ResourceSettlementMutation) Fields() []string {
 	if m.resource_id != nil {
 		fields = append(fields, resourcesettlement.FieldResourceID)
 	}
-	if m.hold_id != nil {
-		fields = append(fields, resourcesettlement.FieldHoldID)
+	if m.amount_cents != nil {
+		fields = append(fields, resourcesettlement.FieldAmountCents)
+	}
+	if m.currency != nil {
+		fields = append(fields, resourcesettlement.FieldCurrency)
 	}
 	if m.status != nil {
 		fields = append(fields, resourcesettlement.FieldStatus)
+	}
+	if m.ledger_entry_id != nil {
+		fields = append(fields, resourcesettlement.FieldLedgerEntryID)
+	}
+	if m.wallet_transaction_id != nil {
+		fields = append(fields, resourcesettlement.FieldWalletTransactionID)
 	}
 	if m.pricing_version != nil {
 		fields = append(fields, resourcesettlement.FieldPricingVersion)
@@ -17860,32 +6427,14 @@ func (m *ResourceSettlementMutation) Fields() []string {
 	if m.provider_cost_evidence_ref != nil {
 		fields = append(fields, resourcesettlement.FieldProviderCostEvidenceRef)
 	}
-	if m.provider_request_id != nil {
-		fields = append(fields, resourcesettlement.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, resourcesettlement.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, resourcesettlement.FieldTokenVersion)
-	}
 	if m.idempotency_key != nil {
 		fields = append(fields, resourcesettlement.FieldIdempotencyKey)
 	}
 	if m.request_hash != nil {
 		fields = append(fields, resourcesettlement.FieldRequestHash)
 	}
-	if m.report_json != nil {
-		fields = append(fields, resourcesettlement.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, resourcesettlement.FieldBlockNewWorkspaces)
-	}
 	if m.created_at != nil {
 		fields = append(fields, resourcesettlement.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, resourcesettlement.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -17897,40 +6446,22 @@ func (m *ResourceSettlementMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case resourcesettlement.FieldAccountID:
 		return m.AccountID()
-	case resourcesettlement.FieldBalanceCents:
-		return m.BalanceCents()
-	case resourcesettlement.FieldFrozenCents:
-		return m.FrozenCents()
-	case resourcesettlement.FieldAvailableCents:
-		return m.AvailableCents()
-	case resourcesettlement.FieldTotalSpentCents:
-		return m.TotalSpentCents()
-	case resourcesettlement.FieldAmountCents:
-		return m.AmountCents()
-	case resourcesettlement.FieldCurrency:
-		return m.Currency()
-	case resourcesettlement.FieldDirection:
-		return m.Direction()
-	case resourcesettlement.FieldSource:
-		return m.Source()
-	case resourcesettlement.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case resourcesettlement.FieldReason:
-		return m.Reason()
-	case resourcesettlement.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case resourcesettlement.FieldWalletTransactionID:
-		return m.WalletTransactionID()
 	case resourcesettlement.FieldWorkspaceID:
 		return m.WorkspaceID()
 	case resourcesettlement.FieldResourceType:
 		return m.ResourceType()
 	case resourcesettlement.FieldResourceID:
 		return m.ResourceID()
-	case resourcesettlement.FieldHoldID:
-		return m.HoldID()
+	case resourcesettlement.FieldAmountCents:
+		return m.AmountCents()
+	case resourcesettlement.FieldCurrency:
+		return m.Currency()
 	case resourcesettlement.FieldStatus:
 		return m.Status()
+	case resourcesettlement.FieldLedgerEntryID:
+		return m.LedgerEntryID()
+	case resourcesettlement.FieldWalletTransactionID:
+		return m.WalletTransactionID()
 	case resourcesettlement.FieldPricingVersion:
 		return m.PricingVersion()
 	case resourcesettlement.FieldPriceSnapshotJSON:
@@ -17945,24 +6476,12 @@ func (m *ResourceSettlementMutation) Field(name string) (ent.Value, bool) {
 		return m.Unit()
 	case resourcesettlement.FieldProviderCostEvidenceRef:
 		return m.ProviderCostEvidenceRef()
-	case resourcesettlement.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case resourcesettlement.FieldRedactedURL:
-		return m.RedactedURL()
-	case resourcesettlement.FieldTokenVersion:
-		return m.TokenVersion()
 	case resourcesettlement.FieldIdempotencyKey:
 		return m.IdempotencyKey()
 	case resourcesettlement.FieldRequestHash:
 		return m.RequestHash()
-	case resourcesettlement.FieldReportJSON:
-		return m.ReportJSON()
-	case resourcesettlement.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
 	case resourcesettlement.FieldCreatedAt:
 		return m.CreatedAt()
-	case resourcesettlement.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -17974,40 +6493,22 @@ func (m *ResourceSettlementMutation) OldField(ctx context.Context, name string) 
 	switch name {
 	case resourcesettlement.FieldAccountID:
 		return m.OldAccountID(ctx)
-	case resourcesettlement.FieldBalanceCents:
-		return m.OldBalanceCents(ctx)
-	case resourcesettlement.FieldFrozenCents:
-		return m.OldFrozenCents(ctx)
-	case resourcesettlement.FieldAvailableCents:
-		return m.OldAvailableCents(ctx)
-	case resourcesettlement.FieldTotalSpentCents:
-		return m.OldTotalSpentCents(ctx)
-	case resourcesettlement.FieldAmountCents:
-		return m.OldAmountCents(ctx)
-	case resourcesettlement.FieldCurrency:
-		return m.OldCurrency(ctx)
-	case resourcesettlement.FieldDirection:
-		return m.OldDirection(ctx)
-	case resourcesettlement.FieldSource:
-		return m.OldSource(ctx)
-	case resourcesettlement.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case resourcesettlement.FieldReason:
-		return m.OldReason(ctx)
-	case resourcesettlement.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case resourcesettlement.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
 	case resourcesettlement.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
 	case resourcesettlement.FieldResourceType:
 		return m.OldResourceType(ctx)
 	case resourcesettlement.FieldResourceID:
 		return m.OldResourceID(ctx)
-	case resourcesettlement.FieldHoldID:
-		return m.OldHoldID(ctx)
+	case resourcesettlement.FieldAmountCents:
+		return m.OldAmountCents(ctx)
+	case resourcesettlement.FieldCurrency:
+		return m.OldCurrency(ctx)
 	case resourcesettlement.FieldStatus:
 		return m.OldStatus(ctx)
+	case resourcesettlement.FieldLedgerEntryID:
+		return m.OldLedgerEntryID(ctx)
+	case resourcesettlement.FieldWalletTransactionID:
+		return m.OldWalletTransactionID(ctx)
 	case resourcesettlement.FieldPricingVersion:
 		return m.OldPricingVersion(ctx)
 	case resourcesettlement.FieldPriceSnapshotJSON:
@@ -18022,24 +6523,12 @@ func (m *ResourceSettlementMutation) OldField(ctx context.Context, name string) 
 		return m.OldUnit(ctx)
 	case resourcesettlement.FieldProviderCostEvidenceRef:
 		return m.OldProviderCostEvidenceRef(ctx)
-	case resourcesettlement.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case resourcesettlement.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case resourcesettlement.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
 	case resourcesettlement.FieldIdempotencyKey:
 		return m.OldIdempotencyKey(ctx)
 	case resourcesettlement.FieldRequestHash:
 		return m.OldRequestHash(ctx)
-	case resourcesettlement.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case resourcesettlement.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
 	case resourcesettlement.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case resourcesettlement.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown ResourceSettlement field %s", name)
 }
@@ -18055,90 +6544,6 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAccountID(v)
-		return nil
-	case resourcesettlement.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBalanceCents(v)
-		return nil
-	case resourcesettlement.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFrozenCents(v)
-		return nil
-	case resourcesettlement.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAvailableCents(v)
-		return nil
-	case resourcesettlement.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTotalSpentCents(v)
-		return nil
-	case resourcesettlement.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
-	case resourcesettlement.FieldCurrency:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCurrency(v)
-		return nil
-	case resourcesettlement.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case resourcesettlement.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case resourcesettlement.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case resourcesettlement.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case resourcesettlement.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case resourcesettlement.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
 		return nil
 	case resourcesettlement.FieldWorkspaceID:
 		v, ok := value.(string)
@@ -18161,12 +6566,19 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 		}
 		m.SetResourceID(v)
 		return nil
-	case resourcesettlement.FieldHoldID:
+	case resourcesettlement.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountCents(v)
+		return nil
+	case resourcesettlement.FieldCurrency:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetHoldID(v)
+		m.SetCurrency(v)
 		return nil
 	case resourcesettlement.FieldStatus:
 		v, ok := value.(string)
@@ -18174,6 +6586,20 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStatus(v)
+		return nil
+	case resourcesettlement.FieldLedgerEntryID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLedgerEntryID(v)
+		return nil
+	case resourcesettlement.FieldWalletTransactionID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWalletTransactionID(v)
 		return nil
 	case resourcesettlement.FieldPricingVersion:
 		v, ok := value.(string)
@@ -18224,27 +6650,6 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 		}
 		m.SetProviderCostEvidenceRef(v)
 		return nil
-	case resourcesettlement.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case resourcesettlement.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case resourcesettlement.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
-		return nil
 	case resourcesettlement.FieldIdempotencyKey:
 		v, ok := value.(string)
 		if !ok {
@@ -18259,33 +6664,12 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 		}
 		m.SetRequestHash(v)
 		return nil
-	case resourcesettlement.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case resourcesettlement.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
 	case resourcesettlement.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case resourcesettlement.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ResourceSettlement field %s", name)
@@ -18295,18 +6679,6 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 // this mutation.
 func (m *ResourceSettlementMutation) AddedFields() []string {
 	var fields []string
-	if m.addbalance_cents != nil {
-		fields = append(fields, resourcesettlement.FieldBalanceCents)
-	}
-	if m.addfrozen_cents != nil {
-		fields = append(fields, resourcesettlement.FieldFrozenCents)
-	}
-	if m.addavailable_cents != nil {
-		fields = append(fields, resourcesettlement.FieldAvailableCents)
-	}
-	if m.addtotal_spent_cents != nil {
-		fields = append(fields, resourcesettlement.FieldTotalSpentCents)
-	}
 	if m.addamount_cents != nil {
 		fields = append(fields, resourcesettlement.FieldAmountCents)
 	}
@@ -18321,14 +6693,6 @@ func (m *ResourceSettlementMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *ResourceSettlementMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
-	case resourcesettlement.FieldBalanceCents:
-		return m.AddedBalanceCents()
-	case resourcesettlement.FieldFrozenCents:
-		return m.AddedFrozenCents()
-	case resourcesettlement.FieldAvailableCents:
-		return m.AddedAvailableCents()
-	case resourcesettlement.FieldTotalSpentCents:
-		return m.AddedTotalSpentCents()
 	case resourcesettlement.FieldAmountCents:
 		return m.AddedAmountCents()
 	case resourcesettlement.FieldQuantity:
@@ -18342,34 +6706,6 @@ func (m *ResourceSettlementMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *ResourceSettlementMutation) AddField(name string, value ent.Value) error {
 	switch name {
-	case resourcesettlement.FieldBalanceCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddBalanceCents(v)
-		return nil
-	case resourcesettlement.FieldFrozenCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddFrozenCents(v)
-		return nil
-	case resourcesettlement.FieldAvailableCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAvailableCents(v)
-		return nil
-	case resourcesettlement.FieldTotalSpentCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddTotalSpentCents(v)
-		return nil
 	case resourcesettlement.FieldAmountCents:
 		v, ok := value.(int64)
 		if !ok {
@@ -18414,42 +6750,6 @@ func (m *ResourceSettlementMutation) ResetField(name string) error {
 	case resourcesettlement.FieldAccountID:
 		m.ResetAccountID()
 		return nil
-	case resourcesettlement.FieldBalanceCents:
-		m.ResetBalanceCents()
-		return nil
-	case resourcesettlement.FieldFrozenCents:
-		m.ResetFrozenCents()
-		return nil
-	case resourcesettlement.FieldAvailableCents:
-		m.ResetAvailableCents()
-		return nil
-	case resourcesettlement.FieldTotalSpentCents:
-		m.ResetTotalSpentCents()
-		return nil
-	case resourcesettlement.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
-	case resourcesettlement.FieldCurrency:
-		m.ResetCurrency()
-		return nil
-	case resourcesettlement.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case resourcesettlement.FieldSource:
-		m.ResetSource()
-		return nil
-	case resourcesettlement.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case resourcesettlement.FieldReason:
-		m.ResetReason()
-		return nil
-	case resourcesettlement.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case resourcesettlement.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
 	case resourcesettlement.FieldWorkspaceID:
 		m.ResetWorkspaceID()
 		return nil
@@ -18459,11 +6759,20 @@ func (m *ResourceSettlementMutation) ResetField(name string) error {
 	case resourcesettlement.FieldResourceID:
 		m.ResetResourceID()
 		return nil
-	case resourcesettlement.FieldHoldID:
-		m.ResetHoldID()
+	case resourcesettlement.FieldAmountCents:
+		m.ResetAmountCents()
+		return nil
+	case resourcesettlement.FieldCurrency:
+		m.ResetCurrency()
 		return nil
 	case resourcesettlement.FieldStatus:
 		m.ResetStatus()
+		return nil
+	case resourcesettlement.FieldLedgerEntryID:
+		m.ResetLedgerEntryID()
+		return nil
+	case resourcesettlement.FieldWalletTransactionID:
+		m.ResetWalletTransactionID()
 		return nil
 	case resourcesettlement.FieldPricingVersion:
 		m.ResetPricingVersion()
@@ -18486,32 +6795,14 @@ func (m *ResourceSettlementMutation) ResetField(name string) error {
 	case resourcesettlement.FieldProviderCostEvidenceRef:
 		m.ResetProviderCostEvidenceRef()
 		return nil
-	case resourcesettlement.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case resourcesettlement.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case resourcesettlement.FieldTokenVersion:
-		m.ResetTokenVersion()
-		return nil
 	case resourcesettlement.FieldIdempotencyKey:
 		m.ResetIdempotencyKey()
 		return nil
 	case resourcesettlement.FieldRequestHash:
 		m.ResetRequestHash()
 		return nil
-	case resourcesettlement.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case resourcesettlement.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
 	case resourcesettlement.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case resourcesettlement.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown ResourceSettlement field %s", name)
@@ -18568,53 +6859,23 @@ func (m *ResourceSettlementMutation) ResetEdge(name string) error {
 // WalletMutation represents an operation that mutates the Wallet nodes in the graph.
 type WalletMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*Wallet, error)
-	predicates                 []predicate.Wallet
+	op                   Op
+	typ                  string
+	id                   *string
+	balance_cents        *int64
+	addbalance_cents     *int64
+	frozen_cents         *int64
+	addfrozen_cents      *int64
+	available_cents      *int64
+	addavailable_cents   *int64
+	total_spent_cents    *int64
+	addtotal_spent_cents *int64
+	currency             *string
+	updated_at           *time.Time
+	clearedFields        map[string]struct{}
+	done                 bool
+	oldValue             func(context.Context) (*Wallet, error)
+	predicates           []predicate.Wallet
 }
 
 var _ ent.Mutation = (*WalletMutation)(nil)
@@ -18719,42 +6980,6 @@ func (m *WalletMutation) IDs(ctx context.Context) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
-}
-
-// SetAccountID sets the "account_id" field.
-func (m *WalletMutation) SetAccountID(s string) {
-	m.account_id = &s
-}
-
-// AccountID returns the value of the "account_id" field in the mutation.
-func (m *WalletMutation) AccountID() (r string, exists bool) {
-	v := m.account_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAccountID returns the old "account_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldAccountID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAccountID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
-	}
-	return oldValue.AccountID, nil
-}
-
-// ResetAccountID resets all changes to the "account_id" field.
-func (m *WalletMutation) ResetAccountID() {
-	m.account_id = nil
 }
 
 // SetBalanceCents sets the "balance_cents" field.
@@ -18981,62 +7206,6 @@ func (m *WalletMutation) ResetTotalSpentCents() {
 	m.addtotal_spent_cents = nil
 }
 
-// SetAmountCents sets the "amount_cents" field.
-func (m *WalletMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *WalletMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *WalletMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *WalletMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *WalletMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
 // SetCurrency sets the "currency" field.
 func (m *WalletMutation) SetCurrency(s string) {
 	m.currency = &s
@@ -19071,962 +7240,6 @@ func (m *WalletMutation) OldCurrency(ctx context.Context) (v string, err error) 
 // ResetCurrency resets all changes to the "currency" field.
 func (m *WalletMutation) ResetCurrency() {
 	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *WalletMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *WalletMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *WalletMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *WalletMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *WalletMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *WalletMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *WalletMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *WalletMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *WalletMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *WalletMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *WalletMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *WalletMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *WalletMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *WalletMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *WalletMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *WalletMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *WalletMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *WalletMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *WalletMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *WalletMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *WalletMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *WalletMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *WalletMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *WalletMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *WalletMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *WalletMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *WalletMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *WalletMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *WalletMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *WalletMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *WalletMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *WalletMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *WalletMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *WalletMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *WalletMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *WalletMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *WalletMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *WalletMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *WalletMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *WalletMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *WalletMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *WalletMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *WalletMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *WalletMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *WalletMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *WalletMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *WalletMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *WalletMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *WalletMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *WalletMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *WalletMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *WalletMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *WalletMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *WalletMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *WalletMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *WalletMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *WalletMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *WalletMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *WalletMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *WalletMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *WalletMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *WalletMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *WalletMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *WalletMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *WalletMutation) ResetTokenVersion() {
-	m.token_version = nil
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (m *WalletMutation) SetIdempotencyKey(s string) {
-	m.idempotency_key = &s
-}
-
-// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
-func (m *WalletMutation) IdempotencyKey() (r string, exists bool) {
-	v := m.idempotency_key
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIdempotencyKey returns the old "idempotency_key" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
-	}
-	return oldValue.IdempotencyKey, nil
-}
-
-// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
-func (m *WalletMutation) ResetIdempotencyKey() {
-	m.idempotency_key = nil
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (m *WalletMutation) SetRequestHash(s string) {
-	m.request_hash = &s
-}
-
-// RequestHash returns the value of the "request_hash" field in the mutation.
-func (m *WalletMutation) RequestHash() (r string, exists bool) {
-	v := m.request_hash
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRequestHash returns the old "request_hash" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldRequestHash(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRequestHash requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
-	}
-	return oldValue.RequestHash, nil
-}
-
-// ResetRequestHash resets all changes to the "request_hash" field.
-func (m *WalletMutation) ResetRequestHash() {
-	m.request_hash = nil
-}
-
-// SetReportJSON sets the "report_json" field.
-func (m *WalletMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *WalletMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *WalletMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *WalletMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *WalletMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *WalletMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
-}
-
-// SetCreatedAt sets the "created_at" field.
-func (m *WalletMutation) SetCreatedAt(t time.Time) {
-	m.created_at = &t
-}
-
-// CreatedAt returns the value of the "created_at" field in the mutation.
-func (m *WalletMutation) CreatedAt() (r time.Time, exists bool) {
-	v := m.created_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCreatedAt returns the old "created_at" field's value of the Wallet entity.
-// If the Wallet object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
-	}
-	return oldValue.CreatedAt, nil
-}
-
-// ResetCreatedAt resets all changes to the "created_at" field.
-func (m *WalletMutation) ResetCreatedAt() {
-	m.created_at = nil
 }
 
 // SetUpdatedAt sets the "updated_at" field.
@@ -20099,10 +7312,7 @@ func (m *WalletMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *WalletMutation) Fields() []string {
-	fields := make([]string, 0, 34)
-	if m.account_id != nil {
-		fields = append(fields, wallet.FieldAccountID)
-	}
+	fields := make([]string, 0, 6)
 	if m.balance_cents != nil {
 		fields = append(fields, wallet.FieldBalanceCents)
 	}
@@ -20115,89 +7325,8 @@ func (m *WalletMutation) Fields() []string {
 	if m.total_spent_cents != nil {
 		fields = append(fields, wallet.FieldTotalSpentCents)
 	}
-	if m.amount_cents != nil {
-		fields = append(fields, wallet.FieldAmountCents)
-	}
 	if m.currency != nil {
 		fields = append(fields, wallet.FieldCurrency)
-	}
-	if m.direction != nil {
-		fields = append(fields, wallet.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, wallet.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, wallet.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, wallet.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, wallet.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, wallet.FieldWalletTransactionID)
-	}
-	if m.workspace_id != nil {
-		fields = append(fields, wallet.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, wallet.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, wallet.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, wallet.FieldHoldID)
-	}
-	if m.status != nil {
-		fields = append(fields, wallet.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, wallet.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, wallet.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, wallet.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, wallet.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, wallet.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, wallet.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, wallet.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, wallet.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, wallet.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, wallet.FieldTokenVersion)
-	}
-	if m.idempotency_key != nil {
-		fields = append(fields, wallet.FieldIdempotencyKey)
-	}
-	if m.request_hash != nil {
-		fields = append(fields, wallet.FieldRequestHash)
-	}
-	if m.report_json != nil {
-		fields = append(fields, wallet.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, wallet.FieldBlockNewWorkspaces)
-	}
-	if m.created_at != nil {
-		fields = append(fields, wallet.FieldCreatedAt)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, wallet.FieldUpdatedAt)
@@ -20210,8 +7339,6 @@ func (m *WalletMutation) Fields() []string {
 // schema.
 func (m *WalletMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case wallet.FieldAccountID:
-		return m.AccountID()
 	case wallet.FieldBalanceCents:
 		return m.BalanceCents()
 	case wallet.FieldFrozenCents:
@@ -20220,62 +7347,8 @@ func (m *WalletMutation) Field(name string) (ent.Value, bool) {
 		return m.AvailableCents()
 	case wallet.FieldTotalSpentCents:
 		return m.TotalSpentCents()
-	case wallet.FieldAmountCents:
-		return m.AmountCents()
 	case wallet.FieldCurrency:
 		return m.Currency()
-	case wallet.FieldDirection:
-		return m.Direction()
-	case wallet.FieldSource:
-		return m.Source()
-	case wallet.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case wallet.FieldReason:
-		return m.Reason()
-	case wallet.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case wallet.FieldWalletTransactionID:
-		return m.WalletTransactionID()
-	case wallet.FieldWorkspaceID:
-		return m.WorkspaceID()
-	case wallet.FieldResourceType:
-		return m.ResourceType()
-	case wallet.FieldResourceID:
-		return m.ResourceID()
-	case wallet.FieldHoldID:
-		return m.HoldID()
-	case wallet.FieldStatus:
-		return m.Status()
-	case wallet.FieldPricingVersion:
-		return m.PricingVersion()
-	case wallet.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case wallet.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case wallet.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case wallet.FieldQuantity:
-		return m.Quantity()
-	case wallet.FieldUnit:
-		return m.Unit()
-	case wallet.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case wallet.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case wallet.FieldRedactedURL:
-		return m.RedactedURL()
-	case wallet.FieldTokenVersion:
-		return m.TokenVersion()
-	case wallet.FieldIdempotencyKey:
-		return m.IdempotencyKey()
-	case wallet.FieldRequestHash:
-		return m.RequestHash()
-	case wallet.FieldReportJSON:
-		return m.ReportJSON()
-	case wallet.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
-	case wallet.FieldCreatedAt:
-		return m.CreatedAt()
 	case wallet.FieldUpdatedAt:
 		return m.UpdatedAt()
 	}
@@ -20287,8 +7360,6 @@ func (m *WalletMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *WalletMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case wallet.FieldAccountID:
-		return m.OldAccountID(ctx)
 	case wallet.FieldBalanceCents:
 		return m.OldBalanceCents(ctx)
 	case wallet.FieldFrozenCents:
@@ -20297,62 +7368,8 @@ func (m *WalletMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldAvailableCents(ctx)
 	case wallet.FieldTotalSpentCents:
 		return m.OldTotalSpentCents(ctx)
-	case wallet.FieldAmountCents:
-		return m.OldAmountCents(ctx)
 	case wallet.FieldCurrency:
 		return m.OldCurrency(ctx)
-	case wallet.FieldDirection:
-		return m.OldDirection(ctx)
-	case wallet.FieldSource:
-		return m.OldSource(ctx)
-	case wallet.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case wallet.FieldReason:
-		return m.OldReason(ctx)
-	case wallet.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case wallet.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
-	case wallet.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
-	case wallet.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case wallet.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case wallet.FieldHoldID:
-		return m.OldHoldID(ctx)
-	case wallet.FieldStatus:
-		return m.OldStatus(ctx)
-	case wallet.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case wallet.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case wallet.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case wallet.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case wallet.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case wallet.FieldUnit:
-		return m.OldUnit(ctx)
-	case wallet.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case wallet.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case wallet.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case wallet.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
-	case wallet.FieldIdempotencyKey:
-		return m.OldIdempotencyKey(ctx)
-	case wallet.FieldRequestHash:
-		return m.OldRequestHash(ctx)
-	case wallet.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case wallet.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
-	case wallet.FieldCreatedAt:
-		return m.OldCreatedAt(ctx)
 	case wallet.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	}
@@ -20364,13 +7381,6 @@ func (m *WalletMutation) OldField(ctx context.Context, name string) (ent.Value, 
 // type.
 func (m *WalletMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case wallet.FieldAccountID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAccountID(v)
-		return nil
 	case wallet.FieldBalanceCents:
 		v, ok := value.(int64)
 		if !ok {
@@ -20399,201 +7409,12 @@ func (m *WalletMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetTotalSpentCents(v)
 		return nil
-	case wallet.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
 	case wallet.FieldCurrency:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCurrency(v)
-		return nil
-	case wallet.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case wallet.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case wallet.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case wallet.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case wallet.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case wallet.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
-		return nil
-	case wallet.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
-	case wallet.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case wallet.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case wallet.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
-	case wallet.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case wallet.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case wallet.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case wallet.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case wallet.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case wallet.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case wallet.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case wallet.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case wallet.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case wallet.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case wallet.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
-		return nil
-	case wallet.FieldIdempotencyKey:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIdempotencyKey(v)
-		return nil
-	case wallet.FieldRequestHash:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRequestHash(v)
-		return nil
-	case wallet.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case wallet.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
-	case wallet.FieldCreatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCreatedAt(v)
 		return nil
 	case wallet.FieldUpdatedAt:
 		v, ok := value.(time.Time)
@@ -20622,12 +7443,6 @@ func (m *WalletMutation) AddedFields() []string {
 	if m.addtotal_spent_cents != nil {
 		fields = append(fields, wallet.FieldTotalSpentCents)
 	}
-	if m.addamount_cents != nil {
-		fields = append(fields, wallet.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, wallet.FieldQuantity)
-	}
 	return fields
 }
 
@@ -20644,10 +7459,6 @@ func (m *WalletMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedAvailableCents()
 	case wallet.FieldTotalSpentCents:
 		return m.AddedTotalSpentCents()
-	case wallet.FieldAmountCents:
-		return m.AddedAmountCents()
-	case wallet.FieldQuantity:
-		return m.AddedQuantity()
 	}
 	return nil, false
 }
@@ -20685,20 +7496,6 @@ func (m *WalletMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddTotalSpentCents(v)
 		return nil
-	case wallet.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAmountCents(v)
-		return nil
-	case wallet.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
-		return nil
 	}
 	return fmt.Errorf("unknown Wallet numeric field %s", name)
 }
@@ -20726,9 +7523,6 @@ func (m *WalletMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *WalletMutation) ResetField(name string) error {
 	switch name {
-	case wallet.FieldAccountID:
-		m.ResetAccountID()
-		return nil
 	case wallet.FieldBalanceCents:
 		m.ResetBalanceCents()
 		return nil
@@ -20741,89 +7535,8 @@ func (m *WalletMutation) ResetField(name string) error {
 	case wallet.FieldTotalSpentCents:
 		m.ResetTotalSpentCents()
 		return nil
-	case wallet.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
 	case wallet.FieldCurrency:
 		m.ResetCurrency()
-		return nil
-	case wallet.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case wallet.FieldSource:
-		m.ResetSource()
-		return nil
-	case wallet.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case wallet.FieldReason:
-		m.ResetReason()
-		return nil
-	case wallet.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case wallet.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
-	case wallet.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
-	case wallet.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case wallet.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case wallet.FieldHoldID:
-		m.ResetHoldID()
-		return nil
-	case wallet.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case wallet.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case wallet.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case wallet.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case wallet.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case wallet.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case wallet.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case wallet.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case wallet.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case wallet.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case wallet.FieldTokenVersion:
-		m.ResetTokenVersion()
-		return nil
-	case wallet.FieldIdempotencyKey:
-		m.ResetIdempotencyKey()
-		return nil
-	case wallet.FieldRequestHash:
-		m.ResetRequestHash()
-		return nil
-	case wallet.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case wallet.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
-	case wallet.FieldCreatedAt:
-		m.ResetCreatedAt()
 		return nil
 	case wallet.FieldUpdatedAt:
 		m.ResetUpdatedAt()
@@ -20883,53 +7596,27 @@ func (m *WalletMutation) ResetEdge(name string) error {
 // WalletTransactionMutation represents an operation that mutates the WalletTransaction nodes in the graph.
 type WalletTransactionMutation struct {
 	config
-	op                         Op
-	typ                        string
-	id                         *string
-	account_id                 *string
-	balance_cents              *int64
-	addbalance_cents           *int64
-	frozen_cents               *int64
-	addfrozen_cents            *int64
-	available_cents            *int64
-	addavailable_cents         *int64
-	total_spent_cents          *int64
-	addtotal_spent_cents       *int64
-	amount_cents               *int64
-	addamount_cents            *int64
-	currency                   *string
-	direction                  *string
-	source                     *string
-	operator_user_id           *string
-	reason                     *string
-	ledger_entry_id            *string
-	wallet_transaction_id      *string
-	workspace_id               *string
-	resource_type              *string
-	resource_id                *string
-	hold_id                    *string
-	status                     *string
-	pricing_version            *string
-	price_snapshot_json        *string
-	usage_period_start         *string
-	usage_period_end           *string
-	quantity                   *float64
-	addquantity                *float64
-	unit                       *string
-	provider_cost_evidence_ref *string
-	provider_request_id        *string
-	redacted_url               *string
-	token_version              *string
-	idempotency_key            *string
-	request_hash               *string
-	report_json                *string
-	block_new_workspaces       *bool
-	created_at                 *time.Time
-	updated_at                 *time.Time
-	clearedFields              map[string]struct{}
-	done                       bool
-	oldValue                   func(context.Context) (*WalletTransaction, error)
-	predicates                 []predicate.WalletTransaction
+	op                   Op
+	typ                  string
+	id                   *string
+	account_id           *string
+	ledger_entry_id      *string
+	amount_cents         *int64
+	addamount_cents      *int64
+	balance_cents        *int64
+	addbalance_cents     *int64
+	frozen_cents         *int64
+	addfrozen_cents      *int64
+	available_cents      *int64
+	addavailable_cents   *int64
+	total_spent_cents    *int64
+	addtotal_spent_cents *int64
+	currency             *string
+	created_at           *time.Time
+	clearedFields        map[string]struct{}
+	done                 bool
+	oldValue             func(context.Context) (*WalletTransaction, error)
+	predicates           []predicate.WalletTransaction
 }
 
 var _ ent.Mutation = (*WalletTransactionMutation)(nil)
@@ -21070,6 +7757,98 @@ func (m *WalletTransactionMutation) OldAccountID(ctx context.Context) (v string,
 // ResetAccountID resets all changes to the "account_id" field.
 func (m *WalletTransactionMutation) ResetAccountID() {
 	m.account_id = nil
+}
+
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (m *WalletTransactionMutation) SetLedgerEntryID(s string) {
+	m.ledger_entry_id = &s
+}
+
+// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
+func (m *WalletTransactionMutation) LedgerEntryID() (r string, exists bool) {
+	v := m.ledger_entry_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the WalletTransaction entity.
+// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WalletTransactionMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
+	}
+	return oldValue.LedgerEntryID, nil
+}
+
+// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
+func (m *WalletTransactionMutation) ResetLedgerEntryID() {
+	m.ledger_entry_id = nil
+}
+
+// SetAmountCents sets the "amount_cents" field.
+func (m *WalletTransactionMutation) SetAmountCents(i int64) {
+	m.amount_cents = &i
+	m.addamount_cents = nil
+}
+
+// AmountCents returns the value of the "amount_cents" field in the mutation.
+func (m *WalletTransactionMutation) AmountCents() (r int64, exists bool) {
+	v := m.amount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountCents returns the old "amount_cents" field's value of the WalletTransaction entity.
+// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WalletTransactionMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
+	}
+	return oldValue.AmountCents, nil
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (m *WalletTransactionMutation) AddAmountCents(i int64) {
+	if m.addamount_cents != nil {
+		*m.addamount_cents += i
+	} else {
+		m.addamount_cents = &i
+	}
+}
+
+// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
+func (m *WalletTransactionMutation) AddedAmountCents() (r int64, exists bool) {
+	v := m.addamount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountCents resets all changes to the "amount_cents" field.
+func (m *WalletTransactionMutation) ResetAmountCents() {
+	m.amount_cents = nil
+	m.addamount_cents = nil
 }
 
 // SetBalanceCents sets the "balance_cents" field.
@@ -21296,62 +8075,6 @@ func (m *WalletTransactionMutation) ResetTotalSpentCents() {
 	m.addtotal_spent_cents = nil
 }
 
-// SetAmountCents sets the "amount_cents" field.
-func (m *WalletTransactionMutation) SetAmountCents(i int64) {
-	m.amount_cents = &i
-	m.addamount_cents = nil
-}
-
-// AmountCents returns the value of the "amount_cents" field in the mutation.
-func (m *WalletTransactionMutation) AmountCents() (r int64, exists bool) {
-	v := m.amount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAmountCents returns the old "amount_cents" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAmountCents requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
-	}
-	return oldValue.AmountCents, nil
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (m *WalletTransactionMutation) AddAmountCents(i int64) {
-	if m.addamount_cents != nil {
-		*m.addamount_cents += i
-	} else {
-		m.addamount_cents = &i
-	}
-}
-
-// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
-func (m *WalletTransactionMutation) AddedAmountCents() (r int64, exists bool) {
-	v := m.addamount_cents
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetAmountCents resets all changes to the "amount_cents" field.
-func (m *WalletTransactionMutation) ResetAmountCents() {
-	m.amount_cents = nil
-	m.addamount_cents = nil
-}
-
 // SetCurrency sets the "currency" field.
 func (m *WalletTransactionMutation) SetCurrency(s string) {
 	m.currency = &s
@@ -21386,926 +8109,6 @@ func (m *WalletTransactionMutation) OldCurrency(ctx context.Context) (v string, 
 // ResetCurrency resets all changes to the "currency" field.
 func (m *WalletTransactionMutation) ResetCurrency() {
 	m.currency = nil
-}
-
-// SetDirection sets the "direction" field.
-func (m *WalletTransactionMutation) SetDirection(s string) {
-	m.direction = &s
-}
-
-// Direction returns the value of the "direction" field in the mutation.
-func (m *WalletTransactionMutation) Direction() (r string, exists bool) {
-	v := m.direction
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldDirection returns the old "direction" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldDirection(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldDirection is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldDirection requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldDirection: %w", err)
-	}
-	return oldValue.Direction, nil
-}
-
-// ResetDirection resets all changes to the "direction" field.
-func (m *WalletTransactionMutation) ResetDirection() {
-	m.direction = nil
-}
-
-// SetSource sets the "source" field.
-func (m *WalletTransactionMutation) SetSource(s string) {
-	m.source = &s
-}
-
-// Source returns the value of the "source" field in the mutation.
-func (m *WalletTransactionMutation) Source() (r string, exists bool) {
-	v := m.source
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSource returns the old "source" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldSource(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSource is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSource requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSource: %w", err)
-	}
-	return oldValue.Source, nil
-}
-
-// ResetSource resets all changes to the "source" field.
-func (m *WalletTransactionMutation) ResetSource() {
-	m.source = nil
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (m *WalletTransactionMutation) SetOperatorUserID(s string) {
-	m.operator_user_id = &s
-}
-
-// OperatorUserID returns the value of the "operator_user_id" field in the mutation.
-func (m *WalletTransactionMutation) OperatorUserID() (r string, exists bool) {
-	v := m.operator_user_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperatorUserID returns the old "operator_user_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldOperatorUserID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperatorUserID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperatorUserID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperatorUserID: %w", err)
-	}
-	return oldValue.OperatorUserID, nil
-}
-
-// ResetOperatorUserID resets all changes to the "operator_user_id" field.
-func (m *WalletTransactionMutation) ResetOperatorUserID() {
-	m.operator_user_id = nil
-}
-
-// SetReason sets the "reason" field.
-func (m *WalletTransactionMutation) SetReason(s string) {
-	m.reason = &s
-}
-
-// Reason returns the value of the "reason" field in the mutation.
-func (m *WalletTransactionMutation) Reason() (r string, exists bool) {
-	v := m.reason
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReason returns the old "reason" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldReason(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReason is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReason requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReason: %w", err)
-	}
-	return oldValue.Reason, nil
-}
-
-// ResetReason resets all changes to the "reason" field.
-func (m *WalletTransactionMutation) ResetReason() {
-	m.reason = nil
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (m *WalletTransactionMutation) SetLedgerEntryID(s string) {
-	m.ledger_entry_id = &s
-}
-
-// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
-func (m *WalletTransactionMutation) LedgerEntryID() (r string, exists bool) {
-	v := m.ledger_entry_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
-	}
-	return oldValue.LedgerEntryID, nil
-}
-
-// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
-func (m *WalletTransactionMutation) ResetLedgerEntryID() {
-	m.ledger_entry_id = nil
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (m *WalletTransactionMutation) SetWalletTransactionID(s string) {
-	m.wallet_transaction_id = &s
-}
-
-// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
-func (m *WalletTransactionMutation) WalletTransactionID() (r string, exists bool) {
-	v := m.wallet_transaction_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
-	}
-	return oldValue.WalletTransactionID, nil
-}
-
-// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
-func (m *WalletTransactionMutation) ResetWalletTransactionID() {
-	m.wallet_transaction_id = nil
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *WalletTransactionMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *WalletTransactionMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *WalletTransactionMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
-// SetResourceType sets the "resource_type" field.
-func (m *WalletTransactionMutation) SetResourceType(s string) {
-	m.resource_type = &s
-}
-
-// ResourceType returns the value of the "resource_type" field in the mutation.
-func (m *WalletTransactionMutation) ResourceType() (r string, exists bool) {
-	v := m.resource_type
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceType returns the old "resource_type" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldResourceType(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceType requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
-	}
-	return oldValue.ResourceType, nil
-}
-
-// ResetResourceType resets all changes to the "resource_type" field.
-func (m *WalletTransactionMutation) ResetResourceType() {
-	m.resource_type = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *WalletTransactionMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *WalletTransactionMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *WalletTransactionMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetHoldID sets the "hold_id" field.
-func (m *WalletTransactionMutation) SetHoldID(s string) {
-	m.hold_id = &s
-}
-
-// HoldID returns the value of the "hold_id" field in the mutation.
-func (m *WalletTransactionMutation) HoldID() (r string, exists bool) {
-	v := m.hold_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldHoldID returns the old "hold_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldHoldID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldHoldID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
-	}
-	return oldValue.HoldID, nil
-}
-
-// ResetHoldID resets all changes to the "hold_id" field.
-func (m *WalletTransactionMutation) ResetHoldID() {
-	m.hold_id = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *WalletTransactionMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *WalletTransactionMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *WalletTransactionMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (m *WalletTransactionMutation) SetPricingVersion(s string) {
-	m.pricing_version = &s
-}
-
-// PricingVersion returns the value of the "pricing_version" field in the mutation.
-func (m *WalletTransactionMutation) PricingVersion() (r string, exists bool) {
-	v := m.pricing_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPricingVersion returns the old "pricing_version" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldPricingVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPricingVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPricingVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPricingVersion: %w", err)
-	}
-	return oldValue.PricingVersion, nil
-}
-
-// ResetPricingVersion resets all changes to the "pricing_version" field.
-func (m *WalletTransactionMutation) ResetPricingVersion() {
-	m.pricing_version = nil
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (m *WalletTransactionMutation) SetPriceSnapshotJSON(s string) {
-	m.price_snapshot_json = &s
-}
-
-// PriceSnapshotJSON returns the value of the "price_snapshot_json" field in the mutation.
-func (m *WalletTransactionMutation) PriceSnapshotJSON() (r string, exists bool) {
-	v := m.price_snapshot_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPriceSnapshotJSON returns the old "price_snapshot_json" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldPriceSnapshotJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPriceSnapshotJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPriceSnapshotJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPriceSnapshotJSON: %w", err)
-	}
-	return oldValue.PriceSnapshotJSON, nil
-}
-
-// ResetPriceSnapshotJSON resets all changes to the "price_snapshot_json" field.
-func (m *WalletTransactionMutation) ResetPriceSnapshotJSON() {
-	m.price_snapshot_json = nil
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (m *WalletTransactionMutation) SetUsagePeriodStart(s string) {
-	m.usage_period_start = &s
-}
-
-// UsagePeriodStart returns the value of the "usage_period_start" field in the mutation.
-func (m *WalletTransactionMutation) UsagePeriodStart() (r string, exists bool) {
-	v := m.usage_period_start
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodStart returns the old "usage_period_start" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldUsagePeriodStart(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodStart is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodStart requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodStart: %w", err)
-	}
-	return oldValue.UsagePeriodStart, nil
-}
-
-// ResetUsagePeriodStart resets all changes to the "usage_period_start" field.
-func (m *WalletTransactionMutation) ResetUsagePeriodStart() {
-	m.usage_period_start = nil
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (m *WalletTransactionMutation) SetUsagePeriodEnd(s string) {
-	m.usage_period_end = &s
-}
-
-// UsagePeriodEnd returns the value of the "usage_period_end" field in the mutation.
-func (m *WalletTransactionMutation) UsagePeriodEnd() (r string, exists bool) {
-	v := m.usage_period_end
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsagePeriodEnd returns the old "usage_period_end" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldUsagePeriodEnd(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsagePeriodEnd is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsagePeriodEnd requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsagePeriodEnd: %w", err)
-	}
-	return oldValue.UsagePeriodEnd, nil
-}
-
-// ResetUsagePeriodEnd resets all changes to the "usage_period_end" field.
-func (m *WalletTransactionMutation) ResetUsagePeriodEnd() {
-	m.usage_period_end = nil
-}
-
-// SetQuantity sets the "quantity" field.
-func (m *WalletTransactionMutation) SetQuantity(f float64) {
-	m.quantity = &f
-	m.addquantity = nil
-}
-
-// Quantity returns the value of the "quantity" field in the mutation.
-func (m *WalletTransactionMutation) Quantity() (r float64, exists bool) {
-	v := m.quantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldQuantity returns the old "quantity" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldQuantity(ctx context.Context) (v float64, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldQuantity is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldQuantity requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldQuantity: %w", err)
-	}
-	return oldValue.Quantity, nil
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (m *WalletTransactionMutation) AddQuantity(f float64) {
-	if m.addquantity != nil {
-		*m.addquantity += f
-	} else {
-		m.addquantity = &f
-	}
-}
-
-// AddedQuantity returns the value that was added to the "quantity" field in this mutation.
-func (m *WalletTransactionMutation) AddedQuantity() (r float64, exists bool) {
-	v := m.addquantity
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetQuantity resets all changes to the "quantity" field.
-func (m *WalletTransactionMutation) ResetQuantity() {
-	m.quantity = nil
-	m.addquantity = nil
-}
-
-// SetUnit sets the "unit" field.
-func (m *WalletTransactionMutation) SetUnit(s string) {
-	m.unit = &s
-}
-
-// Unit returns the value of the "unit" field in the mutation.
-func (m *WalletTransactionMutation) Unit() (r string, exists bool) {
-	v := m.unit
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUnit returns the old "unit" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldUnit(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUnit is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUnit requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUnit: %w", err)
-	}
-	return oldValue.Unit, nil
-}
-
-// ResetUnit resets all changes to the "unit" field.
-func (m *WalletTransactionMutation) ResetUnit() {
-	m.unit = nil
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (m *WalletTransactionMutation) SetProviderCostEvidenceRef(s string) {
-	m.provider_cost_evidence_ref = &s
-}
-
-// ProviderCostEvidenceRef returns the value of the "provider_cost_evidence_ref" field in the mutation.
-func (m *WalletTransactionMutation) ProviderCostEvidenceRef() (r string, exists bool) {
-	v := m.provider_cost_evidence_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderCostEvidenceRef returns the old "provider_cost_evidence_ref" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldProviderCostEvidenceRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderCostEvidenceRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderCostEvidenceRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderCostEvidenceRef: %w", err)
-	}
-	return oldValue.ProviderCostEvidenceRef, nil
-}
-
-// ResetProviderCostEvidenceRef resets all changes to the "provider_cost_evidence_ref" field.
-func (m *WalletTransactionMutation) ResetProviderCostEvidenceRef() {
-	m.provider_cost_evidence_ref = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *WalletTransactionMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *WalletTransactionMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *WalletTransactionMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (m *WalletTransactionMutation) SetRedactedURL(s string) {
-	m.redacted_url = &s
-}
-
-// RedactedURL returns the value of the "redacted_url" field in the mutation.
-func (m *WalletTransactionMutation) RedactedURL() (r string, exists bool) {
-	v := m.redacted_url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedURL returns the old "redacted_url" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldRedactedURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedURL: %w", err)
-	}
-	return oldValue.RedactedURL, nil
-}
-
-// ResetRedactedURL resets all changes to the "redacted_url" field.
-func (m *WalletTransactionMutation) ResetRedactedURL() {
-	m.redacted_url = nil
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (m *WalletTransactionMutation) SetTokenVersion(s string) {
-	m.token_version = &s
-}
-
-// TokenVersion returns the value of the "token_version" field in the mutation.
-func (m *WalletTransactionMutation) TokenVersion() (r string, exists bool) {
-	v := m.token_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldTokenVersion returns the old "token_version" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldTokenVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldTokenVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldTokenVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldTokenVersion: %w", err)
-	}
-	return oldValue.TokenVersion, nil
-}
-
-// ResetTokenVersion resets all changes to the "token_version" field.
-func (m *WalletTransactionMutation) ResetTokenVersion() {
-	m.token_version = nil
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (m *WalletTransactionMutation) SetIdempotencyKey(s string) {
-	m.idempotency_key = &s
-}
-
-// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
-func (m *WalletTransactionMutation) IdempotencyKey() (r string, exists bool) {
-	v := m.idempotency_key
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIdempotencyKey returns the old "idempotency_key" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
-	}
-	return oldValue.IdempotencyKey, nil
-}
-
-// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
-func (m *WalletTransactionMutation) ResetIdempotencyKey() {
-	m.idempotency_key = nil
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (m *WalletTransactionMutation) SetRequestHash(s string) {
-	m.request_hash = &s
-}
-
-// RequestHash returns the value of the "request_hash" field in the mutation.
-func (m *WalletTransactionMutation) RequestHash() (r string, exists bool) {
-	v := m.request_hash
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRequestHash returns the old "request_hash" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldRequestHash(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRequestHash requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
-	}
-	return oldValue.RequestHash, nil
-}
-
-// ResetRequestHash resets all changes to the "request_hash" field.
-func (m *WalletTransactionMutation) ResetRequestHash() {
-	m.request_hash = nil
-}
-
-// SetReportJSON sets the "report_json" field.
-func (m *WalletTransactionMutation) SetReportJSON(s string) {
-	m.report_json = &s
-}
-
-// ReportJSON returns the value of the "report_json" field in the mutation.
-func (m *WalletTransactionMutation) ReportJSON() (r string, exists bool) {
-	v := m.report_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldReportJSON returns the old "report_json" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldReportJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldReportJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldReportJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldReportJSON: %w", err)
-	}
-	return oldValue.ReportJSON, nil
-}
-
-// ResetReportJSON resets all changes to the "report_json" field.
-func (m *WalletTransactionMutation) ResetReportJSON() {
-	m.report_json = nil
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (m *WalletTransactionMutation) SetBlockNewWorkspaces(b bool) {
-	m.block_new_workspaces = &b
-}
-
-// BlockNewWorkspaces returns the value of the "block_new_workspaces" field in the mutation.
-func (m *WalletTransactionMutation) BlockNewWorkspaces() (r bool, exists bool) {
-	v := m.block_new_workspaces
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldBlockNewWorkspaces returns the old "block_new_workspaces" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldBlockNewWorkspaces(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldBlockNewWorkspaces is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldBlockNewWorkspaces requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldBlockNewWorkspaces: %w", err)
-	}
-	return oldValue.BlockNewWorkspaces, nil
-}
-
-// ResetBlockNewWorkspaces resets all changes to the "block_new_workspaces" field.
-func (m *WalletTransactionMutation) ResetBlockNewWorkspaces() {
-	m.block_new_workspaces = nil
 }
 
 // SetCreatedAt sets the "created_at" field.
@@ -22344,42 +8147,6 @@ func (m *WalletTransactionMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *WalletTransactionMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *WalletTransactionMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the WalletTransaction entity.
-// If the WalletTransaction object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WalletTransactionMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *WalletTransactionMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the WalletTransactionMutation builder.
 func (m *WalletTransactionMutation) Where(ps ...predicate.WalletTransaction) {
 	m.predicates = append(m.predicates, ps...)
@@ -22414,9 +8181,15 @@ func (m *WalletTransactionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *WalletTransactionMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 9)
 	if m.account_id != nil {
 		fields = append(fields, wallettransaction.FieldAccountID)
+	}
+	if m.ledger_entry_id != nil {
+		fields = append(fields, wallettransaction.FieldLedgerEntryID)
+	}
+	if m.amount_cents != nil {
+		fields = append(fields, wallettransaction.FieldAmountCents)
 	}
 	if m.balance_cents != nil {
 		fields = append(fields, wallettransaction.FieldBalanceCents)
@@ -22430,92 +8203,11 @@ func (m *WalletTransactionMutation) Fields() []string {
 	if m.total_spent_cents != nil {
 		fields = append(fields, wallettransaction.FieldTotalSpentCents)
 	}
-	if m.amount_cents != nil {
-		fields = append(fields, wallettransaction.FieldAmountCents)
-	}
 	if m.currency != nil {
 		fields = append(fields, wallettransaction.FieldCurrency)
 	}
-	if m.direction != nil {
-		fields = append(fields, wallettransaction.FieldDirection)
-	}
-	if m.source != nil {
-		fields = append(fields, wallettransaction.FieldSource)
-	}
-	if m.operator_user_id != nil {
-		fields = append(fields, wallettransaction.FieldOperatorUserID)
-	}
-	if m.reason != nil {
-		fields = append(fields, wallettransaction.FieldReason)
-	}
-	if m.ledger_entry_id != nil {
-		fields = append(fields, wallettransaction.FieldLedgerEntryID)
-	}
-	if m.wallet_transaction_id != nil {
-		fields = append(fields, wallettransaction.FieldWalletTransactionID)
-	}
-	if m.workspace_id != nil {
-		fields = append(fields, wallettransaction.FieldWorkspaceID)
-	}
-	if m.resource_type != nil {
-		fields = append(fields, wallettransaction.FieldResourceType)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, wallettransaction.FieldResourceID)
-	}
-	if m.hold_id != nil {
-		fields = append(fields, wallettransaction.FieldHoldID)
-	}
-	if m.status != nil {
-		fields = append(fields, wallettransaction.FieldStatus)
-	}
-	if m.pricing_version != nil {
-		fields = append(fields, wallettransaction.FieldPricingVersion)
-	}
-	if m.price_snapshot_json != nil {
-		fields = append(fields, wallettransaction.FieldPriceSnapshotJSON)
-	}
-	if m.usage_period_start != nil {
-		fields = append(fields, wallettransaction.FieldUsagePeriodStart)
-	}
-	if m.usage_period_end != nil {
-		fields = append(fields, wallettransaction.FieldUsagePeriodEnd)
-	}
-	if m.quantity != nil {
-		fields = append(fields, wallettransaction.FieldQuantity)
-	}
-	if m.unit != nil {
-		fields = append(fields, wallettransaction.FieldUnit)
-	}
-	if m.provider_cost_evidence_ref != nil {
-		fields = append(fields, wallettransaction.FieldProviderCostEvidenceRef)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, wallettransaction.FieldProviderRequestID)
-	}
-	if m.redacted_url != nil {
-		fields = append(fields, wallettransaction.FieldRedactedURL)
-	}
-	if m.token_version != nil {
-		fields = append(fields, wallettransaction.FieldTokenVersion)
-	}
-	if m.idempotency_key != nil {
-		fields = append(fields, wallettransaction.FieldIdempotencyKey)
-	}
-	if m.request_hash != nil {
-		fields = append(fields, wallettransaction.FieldRequestHash)
-	}
-	if m.report_json != nil {
-		fields = append(fields, wallettransaction.FieldReportJSON)
-	}
-	if m.block_new_workspaces != nil {
-		fields = append(fields, wallettransaction.FieldBlockNewWorkspaces)
-	}
 	if m.created_at != nil {
 		fields = append(fields, wallettransaction.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, wallettransaction.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -22527,6 +8219,10 @@ func (m *WalletTransactionMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case wallettransaction.FieldAccountID:
 		return m.AccountID()
+	case wallettransaction.FieldLedgerEntryID:
+		return m.LedgerEntryID()
+	case wallettransaction.FieldAmountCents:
+		return m.AmountCents()
 	case wallettransaction.FieldBalanceCents:
 		return m.BalanceCents()
 	case wallettransaction.FieldFrozenCents:
@@ -22535,64 +8231,10 @@ func (m *WalletTransactionMutation) Field(name string) (ent.Value, bool) {
 		return m.AvailableCents()
 	case wallettransaction.FieldTotalSpentCents:
 		return m.TotalSpentCents()
-	case wallettransaction.FieldAmountCents:
-		return m.AmountCents()
 	case wallettransaction.FieldCurrency:
 		return m.Currency()
-	case wallettransaction.FieldDirection:
-		return m.Direction()
-	case wallettransaction.FieldSource:
-		return m.Source()
-	case wallettransaction.FieldOperatorUserID:
-		return m.OperatorUserID()
-	case wallettransaction.FieldReason:
-		return m.Reason()
-	case wallettransaction.FieldLedgerEntryID:
-		return m.LedgerEntryID()
-	case wallettransaction.FieldWalletTransactionID:
-		return m.WalletTransactionID()
-	case wallettransaction.FieldWorkspaceID:
-		return m.WorkspaceID()
-	case wallettransaction.FieldResourceType:
-		return m.ResourceType()
-	case wallettransaction.FieldResourceID:
-		return m.ResourceID()
-	case wallettransaction.FieldHoldID:
-		return m.HoldID()
-	case wallettransaction.FieldStatus:
-		return m.Status()
-	case wallettransaction.FieldPricingVersion:
-		return m.PricingVersion()
-	case wallettransaction.FieldPriceSnapshotJSON:
-		return m.PriceSnapshotJSON()
-	case wallettransaction.FieldUsagePeriodStart:
-		return m.UsagePeriodStart()
-	case wallettransaction.FieldUsagePeriodEnd:
-		return m.UsagePeriodEnd()
-	case wallettransaction.FieldQuantity:
-		return m.Quantity()
-	case wallettransaction.FieldUnit:
-		return m.Unit()
-	case wallettransaction.FieldProviderCostEvidenceRef:
-		return m.ProviderCostEvidenceRef()
-	case wallettransaction.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case wallettransaction.FieldRedactedURL:
-		return m.RedactedURL()
-	case wallettransaction.FieldTokenVersion:
-		return m.TokenVersion()
-	case wallettransaction.FieldIdempotencyKey:
-		return m.IdempotencyKey()
-	case wallettransaction.FieldRequestHash:
-		return m.RequestHash()
-	case wallettransaction.FieldReportJSON:
-		return m.ReportJSON()
-	case wallettransaction.FieldBlockNewWorkspaces:
-		return m.BlockNewWorkspaces()
 	case wallettransaction.FieldCreatedAt:
 		return m.CreatedAt()
-	case wallettransaction.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -22604,6 +8246,10 @@ func (m *WalletTransactionMutation) OldField(ctx context.Context, name string) (
 	switch name {
 	case wallettransaction.FieldAccountID:
 		return m.OldAccountID(ctx)
+	case wallettransaction.FieldLedgerEntryID:
+		return m.OldLedgerEntryID(ctx)
+	case wallettransaction.FieldAmountCents:
+		return m.OldAmountCents(ctx)
 	case wallettransaction.FieldBalanceCents:
 		return m.OldBalanceCents(ctx)
 	case wallettransaction.FieldFrozenCents:
@@ -22612,64 +8258,10 @@ func (m *WalletTransactionMutation) OldField(ctx context.Context, name string) (
 		return m.OldAvailableCents(ctx)
 	case wallettransaction.FieldTotalSpentCents:
 		return m.OldTotalSpentCents(ctx)
-	case wallettransaction.FieldAmountCents:
-		return m.OldAmountCents(ctx)
 	case wallettransaction.FieldCurrency:
 		return m.OldCurrency(ctx)
-	case wallettransaction.FieldDirection:
-		return m.OldDirection(ctx)
-	case wallettransaction.FieldSource:
-		return m.OldSource(ctx)
-	case wallettransaction.FieldOperatorUserID:
-		return m.OldOperatorUserID(ctx)
-	case wallettransaction.FieldReason:
-		return m.OldReason(ctx)
-	case wallettransaction.FieldLedgerEntryID:
-		return m.OldLedgerEntryID(ctx)
-	case wallettransaction.FieldWalletTransactionID:
-		return m.OldWalletTransactionID(ctx)
-	case wallettransaction.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
-	case wallettransaction.FieldResourceType:
-		return m.OldResourceType(ctx)
-	case wallettransaction.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case wallettransaction.FieldHoldID:
-		return m.OldHoldID(ctx)
-	case wallettransaction.FieldStatus:
-		return m.OldStatus(ctx)
-	case wallettransaction.FieldPricingVersion:
-		return m.OldPricingVersion(ctx)
-	case wallettransaction.FieldPriceSnapshotJSON:
-		return m.OldPriceSnapshotJSON(ctx)
-	case wallettransaction.FieldUsagePeriodStart:
-		return m.OldUsagePeriodStart(ctx)
-	case wallettransaction.FieldUsagePeriodEnd:
-		return m.OldUsagePeriodEnd(ctx)
-	case wallettransaction.FieldQuantity:
-		return m.OldQuantity(ctx)
-	case wallettransaction.FieldUnit:
-		return m.OldUnit(ctx)
-	case wallettransaction.FieldProviderCostEvidenceRef:
-		return m.OldProviderCostEvidenceRef(ctx)
-	case wallettransaction.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case wallettransaction.FieldRedactedURL:
-		return m.OldRedactedURL(ctx)
-	case wallettransaction.FieldTokenVersion:
-		return m.OldTokenVersion(ctx)
-	case wallettransaction.FieldIdempotencyKey:
-		return m.OldIdempotencyKey(ctx)
-	case wallettransaction.FieldRequestHash:
-		return m.OldRequestHash(ctx)
-	case wallettransaction.FieldReportJSON:
-		return m.OldReportJSON(ctx)
-	case wallettransaction.FieldBlockNewWorkspaces:
-		return m.OldBlockNewWorkspaces(ctx)
 	case wallettransaction.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case wallettransaction.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown WalletTransaction field %s", name)
 }
@@ -22685,6 +8277,20 @@ func (m *WalletTransactionMutation) SetField(name string, value ent.Value) error
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAccountID(v)
+		return nil
+	case wallettransaction.FieldLedgerEntryID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLedgerEntryID(v)
+		return nil
+	case wallettransaction.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountCents(v)
 		return nil
 	case wallettransaction.FieldBalanceCents:
 		v, ok := value.(int64)
@@ -22714,13 +8320,6 @@ func (m *WalletTransactionMutation) SetField(name string, value ent.Value) error
 		}
 		m.SetTotalSpentCents(v)
 		return nil
-	case wallettransaction.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAmountCents(v)
-		return nil
 	case wallettransaction.FieldCurrency:
 		v, ok := value.(string)
 		if !ok {
@@ -22728,194 +8327,12 @@ func (m *WalletTransactionMutation) SetField(name string, value ent.Value) error
 		}
 		m.SetCurrency(v)
 		return nil
-	case wallettransaction.FieldDirection:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetDirection(v)
-		return nil
-	case wallettransaction.FieldSource:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSource(v)
-		return nil
-	case wallettransaction.FieldOperatorUserID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperatorUserID(v)
-		return nil
-	case wallettransaction.FieldReason:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReason(v)
-		return nil
-	case wallettransaction.FieldLedgerEntryID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLedgerEntryID(v)
-		return nil
-	case wallettransaction.FieldWalletTransactionID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWalletTransactionID(v)
-		return nil
-	case wallettransaction.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
-	case wallettransaction.FieldResourceType:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceType(v)
-		return nil
-	case wallettransaction.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case wallettransaction.FieldHoldID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetHoldID(v)
-		return nil
-	case wallettransaction.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case wallettransaction.FieldPricingVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPricingVersion(v)
-		return nil
-	case wallettransaction.FieldPriceSnapshotJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPriceSnapshotJSON(v)
-		return nil
-	case wallettransaction.FieldUsagePeriodStart:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodStart(v)
-		return nil
-	case wallettransaction.FieldUsagePeriodEnd:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsagePeriodEnd(v)
-		return nil
-	case wallettransaction.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetQuantity(v)
-		return nil
-	case wallettransaction.FieldUnit:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUnit(v)
-		return nil
-	case wallettransaction.FieldProviderCostEvidenceRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderCostEvidenceRef(v)
-		return nil
-	case wallettransaction.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case wallettransaction.FieldRedactedURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedURL(v)
-		return nil
-	case wallettransaction.FieldTokenVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetTokenVersion(v)
-		return nil
-	case wallettransaction.FieldIdempotencyKey:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIdempotencyKey(v)
-		return nil
-	case wallettransaction.FieldRequestHash:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRequestHash(v)
-		return nil
-	case wallettransaction.FieldReportJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetReportJSON(v)
-		return nil
-	case wallettransaction.FieldBlockNewWorkspaces:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetBlockNewWorkspaces(v)
-		return nil
 	case wallettransaction.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case wallettransaction.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown WalletTransaction field %s", name)
@@ -22925,6 +8342,9 @@ func (m *WalletTransactionMutation) SetField(name string, value ent.Value) error
 // this mutation.
 func (m *WalletTransactionMutation) AddedFields() []string {
 	var fields []string
+	if m.addamount_cents != nil {
+		fields = append(fields, wallettransaction.FieldAmountCents)
+	}
 	if m.addbalance_cents != nil {
 		fields = append(fields, wallettransaction.FieldBalanceCents)
 	}
@@ -22937,12 +8357,6 @@ func (m *WalletTransactionMutation) AddedFields() []string {
 	if m.addtotal_spent_cents != nil {
 		fields = append(fields, wallettransaction.FieldTotalSpentCents)
 	}
-	if m.addamount_cents != nil {
-		fields = append(fields, wallettransaction.FieldAmountCents)
-	}
-	if m.addquantity != nil {
-		fields = append(fields, wallettransaction.FieldQuantity)
-	}
 	return fields
 }
 
@@ -22951,6 +8365,8 @@ func (m *WalletTransactionMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *WalletTransactionMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case wallettransaction.FieldAmountCents:
+		return m.AddedAmountCents()
 	case wallettransaction.FieldBalanceCents:
 		return m.AddedBalanceCents()
 	case wallettransaction.FieldFrozenCents:
@@ -22959,10 +8375,6 @@ func (m *WalletTransactionMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedAvailableCents()
 	case wallettransaction.FieldTotalSpentCents:
 		return m.AddedTotalSpentCents()
-	case wallettransaction.FieldAmountCents:
-		return m.AddedAmountCents()
-	case wallettransaction.FieldQuantity:
-		return m.AddedQuantity()
 	}
 	return nil, false
 }
@@ -22972,6 +8384,13 @@ func (m *WalletTransactionMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *WalletTransactionMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case wallettransaction.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAmountCents(v)
+		return nil
 	case wallettransaction.FieldBalanceCents:
 		v, ok := value.(int64)
 		if !ok {
@@ -22999,20 +8418,6 @@ func (m *WalletTransactionMutation) AddField(name string, value ent.Value) error
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddTotalSpentCents(v)
-		return nil
-	case wallettransaction.FieldAmountCents:
-		v, ok := value.(int64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddAmountCents(v)
-		return nil
-	case wallettransaction.FieldQuantity:
-		v, ok := value.(float64)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddQuantity(v)
 		return nil
 	}
 	return fmt.Errorf("unknown WalletTransaction numeric field %s", name)
@@ -23044,6 +8449,12 @@ func (m *WalletTransactionMutation) ResetField(name string) error {
 	case wallettransaction.FieldAccountID:
 		m.ResetAccountID()
 		return nil
+	case wallettransaction.FieldLedgerEntryID:
+		m.ResetLedgerEntryID()
+		return nil
+	case wallettransaction.FieldAmountCents:
+		m.ResetAmountCents()
+		return nil
 	case wallettransaction.FieldBalanceCents:
 		m.ResetBalanceCents()
 		return nil
@@ -23056,92 +8467,11 @@ func (m *WalletTransactionMutation) ResetField(name string) error {
 	case wallettransaction.FieldTotalSpentCents:
 		m.ResetTotalSpentCents()
 		return nil
-	case wallettransaction.FieldAmountCents:
-		m.ResetAmountCents()
-		return nil
 	case wallettransaction.FieldCurrency:
 		m.ResetCurrency()
 		return nil
-	case wallettransaction.FieldDirection:
-		m.ResetDirection()
-		return nil
-	case wallettransaction.FieldSource:
-		m.ResetSource()
-		return nil
-	case wallettransaction.FieldOperatorUserID:
-		m.ResetOperatorUserID()
-		return nil
-	case wallettransaction.FieldReason:
-		m.ResetReason()
-		return nil
-	case wallettransaction.FieldLedgerEntryID:
-		m.ResetLedgerEntryID()
-		return nil
-	case wallettransaction.FieldWalletTransactionID:
-		m.ResetWalletTransactionID()
-		return nil
-	case wallettransaction.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
-	case wallettransaction.FieldResourceType:
-		m.ResetResourceType()
-		return nil
-	case wallettransaction.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case wallettransaction.FieldHoldID:
-		m.ResetHoldID()
-		return nil
-	case wallettransaction.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case wallettransaction.FieldPricingVersion:
-		m.ResetPricingVersion()
-		return nil
-	case wallettransaction.FieldPriceSnapshotJSON:
-		m.ResetPriceSnapshotJSON()
-		return nil
-	case wallettransaction.FieldUsagePeriodStart:
-		m.ResetUsagePeriodStart()
-		return nil
-	case wallettransaction.FieldUsagePeriodEnd:
-		m.ResetUsagePeriodEnd()
-		return nil
-	case wallettransaction.FieldQuantity:
-		m.ResetQuantity()
-		return nil
-	case wallettransaction.FieldUnit:
-		m.ResetUnit()
-		return nil
-	case wallettransaction.FieldProviderCostEvidenceRef:
-		m.ResetProviderCostEvidenceRef()
-		return nil
-	case wallettransaction.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case wallettransaction.FieldRedactedURL:
-		m.ResetRedactedURL()
-		return nil
-	case wallettransaction.FieldTokenVersion:
-		m.ResetTokenVersion()
-		return nil
-	case wallettransaction.FieldIdempotencyKey:
-		m.ResetIdempotencyKey()
-		return nil
-	case wallettransaction.FieldRequestHash:
-		m.ResetRequestHash()
-		return nil
-	case wallettransaction.FieldReportJSON:
-		m.ResetReportJSON()
-		return nil
-	case wallettransaction.FieldBlockNewWorkspaces:
-		m.ResetBlockNewWorkspaces()
-		return nil
 	case wallettransaction.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case wallettransaction.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown WalletTransaction field %s", name)

@@ -26,81 +26,9 @@ func (lec *LedgerEntryCreate) SetAccountID(s string) *LedgerEntryCreate {
 	return lec
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableAccountID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetAccountID(*s)
-	}
-	return lec
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (lec *LedgerEntryCreate) SetBalanceCents(i int64) *LedgerEntryCreate {
-	lec.mutation.SetBalanceCents(i)
-	return lec
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableBalanceCents(i *int64) *LedgerEntryCreate {
-	if i != nil {
-		lec.SetBalanceCents(*i)
-	}
-	return lec
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (lec *LedgerEntryCreate) SetFrozenCents(i int64) *LedgerEntryCreate {
-	lec.mutation.SetFrozenCents(i)
-	return lec
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableFrozenCents(i *int64) *LedgerEntryCreate {
-	if i != nil {
-		lec.SetFrozenCents(*i)
-	}
-	return lec
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (lec *LedgerEntryCreate) SetAvailableCents(i int64) *LedgerEntryCreate {
-	lec.mutation.SetAvailableCents(i)
-	return lec
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableAvailableCents(i *int64) *LedgerEntryCreate {
-	if i != nil {
-		lec.SetAvailableCents(*i)
-	}
-	return lec
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (lec *LedgerEntryCreate) SetTotalSpentCents(i int64) *LedgerEntryCreate {
-	lec.mutation.SetTotalSpentCents(i)
-	return lec
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableTotalSpentCents(i *int64) *LedgerEntryCreate {
-	if i != nil {
-		lec.SetTotalSpentCents(*i)
-	}
-	return lec
-}
-
 // SetAmountCents sets the "amount_cents" field.
 func (lec *LedgerEntryCreate) SetAmountCents(i int64) *LedgerEntryCreate {
 	lec.mutation.SetAmountCents(i)
-	return lec
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableAmountCents(i *int64) *LedgerEntryCreate {
-	if i != nil {
-		lec.SetAmountCents(*i)
-	}
 	return lec
 }
 
@@ -124,25 +52,9 @@ func (lec *LedgerEntryCreate) SetDirection(s string) *LedgerEntryCreate {
 	return lec
 }
 
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableDirection(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetDirection(*s)
-	}
-	return lec
-}
-
 // SetSource sets the "source" field.
 func (lec *LedgerEntryCreate) SetSource(s string) *LedgerEntryCreate {
 	lec.mutation.SetSource(s)
-	return lec
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableSource(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetSource(*s)
-	}
 	return lec
 }
 
@@ -174,300 +86,6 @@ func (lec *LedgerEntryCreate) SetNillableReason(s *string) *LedgerEntryCreate {
 	return lec
 }
 
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (lec *LedgerEntryCreate) SetLedgerEntryID(s string) *LedgerEntryCreate {
-	lec.mutation.SetLedgerEntryID(s)
-	return lec
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableLedgerEntryID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetLedgerEntryID(*s)
-	}
-	return lec
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (lec *LedgerEntryCreate) SetWalletTransactionID(s string) *LedgerEntryCreate {
-	lec.mutation.SetWalletTransactionID(s)
-	return lec
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableWalletTransactionID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetWalletTransactionID(*s)
-	}
-	return lec
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (lec *LedgerEntryCreate) SetWorkspaceID(s string) *LedgerEntryCreate {
-	lec.mutation.SetWorkspaceID(s)
-	return lec
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableWorkspaceID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetWorkspaceID(*s)
-	}
-	return lec
-}
-
-// SetResourceType sets the "resource_type" field.
-func (lec *LedgerEntryCreate) SetResourceType(s string) *LedgerEntryCreate {
-	lec.mutation.SetResourceType(s)
-	return lec
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableResourceType(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetResourceType(*s)
-	}
-	return lec
-}
-
-// SetResourceID sets the "resource_id" field.
-func (lec *LedgerEntryCreate) SetResourceID(s string) *LedgerEntryCreate {
-	lec.mutation.SetResourceID(s)
-	return lec
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableResourceID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetResourceID(*s)
-	}
-	return lec
-}
-
-// SetHoldID sets the "hold_id" field.
-func (lec *LedgerEntryCreate) SetHoldID(s string) *LedgerEntryCreate {
-	lec.mutation.SetHoldID(s)
-	return lec
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableHoldID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetHoldID(*s)
-	}
-	return lec
-}
-
-// SetStatus sets the "status" field.
-func (lec *LedgerEntryCreate) SetStatus(s string) *LedgerEntryCreate {
-	lec.mutation.SetStatus(s)
-	return lec
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableStatus(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetStatus(*s)
-	}
-	return lec
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (lec *LedgerEntryCreate) SetPricingVersion(s string) *LedgerEntryCreate {
-	lec.mutation.SetPricingVersion(s)
-	return lec
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillablePricingVersion(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetPricingVersion(*s)
-	}
-	return lec
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (lec *LedgerEntryCreate) SetPriceSnapshotJSON(s string) *LedgerEntryCreate {
-	lec.mutation.SetPriceSnapshotJSON(s)
-	return lec
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillablePriceSnapshotJSON(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetPriceSnapshotJSON(*s)
-	}
-	return lec
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (lec *LedgerEntryCreate) SetUsagePeriodStart(s string) *LedgerEntryCreate {
-	lec.mutation.SetUsagePeriodStart(s)
-	return lec
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableUsagePeriodStart(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetUsagePeriodStart(*s)
-	}
-	return lec
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (lec *LedgerEntryCreate) SetUsagePeriodEnd(s string) *LedgerEntryCreate {
-	lec.mutation.SetUsagePeriodEnd(s)
-	return lec
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableUsagePeriodEnd(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetUsagePeriodEnd(*s)
-	}
-	return lec
-}
-
-// SetQuantity sets the "quantity" field.
-func (lec *LedgerEntryCreate) SetQuantity(f float64) *LedgerEntryCreate {
-	lec.mutation.SetQuantity(f)
-	return lec
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableQuantity(f *float64) *LedgerEntryCreate {
-	if f != nil {
-		lec.SetQuantity(*f)
-	}
-	return lec
-}
-
-// SetUnit sets the "unit" field.
-func (lec *LedgerEntryCreate) SetUnit(s string) *LedgerEntryCreate {
-	lec.mutation.SetUnit(s)
-	return lec
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableUnit(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetUnit(*s)
-	}
-	return lec
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (lec *LedgerEntryCreate) SetProviderCostEvidenceRef(s string) *LedgerEntryCreate {
-	lec.mutation.SetProviderCostEvidenceRef(s)
-	return lec
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableProviderCostEvidenceRef(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetProviderCostEvidenceRef(*s)
-	}
-	return lec
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (lec *LedgerEntryCreate) SetProviderRequestID(s string) *LedgerEntryCreate {
-	lec.mutation.SetProviderRequestID(s)
-	return lec
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableProviderRequestID(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetProviderRequestID(*s)
-	}
-	return lec
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (lec *LedgerEntryCreate) SetRedactedURL(s string) *LedgerEntryCreate {
-	lec.mutation.SetRedactedURL(s)
-	return lec
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableRedactedURL(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetRedactedURL(*s)
-	}
-	return lec
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (lec *LedgerEntryCreate) SetTokenVersion(s string) *LedgerEntryCreate {
-	lec.mutation.SetTokenVersion(s)
-	return lec
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableTokenVersion(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetTokenVersion(*s)
-	}
-	return lec
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (lec *LedgerEntryCreate) SetIdempotencyKey(s string) *LedgerEntryCreate {
-	lec.mutation.SetIdempotencyKey(s)
-	return lec
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableIdempotencyKey(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetIdempotencyKey(*s)
-	}
-	return lec
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (lec *LedgerEntryCreate) SetRequestHash(s string) *LedgerEntryCreate {
-	lec.mutation.SetRequestHash(s)
-	return lec
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableRequestHash(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetRequestHash(*s)
-	}
-	return lec
-}
-
-// SetReportJSON sets the "report_json" field.
-func (lec *LedgerEntryCreate) SetReportJSON(s string) *LedgerEntryCreate {
-	lec.mutation.SetReportJSON(s)
-	return lec
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableReportJSON(s *string) *LedgerEntryCreate {
-	if s != nil {
-		lec.SetReportJSON(*s)
-	}
-	return lec
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (lec *LedgerEntryCreate) SetBlockNewWorkspaces(b bool) *LedgerEntryCreate {
-	lec.mutation.SetBlockNewWorkspaces(b)
-	return lec
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableBlockNewWorkspaces(b *bool) *LedgerEntryCreate {
-	if b != nil {
-		lec.SetBlockNewWorkspaces(*b)
-	}
-	return lec
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (lec *LedgerEntryCreate) SetCreatedAt(t time.Time) *LedgerEntryCreate {
 	lec.mutation.SetCreatedAt(t)
@@ -478,20 +96,6 @@ func (lec *LedgerEntryCreate) SetCreatedAt(t time.Time) *LedgerEntryCreate {
 func (lec *LedgerEntryCreate) SetNillableCreatedAt(t *time.Time) *LedgerEntryCreate {
 	if t != nil {
 		lec.SetCreatedAt(*t)
-	}
-	return lec
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (lec *LedgerEntryCreate) SetUpdatedAt(t time.Time) *LedgerEntryCreate {
-	lec.mutation.SetUpdatedAt(t)
-	return lec
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (lec *LedgerEntryCreate) SetNillableUpdatedAt(t *time.Time) *LedgerEntryCreate {
-	if t != nil {
-		lec.SetUpdatedAt(*t)
 	}
 	return lec
 }
@@ -537,41 +141,9 @@ func (lec *LedgerEntryCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (lec *LedgerEntryCreate) defaults() {
-	if _, ok := lec.mutation.AccountID(); !ok {
-		v := ledgerentry.DefaultAccountID
-		lec.mutation.SetAccountID(v)
-	}
-	if _, ok := lec.mutation.BalanceCents(); !ok {
-		v := ledgerentry.DefaultBalanceCents
-		lec.mutation.SetBalanceCents(v)
-	}
-	if _, ok := lec.mutation.FrozenCents(); !ok {
-		v := ledgerentry.DefaultFrozenCents
-		lec.mutation.SetFrozenCents(v)
-	}
-	if _, ok := lec.mutation.AvailableCents(); !ok {
-		v := ledgerentry.DefaultAvailableCents
-		lec.mutation.SetAvailableCents(v)
-	}
-	if _, ok := lec.mutation.TotalSpentCents(); !ok {
-		v := ledgerentry.DefaultTotalSpentCents
-		lec.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := lec.mutation.AmountCents(); !ok {
-		v := ledgerentry.DefaultAmountCents
-		lec.mutation.SetAmountCents(v)
-	}
 	if _, ok := lec.mutation.Currency(); !ok {
 		v := ledgerentry.DefaultCurrency
 		lec.mutation.SetCurrency(v)
-	}
-	if _, ok := lec.mutation.Direction(); !ok {
-		v := ledgerentry.DefaultDirection
-		lec.mutation.SetDirection(v)
-	}
-	if _, ok := lec.mutation.Source(); !ok {
-		v := ledgerentry.DefaultSource
-		lec.mutation.SetSource(v)
 	}
 	if _, ok := lec.mutation.OperatorUserID(); !ok {
 		v := ledgerentry.DefaultOperatorUserID
@@ -581,97 +153,9 @@ func (lec *LedgerEntryCreate) defaults() {
 		v := ledgerentry.DefaultReason
 		lec.mutation.SetReason(v)
 	}
-	if _, ok := lec.mutation.LedgerEntryID(); !ok {
-		v := ledgerentry.DefaultLedgerEntryID
-		lec.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := lec.mutation.WalletTransactionID(); !ok {
-		v := ledgerentry.DefaultWalletTransactionID
-		lec.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := lec.mutation.WorkspaceID(); !ok {
-		v := ledgerentry.DefaultWorkspaceID
-		lec.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := lec.mutation.ResourceType(); !ok {
-		v := ledgerentry.DefaultResourceType
-		lec.mutation.SetResourceType(v)
-	}
-	if _, ok := lec.mutation.ResourceID(); !ok {
-		v := ledgerentry.DefaultResourceID
-		lec.mutation.SetResourceID(v)
-	}
-	if _, ok := lec.mutation.HoldID(); !ok {
-		v := ledgerentry.DefaultHoldID
-		lec.mutation.SetHoldID(v)
-	}
-	if _, ok := lec.mutation.Status(); !ok {
-		v := ledgerentry.DefaultStatus
-		lec.mutation.SetStatus(v)
-	}
-	if _, ok := lec.mutation.PricingVersion(); !ok {
-		v := ledgerentry.DefaultPricingVersion
-		lec.mutation.SetPricingVersion(v)
-	}
-	if _, ok := lec.mutation.PriceSnapshotJSON(); !ok {
-		v := ledgerentry.DefaultPriceSnapshotJSON
-		lec.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := lec.mutation.UsagePeriodStart(); !ok {
-		v := ledgerentry.DefaultUsagePeriodStart
-		lec.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := lec.mutation.UsagePeriodEnd(); !ok {
-		v := ledgerentry.DefaultUsagePeriodEnd
-		lec.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := lec.mutation.Quantity(); !ok {
-		v := ledgerentry.DefaultQuantity
-		lec.mutation.SetQuantity(v)
-	}
-	if _, ok := lec.mutation.Unit(); !ok {
-		v := ledgerentry.DefaultUnit
-		lec.mutation.SetUnit(v)
-	}
-	if _, ok := lec.mutation.ProviderCostEvidenceRef(); !ok {
-		v := ledgerentry.DefaultProviderCostEvidenceRef
-		lec.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := lec.mutation.ProviderRequestID(); !ok {
-		v := ledgerentry.DefaultProviderRequestID
-		lec.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := lec.mutation.RedactedURL(); !ok {
-		v := ledgerentry.DefaultRedactedURL
-		lec.mutation.SetRedactedURL(v)
-	}
-	if _, ok := lec.mutation.TokenVersion(); !ok {
-		v := ledgerentry.DefaultTokenVersion
-		lec.mutation.SetTokenVersion(v)
-	}
-	if _, ok := lec.mutation.IdempotencyKey(); !ok {
-		v := ledgerentry.DefaultIdempotencyKey
-		lec.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := lec.mutation.RequestHash(); !ok {
-		v := ledgerentry.DefaultRequestHash
-		lec.mutation.SetRequestHash(v)
-	}
-	if _, ok := lec.mutation.ReportJSON(); !ok {
-		v := ledgerentry.DefaultReportJSON
-		lec.mutation.SetReportJSON(v)
-	}
-	if _, ok := lec.mutation.BlockNewWorkspaces(); !ok {
-		v := ledgerentry.DefaultBlockNewWorkspaces
-		lec.mutation.SetBlockNewWorkspaces(v)
-	}
 	if _, ok := lec.mutation.CreatedAt(); !ok {
 		v := ledgerentry.DefaultCreatedAt()
 		lec.mutation.SetCreatedAt(v)
-	}
-	if _, ok := lec.mutation.UpdatedAt(); !ok {
-		v := ledgerentry.DefaultUpdatedAt()
-		lec.mutation.SetUpdatedAt(v)
 	}
 }
 
@@ -680,17 +164,10 @@ func (lec *LedgerEntryCreate) check() error {
 	if _, ok := lec.mutation.AccountID(); !ok {
 		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "LedgerEntry.account_id"`)}
 	}
-	if _, ok := lec.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "LedgerEntry.balance_cents"`)}
-	}
-	if _, ok := lec.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "LedgerEntry.frozen_cents"`)}
-	}
-	if _, ok := lec.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "LedgerEntry.available_cents"`)}
-	}
-	if _, ok := lec.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "LedgerEntry.total_spent_cents"`)}
+	if v, ok := lec.mutation.AccountID(); ok {
+		if err := ledgerentry.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.account_id": %w`, err)}
+		}
 	}
 	if _, ok := lec.mutation.AmountCents(); !ok {
 		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "LedgerEntry.amount_cents"`)}
@@ -701,8 +178,18 @@ func (lec *LedgerEntryCreate) check() error {
 	if _, ok := lec.mutation.Direction(); !ok {
 		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "LedgerEntry.direction"`)}
 	}
+	if v, ok := lec.mutation.Direction(); ok {
+		if err := ledgerentry.DirectionValidator(v); err != nil {
+			return &ValidationError{Name: "direction", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.direction": %w`, err)}
+		}
+	}
 	if _, ok := lec.mutation.Source(); !ok {
 		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "LedgerEntry.source"`)}
+	}
+	if v, ok := lec.mutation.Source(); ok {
+		if err := ledgerentry.SourceValidator(v); err != nil {
+			return &ValidationError{Name: "source", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.source": %w`, err)}
+		}
 	}
 	if _, ok := lec.mutation.OperatorUserID(); !ok {
 		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "LedgerEntry.operator_user_id"`)}
@@ -710,74 +197,8 @@ func (lec *LedgerEntryCreate) check() error {
 	if _, ok := lec.mutation.Reason(); !ok {
 		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "LedgerEntry.reason"`)}
 	}
-	if _, ok := lec.mutation.LedgerEntryID(); !ok {
-		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "LedgerEntry.ledger_entry_id"`)}
-	}
-	if _, ok := lec.mutation.WalletTransactionID(); !ok {
-		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "LedgerEntry.wallet_transaction_id"`)}
-	}
-	if _, ok := lec.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "LedgerEntry.workspace_id"`)}
-	}
-	if _, ok := lec.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "LedgerEntry.resource_type"`)}
-	}
-	if _, ok := lec.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "LedgerEntry.resource_id"`)}
-	}
-	if _, ok := lec.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "LedgerEntry.hold_id"`)}
-	}
-	if _, ok := lec.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "LedgerEntry.status"`)}
-	}
-	if _, ok := lec.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "LedgerEntry.pricing_version"`)}
-	}
-	if _, ok := lec.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "LedgerEntry.price_snapshot_json"`)}
-	}
-	if _, ok := lec.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "LedgerEntry.usage_period_start"`)}
-	}
-	if _, ok := lec.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "LedgerEntry.usage_period_end"`)}
-	}
-	if _, ok := lec.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "LedgerEntry.quantity"`)}
-	}
-	if _, ok := lec.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "LedgerEntry.unit"`)}
-	}
-	if _, ok := lec.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "LedgerEntry.provider_cost_evidence_ref"`)}
-	}
-	if _, ok := lec.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "LedgerEntry.provider_request_id"`)}
-	}
-	if _, ok := lec.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "LedgerEntry.redacted_url"`)}
-	}
-	if _, ok := lec.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "LedgerEntry.token_version"`)}
-	}
-	if _, ok := lec.mutation.IdempotencyKey(); !ok {
-		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "LedgerEntry.idempotency_key"`)}
-	}
-	if _, ok := lec.mutation.RequestHash(); !ok {
-		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "LedgerEntry.request_hash"`)}
-	}
-	if _, ok := lec.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "LedgerEntry.report_json"`)}
-	}
-	if _, ok := lec.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "LedgerEntry.block_new_workspaces"`)}
-	}
 	if _, ok := lec.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "LedgerEntry.created_at"`)}
-	}
-	if _, ok := lec.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "LedgerEntry.updated_at"`)}
 	}
 	if v, ok := lec.mutation.ID(); ok {
 		if err := ledgerentry.IDValidator(v); err != nil {
@@ -823,22 +244,6 @@ func (lec *LedgerEntryCreate) createSpec() (*LedgerEntry, *sqlgraph.CreateSpec) 
 		_spec.SetField(ledgerentry.FieldAccountID, field.TypeString, value)
 		_node.AccountID = value
 	}
-	if value, ok := lec.mutation.BalanceCents(); ok {
-		_spec.SetField(ledgerentry.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := lec.mutation.FrozenCents(); ok {
-		_spec.SetField(ledgerentry.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := lec.mutation.AvailableCents(); ok {
-		_spec.SetField(ledgerentry.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := lec.mutation.TotalSpentCents(); ok {
-		_spec.SetField(ledgerentry.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
 	if value, ok := lec.mutation.AmountCents(); ok {
 		_spec.SetField(ledgerentry.FieldAmountCents, field.TypeInt64, value)
 		_node.AmountCents = value
@@ -863,97 +268,9 @@ func (lec *LedgerEntryCreate) createSpec() (*LedgerEntry, *sqlgraph.CreateSpec) 
 		_spec.SetField(ledgerentry.FieldReason, field.TypeString, value)
 		_node.Reason = value
 	}
-	if value, ok := lec.mutation.LedgerEntryID(); ok {
-		_spec.SetField(ledgerentry.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := lec.mutation.WalletTransactionID(); ok {
-		_spec.SetField(ledgerentry.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
-	if value, ok := lec.mutation.WorkspaceID(); ok {
-		_spec.SetField(ledgerentry.FieldWorkspaceID, field.TypeString, value)
-		_node.WorkspaceID = value
-	}
-	if value, ok := lec.mutation.ResourceType(); ok {
-		_spec.SetField(ledgerentry.FieldResourceType, field.TypeString, value)
-		_node.ResourceType = value
-	}
-	if value, ok := lec.mutation.ResourceID(); ok {
-		_spec.SetField(ledgerentry.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := lec.mutation.HoldID(); ok {
-		_spec.SetField(ledgerentry.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
-	}
-	if value, ok := lec.mutation.Status(); ok {
-		_spec.SetField(ledgerentry.FieldStatus, field.TypeString, value)
-		_node.Status = value
-	}
-	if value, ok := lec.mutation.PricingVersion(); ok {
-		_spec.SetField(ledgerentry.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
-	}
-	if value, ok := lec.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(ledgerentry.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := lec.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(ledgerentry.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := lec.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(ledgerentry.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := lec.mutation.Quantity(); ok {
-		_spec.SetField(ledgerentry.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := lec.mutation.Unit(); ok {
-		_spec.SetField(ledgerentry.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := lec.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(ledgerentry.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
-	}
-	if value, ok := lec.mutation.ProviderRequestID(); ok {
-		_spec.SetField(ledgerentry.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := lec.mutation.RedactedURL(); ok {
-		_spec.SetField(ledgerentry.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := lec.mutation.TokenVersion(); ok {
-		_spec.SetField(ledgerentry.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
-	}
-	if value, ok := lec.mutation.IdempotencyKey(); ok {
-		_spec.SetField(ledgerentry.FieldIdempotencyKey, field.TypeString, value)
-		_node.IdempotencyKey = value
-	}
-	if value, ok := lec.mutation.RequestHash(); ok {
-		_spec.SetField(ledgerentry.FieldRequestHash, field.TypeString, value)
-		_node.RequestHash = value
-	}
-	if value, ok := lec.mutation.ReportJSON(); ok {
-		_spec.SetField(ledgerentry.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := lec.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(ledgerentry.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
-	}
 	if value, ok := lec.mutation.CreatedAt(); ok {
 		_spec.SetField(ledgerentry.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := lec.mutation.UpdatedAt(); ok {
-		_spec.SetField(ledgerentry.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

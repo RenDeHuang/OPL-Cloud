@@ -26,67 +26,9 @@ func (wtc *WalletTransactionCreate) SetAccountID(s string) *WalletTransactionCre
 	return wtc
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableAccountID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetAccountID(*s)
-	}
-	return wtc
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (wtc *WalletTransactionCreate) SetBalanceCents(i int64) *WalletTransactionCreate {
-	wtc.mutation.SetBalanceCents(i)
-	return wtc
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableBalanceCents(i *int64) *WalletTransactionCreate {
-	if i != nil {
-		wtc.SetBalanceCents(*i)
-	}
-	return wtc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (wtc *WalletTransactionCreate) SetFrozenCents(i int64) *WalletTransactionCreate {
-	wtc.mutation.SetFrozenCents(i)
-	return wtc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableFrozenCents(i *int64) *WalletTransactionCreate {
-	if i != nil {
-		wtc.SetFrozenCents(*i)
-	}
-	return wtc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (wtc *WalletTransactionCreate) SetAvailableCents(i int64) *WalletTransactionCreate {
-	wtc.mutation.SetAvailableCents(i)
-	return wtc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableAvailableCents(i *int64) *WalletTransactionCreate {
-	if i != nil {
-		wtc.SetAvailableCents(*i)
-	}
-	return wtc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (wtc *WalletTransactionCreate) SetTotalSpentCents(i int64) *WalletTransactionCreate {
-	wtc.mutation.SetTotalSpentCents(i)
-	return wtc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableTotalSpentCents(i *int64) *WalletTransactionCreate {
-	if i != nil {
-		wtc.SetTotalSpentCents(*i)
-	}
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (wtc *WalletTransactionCreate) SetLedgerEntryID(s string) *WalletTransactionCreate {
+	wtc.mutation.SetLedgerEntryID(s)
 	return wtc
 }
 
@@ -96,11 +38,27 @@ func (wtc *WalletTransactionCreate) SetAmountCents(i int64) *WalletTransactionCr
 	return wtc
 }
 
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableAmountCents(i *int64) *WalletTransactionCreate {
-	if i != nil {
-		wtc.SetAmountCents(*i)
-	}
+// SetBalanceCents sets the "balance_cents" field.
+func (wtc *WalletTransactionCreate) SetBalanceCents(i int64) *WalletTransactionCreate {
+	wtc.mutation.SetBalanceCents(i)
+	return wtc
+}
+
+// SetFrozenCents sets the "frozen_cents" field.
+func (wtc *WalletTransactionCreate) SetFrozenCents(i int64) *WalletTransactionCreate {
+	wtc.mutation.SetFrozenCents(i)
+	return wtc
+}
+
+// SetAvailableCents sets the "available_cents" field.
+func (wtc *WalletTransactionCreate) SetAvailableCents(i int64) *WalletTransactionCreate {
+	wtc.mutation.SetAvailableCents(i)
+	return wtc
+}
+
+// SetTotalSpentCents sets the "total_spent_cents" field.
+func (wtc *WalletTransactionCreate) SetTotalSpentCents(i int64) *WalletTransactionCreate {
+	wtc.mutation.SetTotalSpentCents(i)
 	return wtc
 }
 
@@ -118,356 +76,6 @@ func (wtc *WalletTransactionCreate) SetNillableCurrency(s *string) *WalletTransa
 	return wtc
 }
 
-// SetDirection sets the "direction" field.
-func (wtc *WalletTransactionCreate) SetDirection(s string) *WalletTransactionCreate {
-	wtc.mutation.SetDirection(s)
-	return wtc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableDirection(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetDirection(*s)
-	}
-	return wtc
-}
-
-// SetSource sets the "source" field.
-func (wtc *WalletTransactionCreate) SetSource(s string) *WalletTransactionCreate {
-	wtc.mutation.SetSource(s)
-	return wtc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableSource(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetSource(*s)
-	}
-	return wtc
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (wtc *WalletTransactionCreate) SetOperatorUserID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetOperatorUserID(s)
-	return wtc
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableOperatorUserID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetOperatorUserID(*s)
-	}
-	return wtc
-}
-
-// SetReason sets the "reason" field.
-func (wtc *WalletTransactionCreate) SetReason(s string) *WalletTransactionCreate {
-	wtc.mutation.SetReason(s)
-	return wtc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableReason(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetReason(*s)
-	}
-	return wtc
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (wtc *WalletTransactionCreate) SetLedgerEntryID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetLedgerEntryID(s)
-	return wtc
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableLedgerEntryID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetLedgerEntryID(*s)
-	}
-	return wtc
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (wtc *WalletTransactionCreate) SetWalletTransactionID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetWalletTransactionID(s)
-	return wtc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableWalletTransactionID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetWalletTransactionID(*s)
-	}
-	return wtc
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (wtc *WalletTransactionCreate) SetWorkspaceID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetWorkspaceID(s)
-	return wtc
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableWorkspaceID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetWorkspaceID(*s)
-	}
-	return wtc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (wtc *WalletTransactionCreate) SetResourceType(s string) *WalletTransactionCreate {
-	wtc.mutation.SetResourceType(s)
-	return wtc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableResourceType(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetResourceType(*s)
-	}
-	return wtc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (wtc *WalletTransactionCreate) SetResourceID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetResourceID(s)
-	return wtc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableResourceID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetResourceID(*s)
-	}
-	return wtc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (wtc *WalletTransactionCreate) SetHoldID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetHoldID(s)
-	return wtc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableHoldID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetHoldID(*s)
-	}
-	return wtc
-}
-
-// SetStatus sets the "status" field.
-func (wtc *WalletTransactionCreate) SetStatus(s string) *WalletTransactionCreate {
-	wtc.mutation.SetStatus(s)
-	return wtc
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableStatus(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetStatus(*s)
-	}
-	return wtc
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (wtc *WalletTransactionCreate) SetPricingVersion(s string) *WalletTransactionCreate {
-	wtc.mutation.SetPricingVersion(s)
-	return wtc
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillablePricingVersion(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetPricingVersion(*s)
-	}
-	return wtc
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (wtc *WalletTransactionCreate) SetPriceSnapshotJSON(s string) *WalletTransactionCreate {
-	wtc.mutation.SetPriceSnapshotJSON(s)
-	return wtc
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillablePriceSnapshotJSON(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetPriceSnapshotJSON(*s)
-	}
-	return wtc
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (wtc *WalletTransactionCreate) SetUsagePeriodStart(s string) *WalletTransactionCreate {
-	wtc.mutation.SetUsagePeriodStart(s)
-	return wtc
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableUsagePeriodStart(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetUsagePeriodStart(*s)
-	}
-	return wtc
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (wtc *WalletTransactionCreate) SetUsagePeriodEnd(s string) *WalletTransactionCreate {
-	wtc.mutation.SetUsagePeriodEnd(s)
-	return wtc
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableUsagePeriodEnd(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetUsagePeriodEnd(*s)
-	}
-	return wtc
-}
-
-// SetQuantity sets the "quantity" field.
-func (wtc *WalletTransactionCreate) SetQuantity(f float64) *WalletTransactionCreate {
-	wtc.mutation.SetQuantity(f)
-	return wtc
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableQuantity(f *float64) *WalletTransactionCreate {
-	if f != nil {
-		wtc.SetQuantity(*f)
-	}
-	return wtc
-}
-
-// SetUnit sets the "unit" field.
-func (wtc *WalletTransactionCreate) SetUnit(s string) *WalletTransactionCreate {
-	wtc.mutation.SetUnit(s)
-	return wtc
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableUnit(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetUnit(*s)
-	}
-	return wtc
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (wtc *WalletTransactionCreate) SetProviderCostEvidenceRef(s string) *WalletTransactionCreate {
-	wtc.mutation.SetProviderCostEvidenceRef(s)
-	return wtc
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableProviderCostEvidenceRef(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetProviderCostEvidenceRef(*s)
-	}
-	return wtc
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (wtc *WalletTransactionCreate) SetProviderRequestID(s string) *WalletTransactionCreate {
-	wtc.mutation.SetProviderRequestID(s)
-	return wtc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableProviderRequestID(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetProviderRequestID(*s)
-	}
-	return wtc
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (wtc *WalletTransactionCreate) SetRedactedURL(s string) *WalletTransactionCreate {
-	wtc.mutation.SetRedactedURL(s)
-	return wtc
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableRedactedURL(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetRedactedURL(*s)
-	}
-	return wtc
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (wtc *WalletTransactionCreate) SetTokenVersion(s string) *WalletTransactionCreate {
-	wtc.mutation.SetTokenVersion(s)
-	return wtc
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableTokenVersion(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetTokenVersion(*s)
-	}
-	return wtc
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (wtc *WalletTransactionCreate) SetIdempotencyKey(s string) *WalletTransactionCreate {
-	wtc.mutation.SetIdempotencyKey(s)
-	return wtc
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableIdempotencyKey(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetIdempotencyKey(*s)
-	}
-	return wtc
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (wtc *WalletTransactionCreate) SetRequestHash(s string) *WalletTransactionCreate {
-	wtc.mutation.SetRequestHash(s)
-	return wtc
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableRequestHash(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetRequestHash(*s)
-	}
-	return wtc
-}
-
-// SetReportJSON sets the "report_json" field.
-func (wtc *WalletTransactionCreate) SetReportJSON(s string) *WalletTransactionCreate {
-	wtc.mutation.SetReportJSON(s)
-	return wtc
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableReportJSON(s *string) *WalletTransactionCreate {
-	if s != nil {
-		wtc.SetReportJSON(*s)
-	}
-	return wtc
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (wtc *WalletTransactionCreate) SetBlockNewWorkspaces(b bool) *WalletTransactionCreate {
-	wtc.mutation.SetBlockNewWorkspaces(b)
-	return wtc
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableBlockNewWorkspaces(b *bool) *WalletTransactionCreate {
-	if b != nil {
-		wtc.SetBlockNewWorkspaces(*b)
-	}
-	return wtc
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (wtc *WalletTransactionCreate) SetCreatedAt(t time.Time) *WalletTransactionCreate {
 	wtc.mutation.SetCreatedAt(t)
@@ -478,20 +86,6 @@ func (wtc *WalletTransactionCreate) SetCreatedAt(t time.Time) *WalletTransaction
 func (wtc *WalletTransactionCreate) SetNillableCreatedAt(t *time.Time) *WalletTransactionCreate {
 	if t != nil {
 		wtc.SetCreatedAt(*t)
-	}
-	return wtc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (wtc *WalletTransactionCreate) SetUpdatedAt(t time.Time) *WalletTransactionCreate {
-	wtc.mutation.SetUpdatedAt(t)
-	return wtc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (wtc *WalletTransactionCreate) SetNillableUpdatedAt(t *time.Time) *WalletTransactionCreate {
-	if t != nil {
-		wtc.SetUpdatedAt(*t)
 	}
 	return wtc
 }
@@ -537,141 +131,13 @@ func (wtc *WalletTransactionCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (wtc *WalletTransactionCreate) defaults() {
-	if _, ok := wtc.mutation.AccountID(); !ok {
-		v := wallettransaction.DefaultAccountID
-		wtc.mutation.SetAccountID(v)
-	}
-	if _, ok := wtc.mutation.BalanceCents(); !ok {
-		v := wallettransaction.DefaultBalanceCents
-		wtc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := wtc.mutation.FrozenCents(); !ok {
-		v := wallettransaction.DefaultFrozenCents
-		wtc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := wtc.mutation.AvailableCents(); !ok {
-		v := wallettransaction.DefaultAvailableCents
-		wtc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := wtc.mutation.TotalSpentCents(); !ok {
-		v := wallettransaction.DefaultTotalSpentCents
-		wtc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := wtc.mutation.AmountCents(); !ok {
-		v := wallettransaction.DefaultAmountCents
-		wtc.mutation.SetAmountCents(v)
-	}
 	if _, ok := wtc.mutation.Currency(); !ok {
 		v := wallettransaction.DefaultCurrency
 		wtc.mutation.SetCurrency(v)
 	}
-	if _, ok := wtc.mutation.Direction(); !ok {
-		v := wallettransaction.DefaultDirection
-		wtc.mutation.SetDirection(v)
-	}
-	if _, ok := wtc.mutation.Source(); !ok {
-		v := wallettransaction.DefaultSource
-		wtc.mutation.SetSource(v)
-	}
-	if _, ok := wtc.mutation.OperatorUserID(); !ok {
-		v := wallettransaction.DefaultOperatorUserID
-		wtc.mutation.SetOperatorUserID(v)
-	}
-	if _, ok := wtc.mutation.Reason(); !ok {
-		v := wallettransaction.DefaultReason
-		wtc.mutation.SetReason(v)
-	}
-	if _, ok := wtc.mutation.LedgerEntryID(); !ok {
-		v := wallettransaction.DefaultLedgerEntryID
-		wtc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := wtc.mutation.WalletTransactionID(); !ok {
-		v := wallettransaction.DefaultWalletTransactionID
-		wtc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := wtc.mutation.WorkspaceID(); !ok {
-		v := wallettransaction.DefaultWorkspaceID
-		wtc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := wtc.mutation.ResourceType(); !ok {
-		v := wallettransaction.DefaultResourceType
-		wtc.mutation.SetResourceType(v)
-	}
-	if _, ok := wtc.mutation.ResourceID(); !ok {
-		v := wallettransaction.DefaultResourceID
-		wtc.mutation.SetResourceID(v)
-	}
-	if _, ok := wtc.mutation.HoldID(); !ok {
-		v := wallettransaction.DefaultHoldID
-		wtc.mutation.SetHoldID(v)
-	}
-	if _, ok := wtc.mutation.Status(); !ok {
-		v := wallettransaction.DefaultStatus
-		wtc.mutation.SetStatus(v)
-	}
-	if _, ok := wtc.mutation.PricingVersion(); !ok {
-		v := wallettransaction.DefaultPricingVersion
-		wtc.mutation.SetPricingVersion(v)
-	}
-	if _, ok := wtc.mutation.PriceSnapshotJSON(); !ok {
-		v := wallettransaction.DefaultPriceSnapshotJSON
-		wtc.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := wtc.mutation.UsagePeriodStart(); !ok {
-		v := wallettransaction.DefaultUsagePeriodStart
-		wtc.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := wtc.mutation.UsagePeriodEnd(); !ok {
-		v := wallettransaction.DefaultUsagePeriodEnd
-		wtc.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := wtc.mutation.Quantity(); !ok {
-		v := wallettransaction.DefaultQuantity
-		wtc.mutation.SetQuantity(v)
-	}
-	if _, ok := wtc.mutation.Unit(); !ok {
-		v := wallettransaction.DefaultUnit
-		wtc.mutation.SetUnit(v)
-	}
-	if _, ok := wtc.mutation.ProviderCostEvidenceRef(); !ok {
-		v := wallettransaction.DefaultProviderCostEvidenceRef
-		wtc.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := wtc.mutation.ProviderRequestID(); !ok {
-		v := wallettransaction.DefaultProviderRequestID
-		wtc.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := wtc.mutation.RedactedURL(); !ok {
-		v := wallettransaction.DefaultRedactedURL
-		wtc.mutation.SetRedactedURL(v)
-	}
-	if _, ok := wtc.mutation.TokenVersion(); !ok {
-		v := wallettransaction.DefaultTokenVersion
-		wtc.mutation.SetTokenVersion(v)
-	}
-	if _, ok := wtc.mutation.IdempotencyKey(); !ok {
-		v := wallettransaction.DefaultIdempotencyKey
-		wtc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := wtc.mutation.RequestHash(); !ok {
-		v := wallettransaction.DefaultRequestHash
-		wtc.mutation.SetRequestHash(v)
-	}
-	if _, ok := wtc.mutation.ReportJSON(); !ok {
-		v := wallettransaction.DefaultReportJSON
-		wtc.mutation.SetReportJSON(v)
-	}
-	if _, ok := wtc.mutation.BlockNewWorkspaces(); !ok {
-		v := wallettransaction.DefaultBlockNewWorkspaces
-		wtc.mutation.SetBlockNewWorkspaces(v)
-	}
 	if _, ok := wtc.mutation.CreatedAt(); !ok {
 		v := wallettransaction.DefaultCreatedAt()
 		wtc.mutation.SetCreatedAt(v)
-	}
-	if _, ok := wtc.mutation.UpdatedAt(); !ok {
-		v := wallettransaction.DefaultUpdatedAt()
-		wtc.mutation.SetUpdatedAt(v)
 	}
 }
 
@@ -679,6 +145,22 @@ func (wtc *WalletTransactionCreate) defaults() {
 func (wtc *WalletTransactionCreate) check() error {
 	if _, ok := wtc.mutation.AccountID(); !ok {
 		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "WalletTransaction.account_id"`)}
+	}
+	if v, ok := wtc.mutation.AccountID(); ok {
+		if err := wallettransaction.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "WalletTransaction.account_id": %w`, err)}
+		}
+	}
+	if _, ok := wtc.mutation.LedgerEntryID(); !ok {
+		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "WalletTransaction.ledger_entry_id"`)}
+	}
+	if v, ok := wtc.mutation.LedgerEntryID(); ok {
+		if err := wallettransaction.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "WalletTransaction.ledger_entry_id": %w`, err)}
+		}
+	}
+	if _, ok := wtc.mutation.AmountCents(); !ok {
+		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "WalletTransaction.amount_cents"`)}
 	}
 	if _, ok := wtc.mutation.BalanceCents(); !ok {
 		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "WalletTransaction.balance_cents"`)}
@@ -692,92 +174,11 @@ func (wtc *WalletTransactionCreate) check() error {
 	if _, ok := wtc.mutation.TotalSpentCents(); !ok {
 		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "WalletTransaction.total_spent_cents"`)}
 	}
-	if _, ok := wtc.mutation.AmountCents(); !ok {
-		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "WalletTransaction.amount_cents"`)}
-	}
 	if _, ok := wtc.mutation.Currency(); !ok {
 		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "WalletTransaction.currency"`)}
 	}
-	if _, ok := wtc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "WalletTransaction.direction"`)}
-	}
-	if _, ok := wtc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "WalletTransaction.source"`)}
-	}
-	if _, ok := wtc.mutation.OperatorUserID(); !ok {
-		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "WalletTransaction.operator_user_id"`)}
-	}
-	if _, ok := wtc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "WalletTransaction.reason"`)}
-	}
-	if _, ok := wtc.mutation.LedgerEntryID(); !ok {
-		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "WalletTransaction.ledger_entry_id"`)}
-	}
-	if _, ok := wtc.mutation.WalletTransactionID(); !ok {
-		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "WalletTransaction.wallet_transaction_id"`)}
-	}
-	if _, ok := wtc.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "WalletTransaction.workspace_id"`)}
-	}
-	if _, ok := wtc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "WalletTransaction.resource_type"`)}
-	}
-	if _, ok := wtc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "WalletTransaction.resource_id"`)}
-	}
-	if _, ok := wtc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "WalletTransaction.hold_id"`)}
-	}
-	if _, ok := wtc.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "WalletTransaction.status"`)}
-	}
-	if _, ok := wtc.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "WalletTransaction.pricing_version"`)}
-	}
-	if _, ok := wtc.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "WalletTransaction.price_snapshot_json"`)}
-	}
-	if _, ok := wtc.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "WalletTransaction.usage_period_start"`)}
-	}
-	if _, ok := wtc.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "WalletTransaction.usage_period_end"`)}
-	}
-	if _, ok := wtc.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "WalletTransaction.quantity"`)}
-	}
-	if _, ok := wtc.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "WalletTransaction.unit"`)}
-	}
-	if _, ok := wtc.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "WalletTransaction.provider_cost_evidence_ref"`)}
-	}
-	if _, ok := wtc.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "WalletTransaction.provider_request_id"`)}
-	}
-	if _, ok := wtc.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "WalletTransaction.redacted_url"`)}
-	}
-	if _, ok := wtc.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "WalletTransaction.token_version"`)}
-	}
-	if _, ok := wtc.mutation.IdempotencyKey(); !ok {
-		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "WalletTransaction.idempotency_key"`)}
-	}
-	if _, ok := wtc.mutation.RequestHash(); !ok {
-		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "WalletTransaction.request_hash"`)}
-	}
-	if _, ok := wtc.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "WalletTransaction.report_json"`)}
-	}
-	if _, ok := wtc.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "WalletTransaction.block_new_workspaces"`)}
-	}
 	if _, ok := wtc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "WalletTransaction.created_at"`)}
-	}
-	if _, ok := wtc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "WalletTransaction.updated_at"`)}
 	}
 	if v, ok := wtc.mutation.ID(); ok {
 		if err := wallettransaction.IDValidator(v); err != nil {
@@ -823,6 +224,14 @@ func (wtc *WalletTransactionCreate) createSpec() (*WalletTransaction, *sqlgraph.
 		_spec.SetField(wallettransaction.FieldAccountID, field.TypeString, value)
 		_node.AccountID = value
 	}
+	if value, ok := wtc.mutation.LedgerEntryID(); ok {
+		_spec.SetField(wallettransaction.FieldLedgerEntryID, field.TypeString, value)
+		_node.LedgerEntryID = value
+	}
+	if value, ok := wtc.mutation.AmountCents(); ok {
+		_spec.SetField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
+		_node.AmountCents = value
+	}
 	if value, ok := wtc.mutation.BalanceCents(); ok {
 		_spec.SetField(wallettransaction.FieldBalanceCents, field.TypeInt64, value)
 		_node.BalanceCents = value
@@ -839,121 +248,13 @@ func (wtc *WalletTransactionCreate) createSpec() (*WalletTransaction, *sqlgraph.
 		_spec.SetField(wallettransaction.FieldTotalSpentCents, field.TypeInt64, value)
 		_node.TotalSpentCents = value
 	}
-	if value, ok := wtc.mutation.AmountCents(); ok {
-		_spec.SetField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
-		_node.AmountCents = value
-	}
 	if value, ok := wtc.mutation.Currency(); ok {
 		_spec.SetField(wallettransaction.FieldCurrency, field.TypeString, value)
 		_node.Currency = value
 	}
-	if value, ok := wtc.mutation.Direction(); ok {
-		_spec.SetField(wallettransaction.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := wtc.mutation.Source(); ok {
-		_spec.SetField(wallettransaction.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
-	if value, ok := wtc.mutation.OperatorUserID(); ok {
-		_spec.SetField(wallettransaction.FieldOperatorUserID, field.TypeString, value)
-		_node.OperatorUserID = value
-	}
-	if value, ok := wtc.mutation.Reason(); ok {
-		_spec.SetField(wallettransaction.FieldReason, field.TypeString, value)
-		_node.Reason = value
-	}
-	if value, ok := wtc.mutation.LedgerEntryID(); ok {
-		_spec.SetField(wallettransaction.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := wtc.mutation.WalletTransactionID(); ok {
-		_spec.SetField(wallettransaction.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
-	if value, ok := wtc.mutation.WorkspaceID(); ok {
-		_spec.SetField(wallettransaction.FieldWorkspaceID, field.TypeString, value)
-		_node.WorkspaceID = value
-	}
-	if value, ok := wtc.mutation.ResourceType(); ok {
-		_spec.SetField(wallettransaction.FieldResourceType, field.TypeString, value)
-		_node.ResourceType = value
-	}
-	if value, ok := wtc.mutation.ResourceID(); ok {
-		_spec.SetField(wallettransaction.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := wtc.mutation.HoldID(); ok {
-		_spec.SetField(wallettransaction.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
-	}
-	if value, ok := wtc.mutation.Status(); ok {
-		_spec.SetField(wallettransaction.FieldStatus, field.TypeString, value)
-		_node.Status = value
-	}
-	if value, ok := wtc.mutation.PricingVersion(); ok {
-		_spec.SetField(wallettransaction.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
-	}
-	if value, ok := wtc.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(wallettransaction.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := wtc.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(wallettransaction.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := wtc.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(wallettransaction.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := wtc.mutation.Quantity(); ok {
-		_spec.SetField(wallettransaction.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := wtc.mutation.Unit(); ok {
-		_spec.SetField(wallettransaction.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := wtc.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(wallettransaction.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
-	}
-	if value, ok := wtc.mutation.ProviderRequestID(); ok {
-		_spec.SetField(wallettransaction.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := wtc.mutation.RedactedURL(); ok {
-		_spec.SetField(wallettransaction.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := wtc.mutation.TokenVersion(); ok {
-		_spec.SetField(wallettransaction.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
-	}
-	if value, ok := wtc.mutation.IdempotencyKey(); ok {
-		_spec.SetField(wallettransaction.FieldIdempotencyKey, field.TypeString, value)
-		_node.IdempotencyKey = value
-	}
-	if value, ok := wtc.mutation.RequestHash(); ok {
-		_spec.SetField(wallettransaction.FieldRequestHash, field.TypeString, value)
-		_node.RequestHash = value
-	}
-	if value, ok := wtc.mutation.ReportJSON(); ok {
-		_spec.SetField(wallettransaction.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := wtc.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(wallettransaction.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
-	}
 	if value, ok := wtc.mutation.CreatedAt(); ok {
 		_spec.SetField(wallettransaction.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := wtc.mutation.UpdatedAt(); ok {
-		_spec.SetField(wallettransaction.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

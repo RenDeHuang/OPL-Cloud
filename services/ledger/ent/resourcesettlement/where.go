@@ -69,66 +69,6 @@ func AccountID(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldAccountID, v))
 }
 
-// BalanceCents applies equality check predicate on the "balance_cents" field. It's identical to BalanceCentsEQ.
-func BalanceCents(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldBalanceCents, v))
-}
-
-// FrozenCents applies equality check predicate on the "frozen_cents" field. It's identical to FrozenCentsEQ.
-func FrozenCents(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldFrozenCents, v))
-}
-
-// AvailableCents applies equality check predicate on the "available_cents" field. It's identical to AvailableCentsEQ.
-func AvailableCents(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldAvailableCents, v))
-}
-
-// TotalSpentCents applies equality check predicate on the "total_spent_cents" field. It's identical to TotalSpentCentsEQ.
-func TotalSpentCents(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldTotalSpentCents, v))
-}
-
-// AmountCents applies equality check predicate on the "amount_cents" field. It's identical to AmountCentsEQ.
-func AmountCents(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldAmountCents, v))
-}
-
-// Currency applies equality check predicate on the "currency" field. It's identical to CurrencyEQ.
-func Currency(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldCurrency, v))
-}
-
-// Direction applies equality check predicate on the "direction" field. It's identical to DirectionEQ.
-func Direction(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldDirection, v))
-}
-
-// Source applies equality check predicate on the "source" field. It's identical to SourceEQ.
-func Source(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldSource, v))
-}
-
-// OperatorUserID applies equality check predicate on the "operator_user_id" field. It's identical to OperatorUserIDEQ.
-func OperatorUserID(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldOperatorUserID, v))
-}
-
-// Reason applies equality check predicate on the "reason" field. It's identical to ReasonEQ.
-func Reason(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldReason, v))
-}
-
-// LedgerEntryID applies equality check predicate on the "ledger_entry_id" field. It's identical to LedgerEntryIDEQ.
-func LedgerEntryID(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldLedgerEntryID, v))
-}
-
-// WalletTransactionID applies equality check predicate on the "wallet_transaction_id" field. It's identical to WalletTransactionIDEQ.
-func WalletTransactionID(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldWalletTransactionID, v))
-}
-
 // WorkspaceID applies equality check predicate on the "workspace_id" field. It's identical to WorkspaceIDEQ.
 func WorkspaceID(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldWorkspaceID, v))
@@ -144,14 +84,29 @@ func ResourceID(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldResourceID, v))
 }
 
-// HoldID applies equality check predicate on the "hold_id" field. It's identical to HoldIDEQ.
-func HoldID(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldHoldID, v))
+// AmountCents applies equality check predicate on the "amount_cents" field. It's identical to AmountCentsEQ.
+func AmountCents(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldAmountCents, v))
+}
+
+// Currency applies equality check predicate on the "currency" field. It's identical to CurrencyEQ.
+func Currency(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldCurrency, v))
 }
 
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldStatus, v))
+}
+
+// LedgerEntryID applies equality check predicate on the "ledger_entry_id" field. It's identical to LedgerEntryIDEQ.
+func LedgerEntryID(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldLedgerEntryID, v))
+}
+
+// WalletTransactionID applies equality check predicate on the "wallet_transaction_id" field. It's identical to WalletTransactionIDEQ.
+func WalletTransactionID(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldWalletTransactionID, v))
 }
 
 // PricingVersion applies equality check predicate on the "pricing_version" field. It's identical to PricingVersionEQ.
@@ -189,21 +144,6 @@ func ProviderCostEvidenceRef(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldProviderCostEvidenceRef, v))
 }
 
-// ProviderRequestID applies equality check predicate on the "provider_request_id" field. It's identical to ProviderRequestIDEQ.
-func ProviderRequestID(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldProviderRequestID, v))
-}
-
-// RedactedURL applies equality check predicate on the "redacted_url" field. It's identical to RedactedURLEQ.
-func RedactedURL(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldRedactedURL, v))
-}
-
-// TokenVersion applies equality check predicate on the "token_version" field. It's identical to TokenVersionEQ.
-func TokenVersion(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldTokenVersion, v))
-}
-
 // IdempotencyKey applies equality check predicate on the "idempotency_key" field. It's identical to IdempotencyKeyEQ.
 func IdempotencyKey(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldIdempotencyKey, v))
@@ -214,24 +154,9 @@ func RequestHash(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldRequestHash, v))
 }
 
-// ReportJSON applies equality check predicate on the "report_json" field. It's identical to ReportJSONEQ.
-func ReportJSON(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldReportJSON, v))
-}
-
-// BlockNewWorkspaces applies equality check predicate on the "block_new_workspaces" field. It's identical to BlockNewWorkspacesEQ.
-func BlockNewWorkspaces(v bool) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldBlockNewWorkspaces, v))
-}
-
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldCreatedAt, v))
-}
-
-// UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
-func UpdatedAt(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldUpdatedAt, v))
 }
 
 // AccountIDEQ applies the EQ predicate on the "account_id" field.
@@ -297,661 +222,6 @@ func AccountIDEqualFold(v string) predicate.ResourceSettlement {
 // AccountIDContainsFold applies the ContainsFold predicate on the "account_id" field.
 func AccountIDContainsFold(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldAccountID, v))
-}
-
-// BalanceCentsEQ applies the EQ predicate on the "balance_cents" field.
-func BalanceCentsEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldBalanceCents, v))
-}
-
-// BalanceCentsNEQ applies the NEQ predicate on the "balance_cents" field.
-func BalanceCentsNEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldBalanceCents, v))
-}
-
-// BalanceCentsIn applies the In predicate on the "balance_cents" field.
-func BalanceCentsIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldBalanceCents, vs...))
-}
-
-// BalanceCentsNotIn applies the NotIn predicate on the "balance_cents" field.
-func BalanceCentsNotIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldBalanceCents, vs...))
-}
-
-// BalanceCentsGT applies the GT predicate on the "balance_cents" field.
-func BalanceCentsGT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldBalanceCents, v))
-}
-
-// BalanceCentsGTE applies the GTE predicate on the "balance_cents" field.
-func BalanceCentsGTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldBalanceCents, v))
-}
-
-// BalanceCentsLT applies the LT predicate on the "balance_cents" field.
-func BalanceCentsLT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldBalanceCents, v))
-}
-
-// BalanceCentsLTE applies the LTE predicate on the "balance_cents" field.
-func BalanceCentsLTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldBalanceCents, v))
-}
-
-// FrozenCentsEQ applies the EQ predicate on the "frozen_cents" field.
-func FrozenCentsEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldFrozenCents, v))
-}
-
-// FrozenCentsNEQ applies the NEQ predicate on the "frozen_cents" field.
-func FrozenCentsNEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldFrozenCents, v))
-}
-
-// FrozenCentsIn applies the In predicate on the "frozen_cents" field.
-func FrozenCentsIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldFrozenCents, vs...))
-}
-
-// FrozenCentsNotIn applies the NotIn predicate on the "frozen_cents" field.
-func FrozenCentsNotIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldFrozenCents, vs...))
-}
-
-// FrozenCentsGT applies the GT predicate on the "frozen_cents" field.
-func FrozenCentsGT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldFrozenCents, v))
-}
-
-// FrozenCentsGTE applies the GTE predicate on the "frozen_cents" field.
-func FrozenCentsGTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldFrozenCents, v))
-}
-
-// FrozenCentsLT applies the LT predicate on the "frozen_cents" field.
-func FrozenCentsLT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldFrozenCents, v))
-}
-
-// FrozenCentsLTE applies the LTE predicate on the "frozen_cents" field.
-func FrozenCentsLTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldFrozenCents, v))
-}
-
-// AvailableCentsEQ applies the EQ predicate on the "available_cents" field.
-func AvailableCentsEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldAvailableCents, v))
-}
-
-// AvailableCentsNEQ applies the NEQ predicate on the "available_cents" field.
-func AvailableCentsNEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldAvailableCents, v))
-}
-
-// AvailableCentsIn applies the In predicate on the "available_cents" field.
-func AvailableCentsIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldAvailableCents, vs...))
-}
-
-// AvailableCentsNotIn applies the NotIn predicate on the "available_cents" field.
-func AvailableCentsNotIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldAvailableCents, vs...))
-}
-
-// AvailableCentsGT applies the GT predicate on the "available_cents" field.
-func AvailableCentsGT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldAvailableCents, v))
-}
-
-// AvailableCentsGTE applies the GTE predicate on the "available_cents" field.
-func AvailableCentsGTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldAvailableCents, v))
-}
-
-// AvailableCentsLT applies the LT predicate on the "available_cents" field.
-func AvailableCentsLT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldAvailableCents, v))
-}
-
-// AvailableCentsLTE applies the LTE predicate on the "available_cents" field.
-func AvailableCentsLTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldAvailableCents, v))
-}
-
-// TotalSpentCentsEQ applies the EQ predicate on the "total_spent_cents" field.
-func TotalSpentCentsEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsNEQ applies the NEQ predicate on the "total_spent_cents" field.
-func TotalSpentCentsNEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsIn applies the In predicate on the "total_spent_cents" field.
-func TotalSpentCentsIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldTotalSpentCents, vs...))
-}
-
-// TotalSpentCentsNotIn applies the NotIn predicate on the "total_spent_cents" field.
-func TotalSpentCentsNotIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldTotalSpentCents, vs...))
-}
-
-// TotalSpentCentsGT applies the GT predicate on the "total_spent_cents" field.
-func TotalSpentCentsGT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsGTE applies the GTE predicate on the "total_spent_cents" field.
-func TotalSpentCentsGTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsLT applies the LT predicate on the "total_spent_cents" field.
-func TotalSpentCentsLT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldTotalSpentCents, v))
-}
-
-// TotalSpentCentsLTE applies the LTE predicate on the "total_spent_cents" field.
-func TotalSpentCentsLTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldTotalSpentCents, v))
-}
-
-// AmountCentsEQ applies the EQ predicate on the "amount_cents" field.
-func AmountCentsEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldAmountCents, v))
-}
-
-// AmountCentsNEQ applies the NEQ predicate on the "amount_cents" field.
-func AmountCentsNEQ(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldAmountCents, v))
-}
-
-// AmountCentsIn applies the In predicate on the "amount_cents" field.
-func AmountCentsIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldAmountCents, vs...))
-}
-
-// AmountCentsNotIn applies the NotIn predicate on the "amount_cents" field.
-func AmountCentsNotIn(vs ...int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldAmountCents, vs...))
-}
-
-// AmountCentsGT applies the GT predicate on the "amount_cents" field.
-func AmountCentsGT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldAmountCents, v))
-}
-
-// AmountCentsGTE applies the GTE predicate on the "amount_cents" field.
-func AmountCentsGTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldAmountCents, v))
-}
-
-// AmountCentsLT applies the LT predicate on the "amount_cents" field.
-func AmountCentsLT(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldAmountCents, v))
-}
-
-// AmountCentsLTE applies the LTE predicate on the "amount_cents" field.
-func AmountCentsLTE(v int64) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldAmountCents, v))
-}
-
-// CurrencyEQ applies the EQ predicate on the "currency" field.
-func CurrencyEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldCurrency, v))
-}
-
-// CurrencyNEQ applies the NEQ predicate on the "currency" field.
-func CurrencyNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldCurrency, v))
-}
-
-// CurrencyIn applies the In predicate on the "currency" field.
-func CurrencyIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldCurrency, vs...))
-}
-
-// CurrencyNotIn applies the NotIn predicate on the "currency" field.
-func CurrencyNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldCurrency, vs...))
-}
-
-// CurrencyGT applies the GT predicate on the "currency" field.
-func CurrencyGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldCurrency, v))
-}
-
-// CurrencyGTE applies the GTE predicate on the "currency" field.
-func CurrencyGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldCurrency, v))
-}
-
-// CurrencyLT applies the LT predicate on the "currency" field.
-func CurrencyLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldCurrency, v))
-}
-
-// CurrencyLTE applies the LTE predicate on the "currency" field.
-func CurrencyLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldCurrency, v))
-}
-
-// CurrencyContains applies the Contains predicate on the "currency" field.
-func CurrencyContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldCurrency, v))
-}
-
-// CurrencyHasPrefix applies the HasPrefix predicate on the "currency" field.
-func CurrencyHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldCurrency, v))
-}
-
-// CurrencyHasSuffix applies the HasSuffix predicate on the "currency" field.
-func CurrencyHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldCurrency, v))
-}
-
-// CurrencyEqualFold applies the EqualFold predicate on the "currency" field.
-func CurrencyEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldCurrency, v))
-}
-
-// CurrencyContainsFold applies the ContainsFold predicate on the "currency" field.
-func CurrencyContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldCurrency, v))
-}
-
-// DirectionEQ applies the EQ predicate on the "direction" field.
-func DirectionEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldDirection, v))
-}
-
-// DirectionNEQ applies the NEQ predicate on the "direction" field.
-func DirectionNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldDirection, v))
-}
-
-// DirectionIn applies the In predicate on the "direction" field.
-func DirectionIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldDirection, vs...))
-}
-
-// DirectionNotIn applies the NotIn predicate on the "direction" field.
-func DirectionNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldDirection, vs...))
-}
-
-// DirectionGT applies the GT predicate on the "direction" field.
-func DirectionGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldDirection, v))
-}
-
-// DirectionGTE applies the GTE predicate on the "direction" field.
-func DirectionGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldDirection, v))
-}
-
-// DirectionLT applies the LT predicate on the "direction" field.
-func DirectionLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldDirection, v))
-}
-
-// DirectionLTE applies the LTE predicate on the "direction" field.
-func DirectionLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldDirection, v))
-}
-
-// DirectionContains applies the Contains predicate on the "direction" field.
-func DirectionContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldDirection, v))
-}
-
-// DirectionHasPrefix applies the HasPrefix predicate on the "direction" field.
-func DirectionHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldDirection, v))
-}
-
-// DirectionHasSuffix applies the HasSuffix predicate on the "direction" field.
-func DirectionHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldDirection, v))
-}
-
-// DirectionEqualFold applies the EqualFold predicate on the "direction" field.
-func DirectionEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldDirection, v))
-}
-
-// DirectionContainsFold applies the ContainsFold predicate on the "direction" field.
-func DirectionContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldDirection, v))
-}
-
-// SourceEQ applies the EQ predicate on the "source" field.
-func SourceEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldSource, v))
-}
-
-// SourceNEQ applies the NEQ predicate on the "source" field.
-func SourceNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldSource, v))
-}
-
-// SourceIn applies the In predicate on the "source" field.
-func SourceIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldSource, vs...))
-}
-
-// SourceNotIn applies the NotIn predicate on the "source" field.
-func SourceNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldSource, vs...))
-}
-
-// SourceGT applies the GT predicate on the "source" field.
-func SourceGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldSource, v))
-}
-
-// SourceGTE applies the GTE predicate on the "source" field.
-func SourceGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldSource, v))
-}
-
-// SourceLT applies the LT predicate on the "source" field.
-func SourceLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldSource, v))
-}
-
-// SourceLTE applies the LTE predicate on the "source" field.
-func SourceLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldSource, v))
-}
-
-// SourceContains applies the Contains predicate on the "source" field.
-func SourceContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldSource, v))
-}
-
-// SourceHasPrefix applies the HasPrefix predicate on the "source" field.
-func SourceHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldSource, v))
-}
-
-// SourceHasSuffix applies the HasSuffix predicate on the "source" field.
-func SourceHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldSource, v))
-}
-
-// SourceEqualFold applies the EqualFold predicate on the "source" field.
-func SourceEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldSource, v))
-}
-
-// SourceContainsFold applies the ContainsFold predicate on the "source" field.
-func SourceContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldSource, v))
-}
-
-// OperatorUserIDEQ applies the EQ predicate on the "operator_user_id" field.
-func OperatorUserIDEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDNEQ applies the NEQ predicate on the "operator_user_id" field.
-func OperatorUserIDNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDIn applies the In predicate on the "operator_user_id" field.
-func OperatorUserIDIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldOperatorUserID, vs...))
-}
-
-// OperatorUserIDNotIn applies the NotIn predicate on the "operator_user_id" field.
-func OperatorUserIDNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldOperatorUserID, vs...))
-}
-
-// OperatorUserIDGT applies the GT predicate on the "operator_user_id" field.
-func OperatorUserIDGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDGTE applies the GTE predicate on the "operator_user_id" field.
-func OperatorUserIDGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDLT applies the LT predicate on the "operator_user_id" field.
-func OperatorUserIDLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDLTE applies the LTE predicate on the "operator_user_id" field.
-func OperatorUserIDLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDContains applies the Contains predicate on the "operator_user_id" field.
-func OperatorUserIDContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDHasPrefix applies the HasPrefix predicate on the "operator_user_id" field.
-func OperatorUserIDHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDHasSuffix applies the HasSuffix predicate on the "operator_user_id" field.
-func OperatorUserIDHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDEqualFold applies the EqualFold predicate on the "operator_user_id" field.
-func OperatorUserIDEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldOperatorUserID, v))
-}
-
-// OperatorUserIDContainsFold applies the ContainsFold predicate on the "operator_user_id" field.
-func OperatorUserIDContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldOperatorUserID, v))
-}
-
-// ReasonEQ applies the EQ predicate on the "reason" field.
-func ReasonEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldReason, v))
-}
-
-// ReasonNEQ applies the NEQ predicate on the "reason" field.
-func ReasonNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldReason, v))
-}
-
-// ReasonIn applies the In predicate on the "reason" field.
-func ReasonIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldReason, vs...))
-}
-
-// ReasonNotIn applies the NotIn predicate on the "reason" field.
-func ReasonNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldReason, vs...))
-}
-
-// ReasonGT applies the GT predicate on the "reason" field.
-func ReasonGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldReason, v))
-}
-
-// ReasonGTE applies the GTE predicate on the "reason" field.
-func ReasonGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldReason, v))
-}
-
-// ReasonLT applies the LT predicate on the "reason" field.
-func ReasonLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldReason, v))
-}
-
-// ReasonLTE applies the LTE predicate on the "reason" field.
-func ReasonLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldReason, v))
-}
-
-// ReasonContains applies the Contains predicate on the "reason" field.
-func ReasonContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldReason, v))
-}
-
-// ReasonHasPrefix applies the HasPrefix predicate on the "reason" field.
-func ReasonHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldReason, v))
-}
-
-// ReasonHasSuffix applies the HasSuffix predicate on the "reason" field.
-func ReasonHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldReason, v))
-}
-
-// ReasonEqualFold applies the EqualFold predicate on the "reason" field.
-func ReasonEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldReason, v))
-}
-
-// ReasonContainsFold applies the ContainsFold predicate on the "reason" field.
-func ReasonContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldReason, v))
-}
-
-// LedgerEntryIDEQ applies the EQ predicate on the "ledger_entry_id" field.
-func LedgerEntryIDEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDNEQ applies the NEQ predicate on the "ledger_entry_id" field.
-func LedgerEntryIDNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDIn applies the In predicate on the "ledger_entry_id" field.
-func LedgerEntryIDIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldLedgerEntryID, vs...))
-}
-
-// LedgerEntryIDNotIn applies the NotIn predicate on the "ledger_entry_id" field.
-func LedgerEntryIDNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldLedgerEntryID, vs...))
-}
-
-// LedgerEntryIDGT applies the GT predicate on the "ledger_entry_id" field.
-func LedgerEntryIDGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDGTE applies the GTE predicate on the "ledger_entry_id" field.
-func LedgerEntryIDGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDLT applies the LT predicate on the "ledger_entry_id" field.
-func LedgerEntryIDLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDLTE applies the LTE predicate on the "ledger_entry_id" field.
-func LedgerEntryIDLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDContains applies the Contains predicate on the "ledger_entry_id" field.
-func LedgerEntryIDContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDHasPrefix applies the HasPrefix predicate on the "ledger_entry_id" field.
-func LedgerEntryIDHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDHasSuffix applies the HasSuffix predicate on the "ledger_entry_id" field.
-func LedgerEntryIDHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDEqualFold applies the EqualFold predicate on the "ledger_entry_id" field.
-func LedgerEntryIDEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldLedgerEntryID, v))
-}
-
-// LedgerEntryIDContainsFold applies the ContainsFold predicate on the "ledger_entry_id" field.
-func LedgerEntryIDContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldLedgerEntryID, v))
-}
-
-// WalletTransactionIDEQ applies the EQ predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDNEQ applies the NEQ predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDIn applies the In predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldWalletTransactionID, vs...))
-}
-
-// WalletTransactionIDNotIn applies the NotIn predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldWalletTransactionID, vs...))
-}
-
-// WalletTransactionIDGT applies the GT predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDGTE applies the GTE predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDLT applies the LT predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDLTE applies the LTE predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDContains applies the Contains predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDHasPrefix applies the HasPrefix predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDHasSuffix applies the HasSuffix predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDEqualFold applies the EqualFold predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldWalletTransactionID, v))
-}
-
-// WalletTransactionIDContainsFold applies the ContainsFold predicate on the "wallet_transaction_id" field.
-func WalletTransactionIDContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldWalletTransactionID, v))
 }
 
 // WorkspaceIDEQ applies the EQ predicate on the "workspace_id" field.
@@ -1149,69 +419,109 @@ func ResourceIDContainsFold(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldResourceID, v))
 }
 
-// HoldIDEQ applies the EQ predicate on the "hold_id" field.
-func HoldIDEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldHoldID, v))
+// AmountCentsEQ applies the EQ predicate on the "amount_cents" field.
+func AmountCentsEQ(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldAmountCents, v))
 }
 
-// HoldIDNEQ applies the NEQ predicate on the "hold_id" field.
-func HoldIDNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldHoldID, v))
+// AmountCentsNEQ applies the NEQ predicate on the "amount_cents" field.
+func AmountCentsNEQ(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNEQ(FieldAmountCents, v))
 }
 
-// HoldIDIn applies the In predicate on the "hold_id" field.
-func HoldIDIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldHoldID, vs...))
+// AmountCentsIn applies the In predicate on the "amount_cents" field.
+func AmountCentsIn(vs ...int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldIn(FieldAmountCents, vs...))
 }
 
-// HoldIDNotIn applies the NotIn predicate on the "hold_id" field.
-func HoldIDNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldHoldID, vs...))
+// AmountCentsNotIn applies the NotIn predicate on the "amount_cents" field.
+func AmountCentsNotIn(vs ...int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNotIn(FieldAmountCents, vs...))
 }
 
-// HoldIDGT applies the GT predicate on the "hold_id" field.
-func HoldIDGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldHoldID, v))
+// AmountCentsGT applies the GT predicate on the "amount_cents" field.
+func AmountCentsGT(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGT(FieldAmountCents, v))
 }
 
-// HoldIDGTE applies the GTE predicate on the "hold_id" field.
-func HoldIDGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldHoldID, v))
+// AmountCentsGTE applies the GTE predicate on the "amount_cents" field.
+func AmountCentsGTE(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGTE(FieldAmountCents, v))
 }
 
-// HoldIDLT applies the LT predicate on the "hold_id" field.
-func HoldIDLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldHoldID, v))
+// AmountCentsLT applies the LT predicate on the "amount_cents" field.
+func AmountCentsLT(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLT(FieldAmountCents, v))
 }
 
-// HoldIDLTE applies the LTE predicate on the "hold_id" field.
-func HoldIDLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldHoldID, v))
+// AmountCentsLTE applies the LTE predicate on the "amount_cents" field.
+func AmountCentsLTE(v int64) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLTE(FieldAmountCents, v))
 }
 
-// HoldIDContains applies the Contains predicate on the "hold_id" field.
-func HoldIDContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldHoldID, v))
+// CurrencyEQ applies the EQ predicate on the "currency" field.
+func CurrencyEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldCurrency, v))
 }
 
-// HoldIDHasPrefix applies the HasPrefix predicate on the "hold_id" field.
-func HoldIDHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldHoldID, v))
+// CurrencyNEQ applies the NEQ predicate on the "currency" field.
+func CurrencyNEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNEQ(FieldCurrency, v))
 }
 
-// HoldIDHasSuffix applies the HasSuffix predicate on the "hold_id" field.
-func HoldIDHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldHoldID, v))
+// CurrencyIn applies the In predicate on the "currency" field.
+func CurrencyIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldIn(FieldCurrency, vs...))
 }
 
-// HoldIDEqualFold applies the EqualFold predicate on the "hold_id" field.
-func HoldIDEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldHoldID, v))
+// CurrencyNotIn applies the NotIn predicate on the "currency" field.
+func CurrencyNotIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNotIn(FieldCurrency, vs...))
 }
 
-// HoldIDContainsFold applies the ContainsFold predicate on the "hold_id" field.
-func HoldIDContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldHoldID, v))
+// CurrencyGT applies the GT predicate on the "currency" field.
+func CurrencyGT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGT(FieldCurrency, v))
+}
+
+// CurrencyGTE applies the GTE predicate on the "currency" field.
+func CurrencyGTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGTE(FieldCurrency, v))
+}
+
+// CurrencyLT applies the LT predicate on the "currency" field.
+func CurrencyLT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLT(FieldCurrency, v))
+}
+
+// CurrencyLTE applies the LTE predicate on the "currency" field.
+func CurrencyLTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLTE(FieldCurrency, v))
+}
+
+// CurrencyContains applies the Contains predicate on the "currency" field.
+func CurrencyContains(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContains(FieldCurrency, v))
+}
+
+// CurrencyHasPrefix applies the HasPrefix predicate on the "currency" field.
+func CurrencyHasPrefix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldCurrency, v))
+}
+
+// CurrencyHasSuffix applies the HasSuffix predicate on the "currency" field.
+func CurrencyHasSuffix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldCurrency, v))
+}
+
+// CurrencyEqualFold applies the EqualFold predicate on the "currency" field.
+func CurrencyEqualFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldCurrency, v))
+}
+
+// CurrencyContainsFold applies the ContainsFold predicate on the "currency" field.
+func CurrencyContainsFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldCurrency, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.
@@ -1277,6 +587,136 @@ func StatusEqualFold(v string) predicate.ResourceSettlement {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// LedgerEntryIDEQ applies the EQ predicate on the "ledger_entry_id" field.
+func LedgerEntryIDEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDNEQ applies the NEQ predicate on the "ledger_entry_id" field.
+func LedgerEntryIDNEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNEQ(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDIn applies the In predicate on the "ledger_entry_id" field.
+func LedgerEntryIDIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldIn(FieldLedgerEntryID, vs...))
+}
+
+// LedgerEntryIDNotIn applies the NotIn predicate on the "ledger_entry_id" field.
+func LedgerEntryIDNotIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNotIn(FieldLedgerEntryID, vs...))
+}
+
+// LedgerEntryIDGT applies the GT predicate on the "ledger_entry_id" field.
+func LedgerEntryIDGT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGT(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDGTE applies the GTE predicate on the "ledger_entry_id" field.
+func LedgerEntryIDGTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGTE(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDLT applies the LT predicate on the "ledger_entry_id" field.
+func LedgerEntryIDLT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLT(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDLTE applies the LTE predicate on the "ledger_entry_id" field.
+func LedgerEntryIDLTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLTE(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDContains applies the Contains predicate on the "ledger_entry_id" field.
+func LedgerEntryIDContains(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContains(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDHasPrefix applies the HasPrefix predicate on the "ledger_entry_id" field.
+func LedgerEntryIDHasPrefix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDHasSuffix applies the HasSuffix predicate on the "ledger_entry_id" field.
+func LedgerEntryIDHasSuffix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDEqualFold applies the EqualFold predicate on the "ledger_entry_id" field.
+func LedgerEntryIDEqualFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldLedgerEntryID, v))
+}
+
+// LedgerEntryIDContainsFold applies the ContainsFold predicate on the "ledger_entry_id" field.
+func LedgerEntryIDContainsFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldLedgerEntryID, v))
+}
+
+// WalletTransactionIDEQ applies the EQ predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDNEQ applies the NEQ predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDNEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNEQ(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDIn applies the In predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldIn(FieldWalletTransactionID, vs...))
+}
+
+// WalletTransactionIDNotIn applies the NotIn predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDNotIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNotIn(FieldWalletTransactionID, vs...))
+}
+
+// WalletTransactionIDGT applies the GT predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDGT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGT(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDGTE applies the GTE predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDGTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGTE(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDLT applies the LT predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDLT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLT(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDLTE applies the LTE predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDLTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLTE(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDContains applies the Contains predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDContains(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContains(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDHasPrefix applies the HasPrefix predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDHasPrefix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDHasSuffix applies the HasSuffix predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDHasSuffix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDEqualFold applies the EqualFold predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDEqualFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldWalletTransactionID, v))
+}
+
+// WalletTransactionIDContainsFold applies the ContainsFold predicate on the "wallet_transaction_id" field.
+func WalletTransactionIDContainsFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldWalletTransactionID, v))
 }
 
 // PricingVersionEQ applies the EQ predicate on the "pricing_version" field.
@@ -1709,201 +1149,6 @@ func ProviderCostEvidenceRefContainsFold(v string) predicate.ResourceSettlement 
 	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldProviderCostEvidenceRef, v))
 }
 
-// ProviderRequestIDEQ applies the EQ predicate on the "provider_request_id" field.
-func ProviderRequestIDEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDNEQ applies the NEQ predicate on the "provider_request_id" field.
-func ProviderRequestIDNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDIn applies the In predicate on the "provider_request_id" field.
-func ProviderRequestIDIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldProviderRequestID, vs...))
-}
-
-// ProviderRequestIDNotIn applies the NotIn predicate on the "provider_request_id" field.
-func ProviderRequestIDNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldProviderRequestID, vs...))
-}
-
-// ProviderRequestIDGT applies the GT predicate on the "provider_request_id" field.
-func ProviderRequestIDGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDGTE applies the GTE predicate on the "provider_request_id" field.
-func ProviderRequestIDGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDLT applies the LT predicate on the "provider_request_id" field.
-func ProviderRequestIDLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDLTE applies the LTE predicate on the "provider_request_id" field.
-func ProviderRequestIDLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDContains applies the Contains predicate on the "provider_request_id" field.
-func ProviderRequestIDContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDHasPrefix applies the HasPrefix predicate on the "provider_request_id" field.
-func ProviderRequestIDHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDHasSuffix applies the HasSuffix predicate on the "provider_request_id" field.
-func ProviderRequestIDHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDEqualFold applies the EqualFold predicate on the "provider_request_id" field.
-func ProviderRequestIDEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldProviderRequestID, v))
-}
-
-// ProviderRequestIDContainsFold applies the ContainsFold predicate on the "provider_request_id" field.
-func ProviderRequestIDContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldProviderRequestID, v))
-}
-
-// RedactedURLEQ applies the EQ predicate on the "redacted_url" field.
-func RedactedURLEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldRedactedURL, v))
-}
-
-// RedactedURLNEQ applies the NEQ predicate on the "redacted_url" field.
-func RedactedURLNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldRedactedURL, v))
-}
-
-// RedactedURLIn applies the In predicate on the "redacted_url" field.
-func RedactedURLIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldRedactedURL, vs...))
-}
-
-// RedactedURLNotIn applies the NotIn predicate on the "redacted_url" field.
-func RedactedURLNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldRedactedURL, vs...))
-}
-
-// RedactedURLGT applies the GT predicate on the "redacted_url" field.
-func RedactedURLGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldRedactedURL, v))
-}
-
-// RedactedURLGTE applies the GTE predicate on the "redacted_url" field.
-func RedactedURLGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldRedactedURL, v))
-}
-
-// RedactedURLLT applies the LT predicate on the "redacted_url" field.
-func RedactedURLLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldRedactedURL, v))
-}
-
-// RedactedURLLTE applies the LTE predicate on the "redacted_url" field.
-func RedactedURLLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldRedactedURL, v))
-}
-
-// RedactedURLContains applies the Contains predicate on the "redacted_url" field.
-func RedactedURLContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldRedactedURL, v))
-}
-
-// RedactedURLHasPrefix applies the HasPrefix predicate on the "redacted_url" field.
-func RedactedURLHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldRedactedURL, v))
-}
-
-// RedactedURLHasSuffix applies the HasSuffix predicate on the "redacted_url" field.
-func RedactedURLHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldRedactedURL, v))
-}
-
-// RedactedURLEqualFold applies the EqualFold predicate on the "redacted_url" field.
-func RedactedURLEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldRedactedURL, v))
-}
-
-// RedactedURLContainsFold applies the ContainsFold predicate on the "redacted_url" field.
-func RedactedURLContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldRedactedURL, v))
-}
-
-// TokenVersionEQ applies the EQ predicate on the "token_version" field.
-func TokenVersionEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldTokenVersion, v))
-}
-
-// TokenVersionNEQ applies the NEQ predicate on the "token_version" field.
-func TokenVersionNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldTokenVersion, v))
-}
-
-// TokenVersionIn applies the In predicate on the "token_version" field.
-func TokenVersionIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldTokenVersion, vs...))
-}
-
-// TokenVersionNotIn applies the NotIn predicate on the "token_version" field.
-func TokenVersionNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldTokenVersion, vs...))
-}
-
-// TokenVersionGT applies the GT predicate on the "token_version" field.
-func TokenVersionGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldTokenVersion, v))
-}
-
-// TokenVersionGTE applies the GTE predicate on the "token_version" field.
-func TokenVersionGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldTokenVersion, v))
-}
-
-// TokenVersionLT applies the LT predicate on the "token_version" field.
-func TokenVersionLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldTokenVersion, v))
-}
-
-// TokenVersionLTE applies the LTE predicate on the "token_version" field.
-func TokenVersionLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldTokenVersion, v))
-}
-
-// TokenVersionContains applies the Contains predicate on the "token_version" field.
-func TokenVersionContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldTokenVersion, v))
-}
-
-// TokenVersionHasPrefix applies the HasPrefix predicate on the "token_version" field.
-func TokenVersionHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldTokenVersion, v))
-}
-
-// TokenVersionHasSuffix applies the HasSuffix predicate on the "token_version" field.
-func TokenVersionHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldTokenVersion, v))
-}
-
-// TokenVersionEqualFold applies the EqualFold predicate on the "token_version" field.
-func TokenVersionEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldTokenVersion, v))
-}
-
-// TokenVersionContainsFold applies the ContainsFold predicate on the "token_version" field.
-func TokenVersionContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldTokenVersion, v))
-}
-
 // IdempotencyKeyEQ applies the EQ predicate on the "idempotency_key" field.
 func IdempotencyKeyEQ(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldIdempotencyKey, v))
@@ -2034,81 +1279,6 @@ func RequestHashContainsFold(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldRequestHash, v))
 }
 
-// ReportJSONEQ applies the EQ predicate on the "report_json" field.
-func ReportJSONEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldReportJSON, v))
-}
-
-// ReportJSONNEQ applies the NEQ predicate on the "report_json" field.
-func ReportJSONNEQ(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldReportJSON, v))
-}
-
-// ReportJSONIn applies the In predicate on the "report_json" field.
-func ReportJSONIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldReportJSON, vs...))
-}
-
-// ReportJSONNotIn applies the NotIn predicate on the "report_json" field.
-func ReportJSONNotIn(vs ...string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldReportJSON, vs...))
-}
-
-// ReportJSONGT applies the GT predicate on the "report_json" field.
-func ReportJSONGT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldReportJSON, v))
-}
-
-// ReportJSONGTE applies the GTE predicate on the "report_json" field.
-func ReportJSONGTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldReportJSON, v))
-}
-
-// ReportJSONLT applies the LT predicate on the "report_json" field.
-func ReportJSONLT(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldReportJSON, v))
-}
-
-// ReportJSONLTE applies the LTE predicate on the "report_json" field.
-func ReportJSONLTE(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldReportJSON, v))
-}
-
-// ReportJSONContains applies the Contains predicate on the "report_json" field.
-func ReportJSONContains(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContains(FieldReportJSON, v))
-}
-
-// ReportJSONHasPrefix applies the HasPrefix predicate on the "report_json" field.
-func ReportJSONHasPrefix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldReportJSON, v))
-}
-
-// ReportJSONHasSuffix applies the HasSuffix predicate on the "report_json" field.
-func ReportJSONHasSuffix(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldReportJSON, v))
-}
-
-// ReportJSONEqualFold applies the EqualFold predicate on the "report_json" field.
-func ReportJSONEqualFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldReportJSON, v))
-}
-
-// ReportJSONContainsFold applies the ContainsFold predicate on the "report_json" field.
-func ReportJSONContainsFold(v string) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldReportJSON, v))
-}
-
-// BlockNewWorkspacesEQ applies the EQ predicate on the "block_new_workspaces" field.
-func BlockNewWorkspacesEQ(v bool) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldBlockNewWorkspaces, v))
-}
-
-// BlockNewWorkspacesNEQ applies the NEQ predicate on the "block_new_workspaces" field.
-func BlockNewWorkspacesNEQ(v bool) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldBlockNewWorkspaces, v))
-}
-
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldCreatedAt, v))
@@ -2147,46 +1317,6 @@ func CreatedAtLT(v time.Time) predicate.ResourceSettlement {
 // CreatedAtLTE applies the LTE predicate on the "created_at" field.
 func CreatedAtLTE(v time.Time) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldLTE(FieldCreatedAt, v))
-}
-
-// UpdatedAtEQ applies the EQ predicate on the "updated_at" field.
-func UpdatedAtEQ(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldEQ(FieldUpdatedAt, v))
-}
-
-// UpdatedAtNEQ applies the NEQ predicate on the "updated_at" field.
-func UpdatedAtNEQ(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNEQ(FieldUpdatedAt, v))
-}
-
-// UpdatedAtIn applies the In predicate on the "updated_at" field.
-func UpdatedAtIn(vs ...time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldIn(FieldUpdatedAt, vs...))
-}
-
-// UpdatedAtNotIn applies the NotIn predicate on the "updated_at" field.
-func UpdatedAtNotIn(vs ...time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldNotIn(FieldUpdatedAt, vs...))
-}
-
-// UpdatedAtGT applies the GT predicate on the "updated_at" field.
-func UpdatedAtGT(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGT(FieldUpdatedAt, v))
-}
-
-// UpdatedAtGTE applies the GTE predicate on the "updated_at" field.
-func UpdatedAtGTE(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldGTE(FieldUpdatedAt, v))
-}
-
-// UpdatedAtLT applies the LT predicate on the "updated_at" field.
-func UpdatedAtLT(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLT(FieldUpdatedAt, v))
-}
-
-// UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
-func UpdatedAtLTE(v time.Time) predicate.ResourceSettlement {
-	return predicate.ResourceSettlement(sql.FieldLTE(FieldUpdatedAt, v))
 }
 
 // And groups predicates with the AND operator between them.

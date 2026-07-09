@@ -19,30 +19,6 @@ type HoldRelease struct {
 	ID string `json:"id,omitempty"`
 	// AccountID holds the value of the "account_id" field.
 	AccountID string `json:"account_id,omitempty"`
-	// BalanceCents holds the value of the "balance_cents" field.
-	BalanceCents int64 `json:"balance_cents,omitempty"`
-	// FrozenCents holds the value of the "frozen_cents" field.
-	FrozenCents int64 `json:"frozen_cents,omitempty"`
-	// AvailableCents holds the value of the "available_cents" field.
-	AvailableCents int64 `json:"available_cents,omitempty"`
-	// TotalSpentCents holds the value of the "total_spent_cents" field.
-	TotalSpentCents int64 `json:"total_spent_cents,omitempty"`
-	// AmountCents holds the value of the "amount_cents" field.
-	AmountCents int64 `json:"amount_cents,omitempty"`
-	// Currency holds the value of the "currency" field.
-	Currency string `json:"currency,omitempty"`
-	// Direction holds the value of the "direction" field.
-	Direction string `json:"direction,omitempty"`
-	// Source holds the value of the "source" field.
-	Source string `json:"source,omitempty"`
-	// OperatorUserID holds the value of the "operator_user_id" field.
-	OperatorUserID string `json:"operator_user_id,omitempty"`
-	// Reason holds the value of the "reason" field.
-	Reason string `json:"reason,omitempty"`
-	// LedgerEntryID holds the value of the "ledger_entry_id" field.
-	LedgerEntryID string `json:"ledger_entry_id,omitempty"`
-	// WalletTransactionID holds the value of the "wallet_transaction_id" field.
-	WalletTransactionID string `json:"wallet_transaction_id,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	// ResourceType holds the value of the "resource_type" field.
@@ -51,40 +27,22 @@ type HoldRelease struct {
 	ResourceID string `json:"resource_id,omitempty"`
 	// HoldID holds the value of the "hold_id" field.
 	HoldID string `json:"hold_id,omitempty"`
+	// AmountCents holds the value of the "amount_cents" field.
+	AmountCents int64 `json:"amount_cents,omitempty"`
+	// Currency holds the value of the "currency" field.
+	Currency string `json:"currency,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
-	// PricingVersion holds the value of the "pricing_version" field.
-	PricingVersion string `json:"pricing_version,omitempty"`
-	// PriceSnapshotJSON holds the value of the "price_snapshot_json" field.
-	PriceSnapshotJSON string `json:"price_snapshot_json,omitempty"`
-	// UsagePeriodStart holds the value of the "usage_period_start" field.
-	UsagePeriodStart string `json:"usage_period_start,omitempty"`
-	// UsagePeriodEnd holds the value of the "usage_period_end" field.
-	UsagePeriodEnd string `json:"usage_period_end,omitempty"`
-	// Quantity holds the value of the "quantity" field.
-	Quantity float64 `json:"quantity,omitempty"`
-	// Unit holds the value of the "unit" field.
-	Unit string `json:"unit,omitempty"`
-	// ProviderCostEvidenceRef holds the value of the "provider_cost_evidence_ref" field.
-	ProviderCostEvidenceRef string `json:"provider_cost_evidence_ref,omitempty"`
-	// ProviderRequestID holds the value of the "provider_request_id" field.
-	ProviderRequestID string `json:"provider_request_id,omitempty"`
-	// RedactedURL holds the value of the "redacted_url" field.
-	RedactedURL string `json:"redacted_url,omitempty"`
-	// TokenVersion holds the value of the "token_version" field.
-	TokenVersion string `json:"token_version,omitempty"`
+	// LedgerEntryID holds the value of the "ledger_entry_id" field.
+	LedgerEntryID string `json:"ledger_entry_id,omitempty"`
+	// WalletTransactionID holds the value of the "wallet_transaction_id" field.
+	WalletTransactionID string `json:"wallet_transaction_id,omitempty"`
 	// IdempotencyKey holds the value of the "idempotency_key" field.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 	// RequestHash holds the value of the "request_hash" field.
 	RequestHash string `json:"request_hash,omitempty"`
-	// ReportJSON holds the value of the "report_json" field.
-	ReportJSON string `json:"report_json,omitempty"`
-	// BlockNewWorkspaces holds the value of the "block_new_workspaces" field.
-	BlockNewWorkspaces bool `json:"block_new_workspaces,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	// UpdatedAt holds the value of the "updated_at" field.
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
 }
 
@@ -93,15 +51,11 @@ func (*HoldRelease) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case holdrelease.FieldBlockNewWorkspaces:
-			values[i] = new(sql.NullBool)
-		case holdrelease.FieldQuantity:
-			values[i] = new(sql.NullFloat64)
-		case holdrelease.FieldBalanceCents, holdrelease.FieldFrozenCents, holdrelease.FieldAvailableCents, holdrelease.FieldTotalSpentCents, holdrelease.FieldAmountCents:
+		case holdrelease.FieldAmountCents:
 			values[i] = new(sql.NullInt64)
-		case holdrelease.FieldID, holdrelease.FieldAccountID, holdrelease.FieldCurrency, holdrelease.FieldDirection, holdrelease.FieldSource, holdrelease.FieldOperatorUserID, holdrelease.FieldReason, holdrelease.FieldLedgerEntryID, holdrelease.FieldWalletTransactionID, holdrelease.FieldWorkspaceID, holdrelease.FieldResourceType, holdrelease.FieldResourceID, holdrelease.FieldHoldID, holdrelease.FieldStatus, holdrelease.FieldPricingVersion, holdrelease.FieldPriceSnapshotJSON, holdrelease.FieldUsagePeriodStart, holdrelease.FieldUsagePeriodEnd, holdrelease.FieldUnit, holdrelease.FieldProviderCostEvidenceRef, holdrelease.FieldProviderRequestID, holdrelease.FieldRedactedURL, holdrelease.FieldTokenVersion, holdrelease.FieldIdempotencyKey, holdrelease.FieldRequestHash, holdrelease.FieldReportJSON:
+		case holdrelease.FieldID, holdrelease.FieldAccountID, holdrelease.FieldWorkspaceID, holdrelease.FieldResourceType, holdrelease.FieldResourceID, holdrelease.FieldHoldID, holdrelease.FieldCurrency, holdrelease.FieldStatus, holdrelease.FieldLedgerEntryID, holdrelease.FieldWalletTransactionID, holdrelease.FieldIdempotencyKey, holdrelease.FieldRequestHash:
 			values[i] = new(sql.NullString)
-		case holdrelease.FieldCreatedAt, holdrelease.FieldUpdatedAt:
+		case holdrelease.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -130,78 +84,6 @@ func (hr *HoldRelease) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				hr.AccountID = value.String
 			}
-		case holdrelease.FieldBalanceCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field balance_cents", values[i])
-			} else if value.Valid {
-				hr.BalanceCents = value.Int64
-			}
-		case holdrelease.FieldFrozenCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field frozen_cents", values[i])
-			} else if value.Valid {
-				hr.FrozenCents = value.Int64
-			}
-		case holdrelease.FieldAvailableCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field available_cents", values[i])
-			} else if value.Valid {
-				hr.AvailableCents = value.Int64
-			}
-		case holdrelease.FieldTotalSpentCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field total_spent_cents", values[i])
-			} else if value.Valid {
-				hr.TotalSpentCents = value.Int64
-			}
-		case holdrelease.FieldAmountCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field amount_cents", values[i])
-			} else if value.Valid {
-				hr.AmountCents = value.Int64
-			}
-		case holdrelease.FieldCurrency:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field currency", values[i])
-			} else if value.Valid {
-				hr.Currency = value.String
-			}
-		case holdrelease.FieldDirection:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field direction", values[i])
-			} else if value.Valid {
-				hr.Direction = value.String
-			}
-		case holdrelease.FieldSource:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field source", values[i])
-			} else if value.Valid {
-				hr.Source = value.String
-			}
-		case holdrelease.FieldOperatorUserID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field operator_user_id", values[i])
-			} else if value.Valid {
-				hr.OperatorUserID = value.String
-			}
-		case holdrelease.FieldReason:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field reason", values[i])
-			} else if value.Valid {
-				hr.Reason = value.String
-			}
-		case holdrelease.FieldLedgerEntryID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field ledger_entry_id", values[i])
-			} else if value.Valid {
-				hr.LedgerEntryID = value.String
-			}
-		case holdrelease.FieldWalletTransactionID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field wallet_transaction_id", values[i])
-			} else if value.Valid {
-				hr.WalletTransactionID = value.String
-			}
 		case holdrelease.FieldWorkspaceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field workspace_id", values[i])
@@ -226,71 +108,35 @@ func (hr *HoldRelease) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				hr.HoldID = value.String
 			}
+		case holdrelease.FieldAmountCents:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field amount_cents", values[i])
+			} else if value.Valid {
+				hr.AmountCents = value.Int64
+			}
+		case holdrelease.FieldCurrency:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field currency", values[i])
+			} else if value.Valid {
+				hr.Currency = value.String
+			}
 		case holdrelease.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
 				hr.Status = value.String
 			}
-		case holdrelease.FieldPricingVersion:
+		case holdrelease.FieldLedgerEntryID:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field pricing_version", values[i])
+				return fmt.Errorf("unexpected type %T for field ledger_entry_id", values[i])
 			} else if value.Valid {
-				hr.PricingVersion = value.String
+				hr.LedgerEntryID = value.String
 			}
-		case holdrelease.FieldPriceSnapshotJSON:
+		case holdrelease.FieldWalletTransactionID:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_json", values[i])
+				return fmt.Errorf("unexpected type %T for field wallet_transaction_id", values[i])
 			} else if value.Valid {
-				hr.PriceSnapshotJSON = value.String
-			}
-		case holdrelease.FieldUsagePeriodStart:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field usage_period_start", values[i])
-			} else if value.Valid {
-				hr.UsagePeriodStart = value.String
-			}
-		case holdrelease.FieldUsagePeriodEnd:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field usage_period_end", values[i])
-			} else if value.Valid {
-				hr.UsagePeriodEnd = value.String
-			}
-		case holdrelease.FieldQuantity:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field quantity", values[i])
-			} else if value.Valid {
-				hr.Quantity = value.Float64
-			}
-		case holdrelease.FieldUnit:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field unit", values[i])
-			} else if value.Valid {
-				hr.Unit = value.String
-			}
-		case holdrelease.FieldProviderCostEvidenceRef:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field provider_cost_evidence_ref", values[i])
-			} else if value.Valid {
-				hr.ProviderCostEvidenceRef = value.String
-			}
-		case holdrelease.FieldProviderRequestID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field provider_request_id", values[i])
-			} else if value.Valid {
-				hr.ProviderRequestID = value.String
-			}
-		case holdrelease.FieldRedactedURL:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field redacted_url", values[i])
-			} else if value.Valid {
-				hr.RedactedURL = value.String
-			}
-		case holdrelease.FieldTokenVersion:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field token_version", values[i])
-			} else if value.Valid {
-				hr.TokenVersion = value.String
+				hr.WalletTransactionID = value.String
 			}
 		case holdrelease.FieldIdempotencyKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -304,29 +150,11 @@ func (hr *HoldRelease) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				hr.RequestHash = value.String
 			}
-		case holdrelease.FieldReportJSON:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field report_json", values[i])
-			} else if value.Valid {
-				hr.ReportJSON = value.String
-			}
-		case holdrelease.FieldBlockNewWorkspaces:
-			if value, ok := values[i].(*sql.NullBool); !ok {
-				return fmt.Errorf("unexpected type %T for field block_new_workspaces", values[i])
-			} else if value.Valid {
-				hr.BlockNewWorkspaces = value.Bool
-			}
 		case holdrelease.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
 				hr.CreatedAt = value.Time
-			}
-		case holdrelease.FieldUpdatedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
-			} else if value.Valid {
-				hr.UpdatedAt = value.Time
 			}
 		default:
 			hr.selectValues.Set(columns[i], values[i])
@@ -367,42 +195,6 @@ func (hr *HoldRelease) String() string {
 	builder.WriteString("account_id=")
 	builder.WriteString(hr.AccountID)
 	builder.WriteString(", ")
-	builder.WriteString("balance_cents=")
-	builder.WriteString(fmt.Sprintf("%v", hr.BalanceCents))
-	builder.WriteString(", ")
-	builder.WriteString("frozen_cents=")
-	builder.WriteString(fmt.Sprintf("%v", hr.FrozenCents))
-	builder.WriteString(", ")
-	builder.WriteString("available_cents=")
-	builder.WriteString(fmt.Sprintf("%v", hr.AvailableCents))
-	builder.WriteString(", ")
-	builder.WriteString("total_spent_cents=")
-	builder.WriteString(fmt.Sprintf("%v", hr.TotalSpentCents))
-	builder.WriteString(", ")
-	builder.WriteString("amount_cents=")
-	builder.WriteString(fmt.Sprintf("%v", hr.AmountCents))
-	builder.WriteString(", ")
-	builder.WriteString("currency=")
-	builder.WriteString(hr.Currency)
-	builder.WriteString(", ")
-	builder.WriteString("direction=")
-	builder.WriteString(hr.Direction)
-	builder.WriteString(", ")
-	builder.WriteString("source=")
-	builder.WriteString(hr.Source)
-	builder.WriteString(", ")
-	builder.WriteString("operator_user_id=")
-	builder.WriteString(hr.OperatorUserID)
-	builder.WriteString(", ")
-	builder.WriteString("reason=")
-	builder.WriteString(hr.Reason)
-	builder.WriteString(", ")
-	builder.WriteString("ledger_entry_id=")
-	builder.WriteString(hr.LedgerEntryID)
-	builder.WriteString(", ")
-	builder.WriteString("wallet_transaction_id=")
-	builder.WriteString(hr.WalletTransactionID)
-	builder.WriteString(", ")
 	builder.WriteString("workspace_id=")
 	builder.WriteString(hr.WorkspaceID)
 	builder.WriteString(", ")
@@ -415,38 +207,20 @@ func (hr *HoldRelease) String() string {
 	builder.WriteString("hold_id=")
 	builder.WriteString(hr.HoldID)
 	builder.WriteString(", ")
+	builder.WriteString("amount_cents=")
+	builder.WriteString(fmt.Sprintf("%v", hr.AmountCents))
+	builder.WriteString(", ")
+	builder.WriteString("currency=")
+	builder.WriteString(hr.Currency)
+	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(hr.Status)
 	builder.WriteString(", ")
-	builder.WriteString("pricing_version=")
-	builder.WriteString(hr.PricingVersion)
+	builder.WriteString("ledger_entry_id=")
+	builder.WriteString(hr.LedgerEntryID)
 	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_json=")
-	builder.WriteString(hr.PriceSnapshotJSON)
-	builder.WriteString(", ")
-	builder.WriteString("usage_period_start=")
-	builder.WriteString(hr.UsagePeriodStart)
-	builder.WriteString(", ")
-	builder.WriteString("usage_period_end=")
-	builder.WriteString(hr.UsagePeriodEnd)
-	builder.WriteString(", ")
-	builder.WriteString("quantity=")
-	builder.WriteString(fmt.Sprintf("%v", hr.Quantity))
-	builder.WriteString(", ")
-	builder.WriteString("unit=")
-	builder.WriteString(hr.Unit)
-	builder.WriteString(", ")
-	builder.WriteString("provider_cost_evidence_ref=")
-	builder.WriteString(hr.ProviderCostEvidenceRef)
-	builder.WriteString(", ")
-	builder.WriteString("provider_request_id=")
-	builder.WriteString(hr.ProviderRequestID)
-	builder.WriteString(", ")
-	builder.WriteString("redacted_url=")
-	builder.WriteString(hr.RedactedURL)
-	builder.WriteString(", ")
-	builder.WriteString("token_version=")
-	builder.WriteString(hr.TokenVersion)
+	builder.WriteString("wallet_transaction_id=")
+	builder.WriteString(hr.WalletTransactionID)
 	builder.WriteString(", ")
 	builder.WriteString("idempotency_key=")
 	builder.WriteString(hr.IdempotencyKey)
@@ -454,17 +228,8 @@ func (hr *HoldRelease) String() string {
 	builder.WriteString("request_hash=")
 	builder.WriteString(hr.RequestHash)
 	builder.WriteString(", ")
-	builder.WriteString("report_json=")
-	builder.WriteString(hr.ReportJSON)
-	builder.WriteString(", ")
-	builder.WriteString("block_new_workspaces=")
-	builder.WriteString(fmt.Sprintf("%v", hr.BlockNewWorkspaces))
-	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(hr.CreatedAt.Format(time.ANSIC))
-	builder.WriteString(", ")
-	builder.WriteString("updated_at=")
-	builder.WriteString(hr.UpdatedAt.Format(time.ANSIC))
 	builder.WriteByte(')')
 	return builder.String()
 }

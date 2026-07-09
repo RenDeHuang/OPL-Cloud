@@ -37,10 +37,10 @@
 
 ## Phase 4: Ledger Ent Store
 
-- [ ] Replace `PostgresStore` hand-written SQL with an Ent-backed store implementing the existing `ledger.Store` interface.
-- [ ] Preserve idempotency conflict behavior for topup, hold, release, evidence, settlement, and reconciliation.
-- [ ] Preserve wallet math: topup increases balance, hold increases frozen, release reduces frozen without reducing balance, settlement reduces balance and increases spent.
-- [ ] Keep `resource_settlements.price_snapshot_json` as a controlled audit snapshot, not a frontend fact source.
+- [x] Replace `PostgresStore` hand-written SQL with an Ent-backed store implementing the existing `ledger.Store` interface.
+- [x] Preserve idempotency conflict behavior for topup, hold, release, evidence, settlement, and reconciliation.
+- [x] Preserve wallet math: topup increases balance, hold increases frozen, release reduces frozen without reducing balance, settlement reduces balance and increases spent.
+- [x] Keep `resource_settlements.price_snapshot_json` as a controlled audit snapshot, not a frontend fact source.
 
 ## Phase 5: Fabric Ent Store
 

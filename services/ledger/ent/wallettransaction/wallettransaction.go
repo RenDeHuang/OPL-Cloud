@@ -15,6 +15,10 @@ const (
 	FieldID = "id"
 	// FieldAccountID holds the string denoting the account_id field in the database.
 	FieldAccountID = "account_id"
+	// FieldLedgerEntryID holds the string denoting the ledger_entry_id field in the database.
+	FieldLedgerEntryID = "ledger_entry_id"
+	// FieldAmountCents holds the string denoting the amount_cents field in the database.
+	FieldAmountCents = "amount_cents"
 	// FieldBalanceCents holds the string denoting the balance_cents field in the database.
 	FieldBalanceCents = "balance_cents"
 	// FieldFrozenCents holds the string denoting the frozen_cents field in the database.
@@ -23,64 +27,10 @@ const (
 	FieldAvailableCents = "available_cents"
 	// FieldTotalSpentCents holds the string denoting the total_spent_cents field in the database.
 	FieldTotalSpentCents = "total_spent_cents"
-	// FieldAmountCents holds the string denoting the amount_cents field in the database.
-	FieldAmountCents = "amount_cents"
 	// FieldCurrency holds the string denoting the currency field in the database.
 	FieldCurrency = "currency"
-	// FieldDirection holds the string denoting the direction field in the database.
-	FieldDirection = "direction"
-	// FieldSource holds the string denoting the source field in the database.
-	FieldSource = "source"
-	// FieldOperatorUserID holds the string denoting the operator_user_id field in the database.
-	FieldOperatorUserID = "operator_user_id"
-	// FieldReason holds the string denoting the reason field in the database.
-	FieldReason = "reason"
-	// FieldLedgerEntryID holds the string denoting the ledger_entry_id field in the database.
-	FieldLedgerEntryID = "ledger_entry_id"
-	// FieldWalletTransactionID holds the string denoting the wallet_transaction_id field in the database.
-	FieldWalletTransactionID = "wallet_transaction_id"
-	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
-	FieldWorkspaceID = "workspace_id"
-	// FieldResourceType holds the string denoting the resource_type field in the database.
-	FieldResourceType = "resource_type"
-	// FieldResourceID holds the string denoting the resource_id field in the database.
-	FieldResourceID = "resource_id"
-	// FieldHoldID holds the string denoting the hold_id field in the database.
-	FieldHoldID = "hold_id"
-	// FieldStatus holds the string denoting the status field in the database.
-	FieldStatus = "status"
-	// FieldPricingVersion holds the string denoting the pricing_version field in the database.
-	FieldPricingVersion = "pricing_version"
-	// FieldPriceSnapshotJSON holds the string denoting the price_snapshot_json field in the database.
-	FieldPriceSnapshotJSON = "price_snapshot_json"
-	// FieldUsagePeriodStart holds the string denoting the usage_period_start field in the database.
-	FieldUsagePeriodStart = "usage_period_start"
-	// FieldUsagePeriodEnd holds the string denoting the usage_period_end field in the database.
-	FieldUsagePeriodEnd = "usage_period_end"
-	// FieldQuantity holds the string denoting the quantity field in the database.
-	FieldQuantity = "quantity"
-	// FieldUnit holds the string denoting the unit field in the database.
-	FieldUnit = "unit"
-	// FieldProviderCostEvidenceRef holds the string denoting the provider_cost_evidence_ref field in the database.
-	FieldProviderCostEvidenceRef = "provider_cost_evidence_ref"
-	// FieldProviderRequestID holds the string denoting the provider_request_id field in the database.
-	FieldProviderRequestID = "provider_request_id"
-	// FieldRedactedURL holds the string denoting the redacted_url field in the database.
-	FieldRedactedURL = "redacted_url"
-	// FieldTokenVersion holds the string denoting the token_version field in the database.
-	FieldTokenVersion = "token_version"
-	// FieldIdempotencyKey holds the string denoting the idempotency_key field in the database.
-	FieldIdempotencyKey = "idempotency_key"
-	// FieldRequestHash holds the string denoting the request_hash field in the database.
-	FieldRequestHash = "request_hash"
-	// FieldReportJSON holds the string denoting the report_json field in the database.
-	FieldReportJSON = "report_json"
-	// FieldBlockNewWorkspaces holds the string denoting the block_new_workspaces field in the database.
-	FieldBlockNewWorkspaces = "block_new_workspaces"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
-	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
-	FieldUpdatedAt = "updated_at"
 	// Table holds the table name of the wallettransaction in the database.
 	Table = "wallet_transactions"
 )
@@ -89,39 +39,14 @@ const (
 var Columns = []string{
 	FieldID,
 	FieldAccountID,
+	FieldLedgerEntryID,
+	FieldAmountCents,
 	FieldBalanceCents,
 	FieldFrozenCents,
 	FieldAvailableCents,
 	FieldTotalSpentCents,
-	FieldAmountCents,
 	FieldCurrency,
-	FieldDirection,
-	FieldSource,
-	FieldOperatorUserID,
-	FieldReason,
-	FieldLedgerEntryID,
-	FieldWalletTransactionID,
-	FieldWorkspaceID,
-	FieldResourceType,
-	FieldResourceID,
-	FieldHoldID,
-	FieldStatus,
-	FieldPricingVersion,
-	FieldPriceSnapshotJSON,
-	FieldUsagePeriodStart,
-	FieldUsagePeriodEnd,
-	FieldQuantity,
-	FieldUnit,
-	FieldProviderCostEvidenceRef,
-	FieldProviderRequestID,
-	FieldRedactedURL,
-	FieldTokenVersion,
-	FieldIdempotencyKey,
-	FieldRequestHash,
-	FieldReportJSON,
-	FieldBlockNewWorkspaces,
 	FieldCreatedAt,
-	FieldUpdatedAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -135,76 +60,14 @@ func ValidColumn(column string) bool {
 }
 
 var (
-	// DefaultAccountID holds the default value on creation for the "account_id" field.
-	DefaultAccountID string
-	// DefaultBalanceCents holds the default value on creation for the "balance_cents" field.
-	DefaultBalanceCents int64
-	// DefaultFrozenCents holds the default value on creation for the "frozen_cents" field.
-	DefaultFrozenCents int64
-	// DefaultAvailableCents holds the default value on creation for the "available_cents" field.
-	DefaultAvailableCents int64
-	// DefaultTotalSpentCents holds the default value on creation for the "total_spent_cents" field.
-	DefaultTotalSpentCents int64
-	// DefaultAmountCents holds the default value on creation for the "amount_cents" field.
-	DefaultAmountCents int64
+	// AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	AccountIDValidator func(string) error
+	// LedgerEntryIDValidator is a validator for the "ledger_entry_id" field. It is called by the builders before save.
+	LedgerEntryIDValidator func(string) error
 	// DefaultCurrency holds the default value on creation for the "currency" field.
 	DefaultCurrency string
-	// DefaultDirection holds the default value on creation for the "direction" field.
-	DefaultDirection string
-	// DefaultSource holds the default value on creation for the "source" field.
-	DefaultSource string
-	// DefaultOperatorUserID holds the default value on creation for the "operator_user_id" field.
-	DefaultOperatorUserID string
-	// DefaultReason holds the default value on creation for the "reason" field.
-	DefaultReason string
-	// DefaultLedgerEntryID holds the default value on creation for the "ledger_entry_id" field.
-	DefaultLedgerEntryID string
-	// DefaultWalletTransactionID holds the default value on creation for the "wallet_transaction_id" field.
-	DefaultWalletTransactionID string
-	// DefaultWorkspaceID holds the default value on creation for the "workspace_id" field.
-	DefaultWorkspaceID string
-	// DefaultResourceType holds the default value on creation for the "resource_type" field.
-	DefaultResourceType string
-	// DefaultResourceID holds the default value on creation for the "resource_id" field.
-	DefaultResourceID string
-	// DefaultHoldID holds the default value on creation for the "hold_id" field.
-	DefaultHoldID string
-	// DefaultStatus holds the default value on creation for the "status" field.
-	DefaultStatus string
-	// DefaultPricingVersion holds the default value on creation for the "pricing_version" field.
-	DefaultPricingVersion string
-	// DefaultPriceSnapshotJSON holds the default value on creation for the "price_snapshot_json" field.
-	DefaultPriceSnapshotJSON string
-	// DefaultUsagePeriodStart holds the default value on creation for the "usage_period_start" field.
-	DefaultUsagePeriodStart string
-	// DefaultUsagePeriodEnd holds the default value on creation for the "usage_period_end" field.
-	DefaultUsagePeriodEnd string
-	// DefaultQuantity holds the default value on creation for the "quantity" field.
-	DefaultQuantity float64
-	// DefaultUnit holds the default value on creation for the "unit" field.
-	DefaultUnit string
-	// DefaultProviderCostEvidenceRef holds the default value on creation for the "provider_cost_evidence_ref" field.
-	DefaultProviderCostEvidenceRef string
-	// DefaultProviderRequestID holds the default value on creation for the "provider_request_id" field.
-	DefaultProviderRequestID string
-	// DefaultRedactedURL holds the default value on creation for the "redacted_url" field.
-	DefaultRedactedURL string
-	// DefaultTokenVersion holds the default value on creation for the "token_version" field.
-	DefaultTokenVersion string
-	// DefaultIdempotencyKey holds the default value on creation for the "idempotency_key" field.
-	DefaultIdempotencyKey string
-	// DefaultRequestHash holds the default value on creation for the "request_hash" field.
-	DefaultRequestHash string
-	// DefaultReportJSON holds the default value on creation for the "report_json" field.
-	DefaultReportJSON string
-	// DefaultBlockNewWorkspaces holds the default value on creation for the "block_new_workspaces" field.
-	DefaultBlockNewWorkspaces bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
-	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
-	DefaultUpdatedAt func() time.Time
-	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
-	UpdateDefaultUpdatedAt func() time.Time
 	// IDValidator is a validator for the "id" field. It is called by the builders before save.
 	IDValidator func(string) error
 )
@@ -220,6 +83,16 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 // ByAccountID orders the results by the account_id field.
 func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
+}
+
+// ByLedgerEntryID orders the results by the ledger_entry_id field.
+func ByLedgerEntryID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLedgerEntryID, opts...).ToFunc()
+}
+
+// ByAmountCents orders the results by the amount_cents field.
+func ByAmountCents(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAmountCents, opts...).ToFunc()
 }
 
 // ByBalanceCents orders the results by the balance_cents field.
@@ -242,147 +115,12 @@ func ByTotalSpentCents(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldTotalSpentCents, opts...).ToFunc()
 }
 
-// ByAmountCents orders the results by the amount_cents field.
-func ByAmountCents(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldAmountCents, opts...).ToFunc()
-}
-
 // ByCurrency orders the results by the currency field.
 func ByCurrency(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCurrency, opts...).ToFunc()
 }
 
-// ByDirection orders the results by the direction field.
-func ByDirection(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldDirection, opts...).ToFunc()
-}
-
-// BySource orders the results by the source field.
-func BySource(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSource, opts...).ToFunc()
-}
-
-// ByOperatorUserID orders the results by the operator_user_id field.
-func ByOperatorUserID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOperatorUserID, opts...).ToFunc()
-}
-
-// ByReason orders the results by the reason field.
-func ByReason(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldReason, opts...).ToFunc()
-}
-
-// ByLedgerEntryID orders the results by the ledger_entry_id field.
-func ByLedgerEntryID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldLedgerEntryID, opts...).ToFunc()
-}
-
-// ByWalletTransactionID orders the results by the wallet_transaction_id field.
-func ByWalletTransactionID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWalletTransactionID, opts...).ToFunc()
-}
-
-// ByWorkspaceID orders the results by the workspace_id field.
-func ByWorkspaceID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWorkspaceID, opts...).ToFunc()
-}
-
-// ByResourceType orders the results by the resource_type field.
-func ByResourceType(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldResourceType, opts...).ToFunc()
-}
-
-// ByResourceID orders the results by the resource_id field.
-func ByResourceID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldResourceID, opts...).ToFunc()
-}
-
-// ByHoldID orders the results by the hold_id field.
-func ByHoldID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldHoldID, opts...).ToFunc()
-}
-
-// ByStatus orders the results by the status field.
-func ByStatus(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldStatus, opts...).ToFunc()
-}
-
-// ByPricingVersion orders the results by the pricing_version field.
-func ByPricingVersion(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPricingVersion, opts...).ToFunc()
-}
-
-// ByPriceSnapshotJSON orders the results by the price_snapshot_json field.
-func ByPriceSnapshotJSON(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotJSON, opts...).ToFunc()
-}
-
-// ByUsagePeriodStart orders the results by the usage_period_start field.
-func ByUsagePeriodStart(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUsagePeriodStart, opts...).ToFunc()
-}
-
-// ByUsagePeriodEnd orders the results by the usage_period_end field.
-func ByUsagePeriodEnd(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUsagePeriodEnd, opts...).ToFunc()
-}
-
-// ByQuantity orders the results by the quantity field.
-func ByQuantity(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldQuantity, opts...).ToFunc()
-}
-
-// ByUnit orders the results by the unit field.
-func ByUnit(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUnit, opts...).ToFunc()
-}
-
-// ByProviderCostEvidenceRef orders the results by the provider_cost_evidence_ref field.
-func ByProviderCostEvidenceRef(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldProviderCostEvidenceRef, opts...).ToFunc()
-}
-
-// ByProviderRequestID orders the results by the provider_request_id field.
-func ByProviderRequestID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldProviderRequestID, opts...).ToFunc()
-}
-
-// ByRedactedURL orders the results by the redacted_url field.
-func ByRedactedURL(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRedactedURL, opts...).ToFunc()
-}
-
-// ByTokenVersion orders the results by the token_version field.
-func ByTokenVersion(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldTokenVersion, opts...).ToFunc()
-}
-
-// ByIdempotencyKey orders the results by the idempotency_key field.
-func ByIdempotencyKey(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldIdempotencyKey, opts...).ToFunc()
-}
-
-// ByRequestHash orders the results by the request_hash field.
-func ByRequestHash(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRequestHash, opts...).ToFunc()
-}
-
-// ByReportJSON orders the results by the report_json field.
-func ByReportJSON(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldReportJSON, opts...).ToFunc()
-}
-
-// ByBlockNewWorkspaces orders the results by the block_new_workspaces field.
-func ByBlockNewWorkspaces(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldBlockNewWorkspaces, opts...).ToFunc()
-}
-
 // ByCreatedAt orders the results by the created_at field.
 func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCreatedAt, opts...).ToFunc()
-}
-
-// ByUpdatedAt orders the results by the updated_at field.
-func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
 }

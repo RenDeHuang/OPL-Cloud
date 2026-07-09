@@ -20,367 +20,15 @@ type EvidenceReceiptCreate struct {
 	hooks    []Hook
 }
 
-// SetAccountID sets the "account_id" field.
-func (erc *EvidenceReceiptCreate) SetAccountID(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetAccountID(s)
-	return erc
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableAccountID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetAccountID(*s)
-	}
-	return erc
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (erc *EvidenceReceiptCreate) SetBalanceCents(i int64) *EvidenceReceiptCreate {
-	erc.mutation.SetBalanceCents(i)
-	return erc
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableBalanceCents(i *int64) *EvidenceReceiptCreate {
-	if i != nil {
-		erc.SetBalanceCents(*i)
-	}
-	return erc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (erc *EvidenceReceiptCreate) SetFrozenCents(i int64) *EvidenceReceiptCreate {
-	erc.mutation.SetFrozenCents(i)
-	return erc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableFrozenCents(i *int64) *EvidenceReceiptCreate {
-	if i != nil {
-		erc.SetFrozenCents(*i)
-	}
-	return erc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (erc *EvidenceReceiptCreate) SetAvailableCents(i int64) *EvidenceReceiptCreate {
-	erc.mutation.SetAvailableCents(i)
-	return erc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableAvailableCents(i *int64) *EvidenceReceiptCreate {
-	if i != nil {
-		erc.SetAvailableCents(*i)
-	}
-	return erc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (erc *EvidenceReceiptCreate) SetTotalSpentCents(i int64) *EvidenceReceiptCreate {
-	erc.mutation.SetTotalSpentCents(i)
-	return erc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableTotalSpentCents(i *int64) *EvidenceReceiptCreate {
-	if i != nil {
-		erc.SetTotalSpentCents(*i)
-	}
-	return erc
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (erc *EvidenceReceiptCreate) SetAmountCents(i int64) *EvidenceReceiptCreate {
-	erc.mutation.SetAmountCents(i)
-	return erc
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableAmountCents(i *int64) *EvidenceReceiptCreate {
-	if i != nil {
-		erc.SetAmountCents(*i)
-	}
-	return erc
-}
-
-// SetCurrency sets the "currency" field.
-func (erc *EvidenceReceiptCreate) SetCurrency(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetCurrency(s)
-	return erc
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableCurrency(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetCurrency(*s)
-	}
-	return erc
-}
-
-// SetDirection sets the "direction" field.
-func (erc *EvidenceReceiptCreate) SetDirection(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetDirection(s)
-	return erc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableDirection(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetDirection(*s)
-	}
-	return erc
-}
-
-// SetSource sets the "source" field.
-func (erc *EvidenceReceiptCreate) SetSource(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetSource(s)
-	return erc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableSource(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetSource(*s)
-	}
-	return erc
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (erc *EvidenceReceiptCreate) SetOperatorUserID(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetOperatorUserID(s)
-	return erc
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableOperatorUserID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetOperatorUserID(*s)
-	}
-	return erc
-}
-
-// SetReason sets the "reason" field.
-func (erc *EvidenceReceiptCreate) SetReason(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetReason(s)
-	return erc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableReason(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetReason(*s)
-	}
-	return erc
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (erc *EvidenceReceiptCreate) SetLedgerEntryID(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetLedgerEntryID(s)
-	return erc
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableLedgerEntryID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetLedgerEntryID(*s)
-	}
-	return erc
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (erc *EvidenceReceiptCreate) SetWalletTransactionID(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetWalletTransactionID(s)
-	return erc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableWalletTransactionID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetWalletTransactionID(*s)
-	}
-	return erc
-}
-
 // SetWorkspaceID sets the "workspace_id" field.
 func (erc *EvidenceReceiptCreate) SetWorkspaceID(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetWorkspaceID(s)
 	return erc
 }
 
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableWorkspaceID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetWorkspaceID(*s)
-	}
-	return erc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (erc *EvidenceReceiptCreate) SetResourceType(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetResourceType(s)
-	return erc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableResourceType(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetResourceType(*s)
-	}
-	return erc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (erc *EvidenceReceiptCreate) SetResourceID(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetResourceID(s)
-	return erc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableResourceID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetResourceID(*s)
-	}
-	return erc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (erc *EvidenceReceiptCreate) SetHoldID(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetHoldID(s)
-	return erc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableHoldID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetHoldID(*s)
-	}
-	return erc
-}
-
-// SetStatus sets the "status" field.
-func (erc *EvidenceReceiptCreate) SetStatus(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetStatus(s)
-	return erc
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableStatus(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetStatus(*s)
-	}
-	return erc
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (erc *EvidenceReceiptCreate) SetPricingVersion(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetPricingVersion(s)
-	return erc
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillablePricingVersion(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetPricingVersion(*s)
-	}
-	return erc
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (erc *EvidenceReceiptCreate) SetPriceSnapshotJSON(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetPriceSnapshotJSON(s)
-	return erc
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillablePriceSnapshotJSON(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetPriceSnapshotJSON(*s)
-	}
-	return erc
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (erc *EvidenceReceiptCreate) SetUsagePeriodStart(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetUsagePeriodStart(s)
-	return erc
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableUsagePeriodStart(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetUsagePeriodStart(*s)
-	}
-	return erc
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (erc *EvidenceReceiptCreate) SetUsagePeriodEnd(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetUsagePeriodEnd(s)
-	return erc
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableUsagePeriodEnd(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetUsagePeriodEnd(*s)
-	}
-	return erc
-}
-
-// SetQuantity sets the "quantity" field.
-func (erc *EvidenceReceiptCreate) SetQuantity(f float64) *EvidenceReceiptCreate {
-	erc.mutation.SetQuantity(f)
-	return erc
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableQuantity(f *float64) *EvidenceReceiptCreate {
-	if f != nil {
-		erc.SetQuantity(*f)
-	}
-	return erc
-}
-
-// SetUnit sets the "unit" field.
-func (erc *EvidenceReceiptCreate) SetUnit(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetUnit(s)
-	return erc
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableUnit(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetUnit(*s)
-	}
-	return erc
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (erc *EvidenceReceiptCreate) SetProviderCostEvidenceRef(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetProviderCostEvidenceRef(s)
-	return erc
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableProviderCostEvidenceRef(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetProviderCostEvidenceRef(*s)
-	}
-	return erc
-}
-
 // SetProviderRequestID sets the "provider_request_id" field.
 func (erc *EvidenceReceiptCreate) SetProviderRequestID(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetProviderRequestID(s)
-	return erc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableProviderRequestID(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetProviderRequestID(*s)
-	}
 	return erc
 }
 
@@ -418,53 +66,9 @@ func (erc *EvidenceReceiptCreate) SetIdempotencyKey(s string) *EvidenceReceiptCr
 	return erc
 }
 
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableIdempotencyKey(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetIdempotencyKey(*s)
-	}
-	return erc
-}
-
 // SetRequestHash sets the "request_hash" field.
 func (erc *EvidenceReceiptCreate) SetRequestHash(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetRequestHash(s)
-	return erc
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableRequestHash(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetRequestHash(*s)
-	}
-	return erc
-}
-
-// SetReportJSON sets the "report_json" field.
-func (erc *EvidenceReceiptCreate) SetReportJSON(s string) *EvidenceReceiptCreate {
-	erc.mutation.SetReportJSON(s)
-	return erc
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableReportJSON(s *string) *EvidenceReceiptCreate {
-	if s != nil {
-		erc.SetReportJSON(*s)
-	}
-	return erc
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (erc *EvidenceReceiptCreate) SetBlockNewWorkspaces(b bool) *EvidenceReceiptCreate {
-	erc.mutation.SetBlockNewWorkspaces(b)
-	return erc
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableBlockNewWorkspaces(b *bool) *EvidenceReceiptCreate {
-	if b != nil {
-		erc.SetBlockNewWorkspaces(*b)
-	}
 	return erc
 }
 
@@ -478,20 +82,6 @@ func (erc *EvidenceReceiptCreate) SetCreatedAt(t time.Time) *EvidenceReceiptCrea
 func (erc *EvidenceReceiptCreate) SetNillableCreatedAt(t *time.Time) *EvidenceReceiptCreate {
 	if t != nil {
 		erc.SetCreatedAt(*t)
-	}
-	return erc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (erc *EvidenceReceiptCreate) SetUpdatedAt(t time.Time) *EvidenceReceiptCreate {
-	erc.mutation.SetUpdatedAt(t)
-	return erc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (erc *EvidenceReceiptCreate) SetNillableUpdatedAt(t *time.Time) *EvidenceReceiptCreate {
-	if t != nil {
-		erc.SetUpdatedAt(*t)
 	}
 	return erc
 }
@@ -537,110 +127,6 @@ func (erc *EvidenceReceiptCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (erc *EvidenceReceiptCreate) defaults() {
-	if _, ok := erc.mutation.AccountID(); !ok {
-		v := evidencereceipt.DefaultAccountID
-		erc.mutation.SetAccountID(v)
-	}
-	if _, ok := erc.mutation.BalanceCents(); !ok {
-		v := evidencereceipt.DefaultBalanceCents
-		erc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := erc.mutation.FrozenCents(); !ok {
-		v := evidencereceipt.DefaultFrozenCents
-		erc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := erc.mutation.AvailableCents(); !ok {
-		v := evidencereceipt.DefaultAvailableCents
-		erc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := erc.mutation.TotalSpentCents(); !ok {
-		v := evidencereceipt.DefaultTotalSpentCents
-		erc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := erc.mutation.AmountCents(); !ok {
-		v := evidencereceipt.DefaultAmountCents
-		erc.mutation.SetAmountCents(v)
-	}
-	if _, ok := erc.mutation.Currency(); !ok {
-		v := evidencereceipt.DefaultCurrency
-		erc.mutation.SetCurrency(v)
-	}
-	if _, ok := erc.mutation.Direction(); !ok {
-		v := evidencereceipt.DefaultDirection
-		erc.mutation.SetDirection(v)
-	}
-	if _, ok := erc.mutation.Source(); !ok {
-		v := evidencereceipt.DefaultSource
-		erc.mutation.SetSource(v)
-	}
-	if _, ok := erc.mutation.OperatorUserID(); !ok {
-		v := evidencereceipt.DefaultOperatorUserID
-		erc.mutation.SetOperatorUserID(v)
-	}
-	if _, ok := erc.mutation.Reason(); !ok {
-		v := evidencereceipt.DefaultReason
-		erc.mutation.SetReason(v)
-	}
-	if _, ok := erc.mutation.LedgerEntryID(); !ok {
-		v := evidencereceipt.DefaultLedgerEntryID
-		erc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := erc.mutation.WalletTransactionID(); !ok {
-		v := evidencereceipt.DefaultWalletTransactionID
-		erc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := erc.mutation.WorkspaceID(); !ok {
-		v := evidencereceipt.DefaultWorkspaceID
-		erc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := erc.mutation.ResourceType(); !ok {
-		v := evidencereceipt.DefaultResourceType
-		erc.mutation.SetResourceType(v)
-	}
-	if _, ok := erc.mutation.ResourceID(); !ok {
-		v := evidencereceipt.DefaultResourceID
-		erc.mutation.SetResourceID(v)
-	}
-	if _, ok := erc.mutation.HoldID(); !ok {
-		v := evidencereceipt.DefaultHoldID
-		erc.mutation.SetHoldID(v)
-	}
-	if _, ok := erc.mutation.Status(); !ok {
-		v := evidencereceipt.DefaultStatus
-		erc.mutation.SetStatus(v)
-	}
-	if _, ok := erc.mutation.PricingVersion(); !ok {
-		v := evidencereceipt.DefaultPricingVersion
-		erc.mutation.SetPricingVersion(v)
-	}
-	if _, ok := erc.mutation.PriceSnapshotJSON(); !ok {
-		v := evidencereceipt.DefaultPriceSnapshotJSON
-		erc.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := erc.mutation.UsagePeriodStart(); !ok {
-		v := evidencereceipt.DefaultUsagePeriodStart
-		erc.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := erc.mutation.UsagePeriodEnd(); !ok {
-		v := evidencereceipt.DefaultUsagePeriodEnd
-		erc.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := erc.mutation.Quantity(); !ok {
-		v := evidencereceipt.DefaultQuantity
-		erc.mutation.SetQuantity(v)
-	}
-	if _, ok := erc.mutation.Unit(); !ok {
-		v := evidencereceipt.DefaultUnit
-		erc.mutation.SetUnit(v)
-	}
-	if _, ok := erc.mutation.ProviderCostEvidenceRef(); !ok {
-		v := evidencereceipt.DefaultProviderCostEvidenceRef
-		erc.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := erc.mutation.ProviderRequestID(); !ok {
-		v := evidencereceipt.DefaultProviderRequestID
-		erc.mutation.SetProviderRequestID(v)
-	}
 	if _, ok := erc.mutation.RedactedURL(); !ok {
 		v := evidencereceipt.DefaultRedactedURL
 		erc.mutation.SetRedactedURL(v)
@@ -649,111 +135,29 @@ func (erc *EvidenceReceiptCreate) defaults() {
 		v := evidencereceipt.DefaultTokenVersion
 		erc.mutation.SetTokenVersion(v)
 	}
-	if _, ok := erc.mutation.IdempotencyKey(); !ok {
-		v := evidencereceipt.DefaultIdempotencyKey
-		erc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := erc.mutation.RequestHash(); !ok {
-		v := evidencereceipt.DefaultRequestHash
-		erc.mutation.SetRequestHash(v)
-	}
-	if _, ok := erc.mutation.ReportJSON(); !ok {
-		v := evidencereceipt.DefaultReportJSON
-		erc.mutation.SetReportJSON(v)
-	}
-	if _, ok := erc.mutation.BlockNewWorkspaces(); !ok {
-		v := evidencereceipt.DefaultBlockNewWorkspaces
-		erc.mutation.SetBlockNewWorkspaces(v)
-	}
 	if _, ok := erc.mutation.CreatedAt(); !ok {
 		v := evidencereceipt.DefaultCreatedAt()
 		erc.mutation.SetCreatedAt(v)
-	}
-	if _, ok := erc.mutation.UpdatedAt(); !ok {
-		v := evidencereceipt.DefaultUpdatedAt()
-		erc.mutation.SetUpdatedAt(v)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
 func (erc *EvidenceReceiptCreate) check() error {
-	if _, ok := erc.mutation.AccountID(); !ok {
-		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "EvidenceReceipt.account_id"`)}
-	}
-	if _, ok := erc.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "EvidenceReceipt.balance_cents"`)}
-	}
-	if _, ok := erc.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "EvidenceReceipt.frozen_cents"`)}
-	}
-	if _, ok := erc.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "EvidenceReceipt.available_cents"`)}
-	}
-	if _, ok := erc.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "EvidenceReceipt.total_spent_cents"`)}
-	}
-	if _, ok := erc.mutation.AmountCents(); !ok {
-		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "EvidenceReceipt.amount_cents"`)}
-	}
-	if _, ok := erc.mutation.Currency(); !ok {
-		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "EvidenceReceipt.currency"`)}
-	}
-	if _, ok := erc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "EvidenceReceipt.direction"`)}
-	}
-	if _, ok := erc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "EvidenceReceipt.source"`)}
-	}
-	if _, ok := erc.mutation.OperatorUserID(); !ok {
-		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "EvidenceReceipt.operator_user_id"`)}
-	}
-	if _, ok := erc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "EvidenceReceipt.reason"`)}
-	}
-	if _, ok := erc.mutation.LedgerEntryID(); !ok {
-		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "EvidenceReceipt.ledger_entry_id"`)}
-	}
-	if _, ok := erc.mutation.WalletTransactionID(); !ok {
-		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "EvidenceReceipt.wallet_transaction_id"`)}
-	}
 	if _, ok := erc.mutation.WorkspaceID(); !ok {
 		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "EvidenceReceipt.workspace_id"`)}
 	}
-	if _, ok := erc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "EvidenceReceipt.resource_type"`)}
-	}
-	if _, ok := erc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "EvidenceReceipt.resource_id"`)}
-	}
-	if _, ok := erc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "EvidenceReceipt.hold_id"`)}
-	}
-	if _, ok := erc.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "EvidenceReceipt.status"`)}
-	}
-	if _, ok := erc.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "EvidenceReceipt.pricing_version"`)}
-	}
-	if _, ok := erc.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "EvidenceReceipt.price_snapshot_json"`)}
-	}
-	if _, ok := erc.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "EvidenceReceipt.usage_period_start"`)}
-	}
-	if _, ok := erc.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "EvidenceReceipt.usage_period_end"`)}
-	}
-	if _, ok := erc.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "EvidenceReceipt.quantity"`)}
-	}
-	if _, ok := erc.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "EvidenceReceipt.unit"`)}
-	}
-	if _, ok := erc.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "EvidenceReceipt.provider_cost_evidence_ref"`)}
+	if v, ok := erc.mutation.WorkspaceID(); ok {
+		if err := evidencereceipt.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.workspace_id": %w`, err)}
+		}
 	}
 	if _, ok := erc.mutation.ProviderRequestID(); !ok {
 		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "EvidenceReceipt.provider_request_id"`)}
+	}
+	if v, ok := erc.mutation.ProviderRequestID(); ok {
+		if err := evidencereceipt.ProviderRequestIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_request_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.provider_request_id": %w`, err)}
+		}
 	}
 	if _, ok := erc.mutation.RedactedURL(); !ok {
 		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "EvidenceReceipt.redacted_url"`)}
@@ -764,20 +168,21 @@ func (erc *EvidenceReceiptCreate) check() error {
 	if _, ok := erc.mutation.IdempotencyKey(); !ok {
 		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "EvidenceReceipt.idempotency_key"`)}
 	}
+	if v, ok := erc.mutation.IdempotencyKey(); ok {
+		if err := evidencereceipt.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.idempotency_key": %w`, err)}
+		}
+	}
 	if _, ok := erc.mutation.RequestHash(); !ok {
 		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "EvidenceReceipt.request_hash"`)}
 	}
-	if _, ok := erc.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "EvidenceReceipt.report_json"`)}
-	}
-	if _, ok := erc.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "EvidenceReceipt.block_new_workspaces"`)}
+	if v, ok := erc.mutation.RequestHash(); ok {
+		if err := evidencereceipt.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.request_hash": %w`, err)}
+		}
 	}
 	if _, ok := erc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "EvidenceReceipt.created_at"`)}
-	}
-	if _, ok := erc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "EvidenceReceipt.updated_at"`)}
 	}
 	if v, ok := erc.mutation.ID(); ok {
 		if err := evidencereceipt.IDValidator(v); err != nil {
@@ -819,105 +224,9 @@ func (erc *EvidenceReceiptCreate) createSpec() (*EvidenceReceipt, *sqlgraph.Crea
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := erc.mutation.AccountID(); ok {
-		_spec.SetField(evidencereceipt.FieldAccountID, field.TypeString, value)
-		_node.AccountID = value
-	}
-	if value, ok := erc.mutation.BalanceCents(); ok {
-		_spec.SetField(evidencereceipt.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := erc.mutation.FrozenCents(); ok {
-		_spec.SetField(evidencereceipt.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := erc.mutation.AvailableCents(); ok {
-		_spec.SetField(evidencereceipt.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := erc.mutation.TotalSpentCents(); ok {
-		_spec.SetField(evidencereceipt.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
-	if value, ok := erc.mutation.AmountCents(); ok {
-		_spec.SetField(evidencereceipt.FieldAmountCents, field.TypeInt64, value)
-		_node.AmountCents = value
-	}
-	if value, ok := erc.mutation.Currency(); ok {
-		_spec.SetField(evidencereceipt.FieldCurrency, field.TypeString, value)
-		_node.Currency = value
-	}
-	if value, ok := erc.mutation.Direction(); ok {
-		_spec.SetField(evidencereceipt.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := erc.mutation.Source(); ok {
-		_spec.SetField(evidencereceipt.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
-	if value, ok := erc.mutation.OperatorUserID(); ok {
-		_spec.SetField(evidencereceipt.FieldOperatorUserID, field.TypeString, value)
-		_node.OperatorUserID = value
-	}
-	if value, ok := erc.mutation.Reason(); ok {
-		_spec.SetField(evidencereceipt.FieldReason, field.TypeString, value)
-		_node.Reason = value
-	}
-	if value, ok := erc.mutation.LedgerEntryID(); ok {
-		_spec.SetField(evidencereceipt.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := erc.mutation.WalletTransactionID(); ok {
-		_spec.SetField(evidencereceipt.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
 	if value, ok := erc.mutation.WorkspaceID(); ok {
 		_spec.SetField(evidencereceipt.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
-	}
-	if value, ok := erc.mutation.ResourceType(); ok {
-		_spec.SetField(evidencereceipt.FieldResourceType, field.TypeString, value)
-		_node.ResourceType = value
-	}
-	if value, ok := erc.mutation.ResourceID(); ok {
-		_spec.SetField(evidencereceipt.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := erc.mutation.HoldID(); ok {
-		_spec.SetField(evidencereceipt.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
-	}
-	if value, ok := erc.mutation.Status(); ok {
-		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
-		_node.Status = value
-	}
-	if value, ok := erc.mutation.PricingVersion(); ok {
-		_spec.SetField(evidencereceipt.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
-	}
-	if value, ok := erc.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(evidencereceipt.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := erc.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(evidencereceipt.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := erc.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(evidencereceipt.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := erc.mutation.Quantity(); ok {
-		_spec.SetField(evidencereceipt.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := erc.mutation.Unit(); ok {
-		_spec.SetField(evidencereceipt.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := erc.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(evidencereceipt.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
 	}
 	if value, ok := erc.mutation.ProviderRequestID(); ok {
 		_spec.SetField(evidencereceipt.FieldProviderRequestID, field.TypeString, value)
@@ -939,21 +248,9 @@ func (erc *EvidenceReceiptCreate) createSpec() (*EvidenceReceipt, *sqlgraph.Crea
 		_spec.SetField(evidencereceipt.FieldRequestHash, field.TypeString, value)
 		_node.RequestHash = value
 	}
-	if value, ok := erc.mutation.ReportJSON(); ok {
-		_spec.SetField(evidencereceipt.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := erc.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(evidencereceipt.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
-	}
 	if value, ok := erc.mutation.CreatedAt(); ok {
 		_spec.SetField(evidencereceipt.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := erc.mutation.UpdatedAt(); ok {
-		_spec.SetField(evidencereceipt.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

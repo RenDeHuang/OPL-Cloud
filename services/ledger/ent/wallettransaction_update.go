@@ -42,6 +42,41 @@ func (wtu *WalletTransactionUpdate) SetNillableAccountID(s *string) *WalletTrans
 	return wtu
 }
 
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (wtu *WalletTransactionUpdate) SetLedgerEntryID(s string) *WalletTransactionUpdate {
+	wtu.mutation.SetLedgerEntryID(s)
+	return wtu
+}
+
+// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
+func (wtu *WalletTransactionUpdate) SetNillableLedgerEntryID(s *string) *WalletTransactionUpdate {
+	if s != nil {
+		wtu.SetLedgerEntryID(*s)
+	}
+	return wtu
+}
+
+// SetAmountCents sets the "amount_cents" field.
+func (wtu *WalletTransactionUpdate) SetAmountCents(i int64) *WalletTransactionUpdate {
+	wtu.mutation.ResetAmountCents()
+	wtu.mutation.SetAmountCents(i)
+	return wtu
+}
+
+// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
+func (wtu *WalletTransactionUpdate) SetNillableAmountCents(i *int64) *WalletTransactionUpdate {
+	if i != nil {
+		wtu.SetAmountCents(*i)
+	}
+	return wtu
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (wtu *WalletTransactionUpdate) AddAmountCents(i int64) *WalletTransactionUpdate {
+	wtu.mutation.AddAmountCents(i)
+	return wtu
+}
+
 // SetBalanceCents sets the "balance_cents" field.
 func (wtu *WalletTransactionUpdate) SetBalanceCents(i int64) *WalletTransactionUpdate {
 	wtu.mutation.ResetBalanceCents()
@@ -126,27 +161,6 @@ func (wtu *WalletTransactionUpdate) AddTotalSpentCents(i int64) *WalletTransacti
 	return wtu
 }
 
-// SetAmountCents sets the "amount_cents" field.
-func (wtu *WalletTransactionUpdate) SetAmountCents(i int64) *WalletTransactionUpdate {
-	wtu.mutation.ResetAmountCents()
-	wtu.mutation.SetAmountCents(i)
-	return wtu
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableAmountCents(i *int64) *WalletTransactionUpdate {
-	if i != nil {
-		wtu.SetAmountCents(*i)
-	}
-	return wtu
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (wtu *WalletTransactionUpdate) AddAmountCents(i int64) *WalletTransactionUpdate {
-	wtu.mutation.AddAmountCents(i)
-	return wtu
-}
-
 // SetCurrency sets the "currency" field.
 func (wtu *WalletTransactionUpdate) SetCurrency(s string) *WalletTransactionUpdate {
 	wtu.mutation.SetCurrency(s)
@@ -157,363 +171,6 @@ func (wtu *WalletTransactionUpdate) SetCurrency(s string) *WalletTransactionUpda
 func (wtu *WalletTransactionUpdate) SetNillableCurrency(s *string) *WalletTransactionUpdate {
 	if s != nil {
 		wtu.SetCurrency(*s)
-	}
-	return wtu
-}
-
-// SetDirection sets the "direction" field.
-func (wtu *WalletTransactionUpdate) SetDirection(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetDirection(s)
-	return wtu
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableDirection(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetDirection(*s)
-	}
-	return wtu
-}
-
-// SetSource sets the "source" field.
-func (wtu *WalletTransactionUpdate) SetSource(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetSource(s)
-	return wtu
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableSource(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetSource(*s)
-	}
-	return wtu
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (wtu *WalletTransactionUpdate) SetOperatorUserID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetOperatorUserID(s)
-	return wtu
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableOperatorUserID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetOperatorUserID(*s)
-	}
-	return wtu
-}
-
-// SetReason sets the "reason" field.
-func (wtu *WalletTransactionUpdate) SetReason(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetReason(s)
-	return wtu
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableReason(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetReason(*s)
-	}
-	return wtu
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (wtu *WalletTransactionUpdate) SetLedgerEntryID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetLedgerEntryID(s)
-	return wtu
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableLedgerEntryID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetLedgerEntryID(*s)
-	}
-	return wtu
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (wtu *WalletTransactionUpdate) SetWalletTransactionID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetWalletTransactionID(s)
-	return wtu
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableWalletTransactionID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetWalletTransactionID(*s)
-	}
-	return wtu
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (wtu *WalletTransactionUpdate) SetWorkspaceID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetWorkspaceID(s)
-	return wtu
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableWorkspaceID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetWorkspaceID(*s)
-	}
-	return wtu
-}
-
-// SetResourceType sets the "resource_type" field.
-func (wtu *WalletTransactionUpdate) SetResourceType(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetResourceType(s)
-	return wtu
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableResourceType(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetResourceType(*s)
-	}
-	return wtu
-}
-
-// SetResourceID sets the "resource_id" field.
-func (wtu *WalletTransactionUpdate) SetResourceID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetResourceID(s)
-	return wtu
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableResourceID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetResourceID(*s)
-	}
-	return wtu
-}
-
-// SetHoldID sets the "hold_id" field.
-func (wtu *WalletTransactionUpdate) SetHoldID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetHoldID(s)
-	return wtu
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableHoldID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetHoldID(*s)
-	}
-	return wtu
-}
-
-// SetStatus sets the "status" field.
-func (wtu *WalletTransactionUpdate) SetStatus(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetStatus(s)
-	return wtu
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableStatus(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetStatus(*s)
-	}
-	return wtu
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (wtu *WalletTransactionUpdate) SetPricingVersion(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetPricingVersion(s)
-	return wtu
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillablePricingVersion(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetPricingVersion(*s)
-	}
-	return wtu
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (wtu *WalletTransactionUpdate) SetPriceSnapshotJSON(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetPriceSnapshotJSON(s)
-	return wtu
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillablePriceSnapshotJSON(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetPriceSnapshotJSON(*s)
-	}
-	return wtu
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (wtu *WalletTransactionUpdate) SetUsagePeriodStart(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetUsagePeriodStart(s)
-	return wtu
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableUsagePeriodStart(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetUsagePeriodStart(*s)
-	}
-	return wtu
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (wtu *WalletTransactionUpdate) SetUsagePeriodEnd(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetUsagePeriodEnd(s)
-	return wtu
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableUsagePeriodEnd(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetUsagePeriodEnd(*s)
-	}
-	return wtu
-}
-
-// SetQuantity sets the "quantity" field.
-func (wtu *WalletTransactionUpdate) SetQuantity(f float64) *WalletTransactionUpdate {
-	wtu.mutation.ResetQuantity()
-	wtu.mutation.SetQuantity(f)
-	return wtu
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableQuantity(f *float64) *WalletTransactionUpdate {
-	if f != nil {
-		wtu.SetQuantity(*f)
-	}
-	return wtu
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (wtu *WalletTransactionUpdate) AddQuantity(f float64) *WalletTransactionUpdate {
-	wtu.mutation.AddQuantity(f)
-	return wtu
-}
-
-// SetUnit sets the "unit" field.
-func (wtu *WalletTransactionUpdate) SetUnit(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetUnit(s)
-	return wtu
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableUnit(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetUnit(*s)
-	}
-	return wtu
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (wtu *WalletTransactionUpdate) SetProviderCostEvidenceRef(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetProviderCostEvidenceRef(s)
-	return wtu
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableProviderCostEvidenceRef(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetProviderCostEvidenceRef(*s)
-	}
-	return wtu
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (wtu *WalletTransactionUpdate) SetProviderRequestID(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetProviderRequestID(s)
-	return wtu
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableProviderRequestID(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetProviderRequestID(*s)
-	}
-	return wtu
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (wtu *WalletTransactionUpdate) SetRedactedURL(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetRedactedURL(s)
-	return wtu
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableRedactedURL(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetRedactedURL(*s)
-	}
-	return wtu
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (wtu *WalletTransactionUpdate) SetTokenVersion(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetTokenVersion(s)
-	return wtu
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableTokenVersion(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetTokenVersion(*s)
-	}
-	return wtu
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (wtu *WalletTransactionUpdate) SetIdempotencyKey(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetIdempotencyKey(s)
-	return wtu
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableIdempotencyKey(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetIdempotencyKey(*s)
-	}
-	return wtu
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (wtu *WalletTransactionUpdate) SetRequestHash(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetRequestHash(s)
-	return wtu
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableRequestHash(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetRequestHash(*s)
-	}
-	return wtu
-}
-
-// SetReportJSON sets the "report_json" field.
-func (wtu *WalletTransactionUpdate) SetReportJSON(s string) *WalletTransactionUpdate {
-	wtu.mutation.SetReportJSON(s)
-	return wtu
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableReportJSON(s *string) *WalletTransactionUpdate {
-	if s != nil {
-		wtu.SetReportJSON(*s)
-	}
-	return wtu
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (wtu *WalletTransactionUpdate) SetBlockNewWorkspaces(b bool) *WalletTransactionUpdate {
-	wtu.mutation.SetBlockNewWorkspaces(b)
-	return wtu
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (wtu *WalletTransactionUpdate) SetNillableBlockNewWorkspaces(b *bool) *WalletTransactionUpdate {
-	if b != nil {
-		wtu.SetBlockNewWorkspaces(*b)
 	}
 	return wtu
 }
@@ -532,12 +189,6 @@ func (wtu *WalletTransactionUpdate) SetNillableCreatedAt(t *time.Time) *WalletTr
 	return wtu
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (wtu *WalletTransactionUpdate) SetUpdatedAt(t time.Time) *WalletTransactionUpdate {
-	wtu.mutation.SetUpdatedAt(t)
-	return wtu
-}
-
 // Mutation returns the WalletTransactionMutation object of the builder.
 func (wtu *WalletTransactionUpdate) Mutation() *WalletTransactionMutation {
 	return wtu.mutation
@@ -545,7 +196,6 @@ func (wtu *WalletTransactionUpdate) Mutation() *WalletTransactionMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (wtu *WalletTransactionUpdate) Save(ctx context.Context) (int, error) {
-	wtu.defaults()
 	return withHooks(ctx, wtu.sqlSave, wtu.mutation, wtu.hooks)
 }
 
@@ -571,15 +221,25 @@ func (wtu *WalletTransactionUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (wtu *WalletTransactionUpdate) defaults() {
-	if _, ok := wtu.mutation.UpdatedAt(); !ok {
-		v := wallettransaction.UpdateDefaultUpdatedAt()
-		wtu.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (wtu *WalletTransactionUpdate) check() error {
+	if v, ok := wtu.mutation.AccountID(); ok {
+		if err := wallettransaction.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "WalletTransaction.account_id": %w`, err)}
+		}
 	}
+	if v, ok := wtu.mutation.LedgerEntryID(); ok {
+		if err := wallettransaction.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "WalletTransaction.ledger_entry_id": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (wtu *WalletTransactionUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := wtu.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(wallettransaction.Table, wallettransaction.Columns, sqlgraph.NewFieldSpec(wallettransaction.FieldID, field.TypeString))
 	if ps := wtu.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -590,6 +250,15 @@ func (wtu *WalletTransactionUpdate) sqlSave(ctx context.Context) (n int, err err
 	}
 	if value, ok := wtu.mutation.AccountID(); ok {
 		_spec.SetField(wallettransaction.FieldAccountID, field.TypeString, value)
+	}
+	if value, ok := wtu.mutation.LedgerEntryID(); ok {
+		_spec.SetField(wallettransaction.FieldLedgerEntryID, field.TypeString, value)
+	}
+	if value, ok := wtu.mutation.AmountCents(); ok {
+		_spec.SetField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := wtu.mutation.AddedAmountCents(); ok {
+		_spec.AddField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
 	}
 	if value, ok := wtu.mutation.BalanceCents(); ok {
 		_spec.SetField(wallettransaction.FieldBalanceCents, field.TypeInt64, value)
@@ -615,98 +284,11 @@ func (wtu *WalletTransactionUpdate) sqlSave(ctx context.Context) (n int, err err
 	if value, ok := wtu.mutation.AddedTotalSpentCents(); ok {
 		_spec.AddField(wallettransaction.FieldTotalSpentCents, field.TypeInt64, value)
 	}
-	if value, ok := wtu.mutation.AmountCents(); ok {
-		_spec.SetField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := wtu.mutation.AddedAmountCents(); ok {
-		_spec.AddField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
-	}
 	if value, ok := wtu.mutation.Currency(); ok {
 		_spec.SetField(wallettransaction.FieldCurrency, field.TypeString, value)
 	}
-	if value, ok := wtu.mutation.Direction(); ok {
-		_spec.SetField(wallettransaction.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.Source(); ok {
-		_spec.SetField(wallettransaction.FieldSource, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.OperatorUserID(); ok {
-		_spec.SetField(wallettransaction.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.Reason(); ok {
-		_spec.SetField(wallettransaction.FieldReason, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.LedgerEntryID(); ok {
-		_spec.SetField(wallettransaction.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.WalletTransactionID(); ok {
-		_spec.SetField(wallettransaction.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.WorkspaceID(); ok {
-		_spec.SetField(wallettransaction.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.ResourceType(); ok {
-		_spec.SetField(wallettransaction.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.ResourceID(); ok {
-		_spec.SetField(wallettransaction.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.HoldID(); ok {
-		_spec.SetField(wallettransaction.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.Status(); ok {
-		_spec.SetField(wallettransaction.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.PricingVersion(); ok {
-		_spec.SetField(wallettransaction.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(wallettransaction.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(wallettransaction.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(wallettransaction.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.Quantity(); ok {
-		_spec.SetField(wallettransaction.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := wtu.mutation.AddedQuantity(); ok {
-		_spec.AddField(wallettransaction.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := wtu.mutation.Unit(); ok {
-		_spec.SetField(wallettransaction.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(wallettransaction.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.ProviderRequestID(); ok {
-		_spec.SetField(wallettransaction.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.RedactedURL(); ok {
-		_spec.SetField(wallettransaction.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.TokenVersion(); ok {
-		_spec.SetField(wallettransaction.FieldTokenVersion, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.IdempotencyKey(); ok {
-		_spec.SetField(wallettransaction.FieldIdempotencyKey, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.RequestHash(); ok {
-		_spec.SetField(wallettransaction.FieldRequestHash, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.ReportJSON(); ok {
-		_spec.SetField(wallettransaction.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := wtu.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(wallettransaction.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := wtu.mutation.CreatedAt(); ok {
 		_spec.SetField(wallettransaction.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := wtu.mutation.UpdatedAt(); ok {
-		_spec.SetField(wallettransaction.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, wtu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -739,6 +321,41 @@ func (wtuo *WalletTransactionUpdateOne) SetNillableAccountID(s *string) *WalletT
 	if s != nil {
 		wtuo.SetAccountID(*s)
 	}
+	return wtuo
+}
+
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (wtuo *WalletTransactionUpdateOne) SetLedgerEntryID(s string) *WalletTransactionUpdateOne {
+	wtuo.mutation.SetLedgerEntryID(s)
+	return wtuo
+}
+
+// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
+func (wtuo *WalletTransactionUpdateOne) SetNillableLedgerEntryID(s *string) *WalletTransactionUpdateOne {
+	if s != nil {
+		wtuo.SetLedgerEntryID(*s)
+	}
+	return wtuo
+}
+
+// SetAmountCents sets the "amount_cents" field.
+func (wtuo *WalletTransactionUpdateOne) SetAmountCents(i int64) *WalletTransactionUpdateOne {
+	wtuo.mutation.ResetAmountCents()
+	wtuo.mutation.SetAmountCents(i)
+	return wtuo
+}
+
+// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
+func (wtuo *WalletTransactionUpdateOne) SetNillableAmountCents(i *int64) *WalletTransactionUpdateOne {
+	if i != nil {
+		wtuo.SetAmountCents(*i)
+	}
+	return wtuo
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (wtuo *WalletTransactionUpdateOne) AddAmountCents(i int64) *WalletTransactionUpdateOne {
+	wtuo.mutation.AddAmountCents(i)
 	return wtuo
 }
 
@@ -826,27 +443,6 @@ func (wtuo *WalletTransactionUpdateOne) AddTotalSpentCents(i int64) *WalletTrans
 	return wtuo
 }
 
-// SetAmountCents sets the "amount_cents" field.
-func (wtuo *WalletTransactionUpdateOne) SetAmountCents(i int64) *WalletTransactionUpdateOne {
-	wtuo.mutation.ResetAmountCents()
-	wtuo.mutation.SetAmountCents(i)
-	return wtuo
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableAmountCents(i *int64) *WalletTransactionUpdateOne {
-	if i != nil {
-		wtuo.SetAmountCents(*i)
-	}
-	return wtuo
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (wtuo *WalletTransactionUpdateOne) AddAmountCents(i int64) *WalletTransactionUpdateOne {
-	wtuo.mutation.AddAmountCents(i)
-	return wtuo
-}
-
 // SetCurrency sets the "currency" field.
 func (wtuo *WalletTransactionUpdateOne) SetCurrency(s string) *WalletTransactionUpdateOne {
 	wtuo.mutation.SetCurrency(s)
@@ -857,363 +453,6 @@ func (wtuo *WalletTransactionUpdateOne) SetCurrency(s string) *WalletTransaction
 func (wtuo *WalletTransactionUpdateOne) SetNillableCurrency(s *string) *WalletTransactionUpdateOne {
 	if s != nil {
 		wtuo.SetCurrency(*s)
-	}
-	return wtuo
-}
-
-// SetDirection sets the "direction" field.
-func (wtuo *WalletTransactionUpdateOne) SetDirection(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetDirection(s)
-	return wtuo
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableDirection(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetDirection(*s)
-	}
-	return wtuo
-}
-
-// SetSource sets the "source" field.
-func (wtuo *WalletTransactionUpdateOne) SetSource(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetSource(s)
-	return wtuo
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableSource(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetSource(*s)
-	}
-	return wtuo
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetOperatorUserID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetOperatorUserID(s)
-	return wtuo
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableOperatorUserID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetOperatorUserID(*s)
-	}
-	return wtuo
-}
-
-// SetReason sets the "reason" field.
-func (wtuo *WalletTransactionUpdateOne) SetReason(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetReason(s)
-	return wtuo
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableReason(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetReason(*s)
-	}
-	return wtuo
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetLedgerEntryID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetLedgerEntryID(s)
-	return wtuo
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableLedgerEntryID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetLedgerEntryID(*s)
-	}
-	return wtuo
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetWalletTransactionID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetWalletTransactionID(s)
-	return wtuo
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableWalletTransactionID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetWalletTransactionID(*s)
-	}
-	return wtuo
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetWorkspaceID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetWorkspaceID(s)
-	return wtuo
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableWorkspaceID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetWorkspaceID(*s)
-	}
-	return wtuo
-}
-
-// SetResourceType sets the "resource_type" field.
-func (wtuo *WalletTransactionUpdateOne) SetResourceType(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetResourceType(s)
-	return wtuo
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableResourceType(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetResourceType(*s)
-	}
-	return wtuo
-}
-
-// SetResourceID sets the "resource_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetResourceID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetResourceID(s)
-	return wtuo
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableResourceID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetResourceID(*s)
-	}
-	return wtuo
-}
-
-// SetHoldID sets the "hold_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetHoldID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetHoldID(s)
-	return wtuo
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableHoldID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetHoldID(*s)
-	}
-	return wtuo
-}
-
-// SetStatus sets the "status" field.
-func (wtuo *WalletTransactionUpdateOne) SetStatus(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetStatus(s)
-	return wtuo
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableStatus(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetStatus(*s)
-	}
-	return wtuo
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (wtuo *WalletTransactionUpdateOne) SetPricingVersion(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetPricingVersion(s)
-	return wtuo
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillablePricingVersion(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetPricingVersion(*s)
-	}
-	return wtuo
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (wtuo *WalletTransactionUpdateOne) SetPriceSnapshotJSON(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetPriceSnapshotJSON(s)
-	return wtuo
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillablePriceSnapshotJSON(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetPriceSnapshotJSON(*s)
-	}
-	return wtuo
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (wtuo *WalletTransactionUpdateOne) SetUsagePeriodStart(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetUsagePeriodStart(s)
-	return wtuo
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableUsagePeriodStart(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetUsagePeriodStart(*s)
-	}
-	return wtuo
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (wtuo *WalletTransactionUpdateOne) SetUsagePeriodEnd(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetUsagePeriodEnd(s)
-	return wtuo
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableUsagePeriodEnd(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetUsagePeriodEnd(*s)
-	}
-	return wtuo
-}
-
-// SetQuantity sets the "quantity" field.
-func (wtuo *WalletTransactionUpdateOne) SetQuantity(f float64) *WalletTransactionUpdateOne {
-	wtuo.mutation.ResetQuantity()
-	wtuo.mutation.SetQuantity(f)
-	return wtuo
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableQuantity(f *float64) *WalletTransactionUpdateOne {
-	if f != nil {
-		wtuo.SetQuantity(*f)
-	}
-	return wtuo
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (wtuo *WalletTransactionUpdateOne) AddQuantity(f float64) *WalletTransactionUpdateOne {
-	wtuo.mutation.AddQuantity(f)
-	return wtuo
-}
-
-// SetUnit sets the "unit" field.
-func (wtuo *WalletTransactionUpdateOne) SetUnit(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetUnit(s)
-	return wtuo
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableUnit(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetUnit(*s)
-	}
-	return wtuo
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (wtuo *WalletTransactionUpdateOne) SetProviderCostEvidenceRef(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetProviderCostEvidenceRef(s)
-	return wtuo
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableProviderCostEvidenceRef(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetProviderCostEvidenceRef(*s)
-	}
-	return wtuo
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (wtuo *WalletTransactionUpdateOne) SetProviderRequestID(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetProviderRequestID(s)
-	return wtuo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableProviderRequestID(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetProviderRequestID(*s)
-	}
-	return wtuo
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (wtuo *WalletTransactionUpdateOne) SetRedactedURL(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetRedactedURL(s)
-	return wtuo
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableRedactedURL(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetRedactedURL(*s)
-	}
-	return wtuo
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (wtuo *WalletTransactionUpdateOne) SetTokenVersion(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetTokenVersion(s)
-	return wtuo
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableTokenVersion(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetTokenVersion(*s)
-	}
-	return wtuo
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (wtuo *WalletTransactionUpdateOne) SetIdempotencyKey(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetIdempotencyKey(s)
-	return wtuo
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableIdempotencyKey(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetIdempotencyKey(*s)
-	}
-	return wtuo
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (wtuo *WalletTransactionUpdateOne) SetRequestHash(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetRequestHash(s)
-	return wtuo
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableRequestHash(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetRequestHash(*s)
-	}
-	return wtuo
-}
-
-// SetReportJSON sets the "report_json" field.
-func (wtuo *WalletTransactionUpdateOne) SetReportJSON(s string) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetReportJSON(s)
-	return wtuo
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableReportJSON(s *string) *WalletTransactionUpdateOne {
-	if s != nil {
-		wtuo.SetReportJSON(*s)
-	}
-	return wtuo
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (wtuo *WalletTransactionUpdateOne) SetBlockNewWorkspaces(b bool) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetBlockNewWorkspaces(b)
-	return wtuo
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (wtuo *WalletTransactionUpdateOne) SetNillableBlockNewWorkspaces(b *bool) *WalletTransactionUpdateOne {
-	if b != nil {
-		wtuo.SetBlockNewWorkspaces(*b)
 	}
 	return wtuo
 }
@@ -1229,12 +468,6 @@ func (wtuo *WalletTransactionUpdateOne) SetNillableCreatedAt(t *time.Time) *Wall
 	if t != nil {
 		wtuo.SetCreatedAt(*t)
 	}
-	return wtuo
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (wtuo *WalletTransactionUpdateOne) SetUpdatedAt(t time.Time) *WalletTransactionUpdateOne {
-	wtuo.mutation.SetUpdatedAt(t)
 	return wtuo
 }
 
@@ -1258,7 +491,6 @@ func (wtuo *WalletTransactionUpdateOne) Select(field string, fields ...string) *
 
 // Save executes the query and returns the updated WalletTransaction entity.
 func (wtuo *WalletTransactionUpdateOne) Save(ctx context.Context) (*WalletTransaction, error) {
-	wtuo.defaults()
 	return withHooks(ctx, wtuo.sqlSave, wtuo.mutation, wtuo.hooks)
 }
 
@@ -1284,15 +516,25 @@ func (wtuo *WalletTransactionUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (wtuo *WalletTransactionUpdateOne) defaults() {
-	if _, ok := wtuo.mutation.UpdatedAt(); !ok {
-		v := wallettransaction.UpdateDefaultUpdatedAt()
-		wtuo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (wtuo *WalletTransactionUpdateOne) check() error {
+	if v, ok := wtuo.mutation.AccountID(); ok {
+		if err := wallettransaction.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "WalletTransaction.account_id": %w`, err)}
+		}
 	}
+	if v, ok := wtuo.mutation.LedgerEntryID(); ok {
+		if err := wallettransaction.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "WalletTransaction.ledger_entry_id": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (wtuo *WalletTransactionUpdateOne) sqlSave(ctx context.Context) (_node *WalletTransaction, err error) {
+	if err := wtuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(wallettransaction.Table, wallettransaction.Columns, sqlgraph.NewFieldSpec(wallettransaction.FieldID, field.TypeString))
 	id, ok := wtuo.mutation.ID()
 	if !ok {
@@ -1321,6 +563,15 @@ func (wtuo *WalletTransactionUpdateOne) sqlSave(ctx context.Context) (_node *Wal
 	if value, ok := wtuo.mutation.AccountID(); ok {
 		_spec.SetField(wallettransaction.FieldAccountID, field.TypeString, value)
 	}
+	if value, ok := wtuo.mutation.LedgerEntryID(); ok {
+		_spec.SetField(wallettransaction.FieldLedgerEntryID, field.TypeString, value)
+	}
+	if value, ok := wtuo.mutation.AmountCents(); ok {
+		_spec.SetField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := wtuo.mutation.AddedAmountCents(); ok {
+		_spec.AddField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
+	}
 	if value, ok := wtuo.mutation.BalanceCents(); ok {
 		_spec.SetField(wallettransaction.FieldBalanceCents, field.TypeInt64, value)
 	}
@@ -1345,98 +596,11 @@ func (wtuo *WalletTransactionUpdateOne) sqlSave(ctx context.Context) (_node *Wal
 	if value, ok := wtuo.mutation.AddedTotalSpentCents(); ok {
 		_spec.AddField(wallettransaction.FieldTotalSpentCents, field.TypeInt64, value)
 	}
-	if value, ok := wtuo.mutation.AmountCents(); ok {
-		_spec.SetField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := wtuo.mutation.AddedAmountCents(); ok {
-		_spec.AddField(wallettransaction.FieldAmountCents, field.TypeInt64, value)
-	}
 	if value, ok := wtuo.mutation.Currency(); ok {
 		_spec.SetField(wallettransaction.FieldCurrency, field.TypeString, value)
 	}
-	if value, ok := wtuo.mutation.Direction(); ok {
-		_spec.SetField(wallettransaction.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.Source(); ok {
-		_spec.SetField(wallettransaction.FieldSource, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.OperatorUserID(); ok {
-		_spec.SetField(wallettransaction.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.Reason(); ok {
-		_spec.SetField(wallettransaction.FieldReason, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.LedgerEntryID(); ok {
-		_spec.SetField(wallettransaction.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.WalletTransactionID(); ok {
-		_spec.SetField(wallettransaction.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.WorkspaceID(); ok {
-		_spec.SetField(wallettransaction.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.ResourceType(); ok {
-		_spec.SetField(wallettransaction.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.ResourceID(); ok {
-		_spec.SetField(wallettransaction.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.HoldID(); ok {
-		_spec.SetField(wallettransaction.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.Status(); ok {
-		_spec.SetField(wallettransaction.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.PricingVersion(); ok {
-		_spec.SetField(wallettransaction.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(wallettransaction.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(wallettransaction.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(wallettransaction.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.Quantity(); ok {
-		_spec.SetField(wallettransaction.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := wtuo.mutation.AddedQuantity(); ok {
-		_spec.AddField(wallettransaction.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := wtuo.mutation.Unit(); ok {
-		_spec.SetField(wallettransaction.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(wallettransaction.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(wallettransaction.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.RedactedURL(); ok {
-		_spec.SetField(wallettransaction.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.TokenVersion(); ok {
-		_spec.SetField(wallettransaction.FieldTokenVersion, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.IdempotencyKey(); ok {
-		_spec.SetField(wallettransaction.FieldIdempotencyKey, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.RequestHash(); ok {
-		_spec.SetField(wallettransaction.FieldRequestHash, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.ReportJSON(); ok {
-		_spec.SetField(wallettransaction.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := wtuo.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(wallettransaction.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := wtuo.mutation.CreatedAt(); ok {
 		_spec.SetField(wallettransaction.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := wtuo.mutation.UpdatedAt(); ok {
-		_spec.SetField(wallettransaction.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &WalletTransaction{config: wtuo.config}
 	_spec.Assign = _node.assignValues

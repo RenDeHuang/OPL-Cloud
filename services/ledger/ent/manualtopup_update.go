@@ -42,90 +42,6 @@ func (mtu *ManualTopupUpdate) SetNillableAccountID(s *string) *ManualTopupUpdate
 	return mtu
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (mtu *ManualTopupUpdate) SetBalanceCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.ResetBalanceCents()
-	mtu.mutation.SetBalanceCents(i)
-	return mtu
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableBalanceCents(i *int64) *ManualTopupUpdate {
-	if i != nil {
-		mtu.SetBalanceCents(*i)
-	}
-	return mtu
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (mtu *ManualTopupUpdate) AddBalanceCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.AddBalanceCents(i)
-	return mtu
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (mtu *ManualTopupUpdate) SetFrozenCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.ResetFrozenCents()
-	mtu.mutation.SetFrozenCents(i)
-	return mtu
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableFrozenCents(i *int64) *ManualTopupUpdate {
-	if i != nil {
-		mtu.SetFrozenCents(*i)
-	}
-	return mtu
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (mtu *ManualTopupUpdate) AddFrozenCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.AddFrozenCents(i)
-	return mtu
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (mtu *ManualTopupUpdate) SetAvailableCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.ResetAvailableCents()
-	mtu.mutation.SetAvailableCents(i)
-	return mtu
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableAvailableCents(i *int64) *ManualTopupUpdate {
-	if i != nil {
-		mtu.SetAvailableCents(*i)
-	}
-	return mtu
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (mtu *ManualTopupUpdate) AddAvailableCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.AddAvailableCents(i)
-	return mtu
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (mtu *ManualTopupUpdate) SetTotalSpentCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.ResetTotalSpentCents()
-	mtu.mutation.SetTotalSpentCents(i)
-	return mtu
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableTotalSpentCents(i *int64) *ManualTopupUpdate {
-	if i != nil {
-		mtu.SetTotalSpentCents(*i)
-	}
-	return mtu
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (mtu *ManualTopupUpdate) AddTotalSpentCents(i int64) *ManualTopupUpdate {
-	mtu.mutation.AddTotalSpentCents(i)
-	return mtu
-}
-
 // SetAmountCents sets the "amount_cents" field.
 func (mtu *ManualTopupUpdate) SetAmountCents(i int64) *ManualTopupUpdate {
 	mtu.mutation.ResetAmountCents()
@@ -161,34 +77,6 @@ func (mtu *ManualTopupUpdate) SetNillableCurrency(s *string) *ManualTopupUpdate 
 	return mtu
 }
 
-// SetDirection sets the "direction" field.
-func (mtu *ManualTopupUpdate) SetDirection(s string) *ManualTopupUpdate {
-	mtu.mutation.SetDirection(s)
-	return mtu
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableDirection(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetDirection(*s)
-	}
-	return mtu
-}
-
-// SetSource sets the "source" field.
-func (mtu *ManualTopupUpdate) SetSource(s string) *ManualTopupUpdate {
-	mtu.mutation.SetSource(s)
-	return mtu
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableSource(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetSource(*s)
-	}
-	return mtu
-}
-
 // SetOperatorUserID sets the "operator_user_id" field.
 func (mtu *ManualTopupUpdate) SetOperatorUserID(s string) *ManualTopupUpdate {
 	mtu.mutation.SetOperatorUserID(s)
@@ -199,20 +87,6 @@ func (mtu *ManualTopupUpdate) SetOperatorUserID(s string) *ManualTopupUpdate {
 func (mtu *ManualTopupUpdate) SetNillableOperatorUserID(s *string) *ManualTopupUpdate {
 	if s != nil {
 		mtu.SetOperatorUserID(*s)
-	}
-	return mtu
-}
-
-// SetReason sets the "reason" field.
-func (mtu *ManualTopupUpdate) SetReason(s string) *ManualTopupUpdate {
-	mtu.mutation.SetReason(s)
-	return mtu
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableReason(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetReason(*s)
 	}
 	return mtu
 }
@@ -245,223 +119,6 @@ func (mtu *ManualTopupUpdate) SetNillableWalletTransactionID(s *string) *ManualT
 	return mtu
 }
 
-// SetWorkspaceID sets the "workspace_id" field.
-func (mtu *ManualTopupUpdate) SetWorkspaceID(s string) *ManualTopupUpdate {
-	mtu.mutation.SetWorkspaceID(s)
-	return mtu
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableWorkspaceID(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetWorkspaceID(*s)
-	}
-	return mtu
-}
-
-// SetResourceType sets the "resource_type" field.
-func (mtu *ManualTopupUpdate) SetResourceType(s string) *ManualTopupUpdate {
-	mtu.mutation.SetResourceType(s)
-	return mtu
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableResourceType(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetResourceType(*s)
-	}
-	return mtu
-}
-
-// SetResourceID sets the "resource_id" field.
-func (mtu *ManualTopupUpdate) SetResourceID(s string) *ManualTopupUpdate {
-	mtu.mutation.SetResourceID(s)
-	return mtu
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableResourceID(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetResourceID(*s)
-	}
-	return mtu
-}
-
-// SetHoldID sets the "hold_id" field.
-func (mtu *ManualTopupUpdate) SetHoldID(s string) *ManualTopupUpdate {
-	mtu.mutation.SetHoldID(s)
-	return mtu
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableHoldID(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetHoldID(*s)
-	}
-	return mtu
-}
-
-// SetStatus sets the "status" field.
-func (mtu *ManualTopupUpdate) SetStatus(s string) *ManualTopupUpdate {
-	mtu.mutation.SetStatus(s)
-	return mtu
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableStatus(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetStatus(*s)
-	}
-	return mtu
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (mtu *ManualTopupUpdate) SetPricingVersion(s string) *ManualTopupUpdate {
-	mtu.mutation.SetPricingVersion(s)
-	return mtu
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillablePricingVersion(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetPricingVersion(*s)
-	}
-	return mtu
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (mtu *ManualTopupUpdate) SetPriceSnapshotJSON(s string) *ManualTopupUpdate {
-	mtu.mutation.SetPriceSnapshotJSON(s)
-	return mtu
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillablePriceSnapshotJSON(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetPriceSnapshotJSON(*s)
-	}
-	return mtu
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (mtu *ManualTopupUpdate) SetUsagePeriodStart(s string) *ManualTopupUpdate {
-	mtu.mutation.SetUsagePeriodStart(s)
-	return mtu
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableUsagePeriodStart(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetUsagePeriodStart(*s)
-	}
-	return mtu
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (mtu *ManualTopupUpdate) SetUsagePeriodEnd(s string) *ManualTopupUpdate {
-	mtu.mutation.SetUsagePeriodEnd(s)
-	return mtu
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableUsagePeriodEnd(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetUsagePeriodEnd(*s)
-	}
-	return mtu
-}
-
-// SetQuantity sets the "quantity" field.
-func (mtu *ManualTopupUpdate) SetQuantity(f float64) *ManualTopupUpdate {
-	mtu.mutation.ResetQuantity()
-	mtu.mutation.SetQuantity(f)
-	return mtu
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableQuantity(f *float64) *ManualTopupUpdate {
-	if f != nil {
-		mtu.SetQuantity(*f)
-	}
-	return mtu
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (mtu *ManualTopupUpdate) AddQuantity(f float64) *ManualTopupUpdate {
-	mtu.mutation.AddQuantity(f)
-	return mtu
-}
-
-// SetUnit sets the "unit" field.
-func (mtu *ManualTopupUpdate) SetUnit(s string) *ManualTopupUpdate {
-	mtu.mutation.SetUnit(s)
-	return mtu
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableUnit(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetUnit(*s)
-	}
-	return mtu
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (mtu *ManualTopupUpdate) SetProviderCostEvidenceRef(s string) *ManualTopupUpdate {
-	mtu.mutation.SetProviderCostEvidenceRef(s)
-	return mtu
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableProviderCostEvidenceRef(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetProviderCostEvidenceRef(*s)
-	}
-	return mtu
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (mtu *ManualTopupUpdate) SetProviderRequestID(s string) *ManualTopupUpdate {
-	mtu.mutation.SetProviderRequestID(s)
-	return mtu
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableProviderRequestID(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetProviderRequestID(*s)
-	}
-	return mtu
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (mtu *ManualTopupUpdate) SetRedactedURL(s string) *ManualTopupUpdate {
-	mtu.mutation.SetRedactedURL(s)
-	return mtu
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableRedactedURL(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetRedactedURL(*s)
-	}
-	return mtu
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (mtu *ManualTopupUpdate) SetTokenVersion(s string) *ManualTopupUpdate {
-	mtu.mutation.SetTokenVersion(s)
-	return mtu
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableTokenVersion(s *string) *ManualTopupUpdate {
-	if s != nil {
-		mtu.SetTokenVersion(*s)
-	}
-	return mtu
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (mtu *ManualTopupUpdate) SetIdempotencyKey(s string) *ManualTopupUpdate {
 	mtu.mutation.SetIdempotencyKey(s)
@@ -490,30 +147,16 @@ func (mtu *ManualTopupUpdate) SetNillableRequestHash(s *string) *ManualTopupUpda
 	return mtu
 }
 
-// SetReportJSON sets the "report_json" field.
-func (mtu *ManualTopupUpdate) SetReportJSON(s string) *ManualTopupUpdate {
-	mtu.mutation.SetReportJSON(s)
+// SetReason sets the "reason" field.
+func (mtu *ManualTopupUpdate) SetReason(s string) *ManualTopupUpdate {
+	mtu.mutation.SetReason(s)
 	return mtu
 }
 
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableReportJSON(s *string) *ManualTopupUpdate {
+// SetNillableReason sets the "reason" field if the given value is not nil.
+func (mtu *ManualTopupUpdate) SetNillableReason(s *string) *ManualTopupUpdate {
 	if s != nil {
-		mtu.SetReportJSON(*s)
-	}
-	return mtu
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (mtu *ManualTopupUpdate) SetBlockNewWorkspaces(b bool) *ManualTopupUpdate {
-	mtu.mutation.SetBlockNewWorkspaces(b)
-	return mtu
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (mtu *ManualTopupUpdate) SetNillableBlockNewWorkspaces(b *bool) *ManualTopupUpdate {
-	if b != nil {
-		mtu.SetBlockNewWorkspaces(*b)
+		mtu.SetReason(*s)
 	}
 	return mtu
 }
@@ -532,12 +175,6 @@ func (mtu *ManualTopupUpdate) SetNillableCreatedAt(t *time.Time) *ManualTopupUpd
 	return mtu
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (mtu *ManualTopupUpdate) SetUpdatedAt(t time.Time) *ManualTopupUpdate {
-	mtu.mutation.SetUpdatedAt(t)
-	return mtu
-}
-
 // Mutation returns the ManualTopupMutation object of the builder.
 func (mtu *ManualTopupUpdate) Mutation() *ManualTopupMutation {
 	return mtu.mutation
@@ -545,7 +182,6 @@ func (mtu *ManualTopupUpdate) Mutation() *ManualTopupMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (mtu *ManualTopupUpdate) Save(ctx context.Context) (int, error) {
-	mtu.defaults()
 	return withHooks(ctx, mtu.sqlSave, mtu.mutation, mtu.hooks)
 }
 
@@ -571,15 +207,40 @@ func (mtu *ManualTopupUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (mtu *ManualTopupUpdate) defaults() {
-	if _, ok := mtu.mutation.UpdatedAt(); !ok {
-		v := manualtopup.UpdateDefaultUpdatedAt()
-		mtu.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (mtu *ManualTopupUpdate) check() error {
+	if v, ok := mtu.mutation.AccountID(); ok {
+		if err := manualtopup.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.account_id": %w`, err)}
+		}
 	}
+	if v, ok := mtu.mutation.LedgerEntryID(); ok {
+		if err := manualtopup.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.ledger_entry_id": %w`, err)}
+		}
+	}
+	if v, ok := mtu.mutation.WalletTransactionID(); ok {
+		if err := manualtopup.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.wallet_transaction_id": %w`, err)}
+		}
+	}
+	if v, ok := mtu.mutation.IdempotencyKey(); ok {
+		if err := manualtopup.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := mtu.mutation.RequestHash(); ok {
+		if err := manualtopup.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (mtu *ManualTopupUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := mtu.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(manualtopup.Table, manualtopup.Columns, sqlgraph.NewFieldSpec(manualtopup.FieldID, field.TypeString))
 	if ps := mtu.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -591,30 +252,6 @@ func (mtu *ManualTopupUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := mtu.mutation.AccountID(); ok {
 		_spec.SetField(manualtopup.FieldAccountID, field.TypeString, value)
 	}
-	if value, ok := mtu.mutation.BalanceCents(); ok {
-		_spec.SetField(manualtopup.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(manualtopup.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.FrozenCents(); ok {
-		_spec.SetField(manualtopup.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(manualtopup.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.AvailableCents(); ok {
-		_spec.SetField(manualtopup.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(manualtopup.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.TotalSpentCents(); ok {
-		_spec.SetField(manualtopup.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := mtu.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(manualtopup.FieldTotalSpentCents, field.TypeInt64, value)
-	}
 	if value, ok := mtu.mutation.AmountCents(); ok {
 		_spec.SetField(manualtopup.FieldAmountCents, field.TypeInt64, value)
 	}
@@ -624,17 +261,8 @@ func (mtu *ManualTopupUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := mtu.mutation.Currency(); ok {
 		_spec.SetField(manualtopup.FieldCurrency, field.TypeString, value)
 	}
-	if value, ok := mtu.mutation.Direction(); ok {
-		_spec.SetField(manualtopup.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.Source(); ok {
-		_spec.SetField(manualtopup.FieldSource, field.TypeString, value)
-	}
 	if value, ok := mtu.mutation.OperatorUserID(); ok {
 		_spec.SetField(manualtopup.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.Reason(); ok {
-		_spec.SetField(manualtopup.FieldReason, field.TypeString, value)
 	}
 	if value, ok := mtu.mutation.LedgerEntryID(); ok {
 		_spec.SetField(manualtopup.FieldLedgerEntryID, field.TypeString, value)
@@ -642,71 +270,17 @@ func (mtu *ManualTopupUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := mtu.mutation.WalletTransactionID(); ok {
 		_spec.SetField(manualtopup.FieldWalletTransactionID, field.TypeString, value)
 	}
-	if value, ok := mtu.mutation.WorkspaceID(); ok {
-		_spec.SetField(manualtopup.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.ResourceType(); ok {
-		_spec.SetField(manualtopup.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.ResourceID(); ok {
-		_spec.SetField(manualtopup.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.HoldID(); ok {
-		_spec.SetField(manualtopup.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.Status(); ok {
-		_spec.SetField(manualtopup.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.PricingVersion(); ok {
-		_spec.SetField(manualtopup.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(manualtopup.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(manualtopup.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(manualtopup.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.Quantity(); ok {
-		_spec.SetField(manualtopup.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := mtu.mutation.AddedQuantity(); ok {
-		_spec.AddField(manualtopup.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := mtu.mutation.Unit(); ok {
-		_spec.SetField(manualtopup.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(manualtopup.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.ProviderRequestID(); ok {
-		_spec.SetField(manualtopup.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.RedactedURL(); ok {
-		_spec.SetField(manualtopup.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.TokenVersion(); ok {
-		_spec.SetField(manualtopup.FieldTokenVersion, field.TypeString, value)
-	}
 	if value, ok := mtu.mutation.IdempotencyKey(); ok {
 		_spec.SetField(manualtopup.FieldIdempotencyKey, field.TypeString, value)
 	}
 	if value, ok := mtu.mutation.RequestHash(); ok {
 		_spec.SetField(manualtopup.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := mtu.mutation.ReportJSON(); ok {
-		_spec.SetField(manualtopup.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := mtu.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(manualtopup.FieldBlockNewWorkspaces, field.TypeBool, value)
+	if value, ok := mtu.mutation.Reason(); ok {
+		_spec.SetField(manualtopup.FieldReason, field.TypeString, value)
 	}
 	if value, ok := mtu.mutation.CreatedAt(); ok {
 		_spec.SetField(manualtopup.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := mtu.mutation.UpdatedAt(); ok {
-		_spec.SetField(manualtopup.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, mtu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -739,90 +313,6 @@ func (mtuo *ManualTopupUpdateOne) SetNillableAccountID(s *string) *ManualTopupUp
 	if s != nil {
 		mtuo.SetAccountID(*s)
 	}
-	return mtuo
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (mtuo *ManualTopupUpdateOne) SetBalanceCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.ResetBalanceCents()
-	mtuo.mutation.SetBalanceCents(i)
-	return mtuo
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableBalanceCents(i *int64) *ManualTopupUpdateOne {
-	if i != nil {
-		mtuo.SetBalanceCents(*i)
-	}
-	return mtuo
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (mtuo *ManualTopupUpdateOne) AddBalanceCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.AddBalanceCents(i)
-	return mtuo
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (mtuo *ManualTopupUpdateOne) SetFrozenCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.ResetFrozenCents()
-	mtuo.mutation.SetFrozenCents(i)
-	return mtuo
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableFrozenCents(i *int64) *ManualTopupUpdateOne {
-	if i != nil {
-		mtuo.SetFrozenCents(*i)
-	}
-	return mtuo
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (mtuo *ManualTopupUpdateOne) AddFrozenCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.AddFrozenCents(i)
-	return mtuo
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (mtuo *ManualTopupUpdateOne) SetAvailableCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.ResetAvailableCents()
-	mtuo.mutation.SetAvailableCents(i)
-	return mtuo
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableAvailableCents(i *int64) *ManualTopupUpdateOne {
-	if i != nil {
-		mtuo.SetAvailableCents(*i)
-	}
-	return mtuo
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (mtuo *ManualTopupUpdateOne) AddAvailableCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.AddAvailableCents(i)
-	return mtuo
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (mtuo *ManualTopupUpdateOne) SetTotalSpentCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.ResetTotalSpentCents()
-	mtuo.mutation.SetTotalSpentCents(i)
-	return mtuo
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableTotalSpentCents(i *int64) *ManualTopupUpdateOne {
-	if i != nil {
-		mtuo.SetTotalSpentCents(*i)
-	}
-	return mtuo
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (mtuo *ManualTopupUpdateOne) AddTotalSpentCents(i int64) *ManualTopupUpdateOne {
-	mtuo.mutation.AddTotalSpentCents(i)
 	return mtuo
 }
 
@@ -861,34 +351,6 @@ func (mtuo *ManualTopupUpdateOne) SetNillableCurrency(s *string) *ManualTopupUpd
 	return mtuo
 }
 
-// SetDirection sets the "direction" field.
-func (mtuo *ManualTopupUpdateOne) SetDirection(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetDirection(s)
-	return mtuo
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableDirection(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetDirection(*s)
-	}
-	return mtuo
-}
-
-// SetSource sets the "source" field.
-func (mtuo *ManualTopupUpdateOne) SetSource(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetSource(s)
-	return mtuo
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableSource(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetSource(*s)
-	}
-	return mtuo
-}
-
 // SetOperatorUserID sets the "operator_user_id" field.
 func (mtuo *ManualTopupUpdateOne) SetOperatorUserID(s string) *ManualTopupUpdateOne {
 	mtuo.mutation.SetOperatorUserID(s)
@@ -899,20 +361,6 @@ func (mtuo *ManualTopupUpdateOne) SetOperatorUserID(s string) *ManualTopupUpdate
 func (mtuo *ManualTopupUpdateOne) SetNillableOperatorUserID(s *string) *ManualTopupUpdateOne {
 	if s != nil {
 		mtuo.SetOperatorUserID(*s)
-	}
-	return mtuo
-}
-
-// SetReason sets the "reason" field.
-func (mtuo *ManualTopupUpdateOne) SetReason(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetReason(s)
-	return mtuo
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableReason(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetReason(*s)
 	}
 	return mtuo
 }
@@ -945,223 +393,6 @@ func (mtuo *ManualTopupUpdateOne) SetNillableWalletTransactionID(s *string) *Man
 	return mtuo
 }
 
-// SetWorkspaceID sets the "workspace_id" field.
-func (mtuo *ManualTopupUpdateOne) SetWorkspaceID(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetWorkspaceID(s)
-	return mtuo
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableWorkspaceID(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetWorkspaceID(*s)
-	}
-	return mtuo
-}
-
-// SetResourceType sets the "resource_type" field.
-func (mtuo *ManualTopupUpdateOne) SetResourceType(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetResourceType(s)
-	return mtuo
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableResourceType(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetResourceType(*s)
-	}
-	return mtuo
-}
-
-// SetResourceID sets the "resource_id" field.
-func (mtuo *ManualTopupUpdateOne) SetResourceID(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetResourceID(s)
-	return mtuo
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableResourceID(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetResourceID(*s)
-	}
-	return mtuo
-}
-
-// SetHoldID sets the "hold_id" field.
-func (mtuo *ManualTopupUpdateOne) SetHoldID(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetHoldID(s)
-	return mtuo
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableHoldID(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetHoldID(*s)
-	}
-	return mtuo
-}
-
-// SetStatus sets the "status" field.
-func (mtuo *ManualTopupUpdateOne) SetStatus(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetStatus(s)
-	return mtuo
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableStatus(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetStatus(*s)
-	}
-	return mtuo
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (mtuo *ManualTopupUpdateOne) SetPricingVersion(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetPricingVersion(s)
-	return mtuo
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillablePricingVersion(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetPricingVersion(*s)
-	}
-	return mtuo
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (mtuo *ManualTopupUpdateOne) SetPriceSnapshotJSON(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetPriceSnapshotJSON(s)
-	return mtuo
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillablePriceSnapshotJSON(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetPriceSnapshotJSON(*s)
-	}
-	return mtuo
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (mtuo *ManualTopupUpdateOne) SetUsagePeriodStart(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetUsagePeriodStart(s)
-	return mtuo
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableUsagePeriodStart(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetUsagePeriodStart(*s)
-	}
-	return mtuo
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (mtuo *ManualTopupUpdateOne) SetUsagePeriodEnd(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetUsagePeriodEnd(s)
-	return mtuo
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableUsagePeriodEnd(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetUsagePeriodEnd(*s)
-	}
-	return mtuo
-}
-
-// SetQuantity sets the "quantity" field.
-func (mtuo *ManualTopupUpdateOne) SetQuantity(f float64) *ManualTopupUpdateOne {
-	mtuo.mutation.ResetQuantity()
-	mtuo.mutation.SetQuantity(f)
-	return mtuo
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableQuantity(f *float64) *ManualTopupUpdateOne {
-	if f != nil {
-		mtuo.SetQuantity(*f)
-	}
-	return mtuo
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (mtuo *ManualTopupUpdateOne) AddQuantity(f float64) *ManualTopupUpdateOne {
-	mtuo.mutation.AddQuantity(f)
-	return mtuo
-}
-
-// SetUnit sets the "unit" field.
-func (mtuo *ManualTopupUpdateOne) SetUnit(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetUnit(s)
-	return mtuo
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableUnit(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetUnit(*s)
-	}
-	return mtuo
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (mtuo *ManualTopupUpdateOne) SetProviderCostEvidenceRef(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetProviderCostEvidenceRef(s)
-	return mtuo
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableProviderCostEvidenceRef(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetProviderCostEvidenceRef(*s)
-	}
-	return mtuo
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (mtuo *ManualTopupUpdateOne) SetProviderRequestID(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetProviderRequestID(s)
-	return mtuo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableProviderRequestID(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetProviderRequestID(*s)
-	}
-	return mtuo
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (mtuo *ManualTopupUpdateOne) SetRedactedURL(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetRedactedURL(s)
-	return mtuo
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableRedactedURL(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetRedactedURL(*s)
-	}
-	return mtuo
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (mtuo *ManualTopupUpdateOne) SetTokenVersion(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetTokenVersion(s)
-	return mtuo
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableTokenVersion(s *string) *ManualTopupUpdateOne {
-	if s != nil {
-		mtuo.SetTokenVersion(*s)
-	}
-	return mtuo
-}
-
 // SetIdempotencyKey sets the "idempotency_key" field.
 func (mtuo *ManualTopupUpdateOne) SetIdempotencyKey(s string) *ManualTopupUpdateOne {
 	mtuo.mutation.SetIdempotencyKey(s)
@@ -1190,30 +421,16 @@ func (mtuo *ManualTopupUpdateOne) SetNillableRequestHash(s *string) *ManualTopup
 	return mtuo
 }
 
-// SetReportJSON sets the "report_json" field.
-func (mtuo *ManualTopupUpdateOne) SetReportJSON(s string) *ManualTopupUpdateOne {
-	mtuo.mutation.SetReportJSON(s)
+// SetReason sets the "reason" field.
+func (mtuo *ManualTopupUpdateOne) SetReason(s string) *ManualTopupUpdateOne {
+	mtuo.mutation.SetReason(s)
 	return mtuo
 }
 
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableReportJSON(s *string) *ManualTopupUpdateOne {
+// SetNillableReason sets the "reason" field if the given value is not nil.
+func (mtuo *ManualTopupUpdateOne) SetNillableReason(s *string) *ManualTopupUpdateOne {
 	if s != nil {
-		mtuo.SetReportJSON(*s)
-	}
-	return mtuo
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (mtuo *ManualTopupUpdateOne) SetBlockNewWorkspaces(b bool) *ManualTopupUpdateOne {
-	mtuo.mutation.SetBlockNewWorkspaces(b)
-	return mtuo
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (mtuo *ManualTopupUpdateOne) SetNillableBlockNewWorkspaces(b *bool) *ManualTopupUpdateOne {
-	if b != nil {
-		mtuo.SetBlockNewWorkspaces(*b)
+		mtuo.SetReason(*s)
 	}
 	return mtuo
 }
@@ -1229,12 +446,6 @@ func (mtuo *ManualTopupUpdateOne) SetNillableCreatedAt(t *time.Time) *ManualTopu
 	if t != nil {
 		mtuo.SetCreatedAt(*t)
 	}
-	return mtuo
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (mtuo *ManualTopupUpdateOne) SetUpdatedAt(t time.Time) *ManualTopupUpdateOne {
-	mtuo.mutation.SetUpdatedAt(t)
 	return mtuo
 }
 
@@ -1258,7 +469,6 @@ func (mtuo *ManualTopupUpdateOne) Select(field string, fields ...string) *Manual
 
 // Save executes the query and returns the updated ManualTopup entity.
 func (mtuo *ManualTopupUpdateOne) Save(ctx context.Context) (*ManualTopup, error) {
-	mtuo.defaults()
 	return withHooks(ctx, mtuo.sqlSave, mtuo.mutation, mtuo.hooks)
 }
 
@@ -1284,15 +494,40 @@ func (mtuo *ManualTopupUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (mtuo *ManualTopupUpdateOne) defaults() {
-	if _, ok := mtuo.mutation.UpdatedAt(); !ok {
-		v := manualtopup.UpdateDefaultUpdatedAt()
-		mtuo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (mtuo *ManualTopupUpdateOne) check() error {
+	if v, ok := mtuo.mutation.AccountID(); ok {
+		if err := manualtopup.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.account_id": %w`, err)}
+		}
 	}
+	if v, ok := mtuo.mutation.LedgerEntryID(); ok {
+		if err := manualtopup.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.ledger_entry_id": %w`, err)}
+		}
+	}
+	if v, ok := mtuo.mutation.WalletTransactionID(); ok {
+		if err := manualtopup.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.wallet_transaction_id": %w`, err)}
+		}
+	}
+	if v, ok := mtuo.mutation.IdempotencyKey(); ok {
+		if err := manualtopup.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := mtuo.mutation.RequestHash(); ok {
+		if err := manualtopup.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (mtuo *ManualTopupUpdateOne) sqlSave(ctx context.Context) (_node *ManualTopup, err error) {
+	if err := mtuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(manualtopup.Table, manualtopup.Columns, sqlgraph.NewFieldSpec(manualtopup.FieldID, field.TypeString))
 	id, ok := mtuo.mutation.ID()
 	if !ok {
@@ -1321,30 +556,6 @@ func (mtuo *ManualTopupUpdateOne) sqlSave(ctx context.Context) (_node *ManualTop
 	if value, ok := mtuo.mutation.AccountID(); ok {
 		_spec.SetField(manualtopup.FieldAccountID, field.TypeString, value)
 	}
-	if value, ok := mtuo.mutation.BalanceCents(); ok {
-		_spec.SetField(manualtopup.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(manualtopup.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.FrozenCents(); ok {
-		_spec.SetField(manualtopup.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(manualtopup.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.AvailableCents(); ok {
-		_spec.SetField(manualtopup.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(manualtopup.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.TotalSpentCents(); ok {
-		_spec.SetField(manualtopup.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := mtuo.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(manualtopup.FieldTotalSpentCents, field.TypeInt64, value)
-	}
 	if value, ok := mtuo.mutation.AmountCents(); ok {
 		_spec.SetField(manualtopup.FieldAmountCents, field.TypeInt64, value)
 	}
@@ -1354,17 +565,8 @@ func (mtuo *ManualTopupUpdateOne) sqlSave(ctx context.Context) (_node *ManualTop
 	if value, ok := mtuo.mutation.Currency(); ok {
 		_spec.SetField(manualtopup.FieldCurrency, field.TypeString, value)
 	}
-	if value, ok := mtuo.mutation.Direction(); ok {
-		_spec.SetField(manualtopup.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.Source(); ok {
-		_spec.SetField(manualtopup.FieldSource, field.TypeString, value)
-	}
 	if value, ok := mtuo.mutation.OperatorUserID(); ok {
 		_spec.SetField(manualtopup.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.Reason(); ok {
-		_spec.SetField(manualtopup.FieldReason, field.TypeString, value)
 	}
 	if value, ok := mtuo.mutation.LedgerEntryID(); ok {
 		_spec.SetField(manualtopup.FieldLedgerEntryID, field.TypeString, value)
@@ -1372,71 +574,17 @@ func (mtuo *ManualTopupUpdateOne) sqlSave(ctx context.Context) (_node *ManualTop
 	if value, ok := mtuo.mutation.WalletTransactionID(); ok {
 		_spec.SetField(manualtopup.FieldWalletTransactionID, field.TypeString, value)
 	}
-	if value, ok := mtuo.mutation.WorkspaceID(); ok {
-		_spec.SetField(manualtopup.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.ResourceType(); ok {
-		_spec.SetField(manualtopup.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.ResourceID(); ok {
-		_spec.SetField(manualtopup.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.HoldID(); ok {
-		_spec.SetField(manualtopup.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.Status(); ok {
-		_spec.SetField(manualtopup.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.PricingVersion(); ok {
-		_spec.SetField(manualtopup.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(manualtopup.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(manualtopup.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(manualtopup.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.Quantity(); ok {
-		_spec.SetField(manualtopup.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := mtuo.mutation.AddedQuantity(); ok {
-		_spec.AddField(manualtopup.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := mtuo.mutation.Unit(); ok {
-		_spec.SetField(manualtopup.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(manualtopup.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(manualtopup.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.RedactedURL(); ok {
-		_spec.SetField(manualtopup.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.TokenVersion(); ok {
-		_spec.SetField(manualtopup.FieldTokenVersion, field.TypeString, value)
-	}
 	if value, ok := mtuo.mutation.IdempotencyKey(); ok {
 		_spec.SetField(manualtopup.FieldIdempotencyKey, field.TypeString, value)
 	}
 	if value, ok := mtuo.mutation.RequestHash(); ok {
 		_spec.SetField(manualtopup.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := mtuo.mutation.ReportJSON(); ok {
-		_spec.SetField(manualtopup.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := mtuo.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(manualtopup.FieldBlockNewWorkspaces, field.TypeBool, value)
+	if value, ok := mtuo.mutation.Reason(); ok {
+		_spec.SetField(manualtopup.FieldReason, field.TypeString, value)
 	}
 	if value, ok := mtuo.mutation.CreatedAt(); ok {
 		_spec.SetField(manualtopup.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := mtuo.mutation.UpdatedAt(); ok {
-		_spec.SetField(manualtopup.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &ManualTopup{config: mtuo.config}
 	_spec.Assign = _node.assignValues

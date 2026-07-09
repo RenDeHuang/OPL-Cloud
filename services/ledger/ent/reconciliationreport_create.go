@@ -20,244 +20,6 @@ type ReconciliationReportCreate struct {
 	hooks    []Hook
 }
 
-// SetAccountID sets the "account_id" field.
-func (rrc *ReconciliationReportCreate) SetAccountID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetAccountID(s)
-	return rrc
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableAccountID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetAccountID(*s)
-	}
-	return rrc
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (rrc *ReconciliationReportCreate) SetBalanceCents(i int64) *ReconciliationReportCreate {
-	rrc.mutation.SetBalanceCents(i)
-	return rrc
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableBalanceCents(i *int64) *ReconciliationReportCreate {
-	if i != nil {
-		rrc.SetBalanceCents(*i)
-	}
-	return rrc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (rrc *ReconciliationReportCreate) SetFrozenCents(i int64) *ReconciliationReportCreate {
-	rrc.mutation.SetFrozenCents(i)
-	return rrc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableFrozenCents(i *int64) *ReconciliationReportCreate {
-	if i != nil {
-		rrc.SetFrozenCents(*i)
-	}
-	return rrc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (rrc *ReconciliationReportCreate) SetAvailableCents(i int64) *ReconciliationReportCreate {
-	rrc.mutation.SetAvailableCents(i)
-	return rrc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableAvailableCents(i *int64) *ReconciliationReportCreate {
-	if i != nil {
-		rrc.SetAvailableCents(*i)
-	}
-	return rrc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (rrc *ReconciliationReportCreate) SetTotalSpentCents(i int64) *ReconciliationReportCreate {
-	rrc.mutation.SetTotalSpentCents(i)
-	return rrc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableTotalSpentCents(i *int64) *ReconciliationReportCreate {
-	if i != nil {
-		rrc.SetTotalSpentCents(*i)
-	}
-	return rrc
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (rrc *ReconciliationReportCreate) SetAmountCents(i int64) *ReconciliationReportCreate {
-	rrc.mutation.SetAmountCents(i)
-	return rrc
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableAmountCents(i *int64) *ReconciliationReportCreate {
-	if i != nil {
-		rrc.SetAmountCents(*i)
-	}
-	return rrc
-}
-
-// SetCurrency sets the "currency" field.
-func (rrc *ReconciliationReportCreate) SetCurrency(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetCurrency(s)
-	return rrc
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableCurrency(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetCurrency(*s)
-	}
-	return rrc
-}
-
-// SetDirection sets the "direction" field.
-func (rrc *ReconciliationReportCreate) SetDirection(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetDirection(s)
-	return rrc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableDirection(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetDirection(*s)
-	}
-	return rrc
-}
-
-// SetSource sets the "source" field.
-func (rrc *ReconciliationReportCreate) SetSource(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetSource(s)
-	return rrc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableSource(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetSource(*s)
-	}
-	return rrc
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (rrc *ReconciliationReportCreate) SetOperatorUserID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetOperatorUserID(s)
-	return rrc
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableOperatorUserID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetOperatorUserID(*s)
-	}
-	return rrc
-}
-
-// SetReason sets the "reason" field.
-func (rrc *ReconciliationReportCreate) SetReason(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetReason(s)
-	return rrc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableReason(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetReason(*s)
-	}
-	return rrc
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (rrc *ReconciliationReportCreate) SetLedgerEntryID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetLedgerEntryID(s)
-	return rrc
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableLedgerEntryID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetLedgerEntryID(*s)
-	}
-	return rrc
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (rrc *ReconciliationReportCreate) SetWalletTransactionID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetWalletTransactionID(s)
-	return rrc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableWalletTransactionID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetWalletTransactionID(*s)
-	}
-	return rrc
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (rrc *ReconciliationReportCreate) SetWorkspaceID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetWorkspaceID(s)
-	return rrc
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableWorkspaceID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetWorkspaceID(*s)
-	}
-	return rrc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (rrc *ReconciliationReportCreate) SetResourceType(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetResourceType(s)
-	return rrc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableResourceType(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetResourceType(*s)
-	}
-	return rrc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (rrc *ReconciliationReportCreate) SetResourceID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetResourceID(s)
-	return rrc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableResourceID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetResourceID(*s)
-	}
-	return rrc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (rrc *ReconciliationReportCreate) SetHoldID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetHoldID(s)
-	return rrc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableHoldID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetHoldID(*s)
-	}
-	return rrc
-}
-
 // SetStatus sets the "status" field.
 func (rrc *ReconciliationReportCreate) SetStatus(s string) *ReconciliationReportCreate {
 	rrc.mutation.SetStatus(s)
@@ -268,174 +30,6 @@ func (rrc *ReconciliationReportCreate) SetStatus(s string) *ReconciliationReport
 func (rrc *ReconciliationReportCreate) SetNillableStatus(s *string) *ReconciliationReportCreate {
 	if s != nil {
 		rrc.SetStatus(*s)
-	}
-	return rrc
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (rrc *ReconciliationReportCreate) SetPricingVersion(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetPricingVersion(s)
-	return rrc
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillablePricingVersion(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetPricingVersion(*s)
-	}
-	return rrc
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (rrc *ReconciliationReportCreate) SetPriceSnapshotJSON(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetPriceSnapshotJSON(s)
-	return rrc
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillablePriceSnapshotJSON(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetPriceSnapshotJSON(*s)
-	}
-	return rrc
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (rrc *ReconciliationReportCreate) SetUsagePeriodStart(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetUsagePeriodStart(s)
-	return rrc
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableUsagePeriodStart(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetUsagePeriodStart(*s)
-	}
-	return rrc
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (rrc *ReconciliationReportCreate) SetUsagePeriodEnd(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetUsagePeriodEnd(s)
-	return rrc
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableUsagePeriodEnd(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetUsagePeriodEnd(*s)
-	}
-	return rrc
-}
-
-// SetQuantity sets the "quantity" field.
-func (rrc *ReconciliationReportCreate) SetQuantity(f float64) *ReconciliationReportCreate {
-	rrc.mutation.SetQuantity(f)
-	return rrc
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableQuantity(f *float64) *ReconciliationReportCreate {
-	if f != nil {
-		rrc.SetQuantity(*f)
-	}
-	return rrc
-}
-
-// SetUnit sets the "unit" field.
-func (rrc *ReconciliationReportCreate) SetUnit(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetUnit(s)
-	return rrc
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableUnit(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetUnit(*s)
-	}
-	return rrc
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (rrc *ReconciliationReportCreate) SetProviderCostEvidenceRef(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetProviderCostEvidenceRef(s)
-	return rrc
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableProviderCostEvidenceRef(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetProviderCostEvidenceRef(*s)
-	}
-	return rrc
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (rrc *ReconciliationReportCreate) SetProviderRequestID(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetProviderRequestID(s)
-	return rrc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableProviderRequestID(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetProviderRequestID(*s)
-	}
-	return rrc
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (rrc *ReconciliationReportCreate) SetRedactedURL(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetRedactedURL(s)
-	return rrc
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableRedactedURL(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetRedactedURL(*s)
-	}
-	return rrc
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (rrc *ReconciliationReportCreate) SetTokenVersion(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetTokenVersion(s)
-	return rrc
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableTokenVersion(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetTokenVersion(*s)
-	}
-	return rrc
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (rrc *ReconciliationReportCreate) SetIdempotencyKey(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetIdempotencyKey(s)
-	return rrc
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableIdempotencyKey(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetIdempotencyKey(*s)
-	}
-	return rrc
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (rrc *ReconciliationReportCreate) SetRequestHash(s string) *ReconciliationReportCreate {
-	rrc.mutation.SetRequestHash(s)
-	return rrc
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableRequestHash(s *string) *ReconciliationReportCreate {
-	if s != nil {
-		rrc.SetRequestHash(*s)
 	}
 	return rrc
 }
@@ -468,6 +62,32 @@ func (rrc *ReconciliationReportCreate) SetNillableBlockNewWorkspaces(b *bool) *R
 	return rrc
 }
 
+// SetReason sets the "reason" field.
+func (rrc *ReconciliationReportCreate) SetReason(s string) *ReconciliationReportCreate {
+	rrc.mutation.SetReason(s)
+	return rrc
+}
+
+// SetNillableReason sets the "reason" field if the given value is not nil.
+func (rrc *ReconciliationReportCreate) SetNillableReason(s *string) *ReconciliationReportCreate {
+	if s != nil {
+		rrc.SetReason(*s)
+	}
+	return rrc
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (rrc *ReconciliationReportCreate) SetIdempotencyKey(s string) *ReconciliationReportCreate {
+	rrc.mutation.SetIdempotencyKey(s)
+	return rrc
+}
+
+// SetRequestHash sets the "request_hash" field.
+func (rrc *ReconciliationReportCreate) SetRequestHash(s string) *ReconciliationReportCreate {
+	rrc.mutation.SetRequestHash(s)
+	return rrc
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (rrc *ReconciliationReportCreate) SetCreatedAt(t time.Time) *ReconciliationReportCreate {
 	rrc.mutation.SetCreatedAt(t)
@@ -478,20 +98,6 @@ func (rrc *ReconciliationReportCreate) SetCreatedAt(t time.Time) *Reconciliation
 func (rrc *ReconciliationReportCreate) SetNillableCreatedAt(t *time.Time) *ReconciliationReportCreate {
 	if t != nil {
 		rrc.SetCreatedAt(*t)
-	}
-	return rrc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (rrc *ReconciliationReportCreate) SetUpdatedAt(t time.Time) *ReconciliationReportCreate {
-	rrc.mutation.SetUpdatedAt(t)
-	return rrc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (rrc *ReconciliationReportCreate) SetNillableUpdatedAt(t *time.Time) *ReconciliationReportCreate {
-	if t != nil {
-		rrc.SetUpdatedAt(*t)
 	}
 	return rrc
 }
@@ -537,125 +143,9 @@ func (rrc *ReconciliationReportCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (rrc *ReconciliationReportCreate) defaults() {
-	if _, ok := rrc.mutation.AccountID(); !ok {
-		v := reconciliationreport.DefaultAccountID
-		rrc.mutation.SetAccountID(v)
-	}
-	if _, ok := rrc.mutation.BalanceCents(); !ok {
-		v := reconciliationreport.DefaultBalanceCents
-		rrc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := rrc.mutation.FrozenCents(); !ok {
-		v := reconciliationreport.DefaultFrozenCents
-		rrc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := rrc.mutation.AvailableCents(); !ok {
-		v := reconciliationreport.DefaultAvailableCents
-		rrc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := rrc.mutation.TotalSpentCents(); !ok {
-		v := reconciliationreport.DefaultTotalSpentCents
-		rrc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := rrc.mutation.AmountCents(); !ok {
-		v := reconciliationreport.DefaultAmountCents
-		rrc.mutation.SetAmountCents(v)
-	}
-	if _, ok := rrc.mutation.Currency(); !ok {
-		v := reconciliationreport.DefaultCurrency
-		rrc.mutation.SetCurrency(v)
-	}
-	if _, ok := rrc.mutation.Direction(); !ok {
-		v := reconciliationreport.DefaultDirection
-		rrc.mutation.SetDirection(v)
-	}
-	if _, ok := rrc.mutation.Source(); !ok {
-		v := reconciliationreport.DefaultSource
-		rrc.mutation.SetSource(v)
-	}
-	if _, ok := rrc.mutation.OperatorUserID(); !ok {
-		v := reconciliationreport.DefaultOperatorUserID
-		rrc.mutation.SetOperatorUserID(v)
-	}
-	if _, ok := rrc.mutation.Reason(); !ok {
-		v := reconciliationreport.DefaultReason
-		rrc.mutation.SetReason(v)
-	}
-	if _, ok := rrc.mutation.LedgerEntryID(); !ok {
-		v := reconciliationreport.DefaultLedgerEntryID
-		rrc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := rrc.mutation.WalletTransactionID(); !ok {
-		v := reconciliationreport.DefaultWalletTransactionID
-		rrc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := rrc.mutation.WorkspaceID(); !ok {
-		v := reconciliationreport.DefaultWorkspaceID
-		rrc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := rrc.mutation.ResourceType(); !ok {
-		v := reconciliationreport.DefaultResourceType
-		rrc.mutation.SetResourceType(v)
-	}
-	if _, ok := rrc.mutation.ResourceID(); !ok {
-		v := reconciliationreport.DefaultResourceID
-		rrc.mutation.SetResourceID(v)
-	}
-	if _, ok := rrc.mutation.HoldID(); !ok {
-		v := reconciliationreport.DefaultHoldID
-		rrc.mutation.SetHoldID(v)
-	}
 	if _, ok := rrc.mutation.Status(); !ok {
 		v := reconciliationreport.DefaultStatus
 		rrc.mutation.SetStatus(v)
-	}
-	if _, ok := rrc.mutation.PricingVersion(); !ok {
-		v := reconciliationreport.DefaultPricingVersion
-		rrc.mutation.SetPricingVersion(v)
-	}
-	if _, ok := rrc.mutation.PriceSnapshotJSON(); !ok {
-		v := reconciliationreport.DefaultPriceSnapshotJSON
-		rrc.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := rrc.mutation.UsagePeriodStart(); !ok {
-		v := reconciliationreport.DefaultUsagePeriodStart
-		rrc.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := rrc.mutation.UsagePeriodEnd(); !ok {
-		v := reconciliationreport.DefaultUsagePeriodEnd
-		rrc.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := rrc.mutation.Quantity(); !ok {
-		v := reconciliationreport.DefaultQuantity
-		rrc.mutation.SetQuantity(v)
-	}
-	if _, ok := rrc.mutation.Unit(); !ok {
-		v := reconciliationreport.DefaultUnit
-		rrc.mutation.SetUnit(v)
-	}
-	if _, ok := rrc.mutation.ProviderCostEvidenceRef(); !ok {
-		v := reconciliationreport.DefaultProviderCostEvidenceRef
-		rrc.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := rrc.mutation.ProviderRequestID(); !ok {
-		v := reconciliationreport.DefaultProviderRequestID
-		rrc.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := rrc.mutation.RedactedURL(); !ok {
-		v := reconciliationreport.DefaultRedactedURL
-		rrc.mutation.SetRedactedURL(v)
-	}
-	if _, ok := rrc.mutation.TokenVersion(); !ok {
-		v := reconciliationreport.DefaultTokenVersion
-		rrc.mutation.SetTokenVersion(v)
-	}
-	if _, ok := rrc.mutation.IdempotencyKey(); !ok {
-		v := reconciliationreport.DefaultIdempotencyKey
-		rrc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := rrc.mutation.RequestHash(); !ok {
-		v := reconciliationreport.DefaultRequestHash
-		rrc.mutation.SetRequestHash(v)
 	}
 	if _, ok := rrc.mutation.ReportJSON(); !ok {
 		v := reconciliationreport.DefaultReportJSON
@@ -665,107 +155,20 @@ func (rrc *ReconciliationReportCreate) defaults() {
 		v := reconciliationreport.DefaultBlockNewWorkspaces
 		rrc.mutation.SetBlockNewWorkspaces(v)
 	}
+	if _, ok := rrc.mutation.Reason(); !ok {
+		v := reconciliationreport.DefaultReason
+		rrc.mutation.SetReason(v)
+	}
 	if _, ok := rrc.mutation.CreatedAt(); !ok {
 		v := reconciliationreport.DefaultCreatedAt()
 		rrc.mutation.SetCreatedAt(v)
-	}
-	if _, ok := rrc.mutation.UpdatedAt(); !ok {
-		v := reconciliationreport.DefaultUpdatedAt()
-		rrc.mutation.SetUpdatedAt(v)
 	}
 }
 
 // check runs all checks and user-defined validators on the builder.
 func (rrc *ReconciliationReportCreate) check() error {
-	if _, ok := rrc.mutation.AccountID(); !ok {
-		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "ReconciliationReport.account_id"`)}
-	}
-	if _, ok := rrc.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "ReconciliationReport.balance_cents"`)}
-	}
-	if _, ok := rrc.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "ReconciliationReport.frozen_cents"`)}
-	}
-	if _, ok := rrc.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "ReconciliationReport.available_cents"`)}
-	}
-	if _, ok := rrc.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "ReconciliationReport.total_spent_cents"`)}
-	}
-	if _, ok := rrc.mutation.AmountCents(); !ok {
-		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "ReconciliationReport.amount_cents"`)}
-	}
-	if _, ok := rrc.mutation.Currency(); !ok {
-		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "ReconciliationReport.currency"`)}
-	}
-	if _, ok := rrc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "ReconciliationReport.direction"`)}
-	}
-	if _, ok := rrc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "ReconciliationReport.source"`)}
-	}
-	if _, ok := rrc.mutation.OperatorUserID(); !ok {
-		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "ReconciliationReport.operator_user_id"`)}
-	}
-	if _, ok := rrc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "ReconciliationReport.reason"`)}
-	}
-	if _, ok := rrc.mutation.LedgerEntryID(); !ok {
-		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "ReconciliationReport.ledger_entry_id"`)}
-	}
-	if _, ok := rrc.mutation.WalletTransactionID(); !ok {
-		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "ReconciliationReport.wallet_transaction_id"`)}
-	}
-	if _, ok := rrc.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "ReconciliationReport.workspace_id"`)}
-	}
-	if _, ok := rrc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "ReconciliationReport.resource_type"`)}
-	}
-	if _, ok := rrc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "ReconciliationReport.resource_id"`)}
-	}
-	if _, ok := rrc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "ReconciliationReport.hold_id"`)}
-	}
 	if _, ok := rrc.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "ReconciliationReport.status"`)}
-	}
-	if _, ok := rrc.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "ReconciliationReport.pricing_version"`)}
-	}
-	if _, ok := rrc.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "ReconciliationReport.price_snapshot_json"`)}
-	}
-	if _, ok := rrc.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "ReconciliationReport.usage_period_start"`)}
-	}
-	if _, ok := rrc.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "ReconciliationReport.usage_period_end"`)}
-	}
-	if _, ok := rrc.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "ReconciliationReport.quantity"`)}
-	}
-	if _, ok := rrc.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "ReconciliationReport.unit"`)}
-	}
-	if _, ok := rrc.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "ReconciliationReport.provider_cost_evidence_ref"`)}
-	}
-	if _, ok := rrc.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "ReconciliationReport.provider_request_id"`)}
-	}
-	if _, ok := rrc.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "ReconciliationReport.redacted_url"`)}
-	}
-	if _, ok := rrc.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "ReconciliationReport.token_version"`)}
-	}
-	if _, ok := rrc.mutation.IdempotencyKey(); !ok {
-		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "ReconciliationReport.idempotency_key"`)}
-	}
-	if _, ok := rrc.mutation.RequestHash(); !ok {
-		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "ReconciliationReport.request_hash"`)}
 	}
 	if _, ok := rrc.mutation.ReportJSON(); !ok {
 		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "ReconciliationReport.report_json"`)}
@@ -773,11 +176,27 @@ func (rrc *ReconciliationReportCreate) check() error {
 	if _, ok := rrc.mutation.BlockNewWorkspaces(); !ok {
 		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "ReconciliationReport.block_new_workspaces"`)}
 	}
+	if _, ok := rrc.mutation.Reason(); !ok {
+		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "ReconciliationReport.reason"`)}
+	}
+	if _, ok := rrc.mutation.IdempotencyKey(); !ok {
+		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "ReconciliationReport.idempotency_key"`)}
+	}
+	if v, ok := rrc.mutation.IdempotencyKey(); ok {
+		if err := reconciliationreport.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ReconciliationReport.idempotency_key": %w`, err)}
+		}
+	}
+	if _, ok := rrc.mutation.RequestHash(); !ok {
+		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "ReconciliationReport.request_hash"`)}
+	}
+	if v, ok := rrc.mutation.RequestHash(); ok {
+		if err := reconciliationreport.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ReconciliationReport.request_hash": %w`, err)}
+		}
+	}
 	if _, ok := rrc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "ReconciliationReport.created_at"`)}
-	}
-	if _, ok := rrc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "ReconciliationReport.updated_at"`)}
 	}
 	if v, ok := rrc.mutation.ID(); ok {
 		if err := reconciliationreport.IDValidator(v); err != nil {
@@ -819,125 +238,9 @@ func (rrc *ReconciliationReportCreate) createSpec() (*ReconciliationReport, *sql
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := rrc.mutation.AccountID(); ok {
-		_spec.SetField(reconciliationreport.FieldAccountID, field.TypeString, value)
-		_node.AccountID = value
-	}
-	if value, ok := rrc.mutation.BalanceCents(); ok {
-		_spec.SetField(reconciliationreport.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := rrc.mutation.FrozenCents(); ok {
-		_spec.SetField(reconciliationreport.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := rrc.mutation.AvailableCents(); ok {
-		_spec.SetField(reconciliationreport.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := rrc.mutation.TotalSpentCents(); ok {
-		_spec.SetField(reconciliationreport.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
-	if value, ok := rrc.mutation.AmountCents(); ok {
-		_spec.SetField(reconciliationreport.FieldAmountCents, field.TypeInt64, value)
-		_node.AmountCents = value
-	}
-	if value, ok := rrc.mutation.Currency(); ok {
-		_spec.SetField(reconciliationreport.FieldCurrency, field.TypeString, value)
-		_node.Currency = value
-	}
-	if value, ok := rrc.mutation.Direction(); ok {
-		_spec.SetField(reconciliationreport.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := rrc.mutation.Source(); ok {
-		_spec.SetField(reconciliationreport.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
-	if value, ok := rrc.mutation.OperatorUserID(); ok {
-		_spec.SetField(reconciliationreport.FieldOperatorUserID, field.TypeString, value)
-		_node.OperatorUserID = value
-	}
-	if value, ok := rrc.mutation.Reason(); ok {
-		_spec.SetField(reconciliationreport.FieldReason, field.TypeString, value)
-		_node.Reason = value
-	}
-	if value, ok := rrc.mutation.LedgerEntryID(); ok {
-		_spec.SetField(reconciliationreport.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := rrc.mutation.WalletTransactionID(); ok {
-		_spec.SetField(reconciliationreport.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
-	if value, ok := rrc.mutation.WorkspaceID(); ok {
-		_spec.SetField(reconciliationreport.FieldWorkspaceID, field.TypeString, value)
-		_node.WorkspaceID = value
-	}
-	if value, ok := rrc.mutation.ResourceType(); ok {
-		_spec.SetField(reconciliationreport.FieldResourceType, field.TypeString, value)
-		_node.ResourceType = value
-	}
-	if value, ok := rrc.mutation.ResourceID(); ok {
-		_spec.SetField(reconciliationreport.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := rrc.mutation.HoldID(); ok {
-		_spec.SetField(reconciliationreport.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
-	}
 	if value, ok := rrc.mutation.Status(); ok {
 		_spec.SetField(reconciliationreport.FieldStatus, field.TypeString, value)
 		_node.Status = value
-	}
-	if value, ok := rrc.mutation.PricingVersion(); ok {
-		_spec.SetField(reconciliationreport.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
-	}
-	if value, ok := rrc.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(reconciliationreport.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := rrc.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(reconciliationreport.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := rrc.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(reconciliationreport.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := rrc.mutation.Quantity(); ok {
-		_spec.SetField(reconciliationreport.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := rrc.mutation.Unit(); ok {
-		_spec.SetField(reconciliationreport.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := rrc.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(reconciliationreport.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
-	}
-	if value, ok := rrc.mutation.ProviderRequestID(); ok {
-		_spec.SetField(reconciliationreport.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := rrc.mutation.RedactedURL(); ok {
-		_spec.SetField(reconciliationreport.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := rrc.mutation.TokenVersion(); ok {
-		_spec.SetField(reconciliationreport.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
-	}
-	if value, ok := rrc.mutation.IdempotencyKey(); ok {
-		_spec.SetField(reconciliationreport.FieldIdempotencyKey, field.TypeString, value)
-		_node.IdempotencyKey = value
-	}
-	if value, ok := rrc.mutation.RequestHash(); ok {
-		_spec.SetField(reconciliationreport.FieldRequestHash, field.TypeString, value)
-		_node.RequestHash = value
 	}
 	if value, ok := rrc.mutation.ReportJSON(); ok {
 		_spec.SetField(reconciliationreport.FieldReportJSON, field.TypeString, value)
@@ -947,13 +250,21 @@ func (rrc *ReconciliationReportCreate) createSpec() (*ReconciliationReport, *sql
 		_spec.SetField(reconciliationreport.FieldBlockNewWorkspaces, field.TypeBool, value)
 		_node.BlockNewWorkspaces = value
 	}
+	if value, ok := rrc.mutation.Reason(); ok {
+		_spec.SetField(reconciliationreport.FieldReason, field.TypeString, value)
+		_node.Reason = value
+	}
+	if value, ok := rrc.mutation.IdempotencyKey(); ok {
+		_spec.SetField(reconciliationreport.FieldIdempotencyKey, field.TypeString, value)
+		_node.IdempotencyKey = value
+	}
+	if value, ok := rrc.mutation.RequestHash(); ok {
+		_spec.SetField(reconciliationreport.FieldRequestHash, field.TypeString, value)
+		_node.RequestHash = value
+	}
 	if value, ok := rrc.mutation.CreatedAt(); ok {
 		_spec.SetField(reconciliationreport.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := rrc.mutation.UpdatedAt(); ok {
-		_spec.SetField(reconciliationreport.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

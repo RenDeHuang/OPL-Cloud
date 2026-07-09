@@ -42,90 +42,6 @@ func (leu *LedgerEntryUpdate) SetNillableAccountID(s *string) *LedgerEntryUpdate
 	return leu
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (leu *LedgerEntryUpdate) SetBalanceCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.ResetBalanceCents()
-	leu.mutation.SetBalanceCents(i)
-	return leu
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableBalanceCents(i *int64) *LedgerEntryUpdate {
-	if i != nil {
-		leu.SetBalanceCents(*i)
-	}
-	return leu
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (leu *LedgerEntryUpdate) AddBalanceCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.AddBalanceCents(i)
-	return leu
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (leu *LedgerEntryUpdate) SetFrozenCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.ResetFrozenCents()
-	leu.mutation.SetFrozenCents(i)
-	return leu
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableFrozenCents(i *int64) *LedgerEntryUpdate {
-	if i != nil {
-		leu.SetFrozenCents(*i)
-	}
-	return leu
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (leu *LedgerEntryUpdate) AddFrozenCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.AddFrozenCents(i)
-	return leu
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (leu *LedgerEntryUpdate) SetAvailableCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.ResetAvailableCents()
-	leu.mutation.SetAvailableCents(i)
-	return leu
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableAvailableCents(i *int64) *LedgerEntryUpdate {
-	if i != nil {
-		leu.SetAvailableCents(*i)
-	}
-	return leu
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (leu *LedgerEntryUpdate) AddAvailableCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.AddAvailableCents(i)
-	return leu
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (leu *LedgerEntryUpdate) SetTotalSpentCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.ResetTotalSpentCents()
-	leu.mutation.SetTotalSpentCents(i)
-	return leu
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableTotalSpentCents(i *int64) *LedgerEntryUpdate {
-	if i != nil {
-		leu.SetTotalSpentCents(*i)
-	}
-	return leu
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (leu *LedgerEntryUpdate) AddTotalSpentCents(i int64) *LedgerEntryUpdate {
-	leu.mutation.AddTotalSpentCents(i)
-	return leu
-}
-
 // SetAmountCents sets the "amount_cents" field.
 func (leu *LedgerEntryUpdate) SetAmountCents(i int64) *LedgerEntryUpdate {
 	leu.mutation.ResetAmountCents()
@@ -217,307 +133,6 @@ func (leu *LedgerEntryUpdate) SetNillableReason(s *string) *LedgerEntryUpdate {
 	return leu
 }
 
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (leu *LedgerEntryUpdate) SetLedgerEntryID(s string) *LedgerEntryUpdate {
-	leu.mutation.SetLedgerEntryID(s)
-	return leu
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableLedgerEntryID(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetLedgerEntryID(*s)
-	}
-	return leu
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (leu *LedgerEntryUpdate) SetWalletTransactionID(s string) *LedgerEntryUpdate {
-	leu.mutation.SetWalletTransactionID(s)
-	return leu
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableWalletTransactionID(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetWalletTransactionID(*s)
-	}
-	return leu
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (leu *LedgerEntryUpdate) SetWorkspaceID(s string) *LedgerEntryUpdate {
-	leu.mutation.SetWorkspaceID(s)
-	return leu
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableWorkspaceID(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetWorkspaceID(*s)
-	}
-	return leu
-}
-
-// SetResourceType sets the "resource_type" field.
-func (leu *LedgerEntryUpdate) SetResourceType(s string) *LedgerEntryUpdate {
-	leu.mutation.SetResourceType(s)
-	return leu
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableResourceType(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetResourceType(*s)
-	}
-	return leu
-}
-
-// SetResourceID sets the "resource_id" field.
-func (leu *LedgerEntryUpdate) SetResourceID(s string) *LedgerEntryUpdate {
-	leu.mutation.SetResourceID(s)
-	return leu
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableResourceID(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetResourceID(*s)
-	}
-	return leu
-}
-
-// SetHoldID sets the "hold_id" field.
-func (leu *LedgerEntryUpdate) SetHoldID(s string) *LedgerEntryUpdate {
-	leu.mutation.SetHoldID(s)
-	return leu
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableHoldID(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetHoldID(*s)
-	}
-	return leu
-}
-
-// SetStatus sets the "status" field.
-func (leu *LedgerEntryUpdate) SetStatus(s string) *LedgerEntryUpdate {
-	leu.mutation.SetStatus(s)
-	return leu
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableStatus(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetStatus(*s)
-	}
-	return leu
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (leu *LedgerEntryUpdate) SetPricingVersion(s string) *LedgerEntryUpdate {
-	leu.mutation.SetPricingVersion(s)
-	return leu
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillablePricingVersion(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetPricingVersion(*s)
-	}
-	return leu
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (leu *LedgerEntryUpdate) SetPriceSnapshotJSON(s string) *LedgerEntryUpdate {
-	leu.mutation.SetPriceSnapshotJSON(s)
-	return leu
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillablePriceSnapshotJSON(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetPriceSnapshotJSON(*s)
-	}
-	return leu
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (leu *LedgerEntryUpdate) SetUsagePeriodStart(s string) *LedgerEntryUpdate {
-	leu.mutation.SetUsagePeriodStart(s)
-	return leu
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableUsagePeriodStart(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetUsagePeriodStart(*s)
-	}
-	return leu
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (leu *LedgerEntryUpdate) SetUsagePeriodEnd(s string) *LedgerEntryUpdate {
-	leu.mutation.SetUsagePeriodEnd(s)
-	return leu
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableUsagePeriodEnd(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetUsagePeriodEnd(*s)
-	}
-	return leu
-}
-
-// SetQuantity sets the "quantity" field.
-func (leu *LedgerEntryUpdate) SetQuantity(f float64) *LedgerEntryUpdate {
-	leu.mutation.ResetQuantity()
-	leu.mutation.SetQuantity(f)
-	return leu
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableQuantity(f *float64) *LedgerEntryUpdate {
-	if f != nil {
-		leu.SetQuantity(*f)
-	}
-	return leu
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (leu *LedgerEntryUpdate) AddQuantity(f float64) *LedgerEntryUpdate {
-	leu.mutation.AddQuantity(f)
-	return leu
-}
-
-// SetUnit sets the "unit" field.
-func (leu *LedgerEntryUpdate) SetUnit(s string) *LedgerEntryUpdate {
-	leu.mutation.SetUnit(s)
-	return leu
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableUnit(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetUnit(*s)
-	}
-	return leu
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (leu *LedgerEntryUpdate) SetProviderCostEvidenceRef(s string) *LedgerEntryUpdate {
-	leu.mutation.SetProviderCostEvidenceRef(s)
-	return leu
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableProviderCostEvidenceRef(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetProviderCostEvidenceRef(*s)
-	}
-	return leu
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (leu *LedgerEntryUpdate) SetProviderRequestID(s string) *LedgerEntryUpdate {
-	leu.mutation.SetProviderRequestID(s)
-	return leu
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableProviderRequestID(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetProviderRequestID(*s)
-	}
-	return leu
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (leu *LedgerEntryUpdate) SetRedactedURL(s string) *LedgerEntryUpdate {
-	leu.mutation.SetRedactedURL(s)
-	return leu
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableRedactedURL(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetRedactedURL(*s)
-	}
-	return leu
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (leu *LedgerEntryUpdate) SetTokenVersion(s string) *LedgerEntryUpdate {
-	leu.mutation.SetTokenVersion(s)
-	return leu
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableTokenVersion(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetTokenVersion(*s)
-	}
-	return leu
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (leu *LedgerEntryUpdate) SetIdempotencyKey(s string) *LedgerEntryUpdate {
-	leu.mutation.SetIdempotencyKey(s)
-	return leu
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableIdempotencyKey(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetIdempotencyKey(*s)
-	}
-	return leu
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (leu *LedgerEntryUpdate) SetRequestHash(s string) *LedgerEntryUpdate {
-	leu.mutation.SetRequestHash(s)
-	return leu
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableRequestHash(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetRequestHash(*s)
-	}
-	return leu
-}
-
-// SetReportJSON sets the "report_json" field.
-func (leu *LedgerEntryUpdate) SetReportJSON(s string) *LedgerEntryUpdate {
-	leu.mutation.SetReportJSON(s)
-	return leu
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableReportJSON(s *string) *LedgerEntryUpdate {
-	if s != nil {
-		leu.SetReportJSON(*s)
-	}
-	return leu
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (leu *LedgerEntryUpdate) SetBlockNewWorkspaces(b bool) *LedgerEntryUpdate {
-	leu.mutation.SetBlockNewWorkspaces(b)
-	return leu
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (leu *LedgerEntryUpdate) SetNillableBlockNewWorkspaces(b *bool) *LedgerEntryUpdate {
-	if b != nil {
-		leu.SetBlockNewWorkspaces(*b)
-	}
-	return leu
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (leu *LedgerEntryUpdate) SetCreatedAt(t time.Time) *LedgerEntryUpdate {
 	leu.mutation.SetCreatedAt(t)
@@ -532,12 +147,6 @@ func (leu *LedgerEntryUpdate) SetNillableCreatedAt(t *time.Time) *LedgerEntryUpd
 	return leu
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (leu *LedgerEntryUpdate) SetUpdatedAt(t time.Time) *LedgerEntryUpdate {
-	leu.mutation.SetUpdatedAt(t)
-	return leu
-}
-
 // Mutation returns the LedgerEntryMutation object of the builder.
 func (leu *LedgerEntryUpdate) Mutation() *LedgerEntryMutation {
 	return leu.mutation
@@ -545,7 +154,6 @@ func (leu *LedgerEntryUpdate) Mutation() *LedgerEntryMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (leu *LedgerEntryUpdate) Save(ctx context.Context) (int, error) {
-	leu.defaults()
 	return withHooks(ctx, leu.sqlSave, leu.mutation, leu.hooks)
 }
 
@@ -571,15 +179,30 @@ func (leu *LedgerEntryUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (leu *LedgerEntryUpdate) defaults() {
-	if _, ok := leu.mutation.UpdatedAt(); !ok {
-		v := ledgerentry.UpdateDefaultUpdatedAt()
-		leu.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (leu *LedgerEntryUpdate) check() error {
+	if v, ok := leu.mutation.AccountID(); ok {
+		if err := ledgerentry.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.account_id": %w`, err)}
+		}
 	}
+	if v, ok := leu.mutation.Direction(); ok {
+		if err := ledgerentry.DirectionValidator(v); err != nil {
+			return &ValidationError{Name: "direction", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.direction": %w`, err)}
+		}
+	}
+	if v, ok := leu.mutation.Source(); ok {
+		if err := ledgerentry.SourceValidator(v); err != nil {
+			return &ValidationError{Name: "source", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.source": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (leu *LedgerEntryUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := leu.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(ledgerentry.Table, ledgerentry.Columns, sqlgraph.NewFieldSpec(ledgerentry.FieldID, field.TypeString))
 	if ps := leu.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -590,30 +213,6 @@ func (leu *LedgerEntryUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := leu.mutation.AccountID(); ok {
 		_spec.SetField(ledgerentry.FieldAccountID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.BalanceCents(); ok {
-		_spec.SetField(ledgerentry.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(ledgerentry.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.FrozenCents(); ok {
-		_spec.SetField(ledgerentry.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(ledgerentry.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.AvailableCents(); ok {
-		_spec.SetField(ledgerentry.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(ledgerentry.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.TotalSpentCents(); ok {
-		_spec.SetField(ledgerentry.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := leu.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(ledgerentry.FieldTotalSpentCents, field.TypeInt64, value)
 	}
 	if value, ok := leu.mutation.AmountCents(); ok {
 		_spec.SetField(ledgerentry.FieldAmountCents, field.TypeInt64, value)
@@ -636,77 +235,8 @@ func (leu *LedgerEntryUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := leu.mutation.Reason(); ok {
 		_spec.SetField(ledgerentry.FieldReason, field.TypeString, value)
 	}
-	if value, ok := leu.mutation.LedgerEntryID(); ok {
-		_spec.SetField(ledgerentry.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.WalletTransactionID(); ok {
-		_spec.SetField(ledgerentry.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.WorkspaceID(); ok {
-		_spec.SetField(ledgerentry.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.ResourceType(); ok {
-		_spec.SetField(ledgerentry.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.ResourceID(); ok {
-		_spec.SetField(ledgerentry.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.HoldID(); ok {
-		_spec.SetField(ledgerentry.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.Status(); ok {
-		_spec.SetField(ledgerentry.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.PricingVersion(); ok {
-		_spec.SetField(ledgerentry.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(ledgerentry.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(ledgerentry.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(ledgerentry.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.Quantity(); ok {
-		_spec.SetField(ledgerentry.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := leu.mutation.AddedQuantity(); ok {
-		_spec.AddField(ledgerentry.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := leu.mutation.Unit(); ok {
-		_spec.SetField(ledgerentry.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(ledgerentry.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.ProviderRequestID(); ok {
-		_spec.SetField(ledgerentry.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.RedactedURL(); ok {
-		_spec.SetField(ledgerentry.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.TokenVersion(); ok {
-		_spec.SetField(ledgerentry.FieldTokenVersion, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.IdempotencyKey(); ok {
-		_spec.SetField(ledgerentry.FieldIdempotencyKey, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.RequestHash(); ok {
-		_spec.SetField(ledgerentry.FieldRequestHash, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.ReportJSON(); ok {
-		_spec.SetField(ledgerentry.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := leu.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(ledgerentry.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := leu.mutation.CreatedAt(); ok {
 		_spec.SetField(ledgerentry.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := leu.mutation.UpdatedAt(); ok {
-		_spec.SetField(ledgerentry.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, leu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -739,90 +269,6 @@ func (leuo *LedgerEntryUpdateOne) SetNillableAccountID(s *string) *LedgerEntryUp
 	if s != nil {
 		leuo.SetAccountID(*s)
 	}
-	return leuo
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (leuo *LedgerEntryUpdateOne) SetBalanceCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.ResetBalanceCents()
-	leuo.mutation.SetBalanceCents(i)
-	return leuo
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableBalanceCents(i *int64) *LedgerEntryUpdateOne {
-	if i != nil {
-		leuo.SetBalanceCents(*i)
-	}
-	return leuo
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (leuo *LedgerEntryUpdateOne) AddBalanceCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.AddBalanceCents(i)
-	return leuo
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (leuo *LedgerEntryUpdateOne) SetFrozenCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.ResetFrozenCents()
-	leuo.mutation.SetFrozenCents(i)
-	return leuo
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableFrozenCents(i *int64) *LedgerEntryUpdateOne {
-	if i != nil {
-		leuo.SetFrozenCents(*i)
-	}
-	return leuo
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (leuo *LedgerEntryUpdateOne) AddFrozenCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.AddFrozenCents(i)
-	return leuo
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (leuo *LedgerEntryUpdateOne) SetAvailableCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.ResetAvailableCents()
-	leuo.mutation.SetAvailableCents(i)
-	return leuo
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableAvailableCents(i *int64) *LedgerEntryUpdateOne {
-	if i != nil {
-		leuo.SetAvailableCents(*i)
-	}
-	return leuo
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (leuo *LedgerEntryUpdateOne) AddAvailableCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.AddAvailableCents(i)
-	return leuo
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (leuo *LedgerEntryUpdateOne) SetTotalSpentCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.ResetTotalSpentCents()
-	leuo.mutation.SetTotalSpentCents(i)
-	return leuo
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableTotalSpentCents(i *int64) *LedgerEntryUpdateOne {
-	if i != nil {
-		leuo.SetTotalSpentCents(*i)
-	}
-	return leuo
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (leuo *LedgerEntryUpdateOne) AddTotalSpentCents(i int64) *LedgerEntryUpdateOne {
-	leuo.mutation.AddTotalSpentCents(i)
 	return leuo
 }
 
@@ -917,307 +363,6 @@ func (leuo *LedgerEntryUpdateOne) SetNillableReason(s *string) *LedgerEntryUpdat
 	return leuo
 }
 
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (leuo *LedgerEntryUpdateOne) SetLedgerEntryID(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetLedgerEntryID(s)
-	return leuo
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableLedgerEntryID(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetLedgerEntryID(*s)
-	}
-	return leuo
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (leuo *LedgerEntryUpdateOne) SetWalletTransactionID(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetWalletTransactionID(s)
-	return leuo
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableWalletTransactionID(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetWalletTransactionID(*s)
-	}
-	return leuo
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (leuo *LedgerEntryUpdateOne) SetWorkspaceID(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetWorkspaceID(s)
-	return leuo
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableWorkspaceID(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetWorkspaceID(*s)
-	}
-	return leuo
-}
-
-// SetResourceType sets the "resource_type" field.
-func (leuo *LedgerEntryUpdateOne) SetResourceType(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetResourceType(s)
-	return leuo
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableResourceType(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetResourceType(*s)
-	}
-	return leuo
-}
-
-// SetResourceID sets the "resource_id" field.
-func (leuo *LedgerEntryUpdateOne) SetResourceID(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetResourceID(s)
-	return leuo
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableResourceID(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetResourceID(*s)
-	}
-	return leuo
-}
-
-// SetHoldID sets the "hold_id" field.
-func (leuo *LedgerEntryUpdateOne) SetHoldID(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetHoldID(s)
-	return leuo
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableHoldID(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetHoldID(*s)
-	}
-	return leuo
-}
-
-// SetStatus sets the "status" field.
-func (leuo *LedgerEntryUpdateOne) SetStatus(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetStatus(s)
-	return leuo
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableStatus(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetStatus(*s)
-	}
-	return leuo
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (leuo *LedgerEntryUpdateOne) SetPricingVersion(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetPricingVersion(s)
-	return leuo
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillablePricingVersion(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetPricingVersion(*s)
-	}
-	return leuo
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (leuo *LedgerEntryUpdateOne) SetPriceSnapshotJSON(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetPriceSnapshotJSON(s)
-	return leuo
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillablePriceSnapshotJSON(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetPriceSnapshotJSON(*s)
-	}
-	return leuo
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (leuo *LedgerEntryUpdateOne) SetUsagePeriodStart(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetUsagePeriodStart(s)
-	return leuo
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableUsagePeriodStart(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetUsagePeriodStart(*s)
-	}
-	return leuo
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (leuo *LedgerEntryUpdateOne) SetUsagePeriodEnd(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetUsagePeriodEnd(s)
-	return leuo
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableUsagePeriodEnd(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetUsagePeriodEnd(*s)
-	}
-	return leuo
-}
-
-// SetQuantity sets the "quantity" field.
-func (leuo *LedgerEntryUpdateOne) SetQuantity(f float64) *LedgerEntryUpdateOne {
-	leuo.mutation.ResetQuantity()
-	leuo.mutation.SetQuantity(f)
-	return leuo
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableQuantity(f *float64) *LedgerEntryUpdateOne {
-	if f != nil {
-		leuo.SetQuantity(*f)
-	}
-	return leuo
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (leuo *LedgerEntryUpdateOne) AddQuantity(f float64) *LedgerEntryUpdateOne {
-	leuo.mutation.AddQuantity(f)
-	return leuo
-}
-
-// SetUnit sets the "unit" field.
-func (leuo *LedgerEntryUpdateOne) SetUnit(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetUnit(s)
-	return leuo
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableUnit(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetUnit(*s)
-	}
-	return leuo
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (leuo *LedgerEntryUpdateOne) SetProviderCostEvidenceRef(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetProviderCostEvidenceRef(s)
-	return leuo
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableProviderCostEvidenceRef(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetProviderCostEvidenceRef(*s)
-	}
-	return leuo
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (leuo *LedgerEntryUpdateOne) SetProviderRequestID(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetProviderRequestID(s)
-	return leuo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableProviderRequestID(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetProviderRequestID(*s)
-	}
-	return leuo
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (leuo *LedgerEntryUpdateOne) SetRedactedURL(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetRedactedURL(s)
-	return leuo
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableRedactedURL(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetRedactedURL(*s)
-	}
-	return leuo
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (leuo *LedgerEntryUpdateOne) SetTokenVersion(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetTokenVersion(s)
-	return leuo
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableTokenVersion(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetTokenVersion(*s)
-	}
-	return leuo
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (leuo *LedgerEntryUpdateOne) SetIdempotencyKey(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetIdempotencyKey(s)
-	return leuo
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableIdempotencyKey(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetIdempotencyKey(*s)
-	}
-	return leuo
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (leuo *LedgerEntryUpdateOne) SetRequestHash(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetRequestHash(s)
-	return leuo
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableRequestHash(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetRequestHash(*s)
-	}
-	return leuo
-}
-
-// SetReportJSON sets the "report_json" field.
-func (leuo *LedgerEntryUpdateOne) SetReportJSON(s string) *LedgerEntryUpdateOne {
-	leuo.mutation.SetReportJSON(s)
-	return leuo
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableReportJSON(s *string) *LedgerEntryUpdateOne {
-	if s != nil {
-		leuo.SetReportJSON(*s)
-	}
-	return leuo
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (leuo *LedgerEntryUpdateOne) SetBlockNewWorkspaces(b bool) *LedgerEntryUpdateOne {
-	leuo.mutation.SetBlockNewWorkspaces(b)
-	return leuo
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (leuo *LedgerEntryUpdateOne) SetNillableBlockNewWorkspaces(b *bool) *LedgerEntryUpdateOne {
-	if b != nil {
-		leuo.SetBlockNewWorkspaces(*b)
-	}
-	return leuo
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (leuo *LedgerEntryUpdateOne) SetCreatedAt(t time.Time) *LedgerEntryUpdateOne {
 	leuo.mutation.SetCreatedAt(t)
@@ -1229,12 +374,6 @@ func (leuo *LedgerEntryUpdateOne) SetNillableCreatedAt(t *time.Time) *LedgerEntr
 	if t != nil {
 		leuo.SetCreatedAt(*t)
 	}
-	return leuo
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (leuo *LedgerEntryUpdateOne) SetUpdatedAt(t time.Time) *LedgerEntryUpdateOne {
-	leuo.mutation.SetUpdatedAt(t)
 	return leuo
 }
 
@@ -1258,7 +397,6 @@ func (leuo *LedgerEntryUpdateOne) Select(field string, fields ...string) *Ledger
 
 // Save executes the query and returns the updated LedgerEntry entity.
 func (leuo *LedgerEntryUpdateOne) Save(ctx context.Context) (*LedgerEntry, error) {
-	leuo.defaults()
 	return withHooks(ctx, leuo.sqlSave, leuo.mutation, leuo.hooks)
 }
 
@@ -1284,15 +422,30 @@ func (leuo *LedgerEntryUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (leuo *LedgerEntryUpdateOne) defaults() {
-	if _, ok := leuo.mutation.UpdatedAt(); !ok {
-		v := ledgerentry.UpdateDefaultUpdatedAt()
-		leuo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (leuo *LedgerEntryUpdateOne) check() error {
+	if v, ok := leuo.mutation.AccountID(); ok {
+		if err := ledgerentry.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.account_id": %w`, err)}
+		}
 	}
+	if v, ok := leuo.mutation.Direction(); ok {
+		if err := ledgerentry.DirectionValidator(v); err != nil {
+			return &ValidationError{Name: "direction", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.direction": %w`, err)}
+		}
+	}
+	if v, ok := leuo.mutation.Source(); ok {
+		if err := ledgerentry.SourceValidator(v); err != nil {
+			return &ValidationError{Name: "source", err: fmt.Errorf(`ent: validator failed for field "LedgerEntry.source": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (leuo *LedgerEntryUpdateOne) sqlSave(ctx context.Context) (_node *LedgerEntry, err error) {
+	if err := leuo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(ledgerentry.Table, ledgerentry.Columns, sqlgraph.NewFieldSpec(ledgerentry.FieldID, field.TypeString))
 	id, ok := leuo.mutation.ID()
 	if !ok {
@@ -1321,30 +474,6 @@ func (leuo *LedgerEntryUpdateOne) sqlSave(ctx context.Context) (_node *LedgerEnt
 	if value, ok := leuo.mutation.AccountID(); ok {
 		_spec.SetField(ledgerentry.FieldAccountID, field.TypeString, value)
 	}
-	if value, ok := leuo.mutation.BalanceCents(); ok {
-		_spec.SetField(ledgerentry.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(ledgerentry.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.FrozenCents(); ok {
-		_spec.SetField(ledgerentry.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(ledgerentry.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.AvailableCents(); ok {
-		_spec.SetField(ledgerentry.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(ledgerentry.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.TotalSpentCents(); ok {
-		_spec.SetField(ledgerentry.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := leuo.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(ledgerentry.FieldTotalSpentCents, field.TypeInt64, value)
-	}
 	if value, ok := leuo.mutation.AmountCents(); ok {
 		_spec.SetField(ledgerentry.FieldAmountCents, field.TypeInt64, value)
 	}
@@ -1366,77 +495,8 @@ func (leuo *LedgerEntryUpdateOne) sqlSave(ctx context.Context) (_node *LedgerEnt
 	if value, ok := leuo.mutation.Reason(); ok {
 		_spec.SetField(ledgerentry.FieldReason, field.TypeString, value)
 	}
-	if value, ok := leuo.mutation.LedgerEntryID(); ok {
-		_spec.SetField(ledgerentry.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.WalletTransactionID(); ok {
-		_spec.SetField(ledgerentry.FieldWalletTransactionID, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.WorkspaceID(); ok {
-		_spec.SetField(ledgerentry.FieldWorkspaceID, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.ResourceType(); ok {
-		_spec.SetField(ledgerentry.FieldResourceType, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.ResourceID(); ok {
-		_spec.SetField(ledgerentry.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.HoldID(); ok {
-		_spec.SetField(ledgerentry.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.Status(); ok {
-		_spec.SetField(ledgerentry.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.PricingVersion(); ok {
-		_spec.SetField(ledgerentry.FieldPricingVersion, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(ledgerentry.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(ledgerentry.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(ledgerentry.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.Quantity(); ok {
-		_spec.SetField(ledgerentry.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := leuo.mutation.AddedQuantity(); ok {
-		_spec.AddField(ledgerentry.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := leuo.mutation.Unit(); ok {
-		_spec.SetField(ledgerentry.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(ledgerentry.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(ledgerentry.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.RedactedURL(); ok {
-		_spec.SetField(ledgerentry.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.TokenVersion(); ok {
-		_spec.SetField(ledgerentry.FieldTokenVersion, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.IdempotencyKey(); ok {
-		_spec.SetField(ledgerentry.FieldIdempotencyKey, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.RequestHash(); ok {
-		_spec.SetField(ledgerentry.FieldRequestHash, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.ReportJSON(); ok {
-		_spec.SetField(ledgerentry.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := leuo.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(ledgerentry.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := leuo.mutation.CreatedAt(); ok {
 		_spec.SetField(ledgerentry.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := leuo.mutation.UpdatedAt(); ok {
-		_spec.SetField(ledgerentry.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &LedgerEntry{config: leuo.config}
 	_spec.Assign = _node.assignValues

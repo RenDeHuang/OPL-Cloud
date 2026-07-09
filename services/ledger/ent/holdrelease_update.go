@@ -42,209 +42,6 @@ func (hru *HoldReleaseUpdate) SetNillableAccountID(s *string) *HoldReleaseUpdate
 	return hru
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (hru *HoldReleaseUpdate) SetBalanceCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.ResetBalanceCents()
-	hru.mutation.SetBalanceCents(i)
-	return hru
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableBalanceCents(i *int64) *HoldReleaseUpdate {
-	if i != nil {
-		hru.SetBalanceCents(*i)
-	}
-	return hru
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (hru *HoldReleaseUpdate) AddBalanceCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.AddBalanceCents(i)
-	return hru
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (hru *HoldReleaseUpdate) SetFrozenCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.ResetFrozenCents()
-	hru.mutation.SetFrozenCents(i)
-	return hru
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableFrozenCents(i *int64) *HoldReleaseUpdate {
-	if i != nil {
-		hru.SetFrozenCents(*i)
-	}
-	return hru
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (hru *HoldReleaseUpdate) AddFrozenCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.AddFrozenCents(i)
-	return hru
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (hru *HoldReleaseUpdate) SetAvailableCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.ResetAvailableCents()
-	hru.mutation.SetAvailableCents(i)
-	return hru
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableAvailableCents(i *int64) *HoldReleaseUpdate {
-	if i != nil {
-		hru.SetAvailableCents(*i)
-	}
-	return hru
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (hru *HoldReleaseUpdate) AddAvailableCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.AddAvailableCents(i)
-	return hru
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (hru *HoldReleaseUpdate) SetTotalSpentCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.ResetTotalSpentCents()
-	hru.mutation.SetTotalSpentCents(i)
-	return hru
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableTotalSpentCents(i *int64) *HoldReleaseUpdate {
-	if i != nil {
-		hru.SetTotalSpentCents(*i)
-	}
-	return hru
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (hru *HoldReleaseUpdate) AddTotalSpentCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.AddTotalSpentCents(i)
-	return hru
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (hru *HoldReleaseUpdate) SetAmountCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.ResetAmountCents()
-	hru.mutation.SetAmountCents(i)
-	return hru
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableAmountCents(i *int64) *HoldReleaseUpdate {
-	if i != nil {
-		hru.SetAmountCents(*i)
-	}
-	return hru
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (hru *HoldReleaseUpdate) AddAmountCents(i int64) *HoldReleaseUpdate {
-	hru.mutation.AddAmountCents(i)
-	return hru
-}
-
-// SetCurrency sets the "currency" field.
-func (hru *HoldReleaseUpdate) SetCurrency(s string) *HoldReleaseUpdate {
-	hru.mutation.SetCurrency(s)
-	return hru
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableCurrency(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetCurrency(*s)
-	}
-	return hru
-}
-
-// SetDirection sets the "direction" field.
-func (hru *HoldReleaseUpdate) SetDirection(s string) *HoldReleaseUpdate {
-	hru.mutation.SetDirection(s)
-	return hru
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableDirection(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetDirection(*s)
-	}
-	return hru
-}
-
-// SetSource sets the "source" field.
-func (hru *HoldReleaseUpdate) SetSource(s string) *HoldReleaseUpdate {
-	hru.mutation.SetSource(s)
-	return hru
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableSource(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetSource(*s)
-	}
-	return hru
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (hru *HoldReleaseUpdate) SetOperatorUserID(s string) *HoldReleaseUpdate {
-	hru.mutation.SetOperatorUserID(s)
-	return hru
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableOperatorUserID(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetOperatorUserID(*s)
-	}
-	return hru
-}
-
-// SetReason sets the "reason" field.
-func (hru *HoldReleaseUpdate) SetReason(s string) *HoldReleaseUpdate {
-	hru.mutation.SetReason(s)
-	return hru
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableReason(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetReason(*s)
-	}
-	return hru
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (hru *HoldReleaseUpdate) SetLedgerEntryID(s string) *HoldReleaseUpdate {
-	hru.mutation.SetLedgerEntryID(s)
-	return hru
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableLedgerEntryID(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetLedgerEntryID(*s)
-	}
-	return hru
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (hru *HoldReleaseUpdate) SetWalletTransactionID(s string) *HoldReleaseUpdate {
-	hru.mutation.SetWalletTransactionID(s)
-	return hru
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableWalletTransactionID(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetWalletTransactionID(*s)
-	}
-	return hru
-}
-
 // SetWorkspaceID sets the "workspace_id" field.
 func (hru *HoldReleaseUpdate) SetWorkspaceID(s string) *HoldReleaseUpdate {
 	hru.mutation.SetWorkspaceID(s)
@@ -301,6 +98,41 @@ func (hru *HoldReleaseUpdate) SetNillableHoldID(s *string) *HoldReleaseUpdate {
 	return hru
 }
 
+// SetAmountCents sets the "amount_cents" field.
+func (hru *HoldReleaseUpdate) SetAmountCents(i int64) *HoldReleaseUpdate {
+	hru.mutation.ResetAmountCents()
+	hru.mutation.SetAmountCents(i)
+	return hru
+}
+
+// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
+func (hru *HoldReleaseUpdate) SetNillableAmountCents(i *int64) *HoldReleaseUpdate {
+	if i != nil {
+		hru.SetAmountCents(*i)
+	}
+	return hru
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (hru *HoldReleaseUpdate) AddAmountCents(i int64) *HoldReleaseUpdate {
+	hru.mutation.AddAmountCents(i)
+	return hru
+}
+
+// SetCurrency sets the "currency" field.
+func (hru *HoldReleaseUpdate) SetCurrency(s string) *HoldReleaseUpdate {
+	hru.mutation.SetCurrency(s)
+	return hru
+}
+
+// SetNillableCurrency sets the "currency" field if the given value is not nil.
+func (hru *HoldReleaseUpdate) SetNillableCurrency(s *string) *HoldReleaseUpdate {
+	if s != nil {
+		hru.SetCurrency(*s)
+	}
+	return hru
+}
+
 // SetStatus sets the "status" field.
 func (hru *HoldReleaseUpdate) SetStatus(s string) *HoldReleaseUpdate {
 	hru.mutation.SetStatus(s)
@@ -315,149 +147,30 @@ func (hru *HoldReleaseUpdate) SetNillableStatus(s *string) *HoldReleaseUpdate {
 	return hru
 }
 
-// SetPricingVersion sets the "pricing_version" field.
-func (hru *HoldReleaseUpdate) SetPricingVersion(s string) *HoldReleaseUpdate {
-	hru.mutation.SetPricingVersion(s)
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (hru *HoldReleaseUpdate) SetLedgerEntryID(s string) *HoldReleaseUpdate {
+	hru.mutation.SetLedgerEntryID(s)
 	return hru
 }
 
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillablePricingVersion(s *string) *HoldReleaseUpdate {
+// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
+func (hru *HoldReleaseUpdate) SetNillableLedgerEntryID(s *string) *HoldReleaseUpdate {
 	if s != nil {
-		hru.SetPricingVersion(*s)
+		hru.SetLedgerEntryID(*s)
 	}
 	return hru
 }
 
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (hru *HoldReleaseUpdate) SetPriceSnapshotJSON(s string) *HoldReleaseUpdate {
-	hru.mutation.SetPriceSnapshotJSON(s)
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (hru *HoldReleaseUpdate) SetWalletTransactionID(s string) *HoldReleaseUpdate {
+	hru.mutation.SetWalletTransactionID(s)
 	return hru
 }
 
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillablePriceSnapshotJSON(s *string) *HoldReleaseUpdate {
+// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
+func (hru *HoldReleaseUpdate) SetNillableWalletTransactionID(s *string) *HoldReleaseUpdate {
 	if s != nil {
-		hru.SetPriceSnapshotJSON(*s)
-	}
-	return hru
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (hru *HoldReleaseUpdate) SetUsagePeriodStart(s string) *HoldReleaseUpdate {
-	hru.mutation.SetUsagePeriodStart(s)
-	return hru
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableUsagePeriodStart(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetUsagePeriodStart(*s)
-	}
-	return hru
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (hru *HoldReleaseUpdate) SetUsagePeriodEnd(s string) *HoldReleaseUpdate {
-	hru.mutation.SetUsagePeriodEnd(s)
-	return hru
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableUsagePeriodEnd(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetUsagePeriodEnd(*s)
-	}
-	return hru
-}
-
-// SetQuantity sets the "quantity" field.
-func (hru *HoldReleaseUpdate) SetQuantity(f float64) *HoldReleaseUpdate {
-	hru.mutation.ResetQuantity()
-	hru.mutation.SetQuantity(f)
-	return hru
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableQuantity(f *float64) *HoldReleaseUpdate {
-	if f != nil {
-		hru.SetQuantity(*f)
-	}
-	return hru
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (hru *HoldReleaseUpdate) AddQuantity(f float64) *HoldReleaseUpdate {
-	hru.mutation.AddQuantity(f)
-	return hru
-}
-
-// SetUnit sets the "unit" field.
-func (hru *HoldReleaseUpdate) SetUnit(s string) *HoldReleaseUpdate {
-	hru.mutation.SetUnit(s)
-	return hru
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableUnit(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetUnit(*s)
-	}
-	return hru
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (hru *HoldReleaseUpdate) SetProviderCostEvidenceRef(s string) *HoldReleaseUpdate {
-	hru.mutation.SetProviderCostEvidenceRef(s)
-	return hru
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableProviderCostEvidenceRef(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetProviderCostEvidenceRef(*s)
-	}
-	return hru
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (hru *HoldReleaseUpdate) SetProviderRequestID(s string) *HoldReleaseUpdate {
-	hru.mutation.SetProviderRequestID(s)
-	return hru
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableProviderRequestID(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetProviderRequestID(*s)
-	}
-	return hru
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (hru *HoldReleaseUpdate) SetRedactedURL(s string) *HoldReleaseUpdate {
-	hru.mutation.SetRedactedURL(s)
-	return hru
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableRedactedURL(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetRedactedURL(*s)
-	}
-	return hru
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (hru *HoldReleaseUpdate) SetTokenVersion(s string) *HoldReleaseUpdate {
-	hru.mutation.SetTokenVersion(s)
-	return hru
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableTokenVersion(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetTokenVersion(*s)
+		hru.SetWalletTransactionID(*s)
 	}
 	return hru
 }
@@ -490,34 +203,6 @@ func (hru *HoldReleaseUpdate) SetNillableRequestHash(s *string) *HoldReleaseUpda
 	return hru
 }
 
-// SetReportJSON sets the "report_json" field.
-func (hru *HoldReleaseUpdate) SetReportJSON(s string) *HoldReleaseUpdate {
-	hru.mutation.SetReportJSON(s)
-	return hru
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableReportJSON(s *string) *HoldReleaseUpdate {
-	if s != nil {
-		hru.SetReportJSON(*s)
-	}
-	return hru
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (hru *HoldReleaseUpdate) SetBlockNewWorkspaces(b bool) *HoldReleaseUpdate {
-	hru.mutation.SetBlockNewWorkspaces(b)
-	return hru
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (hru *HoldReleaseUpdate) SetNillableBlockNewWorkspaces(b *bool) *HoldReleaseUpdate {
-	if b != nil {
-		hru.SetBlockNewWorkspaces(*b)
-	}
-	return hru
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (hru *HoldReleaseUpdate) SetCreatedAt(t time.Time) *HoldReleaseUpdate {
 	hru.mutation.SetCreatedAt(t)
@@ -532,12 +217,6 @@ func (hru *HoldReleaseUpdate) SetNillableCreatedAt(t *time.Time) *HoldReleaseUpd
 	return hru
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (hru *HoldReleaseUpdate) SetUpdatedAt(t time.Time) *HoldReleaseUpdate {
-	hru.mutation.SetUpdatedAt(t)
-	return hru
-}
-
 // Mutation returns the HoldReleaseMutation object of the builder.
 func (hru *HoldReleaseUpdate) Mutation() *HoldReleaseMutation {
 	return hru.mutation
@@ -545,7 +224,6 @@ func (hru *HoldReleaseUpdate) Mutation() *HoldReleaseMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (hru *HoldReleaseUpdate) Save(ctx context.Context) (int, error) {
-	hru.defaults()
 	return withHooks(ctx, hru.sqlSave, hru.mutation, hru.hooks)
 }
 
@@ -571,15 +249,65 @@ func (hru *HoldReleaseUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (hru *HoldReleaseUpdate) defaults() {
-	if _, ok := hru.mutation.UpdatedAt(); !ok {
-		v := holdrelease.UpdateDefaultUpdatedAt()
-		hru.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (hru *HoldReleaseUpdate) check() error {
+	if v, ok := hru.mutation.AccountID(); ok {
+		if err := holdrelease.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.account_id": %w`, err)}
+		}
 	}
+	if v, ok := hru.mutation.WorkspaceID(); ok {
+		if err := holdrelease.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.workspace_id": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.ResourceType(); ok {
+		if err := holdrelease.ResourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "resource_type", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.resource_type": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.ResourceID(); ok {
+		if err := holdrelease.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.resource_id": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.HoldID(); ok {
+		if err := holdrelease.HoldIDValidator(v); err != nil {
+			return &ValidationError{Name: "hold_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.hold_id": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.Status(); ok {
+		if err := holdrelease.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.status": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.LedgerEntryID(); ok {
+		if err := holdrelease.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.ledger_entry_id": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.WalletTransactionID(); ok {
+		if err := holdrelease.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.wallet_transaction_id": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.IdempotencyKey(); ok {
+		if err := holdrelease.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := hru.mutation.RequestHash(); ok {
+		if err := holdrelease.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (hru *HoldReleaseUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := hru.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(holdrelease.Table, holdrelease.Columns, sqlgraph.NewFieldSpec(holdrelease.FieldID, field.TypeString))
 	if ps := hru.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -590,57 +318,6 @@ func (hru *HoldReleaseUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := hru.mutation.AccountID(); ok {
 		_spec.SetField(holdrelease.FieldAccountID, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.BalanceCents(); ok {
-		_spec.SetField(holdrelease.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(holdrelease.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.FrozenCents(); ok {
-		_spec.SetField(holdrelease.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(holdrelease.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AvailableCents(); ok {
-		_spec.SetField(holdrelease.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(holdrelease.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.TotalSpentCents(); ok {
-		_spec.SetField(holdrelease.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(holdrelease.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AmountCents(); ok {
-		_spec.SetField(holdrelease.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.AddedAmountCents(); ok {
-		_spec.AddField(holdrelease.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := hru.mutation.Currency(); ok {
-		_spec.SetField(holdrelease.FieldCurrency, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.Direction(); ok {
-		_spec.SetField(holdrelease.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.Source(); ok {
-		_spec.SetField(holdrelease.FieldSource, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.OperatorUserID(); ok {
-		_spec.SetField(holdrelease.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.Reason(); ok {
-		_spec.SetField(holdrelease.FieldReason, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.LedgerEntryID(); ok {
-		_spec.SetField(holdrelease.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.WalletTransactionID(); ok {
-		_spec.SetField(holdrelease.FieldWalletTransactionID, field.TypeString, value)
 	}
 	if value, ok := hru.mutation.WorkspaceID(); ok {
 		_spec.SetField(holdrelease.FieldWorkspaceID, field.TypeString, value)
@@ -654,41 +331,23 @@ func (hru *HoldReleaseUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := hru.mutation.HoldID(); ok {
 		_spec.SetField(holdrelease.FieldHoldID, field.TypeString, value)
 	}
+	if value, ok := hru.mutation.AmountCents(); ok {
+		_spec.SetField(holdrelease.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := hru.mutation.AddedAmountCents(); ok {
+		_spec.AddField(holdrelease.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := hru.mutation.Currency(); ok {
+		_spec.SetField(holdrelease.FieldCurrency, field.TypeString, value)
+	}
 	if value, ok := hru.mutation.Status(); ok {
 		_spec.SetField(holdrelease.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := hru.mutation.PricingVersion(); ok {
-		_spec.SetField(holdrelease.FieldPricingVersion, field.TypeString, value)
+	if value, ok := hru.mutation.LedgerEntryID(); ok {
+		_spec.SetField(holdrelease.FieldLedgerEntryID, field.TypeString, value)
 	}
-	if value, ok := hru.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(holdrelease.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(holdrelease.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(holdrelease.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.Quantity(); ok {
-		_spec.SetField(holdrelease.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := hru.mutation.AddedQuantity(); ok {
-		_spec.AddField(holdrelease.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := hru.mutation.Unit(); ok {
-		_spec.SetField(holdrelease.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(holdrelease.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.ProviderRequestID(); ok {
-		_spec.SetField(holdrelease.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.RedactedURL(); ok {
-		_spec.SetField(holdrelease.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.TokenVersion(); ok {
-		_spec.SetField(holdrelease.FieldTokenVersion, field.TypeString, value)
+	if value, ok := hru.mutation.WalletTransactionID(); ok {
+		_spec.SetField(holdrelease.FieldWalletTransactionID, field.TypeString, value)
 	}
 	if value, ok := hru.mutation.IdempotencyKey(); ok {
 		_spec.SetField(holdrelease.FieldIdempotencyKey, field.TypeString, value)
@@ -696,17 +355,8 @@ func (hru *HoldReleaseUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := hru.mutation.RequestHash(); ok {
 		_spec.SetField(holdrelease.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := hru.mutation.ReportJSON(); ok {
-		_spec.SetField(holdrelease.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := hru.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(holdrelease.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := hru.mutation.CreatedAt(); ok {
 		_spec.SetField(holdrelease.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := hru.mutation.UpdatedAt(); ok {
-		_spec.SetField(holdrelease.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, hru.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -738,209 +388,6 @@ func (hruo *HoldReleaseUpdateOne) SetAccountID(s string) *HoldReleaseUpdateOne {
 func (hruo *HoldReleaseUpdateOne) SetNillableAccountID(s *string) *HoldReleaseUpdateOne {
 	if s != nil {
 		hruo.SetAccountID(*s)
-	}
-	return hruo
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (hruo *HoldReleaseUpdateOne) SetBalanceCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.ResetBalanceCents()
-	hruo.mutation.SetBalanceCents(i)
-	return hruo
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableBalanceCents(i *int64) *HoldReleaseUpdateOne {
-	if i != nil {
-		hruo.SetBalanceCents(*i)
-	}
-	return hruo
-}
-
-// AddBalanceCents adds i to the "balance_cents" field.
-func (hruo *HoldReleaseUpdateOne) AddBalanceCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.AddBalanceCents(i)
-	return hruo
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (hruo *HoldReleaseUpdateOne) SetFrozenCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.ResetFrozenCents()
-	hruo.mutation.SetFrozenCents(i)
-	return hruo
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableFrozenCents(i *int64) *HoldReleaseUpdateOne {
-	if i != nil {
-		hruo.SetFrozenCents(*i)
-	}
-	return hruo
-}
-
-// AddFrozenCents adds i to the "frozen_cents" field.
-func (hruo *HoldReleaseUpdateOne) AddFrozenCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.AddFrozenCents(i)
-	return hruo
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (hruo *HoldReleaseUpdateOne) SetAvailableCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.ResetAvailableCents()
-	hruo.mutation.SetAvailableCents(i)
-	return hruo
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableAvailableCents(i *int64) *HoldReleaseUpdateOne {
-	if i != nil {
-		hruo.SetAvailableCents(*i)
-	}
-	return hruo
-}
-
-// AddAvailableCents adds i to the "available_cents" field.
-func (hruo *HoldReleaseUpdateOne) AddAvailableCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.AddAvailableCents(i)
-	return hruo
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (hruo *HoldReleaseUpdateOne) SetTotalSpentCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.ResetTotalSpentCents()
-	hruo.mutation.SetTotalSpentCents(i)
-	return hruo
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableTotalSpentCents(i *int64) *HoldReleaseUpdateOne {
-	if i != nil {
-		hruo.SetTotalSpentCents(*i)
-	}
-	return hruo
-}
-
-// AddTotalSpentCents adds i to the "total_spent_cents" field.
-func (hruo *HoldReleaseUpdateOne) AddTotalSpentCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.AddTotalSpentCents(i)
-	return hruo
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (hruo *HoldReleaseUpdateOne) SetAmountCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.ResetAmountCents()
-	hruo.mutation.SetAmountCents(i)
-	return hruo
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableAmountCents(i *int64) *HoldReleaseUpdateOne {
-	if i != nil {
-		hruo.SetAmountCents(*i)
-	}
-	return hruo
-}
-
-// AddAmountCents adds i to the "amount_cents" field.
-func (hruo *HoldReleaseUpdateOne) AddAmountCents(i int64) *HoldReleaseUpdateOne {
-	hruo.mutation.AddAmountCents(i)
-	return hruo
-}
-
-// SetCurrency sets the "currency" field.
-func (hruo *HoldReleaseUpdateOne) SetCurrency(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetCurrency(s)
-	return hruo
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableCurrency(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetCurrency(*s)
-	}
-	return hruo
-}
-
-// SetDirection sets the "direction" field.
-func (hruo *HoldReleaseUpdateOne) SetDirection(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetDirection(s)
-	return hruo
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableDirection(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetDirection(*s)
-	}
-	return hruo
-}
-
-// SetSource sets the "source" field.
-func (hruo *HoldReleaseUpdateOne) SetSource(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetSource(s)
-	return hruo
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableSource(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetSource(*s)
-	}
-	return hruo
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (hruo *HoldReleaseUpdateOne) SetOperatorUserID(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetOperatorUserID(s)
-	return hruo
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableOperatorUserID(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetOperatorUserID(*s)
-	}
-	return hruo
-}
-
-// SetReason sets the "reason" field.
-func (hruo *HoldReleaseUpdateOne) SetReason(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetReason(s)
-	return hruo
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableReason(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetReason(*s)
-	}
-	return hruo
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (hruo *HoldReleaseUpdateOne) SetLedgerEntryID(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetLedgerEntryID(s)
-	return hruo
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableLedgerEntryID(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetLedgerEntryID(*s)
-	}
-	return hruo
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (hruo *HoldReleaseUpdateOne) SetWalletTransactionID(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetWalletTransactionID(s)
-	return hruo
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableWalletTransactionID(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetWalletTransactionID(*s)
 	}
 	return hruo
 }
@@ -1001,6 +448,41 @@ func (hruo *HoldReleaseUpdateOne) SetNillableHoldID(s *string) *HoldReleaseUpdat
 	return hruo
 }
 
+// SetAmountCents sets the "amount_cents" field.
+func (hruo *HoldReleaseUpdateOne) SetAmountCents(i int64) *HoldReleaseUpdateOne {
+	hruo.mutation.ResetAmountCents()
+	hruo.mutation.SetAmountCents(i)
+	return hruo
+}
+
+// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
+func (hruo *HoldReleaseUpdateOne) SetNillableAmountCents(i *int64) *HoldReleaseUpdateOne {
+	if i != nil {
+		hruo.SetAmountCents(*i)
+	}
+	return hruo
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (hruo *HoldReleaseUpdateOne) AddAmountCents(i int64) *HoldReleaseUpdateOne {
+	hruo.mutation.AddAmountCents(i)
+	return hruo
+}
+
+// SetCurrency sets the "currency" field.
+func (hruo *HoldReleaseUpdateOne) SetCurrency(s string) *HoldReleaseUpdateOne {
+	hruo.mutation.SetCurrency(s)
+	return hruo
+}
+
+// SetNillableCurrency sets the "currency" field if the given value is not nil.
+func (hruo *HoldReleaseUpdateOne) SetNillableCurrency(s *string) *HoldReleaseUpdateOne {
+	if s != nil {
+		hruo.SetCurrency(*s)
+	}
+	return hruo
+}
+
 // SetStatus sets the "status" field.
 func (hruo *HoldReleaseUpdateOne) SetStatus(s string) *HoldReleaseUpdateOne {
 	hruo.mutation.SetStatus(s)
@@ -1015,149 +497,30 @@ func (hruo *HoldReleaseUpdateOne) SetNillableStatus(s *string) *HoldReleaseUpdat
 	return hruo
 }
 
-// SetPricingVersion sets the "pricing_version" field.
-func (hruo *HoldReleaseUpdateOne) SetPricingVersion(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetPricingVersion(s)
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (hruo *HoldReleaseUpdateOne) SetLedgerEntryID(s string) *HoldReleaseUpdateOne {
+	hruo.mutation.SetLedgerEntryID(s)
 	return hruo
 }
 
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillablePricingVersion(s *string) *HoldReleaseUpdateOne {
+// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
+func (hruo *HoldReleaseUpdateOne) SetNillableLedgerEntryID(s *string) *HoldReleaseUpdateOne {
 	if s != nil {
-		hruo.SetPricingVersion(*s)
+		hruo.SetLedgerEntryID(*s)
 	}
 	return hruo
 }
 
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (hruo *HoldReleaseUpdateOne) SetPriceSnapshotJSON(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetPriceSnapshotJSON(s)
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (hruo *HoldReleaseUpdateOne) SetWalletTransactionID(s string) *HoldReleaseUpdateOne {
+	hruo.mutation.SetWalletTransactionID(s)
 	return hruo
 }
 
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillablePriceSnapshotJSON(s *string) *HoldReleaseUpdateOne {
+// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
+func (hruo *HoldReleaseUpdateOne) SetNillableWalletTransactionID(s *string) *HoldReleaseUpdateOne {
 	if s != nil {
-		hruo.SetPriceSnapshotJSON(*s)
-	}
-	return hruo
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (hruo *HoldReleaseUpdateOne) SetUsagePeriodStart(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetUsagePeriodStart(s)
-	return hruo
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableUsagePeriodStart(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetUsagePeriodStart(*s)
-	}
-	return hruo
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (hruo *HoldReleaseUpdateOne) SetUsagePeriodEnd(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetUsagePeriodEnd(s)
-	return hruo
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableUsagePeriodEnd(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetUsagePeriodEnd(*s)
-	}
-	return hruo
-}
-
-// SetQuantity sets the "quantity" field.
-func (hruo *HoldReleaseUpdateOne) SetQuantity(f float64) *HoldReleaseUpdateOne {
-	hruo.mutation.ResetQuantity()
-	hruo.mutation.SetQuantity(f)
-	return hruo
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableQuantity(f *float64) *HoldReleaseUpdateOne {
-	if f != nil {
-		hruo.SetQuantity(*f)
-	}
-	return hruo
-}
-
-// AddQuantity adds f to the "quantity" field.
-func (hruo *HoldReleaseUpdateOne) AddQuantity(f float64) *HoldReleaseUpdateOne {
-	hruo.mutation.AddQuantity(f)
-	return hruo
-}
-
-// SetUnit sets the "unit" field.
-func (hruo *HoldReleaseUpdateOne) SetUnit(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetUnit(s)
-	return hruo
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableUnit(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetUnit(*s)
-	}
-	return hruo
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (hruo *HoldReleaseUpdateOne) SetProviderCostEvidenceRef(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetProviderCostEvidenceRef(s)
-	return hruo
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableProviderCostEvidenceRef(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetProviderCostEvidenceRef(*s)
-	}
-	return hruo
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (hruo *HoldReleaseUpdateOne) SetProviderRequestID(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetProviderRequestID(s)
-	return hruo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableProviderRequestID(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetProviderRequestID(*s)
-	}
-	return hruo
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (hruo *HoldReleaseUpdateOne) SetRedactedURL(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetRedactedURL(s)
-	return hruo
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableRedactedURL(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetRedactedURL(*s)
-	}
-	return hruo
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (hruo *HoldReleaseUpdateOne) SetTokenVersion(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetTokenVersion(s)
-	return hruo
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableTokenVersion(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetTokenVersion(*s)
+		hruo.SetWalletTransactionID(*s)
 	}
 	return hruo
 }
@@ -1190,34 +553,6 @@ func (hruo *HoldReleaseUpdateOne) SetNillableRequestHash(s *string) *HoldRelease
 	return hruo
 }
 
-// SetReportJSON sets the "report_json" field.
-func (hruo *HoldReleaseUpdateOne) SetReportJSON(s string) *HoldReleaseUpdateOne {
-	hruo.mutation.SetReportJSON(s)
-	return hruo
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableReportJSON(s *string) *HoldReleaseUpdateOne {
-	if s != nil {
-		hruo.SetReportJSON(*s)
-	}
-	return hruo
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (hruo *HoldReleaseUpdateOne) SetBlockNewWorkspaces(b bool) *HoldReleaseUpdateOne {
-	hruo.mutation.SetBlockNewWorkspaces(b)
-	return hruo
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (hruo *HoldReleaseUpdateOne) SetNillableBlockNewWorkspaces(b *bool) *HoldReleaseUpdateOne {
-	if b != nil {
-		hruo.SetBlockNewWorkspaces(*b)
-	}
-	return hruo
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (hruo *HoldReleaseUpdateOne) SetCreatedAt(t time.Time) *HoldReleaseUpdateOne {
 	hruo.mutation.SetCreatedAt(t)
@@ -1229,12 +564,6 @@ func (hruo *HoldReleaseUpdateOne) SetNillableCreatedAt(t *time.Time) *HoldReleas
 	if t != nil {
 		hruo.SetCreatedAt(*t)
 	}
-	return hruo
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (hruo *HoldReleaseUpdateOne) SetUpdatedAt(t time.Time) *HoldReleaseUpdateOne {
-	hruo.mutation.SetUpdatedAt(t)
 	return hruo
 }
 
@@ -1258,7 +587,6 @@ func (hruo *HoldReleaseUpdateOne) Select(field string, fields ...string) *HoldRe
 
 // Save executes the query and returns the updated HoldRelease entity.
 func (hruo *HoldReleaseUpdateOne) Save(ctx context.Context) (*HoldRelease, error) {
-	hruo.defaults()
 	return withHooks(ctx, hruo.sqlSave, hruo.mutation, hruo.hooks)
 }
 
@@ -1284,15 +612,65 @@ func (hruo *HoldReleaseUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (hruo *HoldReleaseUpdateOne) defaults() {
-	if _, ok := hruo.mutation.UpdatedAt(); !ok {
-		v := holdrelease.UpdateDefaultUpdatedAt()
-		hruo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (hruo *HoldReleaseUpdateOne) check() error {
+	if v, ok := hruo.mutation.AccountID(); ok {
+		if err := holdrelease.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.account_id": %w`, err)}
+		}
 	}
+	if v, ok := hruo.mutation.WorkspaceID(); ok {
+		if err := holdrelease.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.workspace_id": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.ResourceType(); ok {
+		if err := holdrelease.ResourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "resource_type", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.resource_type": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.ResourceID(); ok {
+		if err := holdrelease.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.resource_id": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.HoldID(); ok {
+		if err := holdrelease.HoldIDValidator(v); err != nil {
+			return &ValidationError{Name: "hold_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.hold_id": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.Status(); ok {
+		if err := holdrelease.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.status": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.LedgerEntryID(); ok {
+		if err := holdrelease.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.ledger_entry_id": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.WalletTransactionID(); ok {
+		if err := holdrelease.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.wallet_transaction_id": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.IdempotencyKey(); ok {
+		if err := holdrelease.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.idempotency_key": %w`, err)}
+		}
+	}
+	if v, ok := hruo.mutation.RequestHash(); ok {
+		if err := holdrelease.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "HoldRelease.request_hash": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (hruo *HoldReleaseUpdateOne) sqlSave(ctx context.Context) (_node *HoldRelease, err error) {
+	if err := hruo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(holdrelease.Table, holdrelease.Columns, sqlgraph.NewFieldSpec(holdrelease.FieldID, field.TypeString))
 	id, ok := hruo.mutation.ID()
 	if !ok {
@@ -1321,57 +699,6 @@ func (hruo *HoldReleaseUpdateOne) sqlSave(ctx context.Context) (_node *HoldRelea
 	if value, ok := hruo.mutation.AccountID(); ok {
 		_spec.SetField(holdrelease.FieldAccountID, field.TypeString, value)
 	}
-	if value, ok := hruo.mutation.BalanceCents(); ok {
-		_spec.SetField(holdrelease.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AddedBalanceCents(); ok {
-		_spec.AddField(holdrelease.FieldBalanceCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.FrozenCents(); ok {
-		_spec.SetField(holdrelease.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AddedFrozenCents(); ok {
-		_spec.AddField(holdrelease.FieldFrozenCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AvailableCents(); ok {
-		_spec.SetField(holdrelease.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AddedAvailableCents(); ok {
-		_spec.AddField(holdrelease.FieldAvailableCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.TotalSpentCents(); ok {
-		_spec.SetField(holdrelease.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AddedTotalSpentCents(); ok {
-		_spec.AddField(holdrelease.FieldTotalSpentCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AmountCents(); ok {
-		_spec.SetField(holdrelease.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.AddedAmountCents(); ok {
-		_spec.AddField(holdrelease.FieldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := hruo.mutation.Currency(); ok {
-		_spec.SetField(holdrelease.FieldCurrency, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.Direction(); ok {
-		_spec.SetField(holdrelease.FieldDirection, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.Source(); ok {
-		_spec.SetField(holdrelease.FieldSource, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.OperatorUserID(); ok {
-		_spec.SetField(holdrelease.FieldOperatorUserID, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.Reason(); ok {
-		_spec.SetField(holdrelease.FieldReason, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.LedgerEntryID(); ok {
-		_spec.SetField(holdrelease.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.WalletTransactionID(); ok {
-		_spec.SetField(holdrelease.FieldWalletTransactionID, field.TypeString, value)
-	}
 	if value, ok := hruo.mutation.WorkspaceID(); ok {
 		_spec.SetField(holdrelease.FieldWorkspaceID, field.TypeString, value)
 	}
@@ -1384,41 +711,23 @@ func (hruo *HoldReleaseUpdateOne) sqlSave(ctx context.Context) (_node *HoldRelea
 	if value, ok := hruo.mutation.HoldID(); ok {
 		_spec.SetField(holdrelease.FieldHoldID, field.TypeString, value)
 	}
+	if value, ok := hruo.mutation.AmountCents(); ok {
+		_spec.SetField(holdrelease.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := hruo.mutation.AddedAmountCents(); ok {
+		_spec.AddField(holdrelease.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := hruo.mutation.Currency(); ok {
+		_spec.SetField(holdrelease.FieldCurrency, field.TypeString, value)
+	}
 	if value, ok := hruo.mutation.Status(); ok {
 		_spec.SetField(holdrelease.FieldStatus, field.TypeString, value)
 	}
-	if value, ok := hruo.mutation.PricingVersion(); ok {
-		_spec.SetField(holdrelease.FieldPricingVersion, field.TypeString, value)
+	if value, ok := hruo.mutation.LedgerEntryID(); ok {
+		_spec.SetField(holdrelease.FieldLedgerEntryID, field.TypeString, value)
 	}
-	if value, ok := hruo.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(holdrelease.FieldPriceSnapshotJSON, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(holdrelease.FieldUsagePeriodStart, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(holdrelease.FieldUsagePeriodEnd, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.Quantity(); ok {
-		_spec.SetField(holdrelease.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := hruo.mutation.AddedQuantity(); ok {
-		_spec.AddField(holdrelease.FieldQuantity, field.TypeFloat64, value)
-	}
-	if value, ok := hruo.mutation.Unit(); ok {
-		_spec.SetField(holdrelease.FieldUnit, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(holdrelease.FieldProviderCostEvidenceRef, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(holdrelease.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.RedactedURL(); ok {
-		_spec.SetField(holdrelease.FieldRedactedURL, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.TokenVersion(); ok {
-		_spec.SetField(holdrelease.FieldTokenVersion, field.TypeString, value)
+	if value, ok := hruo.mutation.WalletTransactionID(); ok {
+		_spec.SetField(holdrelease.FieldWalletTransactionID, field.TypeString, value)
 	}
 	if value, ok := hruo.mutation.IdempotencyKey(); ok {
 		_spec.SetField(holdrelease.FieldIdempotencyKey, field.TypeString, value)
@@ -1426,17 +735,8 @@ func (hruo *HoldReleaseUpdateOne) sqlSave(ctx context.Context) (_node *HoldRelea
 	if value, ok := hruo.mutation.RequestHash(); ok {
 		_spec.SetField(holdrelease.FieldRequestHash, field.TypeString, value)
 	}
-	if value, ok := hruo.mutation.ReportJSON(); ok {
-		_spec.SetField(holdrelease.FieldReportJSON, field.TypeString, value)
-	}
-	if value, ok := hruo.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(holdrelease.FieldBlockNewWorkspaces, field.TypeBool, value)
-	}
 	if value, ok := hruo.mutation.CreatedAt(); ok {
 		_spec.SetField(holdrelease.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := hruo.mutation.UpdatedAt(); ok {
-		_spec.SetField(holdrelease.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &HoldRelease{config: hruo.config}
 	_spec.Assign = _node.assignValues

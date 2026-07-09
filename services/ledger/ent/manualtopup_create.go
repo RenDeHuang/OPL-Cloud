@@ -26,81 +26,9 @@ func (mtc *ManualTopupCreate) SetAccountID(s string) *ManualTopupCreate {
 	return mtc
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableAccountID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetAccountID(*s)
-	}
-	return mtc
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (mtc *ManualTopupCreate) SetBalanceCents(i int64) *ManualTopupCreate {
-	mtc.mutation.SetBalanceCents(i)
-	return mtc
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableBalanceCents(i *int64) *ManualTopupCreate {
-	if i != nil {
-		mtc.SetBalanceCents(*i)
-	}
-	return mtc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (mtc *ManualTopupCreate) SetFrozenCents(i int64) *ManualTopupCreate {
-	mtc.mutation.SetFrozenCents(i)
-	return mtc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableFrozenCents(i *int64) *ManualTopupCreate {
-	if i != nil {
-		mtc.SetFrozenCents(*i)
-	}
-	return mtc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (mtc *ManualTopupCreate) SetAvailableCents(i int64) *ManualTopupCreate {
-	mtc.mutation.SetAvailableCents(i)
-	return mtc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableAvailableCents(i *int64) *ManualTopupCreate {
-	if i != nil {
-		mtc.SetAvailableCents(*i)
-	}
-	return mtc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (mtc *ManualTopupCreate) SetTotalSpentCents(i int64) *ManualTopupCreate {
-	mtc.mutation.SetTotalSpentCents(i)
-	return mtc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableTotalSpentCents(i *int64) *ManualTopupCreate {
-	if i != nil {
-		mtc.SetTotalSpentCents(*i)
-	}
-	return mtc
-}
-
 // SetAmountCents sets the "amount_cents" field.
 func (mtc *ManualTopupCreate) SetAmountCents(i int64) *ManualTopupCreate {
 	mtc.mutation.SetAmountCents(i)
-	return mtc
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableAmountCents(i *int64) *ManualTopupCreate {
-	if i != nil {
-		mtc.SetAmountCents(*i)
-	}
 	return mtc
 }
 
@@ -114,34 +42,6 @@ func (mtc *ManualTopupCreate) SetCurrency(s string) *ManualTopupCreate {
 func (mtc *ManualTopupCreate) SetNillableCurrency(s *string) *ManualTopupCreate {
 	if s != nil {
 		mtc.SetCurrency(*s)
-	}
-	return mtc
-}
-
-// SetDirection sets the "direction" field.
-func (mtc *ManualTopupCreate) SetDirection(s string) *ManualTopupCreate {
-	mtc.mutation.SetDirection(s)
-	return mtc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableDirection(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetDirection(*s)
-	}
-	return mtc
-}
-
-// SetSource sets the "source" field.
-func (mtc *ManualTopupCreate) SetSource(s string) *ManualTopupCreate {
-	mtc.mutation.SetSource(s)
-	return mtc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableSource(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetSource(*s)
 	}
 	return mtc
 }
@@ -160,6 +60,30 @@ func (mtc *ManualTopupCreate) SetNillableOperatorUserID(s *string) *ManualTopupC
 	return mtc
 }
 
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (mtc *ManualTopupCreate) SetLedgerEntryID(s string) *ManualTopupCreate {
+	mtc.mutation.SetLedgerEntryID(s)
+	return mtc
+}
+
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (mtc *ManualTopupCreate) SetWalletTransactionID(s string) *ManualTopupCreate {
+	mtc.mutation.SetWalletTransactionID(s)
+	return mtc
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (mtc *ManualTopupCreate) SetIdempotencyKey(s string) *ManualTopupCreate {
+	mtc.mutation.SetIdempotencyKey(s)
+	return mtc
+}
+
+// SetRequestHash sets the "request_hash" field.
+func (mtc *ManualTopupCreate) SetRequestHash(s string) *ManualTopupCreate {
+	mtc.mutation.SetRequestHash(s)
+	return mtc
+}
+
 // SetReason sets the "reason" field.
 func (mtc *ManualTopupCreate) SetReason(s string) *ManualTopupCreate {
 	mtc.mutation.SetReason(s)
@@ -174,300 +98,6 @@ func (mtc *ManualTopupCreate) SetNillableReason(s *string) *ManualTopupCreate {
 	return mtc
 }
 
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (mtc *ManualTopupCreate) SetLedgerEntryID(s string) *ManualTopupCreate {
-	mtc.mutation.SetLedgerEntryID(s)
-	return mtc
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableLedgerEntryID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetLedgerEntryID(*s)
-	}
-	return mtc
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (mtc *ManualTopupCreate) SetWalletTransactionID(s string) *ManualTopupCreate {
-	mtc.mutation.SetWalletTransactionID(s)
-	return mtc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableWalletTransactionID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetWalletTransactionID(*s)
-	}
-	return mtc
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (mtc *ManualTopupCreate) SetWorkspaceID(s string) *ManualTopupCreate {
-	mtc.mutation.SetWorkspaceID(s)
-	return mtc
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableWorkspaceID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetWorkspaceID(*s)
-	}
-	return mtc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (mtc *ManualTopupCreate) SetResourceType(s string) *ManualTopupCreate {
-	mtc.mutation.SetResourceType(s)
-	return mtc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableResourceType(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetResourceType(*s)
-	}
-	return mtc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (mtc *ManualTopupCreate) SetResourceID(s string) *ManualTopupCreate {
-	mtc.mutation.SetResourceID(s)
-	return mtc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableResourceID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetResourceID(*s)
-	}
-	return mtc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (mtc *ManualTopupCreate) SetHoldID(s string) *ManualTopupCreate {
-	mtc.mutation.SetHoldID(s)
-	return mtc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableHoldID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetHoldID(*s)
-	}
-	return mtc
-}
-
-// SetStatus sets the "status" field.
-func (mtc *ManualTopupCreate) SetStatus(s string) *ManualTopupCreate {
-	mtc.mutation.SetStatus(s)
-	return mtc
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableStatus(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetStatus(*s)
-	}
-	return mtc
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (mtc *ManualTopupCreate) SetPricingVersion(s string) *ManualTopupCreate {
-	mtc.mutation.SetPricingVersion(s)
-	return mtc
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillablePricingVersion(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetPricingVersion(*s)
-	}
-	return mtc
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (mtc *ManualTopupCreate) SetPriceSnapshotJSON(s string) *ManualTopupCreate {
-	mtc.mutation.SetPriceSnapshotJSON(s)
-	return mtc
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillablePriceSnapshotJSON(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetPriceSnapshotJSON(*s)
-	}
-	return mtc
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (mtc *ManualTopupCreate) SetUsagePeriodStart(s string) *ManualTopupCreate {
-	mtc.mutation.SetUsagePeriodStart(s)
-	return mtc
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableUsagePeriodStart(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetUsagePeriodStart(*s)
-	}
-	return mtc
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (mtc *ManualTopupCreate) SetUsagePeriodEnd(s string) *ManualTopupCreate {
-	mtc.mutation.SetUsagePeriodEnd(s)
-	return mtc
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableUsagePeriodEnd(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetUsagePeriodEnd(*s)
-	}
-	return mtc
-}
-
-// SetQuantity sets the "quantity" field.
-func (mtc *ManualTopupCreate) SetQuantity(f float64) *ManualTopupCreate {
-	mtc.mutation.SetQuantity(f)
-	return mtc
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableQuantity(f *float64) *ManualTopupCreate {
-	if f != nil {
-		mtc.SetQuantity(*f)
-	}
-	return mtc
-}
-
-// SetUnit sets the "unit" field.
-func (mtc *ManualTopupCreate) SetUnit(s string) *ManualTopupCreate {
-	mtc.mutation.SetUnit(s)
-	return mtc
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableUnit(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetUnit(*s)
-	}
-	return mtc
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (mtc *ManualTopupCreate) SetProviderCostEvidenceRef(s string) *ManualTopupCreate {
-	mtc.mutation.SetProviderCostEvidenceRef(s)
-	return mtc
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableProviderCostEvidenceRef(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetProviderCostEvidenceRef(*s)
-	}
-	return mtc
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (mtc *ManualTopupCreate) SetProviderRequestID(s string) *ManualTopupCreate {
-	mtc.mutation.SetProviderRequestID(s)
-	return mtc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableProviderRequestID(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetProviderRequestID(*s)
-	}
-	return mtc
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (mtc *ManualTopupCreate) SetRedactedURL(s string) *ManualTopupCreate {
-	mtc.mutation.SetRedactedURL(s)
-	return mtc
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableRedactedURL(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetRedactedURL(*s)
-	}
-	return mtc
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (mtc *ManualTopupCreate) SetTokenVersion(s string) *ManualTopupCreate {
-	mtc.mutation.SetTokenVersion(s)
-	return mtc
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableTokenVersion(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetTokenVersion(*s)
-	}
-	return mtc
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (mtc *ManualTopupCreate) SetIdempotencyKey(s string) *ManualTopupCreate {
-	mtc.mutation.SetIdempotencyKey(s)
-	return mtc
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableIdempotencyKey(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetIdempotencyKey(*s)
-	}
-	return mtc
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (mtc *ManualTopupCreate) SetRequestHash(s string) *ManualTopupCreate {
-	mtc.mutation.SetRequestHash(s)
-	return mtc
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableRequestHash(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetRequestHash(*s)
-	}
-	return mtc
-}
-
-// SetReportJSON sets the "report_json" field.
-func (mtc *ManualTopupCreate) SetReportJSON(s string) *ManualTopupCreate {
-	mtc.mutation.SetReportJSON(s)
-	return mtc
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableReportJSON(s *string) *ManualTopupCreate {
-	if s != nil {
-		mtc.SetReportJSON(*s)
-	}
-	return mtc
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (mtc *ManualTopupCreate) SetBlockNewWorkspaces(b bool) *ManualTopupCreate {
-	mtc.mutation.SetBlockNewWorkspaces(b)
-	return mtc
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableBlockNewWorkspaces(b *bool) *ManualTopupCreate {
-	if b != nil {
-		mtc.SetBlockNewWorkspaces(*b)
-	}
-	return mtc
-}
-
 // SetCreatedAt sets the "created_at" field.
 func (mtc *ManualTopupCreate) SetCreatedAt(t time.Time) *ManualTopupCreate {
 	mtc.mutation.SetCreatedAt(t)
@@ -478,20 +108,6 @@ func (mtc *ManualTopupCreate) SetCreatedAt(t time.Time) *ManualTopupCreate {
 func (mtc *ManualTopupCreate) SetNillableCreatedAt(t *time.Time) *ManualTopupCreate {
 	if t != nil {
 		mtc.SetCreatedAt(*t)
-	}
-	return mtc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (mtc *ManualTopupCreate) SetUpdatedAt(t time.Time) *ManualTopupCreate {
-	mtc.mutation.SetUpdatedAt(t)
-	return mtc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (mtc *ManualTopupCreate) SetNillableUpdatedAt(t *time.Time) *ManualTopupCreate {
-	if t != nil {
-		mtc.SetUpdatedAt(*t)
 	}
 	return mtc
 }
@@ -537,41 +153,9 @@ func (mtc *ManualTopupCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (mtc *ManualTopupCreate) defaults() {
-	if _, ok := mtc.mutation.AccountID(); !ok {
-		v := manualtopup.DefaultAccountID
-		mtc.mutation.SetAccountID(v)
-	}
-	if _, ok := mtc.mutation.BalanceCents(); !ok {
-		v := manualtopup.DefaultBalanceCents
-		mtc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := mtc.mutation.FrozenCents(); !ok {
-		v := manualtopup.DefaultFrozenCents
-		mtc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := mtc.mutation.AvailableCents(); !ok {
-		v := manualtopup.DefaultAvailableCents
-		mtc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := mtc.mutation.TotalSpentCents(); !ok {
-		v := manualtopup.DefaultTotalSpentCents
-		mtc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := mtc.mutation.AmountCents(); !ok {
-		v := manualtopup.DefaultAmountCents
-		mtc.mutation.SetAmountCents(v)
-	}
 	if _, ok := mtc.mutation.Currency(); !ok {
 		v := manualtopup.DefaultCurrency
 		mtc.mutation.SetCurrency(v)
-	}
-	if _, ok := mtc.mutation.Direction(); !ok {
-		v := manualtopup.DefaultDirection
-		mtc.mutation.SetDirection(v)
-	}
-	if _, ok := mtc.mutation.Source(); !ok {
-		v := manualtopup.DefaultSource
-		mtc.mutation.SetSource(v)
 	}
 	if _, ok := mtc.mutation.OperatorUserID(); !ok {
 		v := manualtopup.DefaultOperatorUserID
@@ -581,97 +165,9 @@ func (mtc *ManualTopupCreate) defaults() {
 		v := manualtopup.DefaultReason
 		mtc.mutation.SetReason(v)
 	}
-	if _, ok := mtc.mutation.LedgerEntryID(); !ok {
-		v := manualtopup.DefaultLedgerEntryID
-		mtc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := mtc.mutation.WalletTransactionID(); !ok {
-		v := manualtopup.DefaultWalletTransactionID
-		mtc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := mtc.mutation.WorkspaceID(); !ok {
-		v := manualtopup.DefaultWorkspaceID
-		mtc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := mtc.mutation.ResourceType(); !ok {
-		v := manualtopup.DefaultResourceType
-		mtc.mutation.SetResourceType(v)
-	}
-	if _, ok := mtc.mutation.ResourceID(); !ok {
-		v := manualtopup.DefaultResourceID
-		mtc.mutation.SetResourceID(v)
-	}
-	if _, ok := mtc.mutation.HoldID(); !ok {
-		v := manualtopup.DefaultHoldID
-		mtc.mutation.SetHoldID(v)
-	}
-	if _, ok := mtc.mutation.Status(); !ok {
-		v := manualtopup.DefaultStatus
-		mtc.mutation.SetStatus(v)
-	}
-	if _, ok := mtc.mutation.PricingVersion(); !ok {
-		v := manualtopup.DefaultPricingVersion
-		mtc.mutation.SetPricingVersion(v)
-	}
-	if _, ok := mtc.mutation.PriceSnapshotJSON(); !ok {
-		v := manualtopup.DefaultPriceSnapshotJSON
-		mtc.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := mtc.mutation.UsagePeriodStart(); !ok {
-		v := manualtopup.DefaultUsagePeriodStart
-		mtc.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := mtc.mutation.UsagePeriodEnd(); !ok {
-		v := manualtopup.DefaultUsagePeriodEnd
-		mtc.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := mtc.mutation.Quantity(); !ok {
-		v := manualtopup.DefaultQuantity
-		mtc.mutation.SetQuantity(v)
-	}
-	if _, ok := mtc.mutation.Unit(); !ok {
-		v := manualtopup.DefaultUnit
-		mtc.mutation.SetUnit(v)
-	}
-	if _, ok := mtc.mutation.ProviderCostEvidenceRef(); !ok {
-		v := manualtopup.DefaultProviderCostEvidenceRef
-		mtc.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := mtc.mutation.ProviderRequestID(); !ok {
-		v := manualtopup.DefaultProviderRequestID
-		mtc.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := mtc.mutation.RedactedURL(); !ok {
-		v := manualtopup.DefaultRedactedURL
-		mtc.mutation.SetRedactedURL(v)
-	}
-	if _, ok := mtc.mutation.TokenVersion(); !ok {
-		v := manualtopup.DefaultTokenVersion
-		mtc.mutation.SetTokenVersion(v)
-	}
-	if _, ok := mtc.mutation.IdempotencyKey(); !ok {
-		v := manualtopup.DefaultIdempotencyKey
-		mtc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := mtc.mutation.RequestHash(); !ok {
-		v := manualtopup.DefaultRequestHash
-		mtc.mutation.SetRequestHash(v)
-	}
-	if _, ok := mtc.mutation.ReportJSON(); !ok {
-		v := manualtopup.DefaultReportJSON
-		mtc.mutation.SetReportJSON(v)
-	}
-	if _, ok := mtc.mutation.BlockNewWorkspaces(); !ok {
-		v := manualtopup.DefaultBlockNewWorkspaces
-		mtc.mutation.SetBlockNewWorkspaces(v)
-	}
 	if _, ok := mtc.mutation.CreatedAt(); !ok {
 		v := manualtopup.DefaultCreatedAt()
 		mtc.mutation.SetCreatedAt(v)
-	}
-	if _, ok := mtc.mutation.UpdatedAt(); !ok {
-		v := manualtopup.DefaultUpdatedAt()
-		mtc.mutation.SetUpdatedAt(v)
 	}
 }
 
@@ -680,17 +176,10 @@ func (mtc *ManualTopupCreate) check() error {
 	if _, ok := mtc.mutation.AccountID(); !ok {
 		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "ManualTopup.account_id"`)}
 	}
-	if _, ok := mtc.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "ManualTopup.balance_cents"`)}
-	}
-	if _, ok := mtc.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "ManualTopup.frozen_cents"`)}
-	}
-	if _, ok := mtc.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "ManualTopup.available_cents"`)}
-	}
-	if _, ok := mtc.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "ManualTopup.total_spent_cents"`)}
+	if v, ok := mtc.mutation.AccountID(); ok {
+		if err := manualtopup.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.account_id": %w`, err)}
+		}
 	}
 	if _, ok := mtc.mutation.AmountCents(); !ok {
 		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "ManualTopup.amount_cents"`)}
@@ -698,86 +187,46 @@ func (mtc *ManualTopupCreate) check() error {
 	if _, ok := mtc.mutation.Currency(); !ok {
 		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "ManualTopup.currency"`)}
 	}
-	if _, ok := mtc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "ManualTopup.direction"`)}
-	}
-	if _, ok := mtc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "ManualTopup.source"`)}
-	}
 	if _, ok := mtc.mutation.OperatorUserID(); !ok {
 		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "ManualTopup.operator_user_id"`)}
-	}
-	if _, ok := mtc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "ManualTopup.reason"`)}
 	}
 	if _, ok := mtc.mutation.LedgerEntryID(); !ok {
 		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "ManualTopup.ledger_entry_id"`)}
 	}
+	if v, ok := mtc.mutation.LedgerEntryID(); ok {
+		if err := manualtopup.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.ledger_entry_id": %w`, err)}
+		}
+	}
 	if _, ok := mtc.mutation.WalletTransactionID(); !ok {
 		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "ManualTopup.wallet_transaction_id"`)}
 	}
-	if _, ok := mtc.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "ManualTopup.workspace_id"`)}
-	}
-	if _, ok := mtc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "ManualTopup.resource_type"`)}
-	}
-	if _, ok := mtc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "ManualTopup.resource_id"`)}
-	}
-	if _, ok := mtc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "ManualTopup.hold_id"`)}
-	}
-	if _, ok := mtc.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "ManualTopup.status"`)}
-	}
-	if _, ok := mtc.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "ManualTopup.pricing_version"`)}
-	}
-	if _, ok := mtc.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "ManualTopup.price_snapshot_json"`)}
-	}
-	if _, ok := mtc.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "ManualTopup.usage_period_start"`)}
-	}
-	if _, ok := mtc.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "ManualTopup.usage_period_end"`)}
-	}
-	if _, ok := mtc.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "ManualTopup.quantity"`)}
-	}
-	if _, ok := mtc.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "ManualTopup.unit"`)}
-	}
-	if _, ok := mtc.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "ManualTopup.provider_cost_evidence_ref"`)}
-	}
-	if _, ok := mtc.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "ManualTopup.provider_request_id"`)}
-	}
-	if _, ok := mtc.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "ManualTopup.redacted_url"`)}
-	}
-	if _, ok := mtc.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "ManualTopup.token_version"`)}
+	if v, ok := mtc.mutation.WalletTransactionID(); ok {
+		if err := manualtopup.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.wallet_transaction_id": %w`, err)}
+		}
 	}
 	if _, ok := mtc.mutation.IdempotencyKey(); !ok {
 		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "ManualTopup.idempotency_key"`)}
 	}
+	if v, ok := mtc.mutation.IdempotencyKey(); ok {
+		if err := manualtopup.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.idempotency_key": %w`, err)}
+		}
+	}
 	if _, ok := mtc.mutation.RequestHash(); !ok {
 		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "ManualTopup.request_hash"`)}
 	}
-	if _, ok := mtc.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "ManualTopup.report_json"`)}
+	if v, ok := mtc.mutation.RequestHash(); ok {
+		if err := manualtopup.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "ManualTopup.request_hash": %w`, err)}
+		}
 	}
-	if _, ok := mtc.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "ManualTopup.block_new_workspaces"`)}
+	if _, ok := mtc.mutation.Reason(); !ok {
+		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "ManualTopup.reason"`)}
 	}
 	if _, ok := mtc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "ManualTopup.created_at"`)}
-	}
-	if _, ok := mtc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "ManualTopup.updated_at"`)}
 	}
 	if v, ok := mtc.mutation.ID(); ok {
 		if err := manualtopup.IDValidator(v); err != nil {
@@ -823,22 +272,6 @@ func (mtc *ManualTopupCreate) createSpec() (*ManualTopup, *sqlgraph.CreateSpec) 
 		_spec.SetField(manualtopup.FieldAccountID, field.TypeString, value)
 		_node.AccountID = value
 	}
-	if value, ok := mtc.mutation.BalanceCents(); ok {
-		_spec.SetField(manualtopup.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := mtc.mutation.FrozenCents(); ok {
-		_spec.SetField(manualtopup.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := mtc.mutation.AvailableCents(); ok {
-		_spec.SetField(manualtopup.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := mtc.mutation.TotalSpentCents(); ok {
-		_spec.SetField(manualtopup.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
 	if value, ok := mtc.mutation.AmountCents(); ok {
 		_spec.SetField(manualtopup.FieldAmountCents, field.TypeInt64, value)
 		_node.AmountCents = value
@@ -847,21 +280,9 @@ func (mtc *ManualTopupCreate) createSpec() (*ManualTopup, *sqlgraph.CreateSpec) 
 		_spec.SetField(manualtopup.FieldCurrency, field.TypeString, value)
 		_node.Currency = value
 	}
-	if value, ok := mtc.mutation.Direction(); ok {
-		_spec.SetField(manualtopup.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := mtc.mutation.Source(); ok {
-		_spec.SetField(manualtopup.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
 	if value, ok := mtc.mutation.OperatorUserID(); ok {
 		_spec.SetField(manualtopup.FieldOperatorUserID, field.TypeString, value)
 		_node.OperatorUserID = value
-	}
-	if value, ok := mtc.mutation.Reason(); ok {
-		_spec.SetField(manualtopup.FieldReason, field.TypeString, value)
-		_node.Reason = value
 	}
 	if value, ok := mtc.mutation.LedgerEntryID(); ok {
 		_spec.SetField(manualtopup.FieldLedgerEntryID, field.TypeString, value)
@@ -871,66 +292,6 @@ func (mtc *ManualTopupCreate) createSpec() (*ManualTopup, *sqlgraph.CreateSpec) 
 		_spec.SetField(manualtopup.FieldWalletTransactionID, field.TypeString, value)
 		_node.WalletTransactionID = value
 	}
-	if value, ok := mtc.mutation.WorkspaceID(); ok {
-		_spec.SetField(manualtopup.FieldWorkspaceID, field.TypeString, value)
-		_node.WorkspaceID = value
-	}
-	if value, ok := mtc.mutation.ResourceType(); ok {
-		_spec.SetField(manualtopup.FieldResourceType, field.TypeString, value)
-		_node.ResourceType = value
-	}
-	if value, ok := mtc.mutation.ResourceID(); ok {
-		_spec.SetField(manualtopup.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := mtc.mutation.HoldID(); ok {
-		_spec.SetField(manualtopup.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
-	}
-	if value, ok := mtc.mutation.Status(); ok {
-		_spec.SetField(manualtopup.FieldStatus, field.TypeString, value)
-		_node.Status = value
-	}
-	if value, ok := mtc.mutation.PricingVersion(); ok {
-		_spec.SetField(manualtopup.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
-	}
-	if value, ok := mtc.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(manualtopup.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := mtc.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(manualtopup.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := mtc.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(manualtopup.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := mtc.mutation.Quantity(); ok {
-		_spec.SetField(manualtopup.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := mtc.mutation.Unit(); ok {
-		_spec.SetField(manualtopup.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := mtc.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(manualtopup.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
-	}
-	if value, ok := mtc.mutation.ProviderRequestID(); ok {
-		_spec.SetField(manualtopup.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := mtc.mutation.RedactedURL(); ok {
-		_spec.SetField(manualtopup.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := mtc.mutation.TokenVersion(); ok {
-		_spec.SetField(manualtopup.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
-	}
 	if value, ok := mtc.mutation.IdempotencyKey(); ok {
 		_spec.SetField(manualtopup.FieldIdempotencyKey, field.TypeString, value)
 		_node.IdempotencyKey = value
@@ -939,21 +300,13 @@ func (mtc *ManualTopupCreate) createSpec() (*ManualTopup, *sqlgraph.CreateSpec) 
 		_spec.SetField(manualtopup.FieldRequestHash, field.TypeString, value)
 		_node.RequestHash = value
 	}
-	if value, ok := mtc.mutation.ReportJSON(); ok {
-		_spec.SetField(manualtopup.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := mtc.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(manualtopup.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
+	if value, ok := mtc.mutation.Reason(); ok {
+		_spec.SetField(manualtopup.FieldReason, field.TypeString, value)
+		_node.Reason = value
 	}
 	if value, ok := mtc.mutation.CreatedAt(); ok {
 		_spec.SetField(manualtopup.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := mtc.mutation.UpdatedAt(); ok {
-		_spec.SetField(manualtopup.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

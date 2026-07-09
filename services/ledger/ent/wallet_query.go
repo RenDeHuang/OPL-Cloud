@@ -261,12 +261,12 @@ func (wq *WalletQuery) Clone() *WalletQuery {
 // Example:
 //
 //	var v []struct {
-//		AccountID string `json:"account_id,omitempty"`
+//		BalanceCents int64 `json:"balance_cents,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.Wallet.Query().
-//		GroupBy(wallet.FieldAccountID).
+//		GroupBy(wallet.FieldBalanceCents).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (wq *WalletQuery) GroupBy(field string, fields ...string) *WalletGroupBy {
@@ -284,11 +284,11 @@ func (wq *WalletQuery) GroupBy(field string, fields ...string) *WalletGroupBy {
 // Example:
 //
 //	var v []struct {
-//		AccountID string `json:"account_id,omitempty"`
+//		BalanceCents int64 `json:"balance_cents,omitempty"`
 //	}
 //
 //	client.Wallet.Query().
-//		Select(wallet.FieldAccountID).
+//		Select(wallet.FieldBalanceCents).
 //		Scan(ctx, &v)
 func (wq *WalletQuery) Select(fields ...string) *WalletSelect {
 	wq.ctx.Fields = append(wq.ctx.Fields, fields...)

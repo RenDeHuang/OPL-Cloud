@@ -26,81 +26,27 @@ func (hc *HoldCreate) SetAccountID(s string) *HoldCreate {
 	return hc
 }
 
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableAccountID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetAccountID(*s)
-	}
+// SetWorkspaceID sets the "workspace_id" field.
+func (hc *HoldCreate) SetWorkspaceID(s string) *HoldCreate {
+	hc.mutation.SetWorkspaceID(s)
 	return hc
 }
 
-// SetBalanceCents sets the "balance_cents" field.
-func (hc *HoldCreate) SetBalanceCents(i int64) *HoldCreate {
-	hc.mutation.SetBalanceCents(i)
+// SetResourceType sets the "resource_type" field.
+func (hc *HoldCreate) SetResourceType(s string) *HoldCreate {
+	hc.mutation.SetResourceType(s)
 	return hc
 }
 
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableBalanceCents(i *int64) *HoldCreate {
-	if i != nil {
-		hc.SetBalanceCents(*i)
-	}
-	return hc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (hc *HoldCreate) SetFrozenCents(i int64) *HoldCreate {
-	hc.mutation.SetFrozenCents(i)
-	return hc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableFrozenCents(i *int64) *HoldCreate {
-	if i != nil {
-		hc.SetFrozenCents(*i)
-	}
-	return hc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (hc *HoldCreate) SetAvailableCents(i int64) *HoldCreate {
-	hc.mutation.SetAvailableCents(i)
-	return hc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableAvailableCents(i *int64) *HoldCreate {
-	if i != nil {
-		hc.SetAvailableCents(*i)
-	}
-	return hc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (hc *HoldCreate) SetTotalSpentCents(i int64) *HoldCreate {
-	hc.mutation.SetTotalSpentCents(i)
-	return hc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableTotalSpentCents(i *int64) *HoldCreate {
-	if i != nil {
-		hc.SetTotalSpentCents(*i)
-	}
+// SetResourceID sets the "resource_id" field.
+func (hc *HoldCreate) SetResourceID(s string) *HoldCreate {
+	hc.mutation.SetResourceID(s)
 	return hc
 }
 
 // SetAmountCents sets the "amount_cents" field.
 func (hc *HoldCreate) SetAmountCents(i int64) *HoldCreate {
 	hc.mutation.SetAmountCents(i)
-	return hc
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableAmountCents(i *int64) *HoldCreate {
-	if i != nil {
-		hc.SetAmountCents(*i)
-	}
 	return hc
 }
 
@@ -118,59 +64,9 @@ func (hc *HoldCreate) SetNillableCurrency(s *string) *HoldCreate {
 	return hc
 }
 
-// SetDirection sets the "direction" field.
-func (hc *HoldCreate) SetDirection(s string) *HoldCreate {
-	hc.mutation.SetDirection(s)
-	return hc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableDirection(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetDirection(*s)
-	}
-	return hc
-}
-
-// SetSource sets the "source" field.
-func (hc *HoldCreate) SetSource(s string) *HoldCreate {
-	hc.mutation.SetSource(s)
-	return hc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableSource(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetSource(*s)
-	}
-	return hc
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (hc *HoldCreate) SetOperatorUserID(s string) *HoldCreate {
-	hc.mutation.SetOperatorUserID(s)
-	return hc
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableOperatorUserID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetOperatorUserID(*s)
-	}
-	return hc
-}
-
-// SetReason sets the "reason" field.
-func (hc *HoldCreate) SetReason(s string) *HoldCreate {
-	hc.mutation.SetReason(s)
-	return hc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableReason(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetReason(*s)
-	}
+// SetStatus sets the "status" field.
+func (hc *HoldCreate) SetStatus(s string) *HoldCreate {
+	hc.mutation.SetStatus(s)
 	return hc
 }
 
@@ -180,235 +76,9 @@ func (hc *HoldCreate) SetLedgerEntryID(s string) *HoldCreate {
 	return hc
 }
 
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableLedgerEntryID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetLedgerEntryID(*s)
-	}
-	return hc
-}
-
 // SetWalletTransactionID sets the "wallet_transaction_id" field.
 func (hc *HoldCreate) SetWalletTransactionID(s string) *HoldCreate {
 	hc.mutation.SetWalletTransactionID(s)
-	return hc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableWalletTransactionID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetWalletTransactionID(*s)
-	}
-	return hc
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (hc *HoldCreate) SetWorkspaceID(s string) *HoldCreate {
-	hc.mutation.SetWorkspaceID(s)
-	return hc
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableWorkspaceID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetWorkspaceID(*s)
-	}
-	return hc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (hc *HoldCreate) SetResourceType(s string) *HoldCreate {
-	hc.mutation.SetResourceType(s)
-	return hc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableResourceType(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetResourceType(*s)
-	}
-	return hc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (hc *HoldCreate) SetResourceID(s string) *HoldCreate {
-	hc.mutation.SetResourceID(s)
-	return hc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableResourceID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetResourceID(*s)
-	}
-	return hc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (hc *HoldCreate) SetHoldID(s string) *HoldCreate {
-	hc.mutation.SetHoldID(s)
-	return hc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableHoldID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetHoldID(*s)
-	}
-	return hc
-}
-
-// SetStatus sets the "status" field.
-func (hc *HoldCreate) SetStatus(s string) *HoldCreate {
-	hc.mutation.SetStatus(s)
-	return hc
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableStatus(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetStatus(*s)
-	}
-	return hc
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (hc *HoldCreate) SetPricingVersion(s string) *HoldCreate {
-	hc.mutation.SetPricingVersion(s)
-	return hc
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (hc *HoldCreate) SetNillablePricingVersion(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetPricingVersion(*s)
-	}
-	return hc
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (hc *HoldCreate) SetPriceSnapshotJSON(s string) *HoldCreate {
-	hc.mutation.SetPriceSnapshotJSON(s)
-	return hc
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (hc *HoldCreate) SetNillablePriceSnapshotJSON(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetPriceSnapshotJSON(*s)
-	}
-	return hc
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (hc *HoldCreate) SetUsagePeriodStart(s string) *HoldCreate {
-	hc.mutation.SetUsagePeriodStart(s)
-	return hc
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableUsagePeriodStart(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetUsagePeriodStart(*s)
-	}
-	return hc
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (hc *HoldCreate) SetUsagePeriodEnd(s string) *HoldCreate {
-	hc.mutation.SetUsagePeriodEnd(s)
-	return hc
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableUsagePeriodEnd(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetUsagePeriodEnd(*s)
-	}
-	return hc
-}
-
-// SetQuantity sets the "quantity" field.
-func (hc *HoldCreate) SetQuantity(f float64) *HoldCreate {
-	hc.mutation.SetQuantity(f)
-	return hc
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableQuantity(f *float64) *HoldCreate {
-	if f != nil {
-		hc.SetQuantity(*f)
-	}
-	return hc
-}
-
-// SetUnit sets the "unit" field.
-func (hc *HoldCreate) SetUnit(s string) *HoldCreate {
-	hc.mutation.SetUnit(s)
-	return hc
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableUnit(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetUnit(*s)
-	}
-	return hc
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (hc *HoldCreate) SetProviderCostEvidenceRef(s string) *HoldCreate {
-	hc.mutation.SetProviderCostEvidenceRef(s)
-	return hc
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableProviderCostEvidenceRef(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetProviderCostEvidenceRef(*s)
-	}
-	return hc
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (hc *HoldCreate) SetProviderRequestID(s string) *HoldCreate {
-	hc.mutation.SetProviderRequestID(s)
-	return hc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableProviderRequestID(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetProviderRequestID(*s)
-	}
-	return hc
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (hc *HoldCreate) SetRedactedURL(s string) *HoldCreate {
-	hc.mutation.SetRedactedURL(s)
-	return hc
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableRedactedURL(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetRedactedURL(*s)
-	}
-	return hc
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (hc *HoldCreate) SetTokenVersion(s string) *HoldCreate {
-	hc.mutation.SetTokenVersion(s)
-	return hc
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableTokenVersion(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetTokenVersion(*s)
-	}
 	return hc
 }
 
@@ -418,53 +88,9 @@ func (hc *HoldCreate) SetIdempotencyKey(s string) *HoldCreate {
 	return hc
 }
 
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableIdempotencyKey(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetIdempotencyKey(*s)
-	}
-	return hc
-}
-
 // SetRequestHash sets the "request_hash" field.
 func (hc *HoldCreate) SetRequestHash(s string) *HoldCreate {
 	hc.mutation.SetRequestHash(s)
-	return hc
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableRequestHash(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetRequestHash(*s)
-	}
-	return hc
-}
-
-// SetReportJSON sets the "report_json" field.
-func (hc *HoldCreate) SetReportJSON(s string) *HoldCreate {
-	hc.mutation.SetReportJSON(s)
-	return hc
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableReportJSON(s *string) *HoldCreate {
-	if s != nil {
-		hc.SetReportJSON(*s)
-	}
-	return hc
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (hc *HoldCreate) SetBlockNewWorkspaces(b bool) *HoldCreate {
-	hc.mutation.SetBlockNewWorkspaces(b)
-	return hc
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableBlockNewWorkspaces(b *bool) *HoldCreate {
-	if b != nil {
-		hc.SetBlockNewWorkspaces(*b)
-	}
 	return hc
 }
 
@@ -478,20 +104,6 @@ func (hc *HoldCreate) SetCreatedAt(t time.Time) *HoldCreate {
 func (hc *HoldCreate) SetNillableCreatedAt(t *time.Time) *HoldCreate {
 	if t != nil {
 		hc.SetCreatedAt(*t)
-	}
-	return hc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (hc *HoldCreate) SetUpdatedAt(t time.Time) *HoldCreate {
-	hc.mutation.SetUpdatedAt(t)
-	return hc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (hc *HoldCreate) SetNillableUpdatedAt(t *time.Time) *HoldCreate {
-	if t != nil {
-		hc.SetUpdatedAt(*t)
 	}
 	return hc
 }
@@ -537,141 +149,13 @@ func (hc *HoldCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (hc *HoldCreate) defaults() {
-	if _, ok := hc.mutation.AccountID(); !ok {
-		v := hold.DefaultAccountID
-		hc.mutation.SetAccountID(v)
-	}
-	if _, ok := hc.mutation.BalanceCents(); !ok {
-		v := hold.DefaultBalanceCents
-		hc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := hc.mutation.FrozenCents(); !ok {
-		v := hold.DefaultFrozenCents
-		hc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := hc.mutation.AvailableCents(); !ok {
-		v := hold.DefaultAvailableCents
-		hc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := hc.mutation.TotalSpentCents(); !ok {
-		v := hold.DefaultTotalSpentCents
-		hc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := hc.mutation.AmountCents(); !ok {
-		v := hold.DefaultAmountCents
-		hc.mutation.SetAmountCents(v)
-	}
 	if _, ok := hc.mutation.Currency(); !ok {
 		v := hold.DefaultCurrency
 		hc.mutation.SetCurrency(v)
 	}
-	if _, ok := hc.mutation.Direction(); !ok {
-		v := hold.DefaultDirection
-		hc.mutation.SetDirection(v)
-	}
-	if _, ok := hc.mutation.Source(); !ok {
-		v := hold.DefaultSource
-		hc.mutation.SetSource(v)
-	}
-	if _, ok := hc.mutation.OperatorUserID(); !ok {
-		v := hold.DefaultOperatorUserID
-		hc.mutation.SetOperatorUserID(v)
-	}
-	if _, ok := hc.mutation.Reason(); !ok {
-		v := hold.DefaultReason
-		hc.mutation.SetReason(v)
-	}
-	if _, ok := hc.mutation.LedgerEntryID(); !ok {
-		v := hold.DefaultLedgerEntryID
-		hc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := hc.mutation.WalletTransactionID(); !ok {
-		v := hold.DefaultWalletTransactionID
-		hc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := hc.mutation.WorkspaceID(); !ok {
-		v := hold.DefaultWorkspaceID
-		hc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := hc.mutation.ResourceType(); !ok {
-		v := hold.DefaultResourceType
-		hc.mutation.SetResourceType(v)
-	}
-	if _, ok := hc.mutation.ResourceID(); !ok {
-		v := hold.DefaultResourceID
-		hc.mutation.SetResourceID(v)
-	}
-	if _, ok := hc.mutation.HoldID(); !ok {
-		v := hold.DefaultHoldID
-		hc.mutation.SetHoldID(v)
-	}
-	if _, ok := hc.mutation.Status(); !ok {
-		v := hold.DefaultStatus
-		hc.mutation.SetStatus(v)
-	}
-	if _, ok := hc.mutation.PricingVersion(); !ok {
-		v := hold.DefaultPricingVersion
-		hc.mutation.SetPricingVersion(v)
-	}
-	if _, ok := hc.mutation.PriceSnapshotJSON(); !ok {
-		v := hold.DefaultPriceSnapshotJSON
-		hc.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := hc.mutation.UsagePeriodStart(); !ok {
-		v := hold.DefaultUsagePeriodStart
-		hc.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := hc.mutation.UsagePeriodEnd(); !ok {
-		v := hold.DefaultUsagePeriodEnd
-		hc.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := hc.mutation.Quantity(); !ok {
-		v := hold.DefaultQuantity
-		hc.mutation.SetQuantity(v)
-	}
-	if _, ok := hc.mutation.Unit(); !ok {
-		v := hold.DefaultUnit
-		hc.mutation.SetUnit(v)
-	}
-	if _, ok := hc.mutation.ProviderCostEvidenceRef(); !ok {
-		v := hold.DefaultProviderCostEvidenceRef
-		hc.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := hc.mutation.ProviderRequestID(); !ok {
-		v := hold.DefaultProviderRequestID
-		hc.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := hc.mutation.RedactedURL(); !ok {
-		v := hold.DefaultRedactedURL
-		hc.mutation.SetRedactedURL(v)
-	}
-	if _, ok := hc.mutation.TokenVersion(); !ok {
-		v := hold.DefaultTokenVersion
-		hc.mutation.SetTokenVersion(v)
-	}
-	if _, ok := hc.mutation.IdempotencyKey(); !ok {
-		v := hold.DefaultIdempotencyKey
-		hc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := hc.mutation.RequestHash(); !ok {
-		v := hold.DefaultRequestHash
-		hc.mutation.SetRequestHash(v)
-	}
-	if _, ok := hc.mutation.ReportJSON(); !ok {
-		v := hold.DefaultReportJSON
-		hc.mutation.SetReportJSON(v)
-	}
-	if _, ok := hc.mutation.BlockNewWorkspaces(); !ok {
-		v := hold.DefaultBlockNewWorkspaces
-		hc.mutation.SetBlockNewWorkspaces(v)
-	}
 	if _, ok := hc.mutation.CreatedAt(); !ok {
 		v := hold.DefaultCreatedAt()
 		hc.mutation.SetCreatedAt(v)
-	}
-	if _, ok := hc.mutation.UpdatedAt(); !ok {
-		v := hold.DefaultUpdatedAt()
-		hc.mutation.SetUpdatedAt(v)
 	}
 }
 
@@ -680,17 +164,34 @@ func (hc *HoldCreate) check() error {
 	if _, ok := hc.mutation.AccountID(); !ok {
 		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "Hold.account_id"`)}
 	}
-	if _, ok := hc.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "Hold.balance_cents"`)}
+	if v, ok := hc.mutation.AccountID(); ok {
+		if err := hold.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "Hold.account_id": %w`, err)}
+		}
 	}
-	if _, ok := hc.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "Hold.frozen_cents"`)}
+	if _, ok := hc.mutation.WorkspaceID(); !ok {
+		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "Hold.workspace_id"`)}
 	}
-	if _, ok := hc.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "Hold.available_cents"`)}
+	if v, ok := hc.mutation.WorkspaceID(); ok {
+		if err := hold.WorkspaceIDValidator(v); err != nil {
+			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "Hold.workspace_id": %w`, err)}
+		}
 	}
-	if _, ok := hc.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "Hold.total_spent_cents"`)}
+	if _, ok := hc.mutation.ResourceType(); !ok {
+		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "Hold.resource_type"`)}
+	}
+	if v, ok := hc.mutation.ResourceType(); ok {
+		if err := hold.ResourceTypeValidator(v); err != nil {
+			return &ValidationError{Name: "resource_type", err: fmt.Errorf(`ent: validator failed for field "Hold.resource_type": %w`, err)}
+		}
+	}
+	if _, ok := hc.mutation.ResourceID(); !ok {
+		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "Hold.resource_id"`)}
+	}
+	if v, ok := hc.mutation.ResourceID(); ok {
+		if err := hold.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "Hold.resource_id": %w`, err)}
+		}
 	}
 	if _, ok := hc.mutation.AmountCents(); !ok {
 		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "Hold.amount_cents"`)}
@@ -698,86 +199,48 @@ func (hc *HoldCreate) check() error {
 	if _, ok := hc.mutation.Currency(); !ok {
 		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "Hold.currency"`)}
 	}
-	if _, ok := hc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "Hold.direction"`)}
+	if _, ok := hc.mutation.Status(); !ok {
+		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Hold.status"`)}
 	}
-	if _, ok := hc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "Hold.source"`)}
-	}
-	if _, ok := hc.mutation.OperatorUserID(); !ok {
-		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "Hold.operator_user_id"`)}
-	}
-	if _, ok := hc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "Hold.reason"`)}
+	if v, ok := hc.mutation.Status(); ok {
+		if err := hold.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "Hold.status": %w`, err)}
+		}
 	}
 	if _, ok := hc.mutation.LedgerEntryID(); !ok {
 		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "Hold.ledger_entry_id"`)}
 	}
+	if v, ok := hc.mutation.LedgerEntryID(); ok {
+		if err := hold.LedgerEntryIDValidator(v); err != nil {
+			return &ValidationError{Name: "ledger_entry_id", err: fmt.Errorf(`ent: validator failed for field "Hold.ledger_entry_id": %w`, err)}
+		}
+	}
 	if _, ok := hc.mutation.WalletTransactionID(); !ok {
 		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "Hold.wallet_transaction_id"`)}
 	}
-	if _, ok := hc.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "Hold.workspace_id"`)}
-	}
-	if _, ok := hc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "Hold.resource_type"`)}
-	}
-	if _, ok := hc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "Hold.resource_id"`)}
-	}
-	if _, ok := hc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "Hold.hold_id"`)}
-	}
-	if _, ok := hc.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "Hold.status"`)}
-	}
-	if _, ok := hc.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "Hold.pricing_version"`)}
-	}
-	if _, ok := hc.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "Hold.price_snapshot_json"`)}
-	}
-	if _, ok := hc.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "Hold.usage_period_start"`)}
-	}
-	if _, ok := hc.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "Hold.usage_period_end"`)}
-	}
-	if _, ok := hc.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "Hold.quantity"`)}
-	}
-	if _, ok := hc.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "Hold.unit"`)}
-	}
-	if _, ok := hc.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "Hold.provider_cost_evidence_ref"`)}
-	}
-	if _, ok := hc.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "Hold.provider_request_id"`)}
-	}
-	if _, ok := hc.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "Hold.redacted_url"`)}
-	}
-	if _, ok := hc.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "Hold.token_version"`)}
+	if v, ok := hc.mutation.WalletTransactionID(); ok {
+		if err := hold.WalletTransactionIDValidator(v); err != nil {
+			return &ValidationError{Name: "wallet_transaction_id", err: fmt.Errorf(`ent: validator failed for field "Hold.wallet_transaction_id": %w`, err)}
+		}
 	}
 	if _, ok := hc.mutation.IdempotencyKey(); !ok {
 		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "Hold.idempotency_key"`)}
 	}
+	if v, ok := hc.mutation.IdempotencyKey(); ok {
+		if err := hold.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "Hold.idempotency_key": %w`, err)}
+		}
+	}
 	if _, ok := hc.mutation.RequestHash(); !ok {
 		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "Hold.request_hash"`)}
 	}
-	if _, ok := hc.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "Hold.report_json"`)}
-	}
-	if _, ok := hc.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "Hold.block_new_workspaces"`)}
+	if v, ok := hc.mutation.RequestHash(); ok {
+		if err := hold.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "Hold.request_hash": %w`, err)}
+		}
 	}
 	if _, ok := hc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "Hold.created_at"`)}
-	}
-	if _, ok := hc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "Hold.updated_at"`)}
 	}
 	if v, ok := hc.mutation.ID(); ok {
 		if err := hold.IDValidator(v); err != nil {
@@ -823,54 +286,6 @@ func (hc *HoldCreate) createSpec() (*Hold, *sqlgraph.CreateSpec) {
 		_spec.SetField(hold.FieldAccountID, field.TypeString, value)
 		_node.AccountID = value
 	}
-	if value, ok := hc.mutation.BalanceCents(); ok {
-		_spec.SetField(hold.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := hc.mutation.FrozenCents(); ok {
-		_spec.SetField(hold.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := hc.mutation.AvailableCents(); ok {
-		_spec.SetField(hold.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := hc.mutation.TotalSpentCents(); ok {
-		_spec.SetField(hold.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
-	if value, ok := hc.mutation.AmountCents(); ok {
-		_spec.SetField(hold.FieldAmountCents, field.TypeInt64, value)
-		_node.AmountCents = value
-	}
-	if value, ok := hc.mutation.Currency(); ok {
-		_spec.SetField(hold.FieldCurrency, field.TypeString, value)
-		_node.Currency = value
-	}
-	if value, ok := hc.mutation.Direction(); ok {
-		_spec.SetField(hold.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := hc.mutation.Source(); ok {
-		_spec.SetField(hold.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
-	if value, ok := hc.mutation.OperatorUserID(); ok {
-		_spec.SetField(hold.FieldOperatorUserID, field.TypeString, value)
-		_node.OperatorUserID = value
-	}
-	if value, ok := hc.mutation.Reason(); ok {
-		_spec.SetField(hold.FieldReason, field.TypeString, value)
-		_node.Reason = value
-	}
-	if value, ok := hc.mutation.LedgerEntryID(); ok {
-		_spec.SetField(hold.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := hc.mutation.WalletTransactionID(); ok {
-		_spec.SetField(hold.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
 	if value, ok := hc.mutation.WorkspaceID(); ok {
 		_spec.SetField(hold.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
@@ -883,53 +298,25 @@ func (hc *HoldCreate) createSpec() (*Hold, *sqlgraph.CreateSpec) {
 		_spec.SetField(hold.FieldResourceID, field.TypeString, value)
 		_node.ResourceID = value
 	}
-	if value, ok := hc.mutation.HoldID(); ok {
-		_spec.SetField(hold.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
+	if value, ok := hc.mutation.AmountCents(); ok {
+		_spec.SetField(hold.FieldAmountCents, field.TypeInt64, value)
+		_node.AmountCents = value
+	}
+	if value, ok := hc.mutation.Currency(); ok {
+		_spec.SetField(hold.FieldCurrency, field.TypeString, value)
+		_node.Currency = value
 	}
 	if value, ok := hc.mutation.Status(); ok {
 		_spec.SetField(hold.FieldStatus, field.TypeString, value)
 		_node.Status = value
 	}
-	if value, ok := hc.mutation.PricingVersion(); ok {
-		_spec.SetField(hold.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
+	if value, ok := hc.mutation.LedgerEntryID(); ok {
+		_spec.SetField(hold.FieldLedgerEntryID, field.TypeString, value)
+		_node.LedgerEntryID = value
 	}
-	if value, ok := hc.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(hold.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := hc.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(hold.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := hc.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(hold.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := hc.mutation.Quantity(); ok {
-		_spec.SetField(hold.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := hc.mutation.Unit(); ok {
-		_spec.SetField(hold.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := hc.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(hold.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
-	}
-	if value, ok := hc.mutation.ProviderRequestID(); ok {
-		_spec.SetField(hold.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := hc.mutation.RedactedURL(); ok {
-		_spec.SetField(hold.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := hc.mutation.TokenVersion(); ok {
-		_spec.SetField(hold.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
+	if value, ok := hc.mutation.WalletTransactionID(); ok {
+		_spec.SetField(hold.FieldWalletTransactionID, field.TypeString, value)
+		_node.WalletTransactionID = value
 	}
 	if value, ok := hc.mutation.IdempotencyKey(); ok {
 		_spec.SetField(hold.FieldIdempotencyKey, field.TypeString, value)
@@ -939,21 +326,9 @@ func (hc *HoldCreate) createSpec() (*Hold, *sqlgraph.CreateSpec) {
 		_spec.SetField(hold.FieldRequestHash, field.TypeString, value)
 		_node.RequestHash = value
 	}
-	if value, ok := hc.mutation.ReportJSON(); ok {
-		_spec.SetField(hold.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := hc.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(hold.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
-	}
 	if value, ok := hc.mutation.CreatedAt(); ok {
 		_spec.SetField(hold.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := hc.mutation.UpdatedAt(); ok {
-		_spec.SetField(hold.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

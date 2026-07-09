@@ -20,395 +20,9 @@ type IdempotencyKeyCreate struct {
 	hooks    []Hook
 }
 
-// SetAccountID sets the "account_id" field.
-func (ikc *IdempotencyKeyCreate) SetAccountID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetAccountID(s)
-	return ikc
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableAccountID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetAccountID(*s)
-	}
-	return ikc
-}
-
-// SetBalanceCents sets the "balance_cents" field.
-func (ikc *IdempotencyKeyCreate) SetBalanceCents(i int64) *IdempotencyKeyCreate {
-	ikc.mutation.SetBalanceCents(i)
-	return ikc
-}
-
-// SetNillableBalanceCents sets the "balance_cents" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableBalanceCents(i *int64) *IdempotencyKeyCreate {
-	if i != nil {
-		ikc.SetBalanceCents(*i)
-	}
-	return ikc
-}
-
-// SetFrozenCents sets the "frozen_cents" field.
-func (ikc *IdempotencyKeyCreate) SetFrozenCents(i int64) *IdempotencyKeyCreate {
-	ikc.mutation.SetFrozenCents(i)
-	return ikc
-}
-
-// SetNillableFrozenCents sets the "frozen_cents" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableFrozenCents(i *int64) *IdempotencyKeyCreate {
-	if i != nil {
-		ikc.SetFrozenCents(*i)
-	}
-	return ikc
-}
-
-// SetAvailableCents sets the "available_cents" field.
-func (ikc *IdempotencyKeyCreate) SetAvailableCents(i int64) *IdempotencyKeyCreate {
-	ikc.mutation.SetAvailableCents(i)
-	return ikc
-}
-
-// SetNillableAvailableCents sets the "available_cents" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableAvailableCents(i *int64) *IdempotencyKeyCreate {
-	if i != nil {
-		ikc.SetAvailableCents(*i)
-	}
-	return ikc
-}
-
-// SetTotalSpentCents sets the "total_spent_cents" field.
-func (ikc *IdempotencyKeyCreate) SetTotalSpentCents(i int64) *IdempotencyKeyCreate {
-	ikc.mutation.SetTotalSpentCents(i)
-	return ikc
-}
-
-// SetNillableTotalSpentCents sets the "total_spent_cents" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableTotalSpentCents(i *int64) *IdempotencyKeyCreate {
-	if i != nil {
-		ikc.SetTotalSpentCents(*i)
-	}
-	return ikc
-}
-
-// SetAmountCents sets the "amount_cents" field.
-func (ikc *IdempotencyKeyCreate) SetAmountCents(i int64) *IdempotencyKeyCreate {
-	ikc.mutation.SetAmountCents(i)
-	return ikc
-}
-
-// SetNillableAmountCents sets the "amount_cents" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableAmountCents(i *int64) *IdempotencyKeyCreate {
-	if i != nil {
-		ikc.SetAmountCents(*i)
-	}
-	return ikc
-}
-
-// SetCurrency sets the "currency" field.
-func (ikc *IdempotencyKeyCreate) SetCurrency(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetCurrency(s)
-	return ikc
-}
-
-// SetNillableCurrency sets the "currency" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableCurrency(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetCurrency(*s)
-	}
-	return ikc
-}
-
-// SetDirection sets the "direction" field.
-func (ikc *IdempotencyKeyCreate) SetDirection(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetDirection(s)
-	return ikc
-}
-
-// SetNillableDirection sets the "direction" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableDirection(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetDirection(*s)
-	}
-	return ikc
-}
-
-// SetSource sets the "source" field.
-func (ikc *IdempotencyKeyCreate) SetSource(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetSource(s)
-	return ikc
-}
-
-// SetNillableSource sets the "source" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableSource(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetSource(*s)
-	}
-	return ikc
-}
-
-// SetOperatorUserID sets the "operator_user_id" field.
-func (ikc *IdempotencyKeyCreate) SetOperatorUserID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetOperatorUserID(s)
-	return ikc
-}
-
-// SetNillableOperatorUserID sets the "operator_user_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableOperatorUserID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetOperatorUserID(*s)
-	}
-	return ikc
-}
-
-// SetReason sets the "reason" field.
-func (ikc *IdempotencyKeyCreate) SetReason(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetReason(s)
-	return ikc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableReason(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetReason(*s)
-	}
-	return ikc
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (ikc *IdempotencyKeyCreate) SetLedgerEntryID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetLedgerEntryID(s)
-	return ikc
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableLedgerEntryID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetLedgerEntryID(*s)
-	}
-	return ikc
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (ikc *IdempotencyKeyCreate) SetWalletTransactionID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetWalletTransactionID(s)
-	return ikc
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableWalletTransactionID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetWalletTransactionID(*s)
-	}
-	return ikc
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (ikc *IdempotencyKeyCreate) SetWorkspaceID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetWorkspaceID(s)
-	return ikc
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableWorkspaceID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetWorkspaceID(*s)
-	}
-	return ikc
-}
-
-// SetResourceType sets the "resource_type" field.
-func (ikc *IdempotencyKeyCreate) SetResourceType(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetResourceType(s)
-	return ikc
-}
-
-// SetNillableResourceType sets the "resource_type" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableResourceType(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetResourceType(*s)
-	}
-	return ikc
-}
-
-// SetResourceID sets the "resource_id" field.
-func (ikc *IdempotencyKeyCreate) SetResourceID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetResourceID(s)
-	return ikc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableResourceID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetResourceID(*s)
-	}
-	return ikc
-}
-
-// SetHoldID sets the "hold_id" field.
-func (ikc *IdempotencyKeyCreate) SetHoldID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetHoldID(s)
-	return ikc
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableHoldID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetHoldID(*s)
-	}
-	return ikc
-}
-
-// SetStatus sets the "status" field.
-func (ikc *IdempotencyKeyCreate) SetStatus(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetStatus(s)
-	return ikc
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableStatus(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetStatus(*s)
-	}
-	return ikc
-}
-
-// SetPricingVersion sets the "pricing_version" field.
-func (ikc *IdempotencyKeyCreate) SetPricingVersion(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetPricingVersion(s)
-	return ikc
-}
-
-// SetNillablePricingVersion sets the "pricing_version" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillablePricingVersion(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetPricingVersion(*s)
-	}
-	return ikc
-}
-
-// SetPriceSnapshotJSON sets the "price_snapshot_json" field.
-func (ikc *IdempotencyKeyCreate) SetPriceSnapshotJSON(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetPriceSnapshotJSON(s)
-	return ikc
-}
-
-// SetNillablePriceSnapshotJSON sets the "price_snapshot_json" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillablePriceSnapshotJSON(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetPriceSnapshotJSON(*s)
-	}
-	return ikc
-}
-
-// SetUsagePeriodStart sets the "usage_period_start" field.
-func (ikc *IdempotencyKeyCreate) SetUsagePeriodStart(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetUsagePeriodStart(s)
-	return ikc
-}
-
-// SetNillableUsagePeriodStart sets the "usage_period_start" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableUsagePeriodStart(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetUsagePeriodStart(*s)
-	}
-	return ikc
-}
-
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (ikc *IdempotencyKeyCreate) SetUsagePeriodEnd(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetUsagePeriodEnd(s)
-	return ikc
-}
-
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableUsagePeriodEnd(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetUsagePeriodEnd(*s)
-	}
-	return ikc
-}
-
-// SetQuantity sets the "quantity" field.
-func (ikc *IdempotencyKeyCreate) SetQuantity(f float64) *IdempotencyKeyCreate {
-	ikc.mutation.SetQuantity(f)
-	return ikc
-}
-
-// SetNillableQuantity sets the "quantity" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableQuantity(f *float64) *IdempotencyKeyCreate {
-	if f != nil {
-		ikc.SetQuantity(*f)
-	}
-	return ikc
-}
-
-// SetUnit sets the "unit" field.
-func (ikc *IdempotencyKeyCreate) SetUnit(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetUnit(s)
-	return ikc
-}
-
-// SetNillableUnit sets the "unit" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableUnit(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetUnit(*s)
-	}
-	return ikc
-}
-
-// SetProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field.
-func (ikc *IdempotencyKeyCreate) SetProviderCostEvidenceRef(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetProviderCostEvidenceRef(s)
-	return ikc
-}
-
-// SetNillableProviderCostEvidenceRef sets the "provider_cost_evidence_ref" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableProviderCostEvidenceRef(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetProviderCostEvidenceRef(*s)
-	}
-	return ikc
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (ikc *IdempotencyKeyCreate) SetProviderRequestID(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetProviderRequestID(s)
-	return ikc
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableProviderRequestID(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetProviderRequestID(*s)
-	}
-	return ikc
-}
-
-// SetRedactedURL sets the "redacted_url" field.
-func (ikc *IdempotencyKeyCreate) SetRedactedURL(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetRedactedURL(s)
-	return ikc
-}
-
-// SetNillableRedactedURL sets the "redacted_url" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableRedactedURL(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetRedactedURL(*s)
-	}
-	return ikc
-}
-
-// SetTokenVersion sets the "token_version" field.
-func (ikc *IdempotencyKeyCreate) SetTokenVersion(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetTokenVersion(s)
-	return ikc
-}
-
-// SetNillableTokenVersion sets the "token_version" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableTokenVersion(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetTokenVersion(*s)
-	}
+// SetService sets the "service" field.
+func (ikc *IdempotencyKeyCreate) SetService(s string) *IdempotencyKeyCreate {
+	ikc.mutation.SetService(s)
 	return ikc
 }
 
@@ -418,52 +32,22 @@ func (ikc *IdempotencyKeyCreate) SetIdempotencyKey(s string) *IdempotencyKeyCrea
 	return ikc
 }
 
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableIdempotencyKey(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetIdempotencyKey(*s)
-	}
-	return ikc
-}
-
 // SetRequestHash sets the "request_hash" field.
 func (ikc *IdempotencyKeyCreate) SetRequestHash(s string) *IdempotencyKeyCreate {
 	ikc.mutation.SetRequestHash(s)
 	return ikc
 }
 
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableRequestHash(s *string) *IdempotencyKeyCreate {
+// SetResponseRef sets the "response_ref" field.
+func (ikc *IdempotencyKeyCreate) SetResponseRef(s string) *IdempotencyKeyCreate {
+	ikc.mutation.SetResponseRef(s)
+	return ikc
+}
+
+// SetNillableResponseRef sets the "response_ref" field if the given value is not nil.
+func (ikc *IdempotencyKeyCreate) SetNillableResponseRef(s *string) *IdempotencyKeyCreate {
 	if s != nil {
-		ikc.SetRequestHash(*s)
-	}
-	return ikc
-}
-
-// SetReportJSON sets the "report_json" field.
-func (ikc *IdempotencyKeyCreate) SetReportJSON(s string) *IdempotencyKeyCreate {
-	ikc.mutation.SetReportJSON(s)
-	return ikc
-}
-
-// SetNillableReportJSON sets the "report_json" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableReportJSON(s *string) *IdempotencyKeyCreate {
-	if s != nil {
-		ikc.SetReportJSON(*s)
-	}
-	return ikc
-}
-
-// SetBlockNewWorkspaces sets the "block_new_workspaces" field.
-func (ikc *IdempotencyKeyCreate) SetBlockNewWorkspaces(b bool) *IdempotencyKeyCreate {
-	ikc.mutation.SetBlockNewWorkspaces(b)
-	return ikc
-}
-
-// SetNillableBlockNewWorkspaces sets the "block_new_workspaces" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableBlockNewWorkspaces(b *bool) *IdempotencyKeyCreate {
-	if b != nil {
-		ikc.SetBlockNewWorkspaces(*b)
+		ikc.SetResponseRef(*s)
 	}
 	return ikc
 }
@@ -478,20 +62,6 @@ func (ikc *IdempotencyKeyCreate) SetCreatedAt(t time.Time) *IdempotencyKeyCreate
 func (ikc *IdempotencyKeyCreate) SetNillableCreatedAt(t *time.Time) *IdempotencyKeyCreate {
 	if t != nil {
 		ikc.SetCreatedAt(*t)
-	}
-	return ikc
-}
-
-// SetUpdatedAt sets the "updated_at" field.
-func (ikc *IdempotencyKeyCreate) SetUpdatedAt(t time.Time) *IdempotencyKeyCreate {
-	ikc.mutation.SetUpdatedAt(t)
-	return ikc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (ikc *IdempotencyKeyCreate) SetNillableUpdatedAt(t *time.Time) *IdempotencyKeyCreate {
-	if t != nil {
-		ikc.SetUpdatedAt(*t)
 	}
 	return ikc
 }
@@ -537,247 +107,47 @@ func (ikc *IdempotencyKeyCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (ikc *IdempotencyKeyCreate) defaults() {
-	if _, ok := ikc.mutation.AccountID(); !ok {
-		v := idempotencykey.DefaultAccountID
-		ikc.mutation.SetAccountID(v)
-	}
-	if _, ok := ikc.mutation.BalanceCents(); !ok {
-		v := idempotencykey.DefaultBalanceCents
-		ikc.mutation.SetBalanceCents(v)
-	}
-	if _, ok := ikc.mutation.FrozenCents(); !ok {
-		v := idempotencykey.DefaultFrozenCents
-		ikc.mutation.SetFrozenCents(v)
-	}
-	if _, ok := ikc.mutation.AvailableCents(); !ok {
-		v := idempotencykey.DefaultAvailableCents
-		ikc.mutation.SetAvailableCents(v)
-	}
-	if _, ok := ikc.mutation.TotalSpentCents(); !ok {
-		v := idempotencykey.DefaultTotalSpentCents
-		ikc.mutation.SetTotalSpentCents(v)
-	}
-	if _, ok := ikc.mutation.AmountCents(); !ok {
-		v := idempotencykey.DefaultAmountCents
-		ikc.mutation.SetAmountCents(v)
-	}
-	if _, ok := ikc.mutation.Currency(); !ok {
-		v := idempotencykey.DefaultCurrency
-		ikc.mutation.SetCurrency(v)
-	}
-	if _, ok := ikc.mutation.Direction(); !ok {
-		v := idempotencykey.DefaultDirection
-		ikc.mutation.SetDirection(v)
-	}
-	if _, ok := ikc.mutation.Source(); !ok {
-		v := idempotencykey.DefaultSource
-		ikc.mutation.SetSource(v)
-	}
-	if _, ok := ikc.mutation.OperatorUserID(); !ok {
-		v := idempotencykey.DefaultOperatorUserID
-		ikc.mutation.SetOperatorUserID(v)
-	}
-	if _, ok := ikc.mutation.Reason(); !ok {
-		v := idempotencykey.DefaultReason
-		ikc.mutation.SetReason(v)
-	}
-	if _, ok := ikc.mutation.LedgerEntryID(); !ok {
-		v := idempotencykey.DefaultLedgerEntryID
-		ikc.mutation.SetLedgerEntryID(v)
-	}
-	if _, ok := ikc.mutation.WalletTransactionID(); !ok {
-		v := idempotencykey.DefaultWalletTransactionID
-		ikc.mutation.SetWalletTransactionID(v)
-	}
-	if _, ok := ikc.mutation.WorkspaceID(); !ok {
-		v := idempotencykey.DefaultWorkspaceID
-		ikc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := ikc.mutation.ResourceType(); !ok {
-		v := idempotencykey.DefaultResourceType
-		ikc.mutation.SetResourceType(v)
-	}
-	if _, ok := ikc.mutation.ResourceID(); !ok {
-		v := idempotencykey.DefaultResourceID
-		ikc.mutation.SetResourceID(v)
-	}
-	if _, ok := ikc.mutation.HoldID(); !ok {
-		v := idempotencykey.DefaultHoldID
-		ikc.mutation.SetHoldID(v)
-	}
-	if _, ok := ikc.mutation.Status(); !ok {
-		v := idempotencykey.DefaultStatus
-		ikc.mutation.SetStatus(v)
-	}
-	if _, ok := ikc.mutation.PricingVersion(); !ok {
-		v := idempotencykey.DefaultPricingVersion
-		ikc.mutation.SetPricingVersion(v)
-	}
-	if _, ok := ikc.mutation.PriceSnapshotJSON(); !ok {
-		v := idempotencykey.DefaultPriceSnapshotJSON
-		ikc.mutation.SetPriceSnapshotJSON(v)
-	}
-	if _, ok := ikc.mutation.UsagePeriodStart(); !ok {
-		v := idempotencykey.DefaultUsagePeriodStart
-		ikc.mutation.SetUsagePeriodStart(v)
-	}
-	if _, ok := ikc.mutation.UsagePeriodEnd(); !ok {
-		v := idempotencykey.DefaultUsagePeriodEnd
-		ikc.mutation.SetUsagePeriodEnd(v)
-	}
-	if _, ok := ikc.mutation.Quantity(); !ok {
-		v := idempotencykey.DefaultQuantity
-		ikc.mutation.SetQuantity(v)
-	}
-	if _, ok := ikc.mutation.Unit(); !ok {
-		v := idempotencykey.DefaultUnit
-		ikc.mutation.SetUnit(v)
-	}
-	if _, ok := ikc.mutation.ProviderCostEvidenceRef(); !ok {
-		v := idempotencykey.DefaultProviderCostEvidenceRef
-		ikc.mutation.SetProviderCostEvidenceRef(v)
-	}
-	if _, ok := ikc.mutation.ProviderRequestID(); !ok {
-		v := idempotencykey.DefaultProviderRequestID
-		ikc.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := ikc.mutation.RedactedURL(); !ok {
-		v := idempotencykey.DefaultRedactedURL
-		ikc.mutation.SetRedactedURL(v)
-	}
-	if _, ok := ikc.mutation.TokenVersion(); !ok {
-		v := idempotencykey.DefaultTokenVersion
-		ikc.mutation.SetTokenVersion(v)
-	}
-	if _, ok := ikc.mutation.IdempotencyKey(); !ok {
-		v := idempotencykey.DefaultIdempotencyKey
-		ikc.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := ikc.mutation.RequestHash(); !ok {
-		v := idempotencykey.DefaultRequestHash
-		ikc.mutation.SetRequestHash(v)
-	}
-	if _, ok := ikc.mutation.ReportJSON(); !ok {
-		v := idempotencykey.DefaultReportJSON
-		ikc.mutation.SetReportJSON(v)
-	}
-	if _, ok := ikc.mutation.BlockNewWorkspaces(); !ok {
-		v := idempotencykey.DefaultBlockNewWorkspaces
-		ikc.mutation.SetBlockNewWorkspaces(v)
+	if _, ok := ikc.mutation.ResponseRef(); !ok {
+		v := idempotencykey.DefaultResponseRef
+		ikc.mutation.SetResponseRef(v)
 	}
 	if _, ok := ikc.mutation.CreatedAt(); !ok {
 		v := idempotencykey.DefaultCreatedAt()
 		ikc.mutation.SetCreatedAt(v)
 	}
-	if _, ok := ikc.mutation.UpdatedAt(); !ok {
-		v := idempotencykey.DefaultUpdatedAt()
-		ikc.mutation.SetUpdatedAt(v)
-	}
 }
 
 // check runs all checks and user-defined validators on the builder.
 func (ikc *IdempotencyKeyCreate) check() error {
-	if _, ok := ikc.mutation.AccountID(); !ok {
-		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "IdempotencyKey.account_id"`)}
+	if _, ok := ikc.mutation.Service(); !ok {
+		return &ValidationError{Name: "service", err: errors.New(`ent: missing required field "IdempotencyKey.service"`)}
 	}
-	if _, ok := ikc.mutation.BalanceCents(); !ok {
-		return &ValidationError{Name: "balance_cents", err: errors.New(`ent: missing required field "IdempotencyKey.balance_cents"`)}
-	}
-	if _, ok := ikc.mutation.FrozenCents(); !ok {
-		return &ValidationError{Name: "frozen_cents", err: errors.New(`ent: missing required field "IdempotencyKey.frozen_cents"`)}
-	}
-	if _, ok := ikc.mutation.AvailableCents(); !ok {
-		return &ValidationError{Name: "available_cents", err: errors.New(`ent: missing required field "IdempotencyKey.available_cents"`)}
-	}
-	if _, ok := ikc.mutation.TotalSpentCents(); !ok {
-		return &ValidationError{Name: "total_spent_cents", err: errors.New(`ent: missing required field "IdempotencyKey.total_spent_cents"`)}
-	}
-	if _, ok := ikc.mutation.AmountCents(); !ok {
-		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "IdempotencyKey.amount_cents"`)}
-	}
-	if _, ok := ikc.mutation.Currency(); !ok {
-		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "IdempotencyKey.currency"`)}
-	}
-	if _, ok := ikc.mutation.Direction(); !ok {
-		return &ValidationError{Name: "direction", err: errors.New(`ent: missing required field "IdempotencyKey.direction"`)}
-	}
-	if _, ok := ikc.mutation.Source(); !ok {
-		return &ValidationError{Name: "source", err: errors.New(`ent: missing required field "IdempotencyKey.source"`)}
-	}
-	if _, ok := ikc.mutation.OperatorUserID(); !ok {
-		return &ValidationError{Name: "operator_user_id", err: errors.New(`ent: missing required field "IdempotencyKey.operator_user_id"`)}
-	}
-	if _, ok := ikc.mutation.Reason(); !ok {
-		return &ValidationError{Name: "reason", err: errors.New(`ent: missing required field "IdempotencyKey.reason"`)}
-	}
-	if _, ok := ikc.mutation.LedgerEntryID(); !ok {
-		return &ValidationError{Name: "ledger_entry_id", err: errors.New(`ent: missing required field "IdempotencyKey.ledger_entry_id"`)}
-	}
-	if _, ok := ikc.mutation.WalletTransactionID(); !ok {
-		return &ValidationError{Name: "wallet_transaction_id", err: errors.New(`ent: missing required field "IdempotencyKey.wallet_transaction_id"`)}
-	}
-	if _, ok := ikc.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "IdempotencyKey.workspace_id"`)}
-	}
-	if _, ok := ikc.mutation.ResourceType(); !ok {
-		return &ValidationError{Name: "resource_type", err: errors.New(`ent: missing required field "IdempotencyKey.resource_type"`)}
-	}
-	if _, ok := ikc.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "IdempotencyKey.resource_id"`)}
-	}
-	if _, ok := ikc.mutation.HoldID(); !ok {
-		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "IdempotencyKey.hold_id"`)}
-	}
-	if _, ok := ikc.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "IdempotencyKey.status"`)}
-	}
-	if _, ok := ikc.mutation.PricingVersion(); !ok {
-		return &ValidationError{Name: "pricing_version", err: errors.New(`ent: missing required field "IdempotencyKey.pricing_version"`)}
-	}
-	if _, ok := ikc.mutation.PriceSnapshotJSON(); !ok {
-		return &ValidationError{Name: "price_snapshot_json", err: errors.New(`ent: missing required field "IdempotencyKey.price_snapshot_json"`)}
-	}
-	if _, ok := ikc.mutation.UsagePeriodStart(); !ok {
-		return &ValidationError{Name: "usage_period_start", err: errors.New(`ent: missing required field "IdempotencyKey.usage_period_start"`)}
-	}
-	if _, ok := ikc.mutation.UsagePeriodEnd(); !ok {
-		return &ValidationError{Name: "usage_period_end", err: errors.New(`ent: missing required field "IdempotencyKey.usage_period_end"`)}
-	}
-	if _, ok := ikc.mutation.Quantity(); !ok {
-		return &ValidationError{Name: "quantity", err: errors.New(`ent: missing required field "IdempotencyKey.quantity"`)}
-	}
-	if _, ok := ikc.mutation.Unit(); !ok {
-		return &ValidationError{Name: "unit", err: errors.New(`ent: missing required field "IdempotencyKey.unit"`)}
-	}
-	if _, ok := ikc.mutation.ProviderCostEvidenceRef(); !ok {
-		return &ValidationError{Name: "provider_cost_evidence_ref", err: errors.New(`ent: missing required field "IdempotencyKey.provider_cost_evidence_ref"`)}
-	}
-	if _, ok := ikc.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "IdempotencyKey.provider_request_id"`)}
-	}
-	if _, ok := ikc.mutation.RedactedURL(); !ok {
-		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "IdempotencyKey.redacted_url"`)}
-	}
-	if _, ok := ikc.mutation.TokenVersion(); !ok {
-		return &ValidationError{Name: "token_version", err: errors.New(`ent: missing required field "IdempotencyKey.token_version"`)}
+	if v, ok := ikc.mutation.Service(); ok {
+		if err := idempotencykey.ServiceValidator(v); err != nil {
+			return &ValidationError{Name: "service", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.service": %w`, err)}
+		}
 	}
 	if _, ok := ikc.mutation.IdempotencyKey(); !ok {
 		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "IdempotencyKey.idempotency_key"`)}
 	}
+	if v, ok := ikc.mutation.IdempotencyKey(); ok {
+		if err := idempotencykey.IdempotencyKeyValidator(v); err != nil {
+			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.idempotency_key": %w`, err)}
+		}
+	}
 	if _, ok := ikc.mutation.RequestHash(); !ok {
 		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "IdempotencyKey.request_hash"`)}
 	}
-	if _, ok := ikc.mutation.ReportJSON(); !ok {
-		return &ValidationError{Name: "report_json", err: errors.New(`ent: missing required field "IdempotencyKey.report_json"`)}
+	if v, ok := ikc.mutation.RequestHash(); ok {
+		if err := idempotencykey.RequestHashValidator(v); err != nil {
+			return &ValidationError{Name: "request_hash", err: fmt.Errorf(`ent: validator failed for field "IdempotencyKey.request_hash": %w`, err)}
+		}
 	}
-	if _, ok := ikc.mutation.BlockNewWorkspaces(); !ok {
-		return &ValidationError{Name: "block_new_workspaces", err: errors.New(`ent: missing required field "IdempotencyKey.block_new_workspaces"`)}
+	if _, ok := ikc.mutation.ResponseRef(); !ok {
+		return &ValidationError{Name: "response_ref", err: errors.New(`ent: missing required field "IdempotencyKey.response_ref"`)}
 	}
 	if _, ok := ikc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "IdempotencyKey.created_at"`)}
-	}
-	if _, ok := ikc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "IdempotencyKey.updated_at"`)}
 	}
 	if v, ok := ikc.mutation.ID(); ok {
 		if err := idempotencykey.IDValidator(v); err != nil {
@@ -819,117 +189,9 @@ func (ikc *IdempotencyKeyCreate) createSpec() (*IdempotencyKey, *sqlgraph.Create
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := ikc.mutation.AccountID(); ok {
-		_spec.SetField(idempotencykey.FieldAccountID, field.TypeString, value)
-		_node.AccountID = value
-	}
-	if value, ok := ikc.mutation.BalanceCents(); ok {
-		_spec.SetField(idempotencykey.FieldBalanceCents, field.TypeInt64, value)
-		_node.BalanceCents = value
-	}
-	if value, ok := ikc.mutation.FrozenCents(); ok {
-		_spec.SetField(idempotencykey.FieldFrozenCents, field.TypeInt64, value)
-		_node.FrozenCents = value
-	}
-	if value, ok := ikc.mutation.AvailableCents(); ok {
-		_spec.SetField(idempotencykey.FieldAvailableCents, field.TypeInt64, value)
-		_node.AvailableCents = value
-	}
-	if value, ok := ikc.mutation.TotalSpentCents(); ok {
-		_spec.SetField(idempotencykey.FieldTotalSpentCents, field.TypeInt64, value)
-		_node.TotalSpentCents = value
-	}
-	if value, ok := ikc.mutation.AmountCents(); ok {
-		_spec.SetField(idempotencykey.FieldAmountCents, field.TypeInt64, value)
-		_node.AmountCents = value
-	}
-	if value, ok := ikc.mutation.Currency(); ok {
-		_spec.SetField(idempotencykey.FieldCurrency, field.TypeString, value)
-		_node.Currency = value
-	}
-	if value, ok := ikc.mutation.Direction(); ok {
-		_spec.SetField(idempotencykey.FieldDirection, field.TypeString, value)
-		_node.Direction = value
-	}
-	if value, ok := ikc.mutation.Source(); ok {
-		_spec.SetField(idempotencykey.FieldSource, field.TypeString, value)
-		_node.Source = value
-	}
-	if value, ok := ikc.mutation.OperatorUserID(); ok {
-		_spec.SetField(idempotencykey.FieldOperatorUserID, field.TypeString, value)
-		_node.OperatorUserID = value
-	}
-	if value, ok := ikc.mutation.Reason(); ok {
-		_spec.SetField(idempotencykey.FieldReason, field.TypeString, value)
-		_node.Reason = value
-	}
-	if value, ok := ikc.mutation.LedgerEntryID(); ok {
-		_spec.SetField(idempotencykey.FieldLedgerEntryID, field.TypeString, value)
-		_node.LedgerEntryID = value
-	}
-	if value, ok := ikc.mutation.WalletTransactionID(); ok {
-		_spec.SetField(idempotencykey.FieldWalletTransactionID, field.TypeString, value)
-		_node.WalletTransactionID = value
-	}
-	if value, ok := ikc.mutation.WorkspaceID(); ok {
-		_spec.SetField(idempotencykey.FieldWorkspaceID, field.TypeString, value)
-		_node.WorkspaceID = value
-	}
-	if value, ok := ikc.mutation.ResourceType(); ok {
-		_spec.SetField(idempotencykey.FieldResourceType, field.TypeString, value)
-		_node.ResourceType = value
-	}
-	if value, ok := ikc.mutation.ResourceID(); ok {
-		_spec.SetField(idempotencykey.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := ikc.mutation.HoldID(); ok {
-		_spec.SetField(idempotencykey.FieldHoldID, field.TypeString, value)
-		_node.HoldID = value
-	}
-	if value, ok := ikc.mutation.Status(); ok {
-		_spec.SetField(idempotencykey.FieldStatus, field.TypeString, value)
-		_node.Status = value
-	}
-	if value, ok := ikc.mutation.PricingVersion(); ok {
-		_spec.SetField(idempotencykey.FieldPricingVersion, field.TypeString, value)
-		_node.PricingVersion = value
-	}
-	if value, ok := ikc.mutation.PriceSnapshotJSON(); ok {
-		_spec.SetField(idempotencykey.FieldPriceSnapshotJSON, field.TypeString, value)
-		_node.PriceSnapshotJSON = value
-	}
-	if value, ok := ikc.mutation.UsagePeriodStart(); ok {
-		_spec.SetField(idempotencykey.FieldUsagePeriodStart, field.TypeString, value)
-		_node.UsagePeriodStart = value
-	}
-	if value, ok := ikc.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(idempotencykey.FieldUsagePeriodEnd, field.TypeString, value)
-		_node.UsagePeriodEnd = value
-	}
-	if value, ok := ikc.mutation.Quantity(); ok {
-		_spec.SetField(idempotencykey.FieldQuantity, field.TypeFloat64, value)
-		_node.Quantity = value
-	}
-	if value, ok := ikc.mutation.Unit(); ok {
-		_spec.SetField(idempotencykey.FieldUnit, field.TypeString, value)
-		_node.Unit = value
-	}
-	if value, ok := ikc.mutation.ProviderCostEvidenceRef(); ok {
-		_spec.SetField(idempotencykey.FieldProviderCostEvidenceRef, field.TypeString, value)
-		_node.ProviderCostEvidenceRef = value
-	}
-	if value, ok := ikc.mutation.ProviderRequestID(); ok {
-		_spec.SetField(idempotencykey.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := ikc.mutation.RedactedURL(); ok {
-		_spec.SetField(idempotencykey.FieldRedactedURL, field.TypeString, value)
-		_node.RedactedURL = value
-	}
-	if value, ok := ikc.mutation.TokenVersion(); ok {
-		_spec.SetField(idempotencykey.FieldTokenVersion, field.TypeString, value)
-		_node.TokenVersion = value
+	if value, ok := ikc.mutation.Service(); ok {
+		_spec.SetField(idempotencykey.FieldService, field.TypeString, value)
+		_node.Service = value
 	}
 	if value, ok := ikc.mutation.IdempotencyKey(); ok {
 		_spec.SetField(idempotencykey.FieldIdempotencyKey, field.TypeString, value)
@@ -939,21 +201,13 @@ func (ikc *IdempotencyKeyCreate) createSpec() (*IdempotencyKey, *sqlgraph.Create
 		_spec.SetField(idempotencykey.FieldRequestHash, field.TypeString, value)
 		_node.RequestHash = value
 	}
-	if value, ok := ikc.mutation.ReportJSON(); ok {
-		_spec.SetField(idempotencykey.FieldReportJSON, field.TypeString, value)
-		_node.ReportJSON = value
-	}
-	if value, ok := ikc.mutation.BlockNewWorkspaces(); ok {
-		_spec.SetField(idempotencykey.FieldBlockNewWorkspaces, field.TypeBool, value)
-		_node.BlockNewWorkspaces = value
+	if value, ok := ikc.mutation.ResponseRef(); ok {
+		_spec.SetField(idempotencykey.FieldResponseRef, field.TypeString, value)
+		_node.ResponseRef = value
 	}
 	if value, ok := ikc.mutation.CreatedAt(); ok {
 		_spec.SetField(idempotencykey.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := ikc.mutation.UpdatedAt(); ok {
-		_spec.SetField(idempotencykey.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

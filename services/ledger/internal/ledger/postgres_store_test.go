@@ -17,14 +17,18 @@ func TestPostgresSchemaUsesEntMigrationLedgerTables(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS hold_releases",
 		"CREATE TABLE IF NOT EXISTS evidence_receipts",
 		"CREATE TABLE IF NOT EXISTS resource_settlements",
-		"price_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb",
+		"price_snapshot_json TEXT NOT NULL DEFAULT '{}'",
 		"CREATE TABLE IF NOT EXISTS reconciliation_reports",
+		"report_json TEXT NOT NULL DEFAULT '{}'",
 		"CREATE TABLE IF NOT EXISTS idempotency_keys",
 	}
 	for _, marker := range required {
 		if !strings.Contains(schema, marker) {
 			t.Fatalf("schema missing %q", marker)
 		}
+	}
+	if strings.Contains(schema, "JSONB") {
+		t.Fatalf("ledger schema must not keep JSONB fact columns")
 	}
 }
 
