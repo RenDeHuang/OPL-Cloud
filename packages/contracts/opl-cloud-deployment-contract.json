@@ -241,6 +241,7 @@
     "requiredCommandsByStep": {
       "Build and push images": [
         "docker login uswccr.ccs.tencentyun.com --username \"$TCR_ID\" --password-stdin",
+        "docker login ghcr.io --username \"$GHCR_USERNAME\" --password-stdin",
         "docker buildx build --push -f Dockerfile -t \"$OPL_CLOUD_IMAGE_REF\" \"$OPL_CLOUD_IMAGE_CONTEXT\"",
         "docker buildx imagetools create -t \"$OPL_WORKSPACE_IMAGE_REF\" \"$WORKSPACE_SOURCE_IMAGE\""
       ]

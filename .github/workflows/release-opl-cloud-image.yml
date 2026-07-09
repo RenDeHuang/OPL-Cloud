@@ -52,6 +52,8 @@ jobs:
       OPL_WORKSPACE_IMAGE_REPOSITORY: uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app
       TCR_ID: ${{ secrets.TCR_USERNAME }}
       TCR_SECRET: ${{ secrets.TCR_PASSWORD }}
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || github.token }}
 
     steps:
       - name: Checkout
@@ -112,6 +114,11 @@ jobs:
             docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
           fi
           if [ "${{ inputs.mirror_workspace_image }}" = "true" ]; then
+            case "$WORKSPACE_SOURCE_IMAGE" in
+              ghcr.io/*)
+                printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
+                ;;
+            esac
             docker buildx imagetools create -t "$OPL_WORKSPACE_IMAGE_REF" "$WORKSPACE_SOURCE_IMAGE"
           fi
 
