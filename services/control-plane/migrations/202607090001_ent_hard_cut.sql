@@ -4,16 +4,14 @@ DECLARE
   target_table text;
 BEGIN
   FOR target_schema, target_table IN
-    SELECT c.table_schema, c.table_name
-    FROM information_schema.columns c
-    JOIN information_schema.columns u
-      ON u.table_schema = c.table_schema
-      AND u.table_name = c.table_name
-      AND u.column_name = 'updated_at'
-    WHERE c.table_schema = 'public'
-      AND c.table_name LIKE 'control_plane_%'
-      AND c.column_name = 'created_at'
+    SELECT table_schema, table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name LIKE 'control_plane_%'
+      AND table_type = 'BASE TABLE'
   LOOP
+    EXECUTE format('ALTER TABLE %I.%I ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ', target_schema, target_table);
+    EXECUTE format('ALTER TABLE %I.%I ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ', target_schema, target_table);
     EXECUTE format(
       'UPDATE %I.%I SET created_at = COALESCE(created_at, NOW()), updated_at = COALESCE(updated_at, created_at, NOW()) WHERE created_at IS NULL OR updated_at IS NULL',
       target_schema,
