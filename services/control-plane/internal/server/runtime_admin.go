@@ -42,16 +42,16 @@ func (app *controlPlaneApp) managementState(includeDeleted bool, computePools []
 		"accounts":               app.accountsLocked(),
 		"packages":               packageList(),
 		"computePools":           computePools,
-		"workspaces":             values(app.resources.workspaces),
-		"computeAllocations":     values(app.resources.computes),
-		"storageVolumes":         values(app.resources.storages),
-		"storageAttachments":     values(app.resources.attachments),
+		"workspaces":             rowsAsAnyFromMaps(app.listWorkspaces("")),
+		"computeAllocations":     rowsAsAnyFromMaps(app.listComputes("")),
+		"storageVolumes":         rowsAsAnyFromMaps(app.listStorages("")),
+		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments("")),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
-		"billingLedger":          copySlice(app.billing.ledger),
-		"walletTransactions":     copySlice(app.billing.walletTx),
-		"manualTopups":           copySlice(app.billing.topups),
+		"billingLedger":          rowsAsAnyFromMaps(app.listLedger("")),
+		"walletTransactions":     rowsAsAnyFromMaps(app.listWalletTransactions("")),
+		"manualTopups":           rowsAsAnyFromMaps(app.listManualTopups("")),
 		"runtimeOperations":      copySlice(app.runtimeOps),
-		"auditEvents":            copySlice(app.billing.auditEvents),
+		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents("")),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"workspaceAccessCleanup": app.workspaceAccessCleanupSummaryLocked(),
 		"archive":                app.archiveStateLocked(),
@@ -84,8 +84,6 @@ func (app *controlPlaneApp) operatorSummary() map[string]any {
 
 func (app *controlPlaneApp) appendAuditEvent(r *http.Request, action string, resourceKind string, resourceID string, targetAccountID string, before any, after any, result string) error {
 	user, _ := app.sessionUserContext(r)
-	app.mu.Lock()
-	defer app.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339)
 	event := map[string]any{
 		"id":              "audit-" + stableID(action, resourceKind, resourceID, now)[:12],
@@ -103,43 +101,44 @@ func (app *controlPlaneApp) appendAuditEvent(r *http.Request, action string, res
 		"result":          result,
 		"createdAt":       now,
 	}
-	app.billing.auditEvents = append(app.billing.auditEvents, event)
-	return app.persistLocked()
+	return app.tables.SaveAuditEvent(r.Context(), event)
 }
 
 func (app *controlPlaneApp) rememberRuntimeOperations(operations []clients.FabricOperation) error {
-	app.mu.Lock()
-	defer app.mu.Unlock()
 	rows := make([]map[string]any, 0, len(operations))
 	for _, operation := range operations {
 		row := structToMap(operation)
 		rows = append(rows, row)
-		app.rememberRuntimeOperationResourceLocked(row)
+		if err := app.rememberRuntimeOperationResource(row); err != nil {
+			return err
+		}
 	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
 	app.runtimeOps = rows
 	return app.persistLocked()
 }
 
-func (app *controlPlaneApp) rememberRuntimeOperationResourceLocked(operation map[string]any) {
+func (app *controlPlaneApp) rememberRuntimeOperationResource(operation map[string]any) error {
 	status := stringValue(operation["status"])
 	if status != "succeeded" && status != "failed" {
-		return
+		return nil
 	}
 	payload, _ := operation["redactedProviderPayload"].(map[string]any)
 	resource, _ := payload["resource"].(map[string]any)
 	if len(resource) == 0 {
-		return
+		return nil
 	}
 	switch stringValue(operation["resourceKind"]) {
 	case "compute_allocation":
 		row := computeResponse(cloneMap(resource))
 		if id := stringValue(row["id"]); id != "" {
-			app.resources.computes[id] = row
+			return app.tables.SaveCompute(context.Background(), row)
 		}
 	case "storage_volume":
 		row := storageResponse(cloneMap(resource))
 		if id := stringValue(row["id"]); id != "" {
-			app.resources.storages[id] = row
+			return app.tables.SaveStorage(context.Background(), row)
 		}
 	case "storage_attachment":
 		row := attachmentResponse(cloneMap(resource), nil)
@@ -147,9 +146,10 @@ func (app *controlPlaneApp) rememberRuntimeOperationResourceLocked(operation map
 		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
 		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
 		if id := stringValue(row["id"]); id != "" {
-			app.resources.attachments[id] = row
+			return app.tables.SaveAttachment(context.Background(), row)
 		}
 	}
+	return nil
 }
 
 func (app *controlPlaneApp) runtimeOperationSummaryLocked() map[string]any {
@@ -172,9 +172,9 @@ func (app *controlPlaneApp) accountsLocked() []any {
 	rows := make([]any, 0, len(keys))
 	for _, accountID := range keys {
 		row := app.wallet(accountID)
-		row["totalRecharged"] = totalTopupsForAccount(app.billing.topups, accountID)
+		row["totalRecharged"] = totalTopupsForAccount(rowsToRecords(app.listManualTopups(accountID)), accountID)
 		if number(row["totalSpent"]) == 0 {
-			row["totalSpent"] = totalDebitsForAccount(accountID, app.billing.walletTx, app.billing.ledger)
+			row["totalSpent"] = totalDebitsForAccount(accountID, rowsToRecords(app.listWalletTransactions(accountID)), rowsToRecords(app.listLedger(accountID)))
 		}
 		for _, user := range app.userRecordSet(true) {
 			if stringValue(user["accountId"]) == accountID && stringValue(user["status"]) != "deleted" {

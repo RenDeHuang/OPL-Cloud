@@ -110,9 +110,7 @@ func (app *controlPlaneApp) settlementResourceRows(ctx context.Context) (control
 	if store, ok := app.store.(settlementResourceStore); ok {
 		return store.SettlementResourceRows(ctx)
 	}
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	return cloneStateTable(app.resources.computes), cloneStateTable(app.resources.storages), nil
+	return app.computeRecordSet(""), app.storageRecordSet(""), nil
 }
 
 func billableCompute(row map[string]any) bool {
@@ -214,16 +212,13 @@ func periodicSettlementKey(input controlplane.ResourceSettlementInput) string {
 }
 
 func (app *controlPlaneApp) markResourceSettlement(result clients.ResourceSettlementResult) error {
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	var table controlPlaneRecordSet
+	var row map[string]any
 	switch result.ResourceType {
 	case "storage":
-		table = app.resources.storages
+		row, _ = app.getStorage(result.ResourceID)
 	default:
-		table = app.resources.computes
+		row, _ = app.getCompute(result.ResourceID)
 	}
-	row := table[result.ResourceID]
 	if row == nil {
 		return nil
 	}
@@ -231,5 +226,8 @@ func (app *controlPlaneApp) markResourceSettlement(result clients.ResourceSettle
 	row["ledgerEntryId"] = result.LedgerEntryID
 	row["walletTransactionId"] = result.WalletTransactionID
 	row["usagePeriodEnd"] = result.UsagePeriodEnd
-	return app.persistLocked()
+	if result.ResourceType == "storage" {
+		return app.tables.SaveStorage(context.Background(), row)
+	}
+	return app.tables.SaveCompute(context.Background(), row)
 }

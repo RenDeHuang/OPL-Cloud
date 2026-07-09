@@ -24,6 +24,24 @@ func mustStore(t *testing.T, err error) {
 	}
 }
 
+func storedWorkspace(t *testing.T, app *controlPlaneApp, id string) map[string]any {
+	t.Helper()
+	workspace, ok := app.getWorkspace(id)
+	if !ok {
+		t.Fatalf("workspace %s not found", id)
+	}
+	return workspace
+}
+
+func storedAttachment(t *testing.T, app *controlPlaneApp, id string) map[string]any {
+	t.Helper()
+	attachment, ok := app.getAttachment(id)
+	if !ok {
+		t.Fatalf("attachment %s not found", id)
+	}
+	return attachment
+}
+
 func TestCreateWorkspaceHTTPUsesMutationKeyWhenHeaderIsAbsent(t *testing.T) {
 	calls := []string{}
 	ledger := &fakeLedgerClientWithKeys{fakeLedgerClient{}, []string{}}
@@ -1002,30 +1020,30 @@ func TestSyncStorageVolumeExternalDeleteStopsBillingAndDeletesWorkspaceData(t *t
 
 func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	app := newControlPlaneApp()
-	app.mu.Lock()
-	app.resources.workspaces["ws-alpha"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":                         "ws-alpha",
 		"ownerAccountId":             "acct-alpha",
 		"ownerUserId":                "usr-alpha",
 		"currentComputeAllocationId": "compute-alpha",
 		"currentAttachmentId":        "attach-alpha",
 		"storageId":                  "storage-alpha",
-	}
-	app.resources.computes["compute-alpha"] = map[string]any{
+	}))
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
 		"id":             "compute-alpha",
 		"ownerAccountId": "acct-alpha",
 		"ownerUserId":    "usr-alpha",
 		"cvmInstanceId":  "ins-alpha",
 		"nodeName":       "node-alpha",
-	}
-	app.resources.storages["storage-alpha"] = map[string]any{
+	}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
 		"id":             "storage-alpha",
 		"ownerAccountId": "acct-alpha",
-	}
+	}))
 	ledger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha"})
 	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha"})
-	wallet := app.billing.walletTx[len(app.billing.walletTx)-1]
-	app.mu.Unlock()
+	wallets, err := app.tables.ListWalletTransactions(context.Background(), "acct-alpha")
+	mustStore(t, err)
+	wallet := wallets[len(wallets)-1]
 
 	state := app.managementState(true, nil)
 	rows := state["resourceLedgerEvidence"].([]any)
@@ -1049,17 +1067,17 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 
 func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	app := newControlPlaneApp()
-	app.mu.Lock()
-	app.resources.workspaces["ws-replacement"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":                         "ws-replacement",
 		"ownerAccountId":             "acct-alpha",
 		"currentComputeAllocationId": "compute-replacement",
 		"currentAttachmentId":        "attach-replacement",
 		"storageId":                  "storage-alpha",
-	}
-	app.resources.computes["compute-replacement"] = map[string]any{"id": "compute-replacement", "ownerAccountId": "acct-alpha", "status": "running", "billingStatus": "active", "hourlyPrice": 1.25}
-	app.resources.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha", "status": "available", "billingStatus": "active", "hourlyEstimate": 0.25}
-	app.resources.attachments["attach-replacement"] = map[string]any{"id": "attach-replacement", "ownerAccountId": "acct-alpha"}
+	}))
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "ownerAccountId": "acct-alpha", "status": "running", "billingStatus": "active", "hourlyPrice": 1.25}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha", "status": "available", "billingStatus": "active", "hourlyEstimate": 0.25}))
+	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-replacement", "ownerAccountId": "acct-alpha"}))
+	app.mu.Lock()
 	app.runtimeOps = []map[string]any{{
 		"operationId":  "op-runtime-replacement",
 		"resourceKind": "workspace_runtime",
@@ -1114,17 +1132,17 @@ func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 
 func TestResourceLedgerEvidenceDerivesProviderCostTags(t *testing.T) {
 	app := newControlPlaneApp()
-	app.mu.Lock()
-	app.resources.workspaces["ws-alpha"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":                         "ws-alpha",
 		"ownerAccountId":             "acct-alpha",
 		"currentComputeAllocationId": "compute-alpha",
 		"currentAttachmentId":        "attach-alpha",
 		"storageId":                  "storage-alpha",
-	}
-	app.resources.computes["compute-alpha"] = map[string]any{"id": "compute-alpha", "ownerAccountId": "acct-alpha"}
-	app.resources.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha"}
-	app.resources.attachments["attach-alpha"] = map[string]any{"id": "attach-alpha", "ownerAccountId": "acct-alpha"}
+	}))
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "ownerAccountId": "acct-alpha"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha"}))
+	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-alpha", "ownerAccountId": "acct-alpha"}))
+	app.mu.Lock()
 	app.runtimeOps = []map[string]any{{
 		"operationId":  "op-runtime-alpha",
 		"resourceKind": "workspace_runtime",
@@ -1143,7 +1161,7 @@ func TestResourceLedgerEvidenceDerivesProviderCostTags(t *testing.T) {
 
 func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	app := newControlPlaneApp()
-	app.resources.workspaces["ws-alpha"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":                         "ws-alpha",
 		"ownerAccountId":             "acct-alpha",
 		"state":                      "running",
@@ -1155,9 +1173,9 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 		"attachmentId":               "attach-alpha",
 		"runtime":                    map[string]any{"serviceName": "runtime-alpha"},
 		"access":                     map[string]any{"tokenStatus": "active"},
-	}
+	}))
 
-	app.rememberCompute(map[string]any{
+	mustStore(t, app.rememberCompute(map[string]any{
 		"id":              "compute-alpha",
 		"accountId":       "acct-alpha",
 		"status":          "destroyed",
@@ -1165,18 +1183,19 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 		"holdReleaseId":   "release-compute",
 		"holdAmountCents": 7862,
 		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": 20000, "frozenCents": 0, "availableCents": 20000, "currency": "CNY"},
-	})
-	workspace := app.resources.workspaces["ws-alpha"]
+	}))
+	workspace := storedWorkspace(t, app, "ws-alpha")
 	if workspace["state"] != "suspended" || workspace["currentComputeAllocationId"] != "" {
 		t.Fatalf("compute destroy did not suspend and clear compute pointer: %#v", workspace)
 	}
 
-	app.rememberAttachment(map[string]any{"id": "attach-alpha", "status": "detached"}, map[string]any{})
+	mustStore(t, app.rememberAttachment(map[string]any{"id": "attach-alpha", "status": "detached"}, map[string]any{}))
+	workspace = storedWorkspace(t, app, "ws-alpha")
 	if workspace["currentAttachmentId"] != "" || workspace["attachmentId"] != "" {
 		t.Fatalf("attachment detach did not clear workspace pointer: %#v", workspace)
 	}
 
-	app.rememberStorage(map[string]any{
+	mustStore(t, app.rememberStorage(map[string]any{
 		"id":              "storage-alpha",
 		"accountId":       "acct-alpha",
 		"status":          "destroyed",
@@ -1184,13 +1203,16 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 		"holdReleaseId":   "release-storage",
 		"holdAmountCents": 101,
 		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": 20000, "frozenCents": 0, "availableCents": 20000, "currency": "CNY"},
-	})
+	}))
+	workspace = storedWorkspace(t, app, "ws-alpha")
 	access, ok := workspace["access"].(map[string]any)
 	if workspace["state"] != "data_deleted" || workspace["status"] != "unrecoverable" || !ok || access["tokenStatus"] != "disabled" {
 		t.Fatalf("storage destroy did not mark workspace unrecoverable: %#v", workspace)
 	}
-	if len(app.billing.ledger) != 2 || app.billing.ledger[0]["type"] != "compute_hold_released" || app.billing.ledger[1]["type"] != "storage_hold_released" {
-		t.Fatalf("missing hold release ledger projection: %#v", app.billing.ledger)
+	ledger, err := app.tables.ListLedger(context.Background(), "acct-alpha")
+	mustStore(t, err)
+	if len(ledger) != 2 || ledger[0]["type"] != "compute_hold_released" || ledger[1]["type"] != "storage_hold_released" {
+		t.Fatalf("missing hold release ledger projection: %#v", ledger)
 	}
 }
 
@@ -1210,8 +1232,8 @@ func TestDetachStorageAttachmentPreservesOwnershipFacts(t *testing.T) {
 
 func TestRememberAttachmentDerivesAccountFromLinkedResources(t *testing.T) {
 	app := newControlPlaneApp()
-	app.resources.computes["compute-alpha"] = map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}
-	app.resources.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}))
 	if err := app.rememberAttachment(map[string]any{
 		"id":                  "attach-alpha",
 		"computeAllocationId": "compute-alpha",
@@ -1220,7 +1242,7 @@ func TestRememberAttachmentDerivesAccountFromLinkedResources(t *testing.T) {
 	}, map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := stringValue(app.resources.attachments["attach-alpha"]["accountId"]); got != "acct-alpha" {
+	if got := stringValue(storedAttachment(t, app, "attach-alpha")["accountId"]); got != "acct-alpha" {
 		t.Fatalf("attachment accountId = %q, want acct-alpha", got)
 	}
 }
@@ -1228,22 +1250,18 @@ func TestRememberAttachmentDerivesAccountFromLinkedResources(t *testing.T) {
 func TestPersistDerivesAttachmentAccountFromExistingFacts(t *testing.T) {
 	app := newControlPlaneApp()
 	app.store = NewTestEntStateStore(t, t.TempDir()+"/attachment-account.sqlite")
-	app.resources.computes["compute-alpha"] = map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}
-	app.resources.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}
-	app.resources.attachments["attach-alpha"] = map[string]any{
+	app.tables = app.store.(controlPlaneTableStore)
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}))
+	mustStore(t, app.rememberAttachment(map[string]any{
 		"id":                  "attach-alpha",
 		"computeAllocationId": "compute-alpha",
 		"storageId":           "storage-alpha",
 		"status":              "attached",
-	}
-	if err := app.persistLocked(); err != nil {
-		t.Fatalf("persist should derive attachment accountId: %v", err)
-	}
-	facts, err := app.store.Load(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := stringValue(facts.Attachments["attach-alpha"]["accountId"]); got != "acct-alpha" {
+	}, map[string]any{}))
+	attachments, err := app.tables.ListAttachments(context.Background(), "")
+	mustStore(t, err)
+	if got := stringValue(attachments[0]["accountId"]); got != "acct-alpha" {
 		t.Fatalf("persisted attachment accountId = %q, want acct-alpha", got)
 	}
 }
@@ -1662,9 +1680,9 @@ func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
-	app.resources.workspaces["ws-alpha"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha",
 		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
-	}
+	}))
 	req := httptest.NewRequest(http.MethodPost, "https://workspace.medopl.cn/login", bytes.NewBufferString(`{"username":"admin"}`))
 	req.Header.Set("Referer", "https://workspace.medopl.cn/w/ws-alpha/")
 	rec := httptest.NewRecorder()
@@ -1688,9 +1706,9 @@ func TestWorkspaceGatewaySetsActiveCookieForRootRuntimeApi(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
-	app.resources.workspaces["ws-alpha"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha",
 		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
-	}
+	}))
 	entryReq := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/?token=share_alpha", nil)
 	entryRec := httptest.NewRecorder()
 
@@ -1746,7 +1764,8 @@ func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newControlPlaneApp()
-			app.resources.workspaces["ws-alpha"] = tc.row
+			tc.row["id"] = "ws-alpha"
+			mustStore(t, app.tables.SaveWorkspace(context.Background(), tc.row))
 			req := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
 			rec := httptest.NewRecorder()
 
