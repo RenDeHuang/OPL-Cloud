@@ -31,8 +31,6 @@ type FabricOperation struct {
 	AccountID string `json:"account_id,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
 	WorkspaceID string `json:"workspace_id,omitempty"`
-	// RuntimeID holds the value of the "runtime_id" field.
-	RuntimeID string `json:"runtime_id,omitempty"`
 	// Provider holds the value of the "provider" field.
 	Provider string `json:"provider,omitempty"`
 	// ProviderRequestID holds the value of the "provider_request_id" field.
@@ -49,28 +47,12 @@ type FabricOperation struct {
 	ErrorCode string `json:"error_code,omitempty"`
 	// Retryable holds the value of the "retryable" field.
 	Retryable bool `json:"retryable,omitempty"`
-	// URL holds the value of the "url" field.
-	URL string `json:"url,omitempty"`
-	// ServiceName holds the value of the "service_name" field.
-	ServiceName string `json:"service_name,omitempty"`
-	// Username holds the value of the "username" field.
-	Username string `json:"username,omitempty"`
-	// Password holds the value of the "password" field.
-	Password string `json:"password,omitempty"`
-	// CredentialStatus holds the value of the "credential_status" field.
-	CredentialStatus string `json:"credential_status,omitempty"`
-	// CredentialVersion holds the value of the "credential_version" field.
-	CredentialVersion string `json:"credential_version,omitempty"`
-	// SecretRef holds the value of the "secret_ref" field.
-	SecretRef string `json:"secret_ref,omitempty"`
 	// StartedAt holds the value of the "started_at" field.
 	StartedAt time.Time `json:"started_at,omitempty"`
 	// FinishedAt holds the value of the "finished_at" field.
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	// UpdatedAt holds the value of the "updated_at" field.
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
 	selectValues sql.SelectValues
 }
 
@@ -81,9 +63,9 @@ func (*FabricOperation) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case fabricoperation.FieldRetryable:
 			values[i] = new(sql.NullBool)
-		case fabricoperation.FieldID, fabricoperation.FieldOperationID, fabricoperation.FieldCallerService, fabricoperation.FieldAction, fabricoperation.FieldResourceKind, fabricoperation.FieldResourceID, fabricoperation.FieldAccountID, fabricoperation.FieldWorkspaceID, fabricoperation.FieldRuntimeID, fabricoperation.FieldProvider, fabricoperation.FieldProviderRequestID, fabricoperation.FieldIdempotencyKey, fabricoperation.FieldRequestHash, fabricoperation.FieldRedactedProviderPayload, fabricoperation.FieldStatus, fabricoperation.FieldErrorCode, fabricoperation.FieldURL, fabricoperation.FieldServiceName, fabricoperation.FieldUsername, fabricoperation.FieldPassword, fabricoperation.FieldCredentialStatus, fabricoperation.FieldCredentialVersion, fabricoperation.FieldSecretRef:
+		case fabricoperation.FieldID, fabricoperation.FieldOperationID, fabricoperation.FieldCallerService, fabricoperation.FieldAction, fabricoperation.FieldResourceKind, fabricoperation.FieldResourceID, fabricoperation.FieldAccountID, fabricoperation.FieldWorkspaceID, fabricoperation.FieldProvider, fabricoperation.FieldProviderRequestID, fabricoperation.FieldIdempotencyKey, fabricoperation.FieldRequestHash, fabricoperation.FieldRedactedProviderPayload, fabricoperation.FieldStatus, fabricoperation.FieldErrorCode:
 			values[i] = new(sql.NullString)
-		case fabricoperation.FieldStartedAt, fabricoperation.FieldFinishedAt, fabricoperation.FieldCreatedAt, fabricoperation.FieldUpdatedAt:
+		case fabricoperation.FieldStartedAt, fabricoperation.FieldFinishedAt, fabricoperation.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -148,12 +130,6 @@ func (fo *FabricOperation) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				fo.WorkspaceID = value.String
 			}
-		case fabricoperation.FieldRuntimeID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field runtime_id", values[i])
-			} else if value.Valid {
-				fo.RuntimeID = value.String
-			}
 		case fabricoperation.FieldProvider:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field provider", values[i])
@@ -202,48 +178,6 @@ func (fo *FabricOperation) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				fo.Retryable = value.Bool
 			}
-		case fabricoperation.FieldURL:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field url", values[i])
-			} else if value.Valid {
-				fo.URL = value.String
-			}
-		case fabricoperation.FieldServiceName:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field service_name", values[i])
-			} else if value.Valid {
-				fo.ServiceName = value.String
-			}
-		case fabricoperation.FieldUsername:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field username", values[i])
-			} else if value.Valid {
-				fo.Username = value.String
-			}
-		case fabricoperation.FieldPassword:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field password", values[i])
-			} else if value.Valid {
-				fo.Password = value.String
-			}
-		case fabricoperation.FieldCredentialStatus:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field credential_status", values[i])
-			} else if value.Valid {
-				fo.CredentialStatus = value.String
-			}
-		case fabricoperation.FieldCredentialVersion:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field credential_version", values[i])
-			} else if value.Valid {
-				fo.CredentialVersion = value.String
-			}
-		case fabricoperation.FieldSecretRef:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field secret_ref", values[i])
-			} else if value.Valid {
-				fo.SecretRef = value.String
-			}
 		case fabricoperation.FieldStartedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field started_at", values[i])
@@ -262,12 +196,6 @@ func (fo *FabricOperation) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
 			} else if value.Valid {
 				fo.CreatedAt = value.Time
-			}
-		case fabricoperation.FieldUpdatedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
-			} else if value.Valid {
-				fo.UpdatedAt = value.Time
 			}
 		default:
 			fo.selectValues.Set(columns[i], values[i])
@@ -326,9 +254,6 @@ func (fo *FabricOperation) String() string {
 	builder.WriteString("workspace_id=")
 	builder.WriteString(fo.WorkspaceID)
 	builder.WriteString(", ")
-	builder.WriteString("runtime_id=")
-	builder.WriteString(fo.RuntimeID)
-	builder.WriteString(", ")
 	builder.WriteString("provider=")
 	builder.WriteString(fo.Provider)
 	builder.WriteString(", ")
@@ -353,27 +278,6 @@ func (fo *FabricOperation) String() string {
 	builder.WriteString("retryable=")
 	builder.WriteString(fmt.Sprintf("%v", fo.Retryable))
 	builder.WriteString(", ")
-	builder.WriteString("url=")
-	builder.WriteString(fo.URL)
-	builder.WriteString(", ")
-	builder.WriteString("service_name=")
-	builder.WriteString(fo.ServiceName)
-	builder.WriteString(", ")
-	builder.WriteString("username=")
-	builder.WriteString(fo.Username)
-	builder.WriteString(", ")
-	builder.WriteString("password=")
-	builder.WriteString(fo.Password)
-	builder.WriteString(", ")
-	builder.WriteString("credential_status=")
-	builder.WriteString(fo.CredentialStatus)
-	builder.WriteString(", ")
-	builder.WriteString("credential_version=")
-	builder.WriteString(fo.CredentialVersion)
-	builder.WriteString(", ")
-	builder.WriteString("secret_ref=")
-	builder.WriteString(fo.SecretRef)
-	builder.WriteString(", ")
 	builder.WriteString("started_at=")
 	builder.WriteString(fo.StartedAt.Format(time.ANSIC))
 	builder.WriteString(", ")
@@ -384,9 +288,6 @@ func (fo *FabricOperation) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(fo.CreatedAt.Format(time.ANSIC))
-	builder.WriteString(", ")
-	builder.WriteString("updated_at=")
-	builder.WriteString(fo.UpdatedAt.Format(time.ANSIC))
 	builder.WriteByte(')')
 	return builder.String()
 }

@@ -261,12 +261,12 @@ func (wraq *WorkspaceRuntimeAccessQuery) Clone() *WorkspaceRuntimeAccessQuery {
 // Example:
 //
 //	var v []struct {
-//		OperationID string `json:"operation_id,omitempty"`
+//		RuntimeID string `json:"runtime_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.WorkspaceRuntimeAccess.Query().
-//		GroupBy(workspaceruntimeaccess.FieldOperationID).
+//		GroupBy(workspaceruntimeaccess.FieldRuntimeID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (wraq *WorkspaceRuntimeAccessQuery) GroupBy(field string, fields ...string) *WorkspaceRuntimeAccessGroupBy {
@@ -284,11 +284,11 @@ func (wraq *WorkspaceRuntimeAccessQuery) GroupBy(field string, fields ...string)
 // Example:
 //
 //	var v []struct {
-//		OperationID string `json:"operation_id,omitempty"`
+//		RuntimeID string `json:"runtime_id,omitempty"`
 //	}
 //
 //	client.WorkspaceRuntimeAccess.Query().
-//		Select(workspaceruntimeaccess.FieldOperationID).
+//		Select(workspaceruntimeaccess.FieldRuntimeID).
 //		Scan(ctx, &v)
 func (wraq *WorkspaceRuntimeAccessQuery) Select(fields ...string) *WorkspaceRuntimeAccessSelect {
 	wraq.ctx.Fields = append(wraq.ctx.Fields, fields...)

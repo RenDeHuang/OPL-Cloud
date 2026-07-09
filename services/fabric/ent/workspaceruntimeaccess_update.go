@@ -28,104 +28,6 @@ func (wrau *WorkspaceRuntimeAccessUpdate) Where(ps ...predicate.WorkspaceRuntime
 	return wrau
 }
 
-// SetOperationID sets the "operation_id" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetOperationID(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetOperationID(s)
-	return wrau
-}
-
-// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableOperationID(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetOperationID(*s)
-	}
-	return wrau
-}
-
-// SetCallerService sets the "caller_service" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetCallerService(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetCallerService(s)
-	return wrau
-}
-
-// SetNillableCallerService sets the "caller_service" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableCallerService(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetCallerService(*s)
-	}
-	return wrau
-}
-
-// SetAction sets the "action" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetAction(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetAction(s)
-	return wrau
-}
-
-// SetNillableAction sets the "action" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableAction(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetAction(*s)
-	}
-	return wrau
-}
-
-// SetResourceKind sets the "resource_kind" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetResourceKind(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetResourceKind(s)
-	return wrau
-}
-
-// SetNillableResourceKind sets the "resource_kind" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableResourceKind(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetResourceKind(*s)
-	}
-	return wrau
-}
-
-// SetResourceID sets the "resource_id" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetResourceID(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetResourceID(s)
-	return wrau
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableResourceID(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetResourceID(*s)
-	}
-	return wrau
-}
-
-// SetAccountID sets the "account_id" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetAccountID(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetAccountID(s)
-	return wrau
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableAccountID(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetAccountID(*s)
-	}
-	return wrau
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetWorkspaceID(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetWorkspaceID(s)
-	return wrau
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableWorkspaceID(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetWorkspaceID(*s)
-	}
-	return wrau
-}
-
 // SetRuntimeID sets the "runtime_id" field.
 func (wrau *WorkspaceRuntimeAccessUpdate) SetRuntimeID(s string) *WorkspaceRuntimeAccessUpdate {
 	wrau.mutation.SetRuntimeID(s)
@@ -136,118 +38,6 @@ func (wrau *WorkspaceRuntimeAccessUpdate) SetRuntimeID(s string) *WorkspaceRunti
 func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableRuntimeID(s *string) *WorkspaceRuntimeAccessUpdate {
 	if s != nil {
 		wrau.SetRuntimeID(*s)
-	}
-	return wrau
-}
-
-// SetProvider sets the "provider" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetProvider(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetProvider(s)
-	return wrau
-}
-
-// SetNillableProvider sets the "provider" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableProvider(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetProvider(*s)
-	}
-	return wrau
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetProviderRequestID(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetProviderRequestID(s)
-	return wrau
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableProviderRequestID(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetProviderRequestID(*s)
-	}
-	return wrau
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetIdempotencyKey(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetIdempotencyKey(s)
-	return wrau
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableIdempotencyKey(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetIdempotencyKey(*s)
-	}
-	return wrau
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetRequestHash(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetRequestHash(s)
-	return wrau
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableRequestHash(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetRequestHash(*s)
-	}
-	return wrau
-}
-
-// SetRedactedProviderPayload sets the "redacted_provider_payload" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetRedactedProviderPayload(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetRedactedProviderPayload(s)
-	return wrau
-}
-
-// SetNillableRedactedProviderPayload sets the "redacted_provider_payload" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableRedactedProviderPayload(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetRedactedProviderPayload(*s)
-	}
-	return wrau
-}
-
-// SetStatus sets the "status" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetStatus(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetStatus(s)
-	return wrau
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableStatus(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetStatus(*s)
-	}
-	return wrau
-}
-
-// SetErrorCode sets the "error_code" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetErrorCode(s string) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetErrorCode(s)
-	return wrau
-}
-
-// SetNillableErrorCode sets the "error_code" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableErrorCode(s *string) *WorkspaceRuntimeAccessUpdate {
-	if s != nil {
-		wrau.SetErrorCode(*s)
-	}
-	return wrau
-}
-
-// SetRetryable sets the "retryable" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetRetryable(b bool) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetRetryable(b)
-	return wrau
-}
-
-// SetNillableRetryable sets the "retryable" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableRetryable(b *bool) *WorkspaceRuntimeAccessUpdate {
-	if b != nil {
-		wrau.SetRetryable(*b)
 	}
 	return wrau
 }
@@ -350,54 +140,6 @@ func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableSecretRef(s *string) *Works
 	return wrau
 }
 
-// SetStartedAt sets the "started_at" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetStartedAt(t time.Time) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetStartedAt(t)
-	return wrau
-}
-
-// SetNillableStartedAt sets the "started_at" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableStartedAt(t *time.Time) *WorkspaceRuntimeAccessUpdate {
-	if t != nil {
-		wrau.SetStartedAt(*t)
-	}
-	return wrau
-}
-
-// SetFinishedAt sets the "finished_at" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetFinishedAt(t time.Time) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetFinishedAt(t)
-	return wrau
-}
-
-// SetNillableFinishedAt sets the "finished_at" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableFinishedAt(t *time.Time) *WorkspaceRuntimeAccessUpdate {
-	if t != nil {
-		wrau.SetFinishedAt(*t)
-	}
-	return wrau
-}
-
-// ClearFinishedAt clears the value of the "finished_at" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) ClearFinishedAt() *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.ClearFinishedAt()
-	return wrau
-}
-
-// SetCreatedAt sets the "created_at" field.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetCreatedAt(t time.Time) *WorkspaceRuntimeAccessUpdate {
-	wrau.mutation.SetCreatedAt(t)
-	return wrau
-}
-
-// SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (wrau *WorkspaceRuntimeAccessUpdate) SetNillableCreatedAt(t *time.Time) *WorkspaceRuntimeAccessUpdate {
-	if t != nil {
-		wrau.SetCreatedAt(*t)
-	}
-	return wrau
-}
-
 // SetUpdatedAt sets the "updated_at" field.
 func (wrau *WorkspaceRuntimeAccessUpdate) SetUpdatedAt(t time.Time) *WorkspaceRuntimeAccessUpdate {
 	wrau.mutation.SetUpdatedAt(t)
@@ -445,7 +187,45 @@ func (wrau *WorkspaceRuntimeAccessUpdate) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (wrau *WorkspaceRuntimeAccessUpdate) check() error {
+	if v, ok := wrau.mutation.RuntimeID(); ok {
+		if err := workspaceruntimeaccess.RuntimeIDValidator(v); err != nil {
+			return &ValidationError{Name: "runtime_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.runtime_id": %w`, err)}
+		}
+	}
+	if v, ok := wrau.mutation.URL(); ok {
+		if err := workspaceruntimeaccess.URLValidator(v); err != nil {
+			return &ValidationError{Name: "url", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.url": %w`, err)}
+		}
+	}
+	if v, ok := wrau.mutation.Username(); ok {
+		if err := workspaceruntimeaccess.UsernameValidator(v); err != nil {
+			return &ValidationError{Name: "username", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.username": %w`, err)}
+		}
+	}
+	if v, ok := wrau.mutation.Password(); ok {
+		if err := workspaceruntimeaccess.PasswordValidator(v); err != nil {
+			return &ValidationError{Name: "password", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.password": %w`, err)}
+		}
+	}
+	if v, ok := wrau.mutation.CredentialStatus(); ok {
+		if err := workspaceruntimeaccess.CredentialStatusValidator(v); err != nil {
+			return &ValidationError{Name: "credential_status", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.credential_status": %w`, err)}
+		}
+	}
+	if v, ok := wrau.mutation.CredentialVersion(); ok {
+		if err := workspaceruntimeaccess.CredentialVersionValidator(v); err != nil {
+			return &ValidationError{Name: "credential_version", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.credential_version": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (wrau *WorkspaceRuntimeAccessUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := wrau.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(workspaceruntimeaccess.Table, workspaceruntimeaccess.Columns, sqlgraph.NewFieldSpec(workspaceruntimeaccess.FieldID, field.TypeString))
 	if ps := wrau.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -454,53 +234,8 @@ func (wrau *WorkspaceRuntimeAccessUpdate) sqlSave(ctx context.Context) (n int, e
 			}
 		}
 	}
-	if value, ok := wrau.mutation.OperationID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldOperationID, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.CallerService(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldCallerService, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.Action(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldAction, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.ResourceKind(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldResourceKind, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.ResourceID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.AccountID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldAccountID, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.WorkspaceID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldWorkspaceID, field.TypeString, value)
-	}
 	if value, ok := wrau.mutation.RuntimeID(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldRuntimeID, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.Provider(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldProvider, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.ProviderRequestID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.IdempotencyKey(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldIdempotencyKey, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.RequestHash(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRequestHash, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.RedactedProviderPayload(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRedactedProviderPayload, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.Status(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.ErrorCode(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldErrorCode, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.Retryable(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRetryable, field.TypeBool, value)
 	}
 	if value, ok := wrau.mutation.URL(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldURL, field.TypeString, value)
@@ -522,18 +257,6 @@ func (wrau *WorkspaceRuntimeAccessUpdate) sqlSave(ctx context.Context) (n int, e
 	}
 	if value, ok := wrau.mutation.SecretRef(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldSecretRef, field.TypeString, value)
-	}
-	if value, ok := wrau.mutation.StartedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldStartedAt, field.TypeTime, value)
-	}
-	if value, ok := wrau.mutation.FinishedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldFinishedAt, field.TypeTime, value)
-	}
-	if wrau.mutation.FinishedAtCleared() {
-		_spec.ClearField(workspaceruntimeaccess.FieldFinishedAt, field.TypeTime)
-	}
-	if value, ok := wrau.mutation.CreatedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldCreatedAt, field.TypeTime, value)
 	}
 	if value, ok := wrau.mutation.UpdatedAt(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldUpdatedAt, field.TypeTime, value)
@@ -558,104 +281,6 @@ type WorkspaceRuntimeAccessUpdateOne struct {
 	mutation *WorkspaceRuntimeAccessMutation
 }
 
-// SetOperationID sets the "operation_id" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetOperationID(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetOperationID(s)
-	return wrauo
-}
-
-// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableOperationID(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetOperationID(*s)
-	}
-	return wrauo
-}
-
-// SetCallerService sets the "caller_service" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetCallerService(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetCallerService(s)
-	return wrauo
-}
-
-// SetNillableCallerService sets the "caller_service" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableCallerService(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetCallerService(*s)
-	}
-	return wrauo
-}
-
-// SetAction sets the "action" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetAction(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetAction(s)
-	return wrauo
-}
-
-// SetNillableAction sets the "action" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableAction(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetAction(*s)
-	}
-	return wrauo
-}
-
-// SetResourceKind sets the "resource_kind" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetResourceKind(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetResourceKind(s)
-	return wrauo
-}
-
-// SetNillableResourceKind sets the "resource_kind" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableResourceKind(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetResourceKind(*s)
-	}
-	return wrauo
-}
-
-// SetResourceID sets the "resource_id" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetResourceID(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetResourceID(s)
-	return wrauo
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableResourceID(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetResourceID(*s)
-	}
-	return wrauo
-}
-
-// SetAccountID sets the "account_id" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetAccountID(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetAccountID(s)
-	return wrauo
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableAccountID(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetAccountID(*s)
-	}
-	return wrauo
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetWorkspaceID(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetWorkspaceID(s)
-	return wrauo
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableWorkspaceID(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetWorkspaceID(*s)
-	}
-	return wrauo
-}
-
 // SetRuntimeID sets the "runtime_id" field.
 func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetRuntimeID(s string) *WorkspaceRuntimeAccessUpdateOne {
 	wrauo.mutation.SetRuntimeID(s)
@@ -666,118 +291,6 @@ func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetRuntimeID(s string) *WorkspaceR
 func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableRuntimeID(s *string) *WorkspaceRuntimeAccessUpdateOne {
 	if s != nil {
 		wrauo.SetRuntimeID(*s)
-	}
-	return wrauo
-}
-
-// SetProvider sets the "provider" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetProvider(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetProvider(s)
-	return wrauo
-}
-
-// SetNillableProvider sets the "provider" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableProvider(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetProvider(*s)
-	}
-	return wrauo
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetProviderRequestID(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetProviderRequestID(s)
-	return wrauo
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableProviderRequestID(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetProviderRequestID(*s)
-	}
-	return wrauo
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetIdempotencyKey(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetIdempotencyKey(s)
-	return wrauo
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableIdempotencyKey(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetIdempotencyKey(*s)
-	}
-	return wrauo
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetRequestHash(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetRequestHash(s)
-	return wrauo
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableRequestHash(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetRequestHash(*s)
-	}
-	return wrauo
-}
-
-// SetRedactedProviderPayload sets the "redacted_provider_payload" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetRedactedProviderPayload(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetRedactedProviderPayload(s)
-	return wrauo
-}
-
-// SetNillableRedactedProviderPayload sets the "redacted_provider_payload" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableRedactedProviderPayload(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetRedactedProviderPayload(*s)
-	}
-	return wrauo
-}
-
-// SetStatus sets the "status" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetStatus(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetStatus(s)
-	return wrauo
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableStatus(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetStatus(*s)
-	}
-	return wrauo
-}
-
-// SetErrorCode sets the "error_code" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetErrorCode(s string) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetErrorCode(s)
-	return wrauo
-}
-
-// SetNillableErrorCode sets the "error_code" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableErrorCode(s *string) *WorkspaceRuntimeAccessUpdateOne {
-	if s != nil {
-		wrauo.SetErrorCode(*s)
-	}
-	return wrauo
-}
-
-// SetRetryable sets the "retryable" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetRetryable(b bool) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetRetryable(b)
-	return wrauo
-}
-
-// SetNillableRetryable sets the "retryable" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableRetryable(b *bool) *WorkspaceRuntimeAccessUpdateOne {
-	if b != nil {
-		wrauo.SetRetryable(*b)
 	}
 	return wrauo
 }
@@ -880,54 +393,6 @@ func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableSecretRef(s *string) *W
 	return wrauo
 }
 
-// SetStartedAt sets the "started_at" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetStartedAt(t time.Time) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetStartedAt(t)
-	return wrauo
-}
-
-// SetNillableStartedAt sets the "started_at" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableStartedAt(t *time.Time) *WorkspaceRuntimeAccessUpdateOne {
-	if t != nil {
-		wrauo.SetStartedAt(*t)
-	}
-	return wrauo
-}
-
-// SetFinishedAt sets the "finished_at" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetFinishedAt(t time.Time) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetFinishedAt(t)
-	return wrauo
-}
-
-// SetNillableFinishedAt sets the "finished_at" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableFinishedAt(t *time.Time) *WorkspaceRuntimeAccessUpdateOne {
-	if t != nil {
-		wrauo.SetFinishedAt(*t)
-	}
-	return wrauo
-}
-
-// ClearFinishedAt clears the value of the "finished_at" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) ClearFinishedAt() *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.ClearFinishedAt()
-	return wrauo
-}
-
-// SetCreatedAt sets the "created_at" field.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetCreatedAt(t time.Time) *WorkspaceRuntimeAccessUpdateOne {
-	wrauo.mutation.SetCreatedAt(t)
-	return wrauo
-}
-
-// SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetNillableCreatedAt(t *time.Time) *WorkspaceRuntimeAccessUpdateOne {
-	if t != nil {
-		wrauo.SetCreatedAt(*t)
-	}
-	return wrauo
-}
-
 // SetUpdatedAt sets the "updated_at" field.
 func (wrauo *WorkspaceRuntimeAccessUpdateOne) SetUpdatedAt(t time.Time) *WorkspaceRuntimeAccessUpdateOne {
 	wrauo.mutation.SetUpdatedAt(t)
@@ -988,7 +453,45 @@ func (wrauo *WorkspaceRuntimeAccessUpdateOne) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (wrauo *WorkspaceRuntimeAccessUpdateOne) check() error {
+	if v, ok := wrauo.mutation.RuntimeID(); ok {
+		if err := workspaceruntimeaccess.RuntimeIDValidator(v); err != nil {
+			return &ValidationError{Name: "runtime_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.runtime_id": %w`, err)}
+		}
+	}
+	if v, ok := wrauo.mutation.URL(); ok {
+		if err := workspaceruntimeaccess.URLValidator(v); err != nil {
+			return &ValidationError{Name: "url", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.url": %w`, err)}
+		}
+	}
+	if v, ok := wrauo.mutation.Username(); ok {
+		if err := workspaceruntimeaccess.UsernameValidator(v); err != nil {
+			return &ValidationError{Name: "username", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.username": %w`, err)}
+		}
+	}
+	if v, ok := wrauo.mutation.Password(); ok {
+		if err := workspaceruntimeaccess.PasswordValidator(v); err != nil {
+			return &ValidationError{Name: "password", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.password": %w`, err)}
+		}
+	}
+	if v, ok := wrauo.mutation.CredentialStatus(); ok {
+		if err := workspaceruntimeaccess.CredentialStatusValidator(v); err != nil {
+			return &ValidationError{Name: "credential_status", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.credential_status": %w`, err)}
+		}
+	}
+	if v, ok := wrauo.mutation.CredentialVersion(); ok {
+		if err := workspaceruntimeaccess.CredentialVersionValidator(v); err != nil {
+			return &ValidationError{Name: "credential_version", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.credential_version": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (wrauo *WorkspaceRuntimeAccessUpdateOne) sqlSave(ctx context.Context) (_node *WorkspaceRuntimeAccess, err error) {
+	if err := wrauo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(workspaceruntimeaccess.Table, workspaceruntimeaccess.Columns, sqlgraph.NewFieldSpec(workspaceruntimeaccess.FieldID, field.TypeString))
 	id, ok := wrauo.mutation.ID()
 	if !ok {
@@ -1014,53 +517,8 @@ func (wrauo *WorkspaceRuntimeAccessUpdateOne) sqlSave(ctx context.Context) (_nod
 			}
 		}
 	}
-	if value, ok := wrauo.mutation.OperationID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldOperationID, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.CallerService(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldCallerService, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.Action(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldAction, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.ResourceKind(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldResourceKind, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.ResourceID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldResourceID, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.AccountID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldAccountID, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.WorkspaceID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldWorkspaceID, field.TypeString, value)
-	}
 	if value, ok := wrauo.mutation.RuntimeID(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldRuntimeID, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.Provider(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldProvider, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.ProviderRequestID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldProviderRequestID, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.IdempotencyKey(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldIdempotencyKey, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.RequestHash(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRequestHash, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.RedactedProviderPayload(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRedactedProviderPayload, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.Status(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldStatus, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.ErrorCode(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldErrorCode, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.Retryable(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRetryable, field.TypeBool, value)
 	}
 	if value, ok := wrauo.mutation.URL(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldURL, field.TypeString, value)
@@ -1082,18 +540,6 @@ func (wrauo *WorkspaceRuntimeAccessUpdateOne) sqlSave(ctx context.Context) (_nod
 	}
 	if value, ok := wrauo.mutation.SecretRef(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldSecretRef, field.TypeString, value)
-	}
-	if value, ok := wrauo.mutation.StartedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldStartedAt, field.TypeTime, value)
-	}
-	if value, ok := wrauo.mutation.FinishedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldFinishedAt, field.TypeTime, value)
-	}
-	if wrauo.mutation.FinishedAtCleared() {
-		_spec.ClearField(workspaceruntimeaccess.FieldFinishedAt, field.TypeTime)
-	}
-	if value, ok := wrauo.mutation.CreatedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldCreatedAt, field.TypeTime, value)
 	}
 	if value, ok := wrauo.mutation.UpdatedAt(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldUpdatedAt, field.TypeTime, value)

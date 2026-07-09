@@ -8,7 +8,12 @@ import (
 	"strings"
 	"sync"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/lib/pq"
+
+	fabricent "opl-cloud/services/fabric/ent"
+	"opl-cloud/services/fabric/ent/fabricoperation"
 )
 
 type OperationStore interface {
@@ -67,7 +72,8 @@ func (s *MemoryOperationStore) RuntimeAccess(_ context.Context, workspaceID stri
 }
 
 type PostgresOperationStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *fabricent.Client
 }
 
 //go:embed ent_migrations/*.sql
@@ -98,7 +104,10 @@ func NewPostgresOperationStore(databaseURL string) (*PostgresOperationStore, err
 	if err != nil {
 		return nil, err
 	}
-	store := &PostgresOperationStore{db: db}
+	store := &PostgresOperationStore{
+		db:     db,
+		client: fabricent.NewClient(fabricent.Driver(entsql.OpenDB(dialect.Postgres, db))),
+	}
 	if err := store.Install(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -120,90 +129,114 @@ func (s *PostgresOperationStore) Append(ctx context.Context, operation FabricOpe
 	if err != nil {
 		return err
 	}
-	var finishedAt any
+	create := s.client.FabricOperation.Create().
+		SetID(operation.ID).
+		SetOperationID(operation.OperationID).
+		SetCallerService(operation.CallerService).
+		SetAction(operation.Action).
+		SetResourceKind(operation.ResourceKind).
+		SetResourceID(operation.ResourceID).
+		SetAccountID(operation.AccountID).
+		SetWorkspaceID(operation.WorkspaceID).
+		SetProvider(operation.Provider).
+		SetProviderRequestID(operation.ProviderRequestID).
+		SetIdempotencyKey(operation.IdempotencyKey).
+		SetRequestHash(operation.RequestHash).
+		SetRedactedProviderPayload(string(payloadJSON)).
+		SetStatus(operation.Status).
+		SetErrorCode(operation.ErrorCode).
+		SetRetryable(operation.Retryable).
+		SetStartedAt(operation.StartedAt).
+		SetCreatedAt(operation.CreatedAt)
 	if !operation.FinishedAt.IsZero() {
-		finishedAt = operation.FinishedAt
+		create.SetFinishedAt(operation.FinishedAt)
 	}
-	_, err = s.db.ExecContext(ctx, `
-INSERT INTO fabric_operations(
-  id, operation_id, caller_service, action, resource_kind, resource_id, account_id, workspace_id,
-  provider, provider_request_id, idempotency_key, request_hash, redacted_provider_payload,
-  status, error_code, retryable, started_at, finished_at, created_at
-) VALUES (
-  $1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''),
-  NULLIF($11, ''), NULLIF($12, ''), $13::jsonb, $14, NULLIF($15, ''), $16, $17, $18, $19
-)`, operation.ID, operation.OperationID, operation.CallerService, operation.Action, operation.ResourceKind, operation.ResourceID, operation.AccountID, operation.WorkspaceID, operation.Provider, operation.ProviderRequestID, operation.IdempotencyKey, operation.RequestHash, string(payloadJSON), operation.Status, operation.ErrorCode, operation.Retryable, operation.StartedAt, finishedAt, operation.CreatedAt)
-	return err
+	return create.Exec(ctx)
 }
 
 func (s *PostgresOperationStore) List(ctx context.Context) ([]FabricOperation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-SELECT id, operation_id, caller_service, action, resource_kind, resource_id, COALESCE(account_id, ''),
-  COALESCE(workspace_id, ''), COALESCE(provider, ''), COALESCE(provider_request_id, ''),
-  COALESCE(idempotency_key, ''), COALESCE(request_hash, ''), redacted_provider_payload,
-  status, COALESCE(error_code, ''), retryable, started_at, finished_at, created_at
-FROM fabric_operations
-ORDER BY created_at, id
-`)
+	rows, err := s.client.FabricOperation.Query().Order(fabricent.Asc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var operations []FabricOperation
-	for rows.Next() {
-		var operation FabricOperation
-		var payload []byte
-		var finishedAt sql.NullTime
-		if err := rows.Scan(&operation.ID, &operation.OperationID, &operation.CallerService, &operation.Action, &operation.ResourceKind, &operation.ResourceID, &operation.AccountID, &operation.WorkspaceID, &operation.Provider, &operation.ProviderRequestID, &operation.IdempotencyKey, &operation.RequestHash, &payload, &operation.Status, &operation.ErrorCode, &operation.Retryable, &operation.StartedAt, &finishedAt, &operation.CreatedAt); err != nil {
-			return nil, err
-		}
-		if finishedAt.Valid {
-			operation.FinishedAt = finishedAt.Time
-		}
-		if len(payload) > 0 {
-			_ = json.Unmarshal(payload, &operation.RedactedProviderPayload)
-		}
-		operations = append(operations, operation)
+	operations := make([]FabricOperation, 0, len(rows))
+	for _, row := range rows {
+		operations = append(operations, fabricOperationFromEnt(row))
 	}
-	return operations, rows.Err()
+	return operations, nil
 }
 
 func (s *PostgresOperationStore) SaveRuntimeAccess(ctx context.Context, runtime WorkspaceRuntime) error {
 	if runtime.WorkspaceID == "" || runtime.Access.Username == "" || runtime.Access.Password == "" {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO fabric_workspace_runtime_access(
-  workspace_id, runtime_id, url, service_name, username, password,
-  credential_status, credential_version, secret_ref, updated_at
-) VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, NULLIF($9, ''), $10)
-ON CONFLICT (workspace_id) DO UPDATE SET
-  runtime_id = EXCLUDED.runtime_id,
-  url = EXCLUDED.url,
-  service_name = EXCLUDED.service_name,
-  username = EXCLUDED.username,
-  password = EXCLUDED.password,
-  credential_status = EXCLUDED.credential_status,
-  credential_version = EXCLUDED.credential_version,
-  secret_ref = EXCLUDED.secret_ref,
-  updated_at = EXCLUDED.updated_at
-`, runtime.WorkspaceID, runtime.ID, runtime.URL, runtime.ServiceName, runtime.Access.Username, runtime.Access.Password, runtime.Access.CredentialStatus, runtime.Access.CredentialVersion, runtime.Access.SecretRef, runtime.Access.UpdatedAt)
-	return err
+	_, err := s.client.WorkspaceRuntimeAccess.Get(ctx, runtime.WorkspaceID)
+	if fabricent.IsNotFound(err) {
+		return s.client.WorkspaceRuntimeAccess.Create().
+			SetID(runtime.WorkspaceID).
+			SetRuntimeID(runtime.ID).
+			SetURL(runtime.URL).
+			SetServiceName(runtime.ServiceName).
+			SetUsername(runtime.Access.Username).
+			SetPassword(runtime.Access.Password).
+			SetCredentialStatus(runtime.Access.CredentialStatus).
+			SetCredentialVersion(runtime.Access.CredentialVersion).
+			SetSecretRef(runtime.Access.SecretRef).
+			SetUpdatedAt(runtime.Access.UpdatedAt).
+			Exec(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	return s.client.WorkspaceRuntimeAccess.UpdateOneID(runtime.WorkspaceID).
+		SetRuntimeID(runtime.ID).
+		SetURL(runtime.URL).
+		SetServiceName(runtime.ServiceName).
+		SetUsername(runtime.Access.Username).
+		SetPassword(runtime.Access.Password).
+		SetCredentialStatus(runtime.Access.CredentialStatus).
+		SetCredentialVersion(runtime.Access.CredentialVersion).
+		SetSecretRef(runtime.Access.SecretRef).
+		SetUpdatedAt(runtime.Access.UpdatedAt).
+		Exec(ctx)
 }
 
 func (s *PostgresOperationStore) RuntimeAccess(ctx context.Context, workspaceID string) (RuntimeAccess, bool, error) {
-	var access RuntimeAccess
-	row := s.db.QueryRowContext(ctx, `
-SELECT username, password, credential_status, credential_version, COALESCE(secret_ref, ''), updated_at
-FROM fabric_workspace_runtime_access
-WHERE workspace_id = $1
-`, workspaceID)
-	if err := row.Scan(&access.Username, &access.Password, &access.CredentialStatus, &access.CredentialVersion, &access.SecretRef, &access.UpdatedAt); err != nil {
-		if err == sql.ErrNoRows {
-			return RuntimeAccess{}, false, nil
-		}
+	row, err := s.client.WorkspaceRuntimeAccess.Get(ctx, workspaceID)
+	if fabricent.IsNotFound(err) {
+		return RuntimeAccess{}, false, nil
+	}
+	if err != nil {
 		return RuntimeAccess{}, false, err
 	}
-	return access, true, nil
+	return RuntimeAccess{Username: row.Username, Password: row.Password, CredentialStatus: row.CredentialStatus, CredentialVersion: row.CredentialVersion, SecretRef: row.SecretRef, UpdatedAt: row.UpdatedAt}, true, nil
+}
+
+func fabricOperationFromEnt(row *fabricent.FabricOperation) FabricOperation {
+	operation := FabricOperation{
+		ID:                row.ID,
+		OperationID:       row.OperationID,
+		CallerService:     row.CallerService,
+		Action:            row.Action,
+		ResourceKind:      row.ResourceKind,
+		ResourceID:        row.ResourceID,
+		AccountID:         row.AccountID,
+		WorkspaceID:       row.WorkspaceID,
+		Provider:          row.Provider,
+		ProviderRequestID: row.ProviderRequestID,
+		IdempotencyKey:    row.IdempotencyKey,
+		RequestHash:       row.RequestHash,
+		Status:            row.Status,
+		ErrorCode:         row.ErrorCode,
+		Retryable:         row.Retryable,
+		StartedAt:         row.StartedAt,
+		CreatedAt:         row.CreatedAt,
+	}
+	if row.FinishedAt != nil {
+		operation.FinishedAt = *row.FinishedAt
+	}
+	if row.RedactedProviderPayload != "" {
+		_ = json.Unmarshal([]byte(row.RedactedProviderPayload), &operation.RedactedProviderPayload)
+	}
+	return operation
 }

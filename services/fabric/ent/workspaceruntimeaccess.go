@@ -17,38 +17,8 @@ type WorkspaceRuntimeAccess struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
-	// OperationID holds the value of the "operation_id" field.
-	OperationID string `json:"operation_id,omitempty"`
-	// CallerService holds the value of the "caller_service" field.
-	CallerService string `json:"caller_service,omitempty"`
-	// Action holds the value of the "action" field.
-	Action string `json:"action,omitempty"`
-	// ResourceKind holds the value of the "resource_kind" field.
-	ResourceKind string `json:"resource_kind,omitempty"`
-	// ResourceID holds the value of the "resource_id" field.
-	ResourceID string `json:"resource_id,omitempty"`
-	// AccountID holds the value of the "account_id" field.
-	AccountID string `json:"account_id,omitempty"`
-	// WorkspaceID holds the value of the "workspace_id" field.
-	WorkspaceID string `json:"workspace_id,omitempty"`
 	// RuntimeID holds the value of the "runtime_id" field.
 	RuntimeID string `json:"runtime_id,omitempty"`
-	// Provider holds the value of the "provider" field.
-	Provider string `json:"provider,omitempty"`
-	// ProviderRequestID holds the value of the "provider_request_id" field.
-	ProviderRequestID string `json:"provider_request_id,omitempty"`
-	// IdempotencyKey holds the value of the "idempotency_key" field.
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	// RequestHash holds the value of the "request_hash" field.
-	RequestHash string `json:"request_hash,omitempty"`
-	// RedactedProviderPayload holds the value of the "redacted_provider_payload" field.
-	RedactedProviderPayload string `json:"redacted_provider_payload,omitempty"`
-	// Status holds the value of the "status" field.
-	Status string `json:"status,omitempty"`
-	// ErrorCode holds the value of the "error_code" field.
-	ErrorCode string `json:"error_code,omitempty"`
-	// Retryable holds the value of the "retryable" field.
-	Retryable bool `json:"retryable,omitempty"`
 	// URL holds the value of the "url" field.
 	URL string `json:"url,omitempty"`
 	// ServiceName holds the value of the "service_name" field.
@@ -63,12 +33,6 @@ type WorkspaceRuntimeAccess struct {
 	CredentialVersion string `json:"credential_version,omitempty"`
 	// SecretRef holds the value of the "secret_ref" field.
 	SecretRef string `json:"secret_ref,omitempty"`
-	// StartedAt holds the value of the "started_at" field.
-	StartedAt time.Time `json:"started_at,omitempty"`
-	// FinishedAt holds the value of the "finished_at" field.
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	// CreatedAt holds the value of the "created_at" field.
-	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 	selectValues sql.SelectValues
@@ -79,11 +43,9 @@ func (*WorkspaceRuntimeAccess) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case workspaceruntimeaccess.FieldRetryable:
-			values[i] = new(sql.NullBool)
-		case workspaceruntimeaccess.FieldID, workspaceruntimeaccess.FieldOperationID, workspaceruntimeaccess.FieldCallerService, workspaceruntimeaccess.FieldAction, workspaceruntimeaccess.FieldResourceKind, workspaceruntimeaccess.FieldResourceID, workspaceruntimeaccess.FieldAccountID, workspaceruntimeaccess.FieldWorkspaceID, workspaceruntimeaccess.FieldRuntimeID, workspaceruntimeaccess.FieldProvider, workspaceruntimeaccess.FieldProviderRequestID, workspaceruntimeaccess.FieldIdempotencyKey, workspaceruntimeaccess.FieldRequestHash, workspaceruntimeaccess.FieldRedactedProviderPayload, workspaceruntimeaccess.FieldStatus, workspaceruntimeaccess.FieldErrorCode, workspaceruntimeaccess.FieldURL, workspaceruntimeaccess.FieldServiceName, workspaceruntimeaccess.FieldUsername, workspaceruntimeaccess.FieldPassword, workspaceruntimeaccess.FieldCredentialStatus, workspaceruntimeaccess.FieldCredentialVersion, workspaceruntimeaccess.FieldSecretRef:
+		case workspaceruntimeaccess.FieldID, workspaceruntimeaccess.FieldRuntimeID, workspaceruntimeaccess.FieldURL, workspaceruntimeaccess.FieldServiceName, workspaceruntimeaccess.FieldUsername, workspaceruntimeaccess.FieldPassword, workspaceruntimeaccess.FieldCredentialStatus, workspaceruntimeaccess.FieldCredentialVersion, workspaceruntimeaccess.FieldSecretRef:
 			values[i] = new(sql.NullString)
-		case workspaceruntimeaccess.FieldStartedAt, workspaceruntimeaccess.FieldFinishedAt, workspaceruntimeaccess.FieldCreatedAt, workspaceruntimeaccess.FieldUpdatedAt:
+		case workspaceruntimeaccess.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -106,101 +68,11 @@ func (wra *WorkspaceRuntimeAccess) assignValues(columns []string, values []any) 
 			} else if value.Valid {
 				wra.ID = value.String
 			}
-		case workspaceruntimeaccess.FieldOperationID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field operation_id", values[i])
-			} else if value.Valid {
-				wra.OperationID = value.String
-			}
-		case workspaceruntimeaccess.FieldCallerService:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field caller_service", values[i])
-			} else if value.Valid {
-				wra.CallerService = value.String
-			}
-		case workspaceruntimeaccess.FieldAction:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field action", values[i])
-			} else if value.Valid {
-				wra.Action = value.String
-			}
-		case workspaceruntimeaccess.FieldResourceKind:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field resource_kind", values[i])
-			} else if value.Valid {
-				wra.ResourceKind = value.String
-			}
-		case workspaceruntimeaccess.FieldResourceID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field resource_id", values[i])
-			} else if value.Valid {
-				wra.ResourceID = value.String
-			}
-		case workspaceruntimeaccess.FieldAccountID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field account_id", values[i])
-			} else if value.Valid {
-				wra.AccountID = value.String
-			}
-		case workspaceruntimeaccess.FieldWorkspaceID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field workspace_id", values[i])
-			} else if value.Valid {
-				wra.WorkspaceID = value.String
-			}
 		case workspaceruntimeaccess.FieldRuntimeID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field runtime_id", values[i])
 			} else if value.Valid {
 				wra.RuntimeID = value.String
-			}
-		case workspaceruntimeaccess.FieldProvider:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field provider", values[i])
-			} else if value.Valid {
-				wra.Provider = value.String
-			}
-		case workspaceruntimeaccess.FieldProviderRequestID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field provider_request_id", values[i])
-			} else if value.Valid {
-				wra.ProviderRequestID = value.String
-			}
-		case workspaceruntimeaccess.FieldIdempotencyKey:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field idempotency_key", values[i])
-			} else if value.Valid {
-				wra.IdempotencyKey = value.String
-			}
-		case workspaceruntimeaccess.FieldRequestHash:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field request_hash", values[i])
-			} else if value.Valid {
-				wra.RequestHash = value.String
-			}
-		case workspaceruntimeaccess.FieldRedactedProviderPayload:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field redacted_provider_payload", values[i])
-			} else if value.Valid {
-				wra.RedactedProviderPayload = value.String
-			}
-		case workspaceruntimeaccess.FieldStatus:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field status", values[i])
-			} else if value.Valid {
-				wra.Status = value.String
-			}
-		case workspaceruntimeaccess.FieldErrorCode:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field error_code", values[i])
-			} else if value.Valid {
-				wra.ErrorCode = value.String
-			}
-		case workspaceruntimeaccess.FieldRetryable:
-			if value, ok := values[i].(*sql.NullBool); !ok {
-				return fmt.Errorf("unexpected type %T for field retryable", values[i])
-			} else if value.Valid {
-				wra.Retryable = value.Bool
 			}
 		case workspaceruntimeaccess.FieldURL:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -244,25 +116,6 @@ func (wra *WorkspaceRuntimeAccess) assignValues(columns []string, values []any) 
 			} else if value.Valid {
 				wra.SecretRef = value.String
 			}
-		case workspaceruntimeaccess.FieldStartedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field started_at", values[i])
-			} else if value.Valid {
-				wra.StartedAt = value.Time
-			}
-		case workspaceruntimeaccess.FieldFinishedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field finished_at", values[i])
-			} else if value.Valid {
-				wra.FinishedAt = new(time.Time)
-				*wra.FinishedAt = value.Time
-			}
-		case workspaceruntimeaccess.FieldCreatedAt:
-			if value, ok := values[i].(*sql.NullTime); !ok {
-				return fmt.Errorf("unexpected type %T for field created_at", values[i])
-			} else if value.Valid {
-				wra.CreatedAt = value.Time
-			}
 		case workspaceruntimeaccess.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
@@ -305,53 +158,8 @@ func (wra *WorkspaceRuntimeAccess) String() string {
 	var builder strings.Builder
 	builder.WriteString("WorkspaceRuntimeAccess(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", wra.ID))
-	builder.WriteString("operation_id=")
-	builder.WriteString(wra.OperationID)
-	builder.WriteString(", ")
-	builder.WriteString("caller_service=")
-	builder.WriteString(wra.CallerService)
-	builder.WriteString(", ")
-	builder.WriteString("action=")
-	builder.WriteString(wra.Action)
-	builder.WriteString(", ")
-	builder.WriteString("resource_kind=")
-	builder.WriteString(wra.ResourceKind)
-	builder.WriteString(", ")
-	builder.WriteString("resource_id=")
-	builder.WriteString(wra.ResourceID)
-	builder.WriteString(", ")
-	builder.WriteString("account_id=")
-	builder.WriteString(wra.AccountID)
-	builder.WriteString(", ")
-	builder.WriteString("workspace_id=")
-	builder.WriteString(wra.WorkspaceID)
-	builder.WriteString(", ")
 	builder.WriteString("runtime_id=")
 	builder.WriteString(wra.RuntimeID)
-	builder.WriteString(", ")
-	builder.WriteString("provider=")
-	builder.WriteString(wra.Provider)
-	builder.WriteString(", ")
-	builder.WriteString("provider_request_id=")
-	builder.WriteString(wra.ProviderRequestID)
-	builder.WriteString(", ")
-	builder.WriteString("idempotency_key=")
-	builder.WriteString(wra.IdempotencyKey)
-	builder.WriteString(", ")
-	builder.WriteString("request_hash=")
-	builder.WriteString(wra.RequestHash)
-	builder.WriteString(", ")
-	builder.WriteString("redacted_provider_payload=")
-	builder.WriteString(wra.RedactedProviderPayload)
-	builder.WriteString(", ")
-	builder.WriteString("status=")
-	builder.WriteString(wra.Status)
-	builder.WriteString(", ")
-	builder.WriteString("error_code=")
-	builder.WriteString(wra.ErrorCode)
-	builder.WriteString(", ")
-	builder.WriteString("retryable=")
-	builder.WriteString(fmt.Sprintf("%v", wra.Retryable))
 	builder.WriteString(", ")
 	builder.WriteString("url=")
 	builder.WriteString(wra.URL)
@@ -373,17 +181,6 @@ func (wra *WorkspaceRuntimeAccess) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("secret_ref=")
 	builder.WriteString(wra.SecretRef)
-	builder.WriteString(", ")
-	builder.WriteString("started_at=")
-	builder.WriteString(wra.StartedAt.Format(time.ANSIC))
-	builder.WriteString(", ")
-	if v := wra.FinishedAt; v != nil {
-		builder.WriteString("finished_at=")
-		builder.WriteString(v.Format(time.ANSIC))
-	}
-	builder.WriteString(", ")
-	builder.WriteString("created_at=")
-	builder.WriteString(wra.CreatedAt.Format(time.ANSIC))
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(wra.UpdatedAt.Format(time.ANSIC))

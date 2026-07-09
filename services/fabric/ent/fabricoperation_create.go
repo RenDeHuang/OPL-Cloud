@@ -26,25 +26,9 @@ func (foc *FabricOperationCreate) SetOperationID(s string) *FabricOperationCreat
 	return foc
 }
 
-// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableOperationID(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetOperationID(*s)
-	}
-	return foc
-}
-
 // SetCallerService sets the "caller_service" field.
 func (foc *FabricOperationCreate) SetCallerService(s string) *FabricOperationCreate {
 	foc.mutation.SetCallerService(s)
-	return foc
-}
-
-// SetNillableCallerService sets the "caller_service" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableCallerService(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetCallerService(*s)
-	}
 	return foc
 }
 
@@ -54,39 +38,15 @@ func (foc *FabricOperationCreate) SetAction(s string) *FabricOperationCreate {
 	return foc
 }
 
-// SetNillableAction sets the "action" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableAction(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetAction(*s)
-	}
-	return foc
-}
-
 // SetResourceKind sets the "resource_kind" field.
 func (foc *FabricOperationCreate) SetResourceKind(s string) *FabricOperationCreate {
 	foc.mutation.SetResourceKind(s)
 	return foc
 }
 
-// SetNillableResourceKind sets the "resource_kind" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableResourceKind(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetResourceKind(*s)
-	}
-	return foc
-}
-
 // SetResourceID sets the "resource_id" field.
 func (foc *FabricOperationCreate) SetResourceID(s string) *FabricOperationCreate {
 	foc.mutation.SetResourceID(s)
-	return foc
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableResourceID(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetResourceID(*s)
-	}
 	return foc
 }
 
@@ -114,20 +74,6 @@ func (foc *FabricOperationCreate) SetWorkspaceID(s string) *FabricOperationCreat
 func (foc *FabricOperationCreate) SetNillableWorkspaceID(s *string) *FabricOperationCreate {
 	if s != nil {
 		foc.SetWorkspaceID(*s)
-	}
-	return foc
-}
-
-// SetRuntimeID sets the "runtime_id" field.
-func (foc *FabricOperationCreate) SetRuntimeID(s string) *FabricOperationCreate {
-	foc.mutation.SetRuntimeID(s)
-	return foc
-}
-
-// SetNillableRuntimeID sets the "runtime_id" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableRuntimeID(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetRuntimeID(*s)
 	}
 	return foc
 }
@@ -208,14 +154,6 @@ func (foc *FabricOperationCreate) SetStatus(s string) *FabricOperationCreate {
 	return foc
 }
 
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableStatus(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetStatus(*s)
-	}
-	return foc
-}
-
 // SetErrorCode sets the "error_code" field.
 func (foc *FabricOperationCreate) SetErrorCode(s string) *FabricOperationCreate {
 	foc.mutation.SetErrorCode(s)
@@ -240,104 +178,6 @@ func (foc *FabricOperationCreate) SetRetryable(b bool) *FabricOperationCreate {
 func (foc *FabricOperationCreate) SetNillableRetryable(b *bool) *FabricOperationCreate {
 	if b != nil {
 		foc.SetRetryable(*b)
-	}
-	return foc
-}
-
-// SetURL sets the "url" field.
-func (foc *FabricOperationCreate) SetURL(s string) *FabricOperationCreate {
-	foc.mutation.SetURL(s)
-	return foc
-}
-
-// SetNillableURL sets the "url" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableURL(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetURL(*s)
-	}
-	return foc
-}
-
-// SetServiceName sets the "service_name" field.
-func (foc *FabricOperationCreate) SetServiceName(s string) *FabricOperationCreate {
-	foc.mutation.SetServiceName(s)
-	return foc
-}
-
-// SetNillableServiceName sets the "service_name" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableServiceName(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetServiceName(*s)
-	}
-	return foc
-}
-
-// SetUsername sets the "username" field.
-func (foc *FabricOperationCreate) SetUsername(s string) *FabricOperationCreate {
-	foc.mutation.SetUsername(s)
-	return foc
-}
-
-// SetNillableUsername sets the "username" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableUsername(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetUsername(*s)
-	}
-	return foc
-}
-
-// SetPassword sets the "password" field.
-func (foc *FabricOperationCreate) SetPassword(s string) *FabricOperationCreate {
-	foc.mutation.SetPassword(s)
-	return foc
-}
-
-// SetNillablePassword sets the "password" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillablePassword(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetPassword(*s)
-	}
-	return foc
-}
-
-// SetCredentialStatus sets the "credential_status" field.
-func (foc *FabricOperationCreate) SetCredentialStatus(s string) *FabricOperationCreate {
-	foc.mutation.SetCredentialStatus(s)
-	return foc
-}
-
-// SetNillableCredentialStatus sets the "credential_status" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableCredentialStatus(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetCredentialStatus(*s)
-	}
-	return foc
-}
-
-// SetCredentialVersion sets the "credential_version" field.
-func (foc *FabricOperationCreate) SetCredentialVersion(s string) *FabricOperationCreate {
-	foc.mutation.SetCredentialVersion(s)
-	return foc
-}
-
-// SetNillableCredentialVersion sets the "credential_version" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableCredentialVersion(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetCredentialVersion(*s)
-	}
-	return foc
-}
-
-// SetSecretRef sets the "secret_ref" field.
-func (foc *FabricOperationCreate) SetSecretRef(s string) *FabricOperationCreate {
-	foc.mutation.SetSecretRef(s)
-	return foc
-}
-
-// SetNillableSecretRef sets the "secret_ref" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableSecretRef(s *string) *FabricOperationCreate {
-	if s != nil {
-		foc.SetSecretRef(*s)
 	}
 	return foc
 }
@@ -384,20 +224,6 @@ func (foc *FabricOperationCreate) SetNillableCreatedAt(t *time.Time) *FabricOper
 	return foc
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (foc *FabricOperationCreate) SetUpdatedAt(t time.Time) *FabricOperationCreate {
-	foc.mutation.SetUpdatedAt(t)
-	return foc
-}
-
-// SetNillableUpdatedAt sets the "updated_at" field if the given value is not nil.
-func (foc *FabricOperationCreate) SetNillableUpdatedAt(t *time.Time) *FabricOperationCreate {
-	if t != nil {
-		foc.SetUpdatedAt(*t)
-	}
-	return foc
-}
-
 // SetID sets the "id" field.
 func (foc *FabricOperationCreate) SetID(s string) *FabricOperationCreate {
 	foc.mutation.SetID(s)
@@ -439,26 +265,6 @@ func (foc *FabricOperationCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (foc *FabricOperationCreate) defaults() {
-	if _, ok := foc.mutation.OperationID(); !ok {
-		v := fabricoperation.DefaultOperationID
-		foc.mutation.SetOperationID(v)
-	}
-	if _, ok := foc.mutation.CallerService(); !ok {
-		v := fabricoperation.DefaultCallerService
-		foc.mutation.SetCallerService(v)
-	}
-	if _, ok := foc.mutation.Action(); !ok {
-		v := fabricoperation.DefaultAction
-		foc.mutation.SetAction(v)
-	}
-	if _, ok := foc.mutation.ResourceKind(); !ok {
-		v := fabricoperation.DefaultResourceKind
-		foc.mutation.SetResourceKind(v)
-	}
-	if _, ok := foc.mutation.ResourceID(); !ok {
-		v := fabricoperation.DefaultResourceID
-		foc.mutation.SetResourceID(v)
-	}
 	if _, ok := foc.mutation.AccountID(); !ok {
 		v := fabricoperation.DefaultAccountID
 		foc.mutation.SetAccountID(v)
@@ -466,10 +272,6 @@ func (foc *FabricOperationCreate) defaults() {
 	if _, ok := foc.mutation.WorkspaceID(); !ok {
 		v := fabricoperation.DefaultWorkspaceID
 		foc.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := foc.mutation.RuntimeID(); !ok {
-		v := fabricoperation.DefaultRuntimeID
-		foc.mutation.SetRuntimeID(v)
 	}
 	if _, ok := foc.mutation.Provider(); !ok {
 		v := fabricoperation.DefaultProvider
@@ -491,10 +293,6 @@ func (foc *FabricOperationCreate) defaults() {
 		v := fabricoperation.DefaultRedactedProviderPayload
 		foc.mutation.SetRedactedProviderPayload(v)
 	}
-	if _, ok := foc.mutation.Status(); !ok {
-		v := fabricoperation.DefaultStatus
-		foc.mutation.SetStatus(v)
-	}
 	if _, ok := foc.mutation.ErrorCode(); !ok {
 		v := fabricoperation.DefaultErrorCode
 		foc.mutation.SetErrorCode(v)
@@ -502,34 +300,6 @@ func (foc *FabricOperationCreate) defaults() {
 	if _, ok := foc.mutation.Retryable(); !ok {
 		v := fabricoperation.DefaultRetryable
 		foc.mutation.SetRetryable(v)
-	}
-	if _, ok := foc.mutation.URL(); !ok {
-		v := fabricoperation.DefaultURL
-		foc.mutation.SetURL(v)
-	}
-	if _, ok := foc.mutation.ServiceName(); !ok {
-		v := fabricoperation.DefaultServiceName
-		foc.mutation.SetServiceName(v)
-	}
-	if _, ok := foc.mutation.Username(); !ok {
-		v := fabricoperation.DefaultUsername
-		foc.mutation.SetUsername(v)
-	}
-	if _, ok := foc.mutation.Password(); !ok {
-		v := fabricoperation.DefaultPassword
-		foc.mutation.SetPassword(v)
-	}
-	if _, ok := foc.mutation.CredentialStatus(); !ok {
-		v := fabricoperation.DefaultCredentialStatus
-		foc.mutation.SetCredentialStatus(v)
-	}
-	if _, ok := foc.mutation.CredentialVersion(); !ok {
-		v := fabricoperation.DefaultCredentialVersion
-		foc.mutation.SetCredentialVersion(v)
-	}
-	if _, ok := foc.mutation.SecretRef(); !ok {
-		v := fabricoperation.DefaultSecretRef
-		foc.mutation.SetSecretRef(v)
 	}
 	if _, ok := foc.mutation.StartedAt(); !ok {
 		v := fabricoperation.DefaultStartedAt()
@@ -539,10 +309,6 @@ func (foc *FabricOperationCreate) defaults() {
 		v := fabricoperation.DefaultCreatedAt()
 		foc.mutation.SetCreatedAt(v)
 	}
-	if _, ok := foc.mutation.UpdatedAt(); !ok {
-		v := fabricoperation.DefaultUpdatedAt()
-		foc.mutation.SetUpdatedAt(v)
-	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -550,26 +316,48 @@ func (foc *FabricOperationCreate) check() error {
 	if _, ok := foc.mutation.OperationID(); !ok {
 		return &ValidationError{Name: "operation_id", err: errors.New(`ent: missing required field "FabricOperation.operation_id"`)}
 	}
+	if v, ok := foc.mutation.OperationID(); ok {
+		if err := fabricoperation.OperationIDValidator(v); err != nil {
+			return &ValidationError{Name: "operation_id", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.operation_id": %w`, err)}
+		}
+	}
 	if _, ok := foc.mutation.CallerService(); !ok {
 		return &ValidationError{Name: "caller_service", err: errors.New(`ent: missing required field "FabricOperation.caller_service"`)}
+	}
+	if v, ok := foc.mutation.CallerService(); ok {
+		if err := fabricoperation.CallerServiceValidator(v); err != nil {
+			return &ValidationError{Name: "caller_service", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.caller_service": %w`, err)}
+		}
 	}
 	if _, ok := foc.mutation.Action(); !ok {
 		return &ValidationError{Name: "action", err: errors.New(`ent: missing required field "FabricOperation.action"`)}
 	}
+	if v, ok := foc.mutation.Action(); ok {
+		if err := fabricoperation.ActionValidator(v); err != nil {
+			return &ValidationError{Name: "action", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.action": %w`, err)}
+		}
+	}
 	if _, ok := foc.mutation.ResourceKind(); !ok {
 		return &ValidationError{Name: "resource_kind", err: errors.New(`ent: missing required field "FabricOperation.resource_kind"`)}
 	}
+	if v, ok := foc.mutation.ResourceKind(); ok {
+		if err := fabricoperation.ResourceKindValidator(v); err != nil {
+			return &ValidationError{Name: "resource_kind", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.resource_kind": %w`, err)}
+		}
+	}
 	if _, ok := foc.mutation.ResourceID(); !ok {
 		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "FabricOperation.resource_id"`)}
+	}
+	if v, ok := foc.mutation.ResourceID(); ok {
+		if err := fabricoperation.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.resource_id": %w`, err)}
+		}
 	}
 	if _, ok := foc.mutation.AccountID(); !ok {
 		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "FabricOperation.account_id"`)}
 	}
 	if _, ok := foc.mutation.WorkspaceID(); !ok {
 		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "FabricOperation.workspace_id"`)}
-	}
-	if _, ok := foc.mutation.RuntimeID(); !ok {
-		return &ValidationError{Name: "runtime_id", err: errors.New(`ent: missing required field "FabricOperation.runtime_id"`)}
 	}
 	if _, ok := foc.mutation.Provider(); !ok {
 		return &ValidationError{Name: "provider", err: errors.New(`ent: missing required field "FabricOperation.provider"`)}
@@ -589,41 +377,22 @@ func (foc *FabricOperationCreate) check() error {
 	if _, ok := foc.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "FabricOperation.status"`)}
 	}
+	if v, ok := foc.mutation.Status(); ok {
+		if err := fabricoperation.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.status": %w`, err)}
+		}
+	}
 	if _, ok := foc.mutation.ErrorCode(); !ok {
 		return &ValidationError{Name: "error_code", err: errors.New(`ent: missing required field "FabricOperation.error_code"`)}
 	}
 	if _, ok := foc.mutation.Retryable(); !ok {
 		return &ValidationError{Name: "retryable", err: errors.New(`ent: missing required field "FabricOperation.retryable"`)}
 	}
-	if _, ok := foc.mutation.URL(); !ok {
-		return &ValidationError{Name: "url", err: errors.New(`ent: missing required field "FabricOperation.url"`)}
-	}
-	if _, ok := foc.mutation.ServiceName(); !ok {
-		return &ValidationError{Name: "service_name", err: errors.New(`ent: missing required field "FabricOperation.service_name"`)}
-	}
-	if _, ok := foc.mutation.Username(); !ok {
-		return &ValidationError{Name: "username", err: errors.New(`ent: missing required field "FabricOperation.username"`)}
-	}
-	if _, ok := foc.mutation.Password(); !ok {
-		return &ValidationError{Name: "password", err: errors.New(`ent: missing required field "FabricOperation.password"`)}
-	}
-	if _, ok := foc.mutation.CredentialStatus(); !ok {
-		return &ValidationError{Name: "credential_status", err: errors.New(`ent: missing required field "FabricOperation.credential_status"`)}
-	}
-	if _, ok := foc.mutation.CredentialVersion(); !ok {
-		return &ValidationError{Name: "credential_version", err: errors.New(`ent: missing required field "FabricOperation.credential_version"`)}
-	}
-	if _, ok := foc.mutation.SecretRef(); !ok {
-		return &ValidationError{Name: "secret_ref", err: errors.New(`ent: missing required field "FabricOperation.secret_ref"`)}
-	}
 	if _, ok := foc.mutation.StartedAt(); !ok {
 		return &ValidationError{Name: "started_at", err: errors.New(`ent: missing required field "FabricOperation.started_at"`)}
 	}
 	if _, ok := foc.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "FabricOperation.created_at"`)}
-	}
-	if _, ok := foc.mutation.UpdatedAt(); !ok {
-		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "FabricOperation.updated_at"`)}
 	}
 	if v, ok := foc.mutation.ID(); ok {
 		if err := fabricoperation.IDValidator(v); err != nil {
@@ -693,10 +462,6 @@ func (foc *FabricOperationCreate) createSpec() (*FabricOperation, *sqlgraph.Crea
 		_spec.SetField(fabricoperation.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
 	}
-	if value, ok := foc.mutation.RuntimeID(); ok {
-		_spec.SetField(fabricoperation.FieldRuntimeID, field.TypeString, value)
-		_node.RuntimeID = value
-	}
 	if value, ok := foc.mutation.Provider(); ok {
 		_spec.SetField(fabricoperation.FieldProvider, field.TypeString, value)
 		_node.Provider = value
@@ -729,34 +494,6 @@ func (foc *FabricOperationCreate) createSpec() (*FabricOperation, *sqlgraph.Crea
 		_spec.SetField(fabricoperation.FieldRetryable, field.TypeBool, value)
 		_node.Retryable = value
 	}
-	if value, ok := foc.mutation.URL(); ok {
-		_spec.SetField(fabricoperation.FieldURL, field.TypeString, value)
-		_node.URL = value
-	}
-	if value, ok := foc.mutation.ServiceName(); ok {
-		_spec.SetField(fabricoperation.FieldServiceName, field.TypeString, value)
-		_node.ServiceName = value
-	}
-	if value, ok := foc.mutation.Username(); ok {
-		_spec.SetField(fabricoperation.FieldUsername, field.TypeString, value)
-		_node.Username = value
-	}
-	if value, ok := foc.mutation.Password(); ok {
-		_spec.SetField(fabricoperation.FieldPassword, field.TypeString, value)
-		_node.Password = value
-	}
-	if value, ok := foc.mutation.CredentialStatus(); ok {
-		_spec.SetField(fabricoperation.FieldCredentialStatus, field.TypeString, value)
-		_node.CredentialStatus = value
-	}
-	if value, ok := foc.mutation.CredentialVersion(); ok {
-		_spec.SetField(fabricoperation.FieldCredentialVersion, field.TypeString, value)
-		_node.CredentialVersion = value
-	}
-	if value, ok := foc.mutation.SecretRef(); ok {
-		_spec.SetField(fabricoperation.FieldSecretRef, field.TypeString, value)
-		_node.SecretRef = value
-	}
 	if value, ok := foc.mutation.StartedAt(); ok {
 		_spec.SetField(fabricoperation.FieldStartedAt, field.TypeTime, value)
 		_node.StartedAt = value
@@ -768,10 +505,6 @@ func (foc *FabricOperationCreate) createSpec() (*FabricOperation, *sqlgraph.Crea
 	if value, ok := foc.mutation.CreatedAt(); ok {
 		_spec.SetField(fabricoperation.FieldCreatedAt, field.TypeTime, value)
 		_node.CreatedAt = value
-	}
-	if value, ok := foc.mutation.UpdatedAt(); ok {
-		_spec.SetField(fabricoperation.FieldUpdatedAt, field.TypeTime, value)
-		_node.UpdatedAt = value
 	}
 	return _node, _spec
 }

@@ -42,7 +42,6 @@ type FabricOperationMutation struct {
 	resource_id               *string
 	account_id                *string
 	workspace_id              *string
-	runtime_id                *string
 	provider                  *string
 	provider_request_id       *string
 	idempotency_key           *string
@@ -51,17 +50,9 @@ type FabricOperationMutation struct {
 	status                    *string
 	error_code                *string
 	retryable                 *bool
-	url                       *string
-	service_name              *string
-	username                  *string
-	password                  *string
-	credential_status         *string
-	credential_version        *string
-	secret_ref                *string
 	started_at                *time.Time
 	finished_at               *time.Time
 	created_at                *time.Time
-	updated_at                *time.Time
 	clearedFields             map[string]struct{}
 	done                      bool
 	oldValue                  func(context.Context) (*FabricOperation, error)
@@ -424,42 +415,6 @@ func (m *FabricOperationMutation) ResetWorkspaceID() {
 	m.workspace_id = nil
 }
 
-// SetRuntimeID sets the "runtime_id" field.
-func (m *FabricOperationMutation) SetRuntimeID(s string) {
-	m.runtime_id = &s
-}
-
-// RuntimeID returns the value of the "runtime_id" field in the mutation.
-func (m *FabricOperationMutation) RuntimeID() (r string, exists bool) {
-	v := m.runtime_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRuntimeID returns the old "runtime_id" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldRuntimeID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRuntimeID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRuntimeID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRuntimeID: %w", err)
-	}
-	return oldValue.RuntimeID, nil
-}
-
-// ResetRuntimeID resets all changes to the "runtime_id" field.
-func (m *FabricOperationMutation) ResetRuntimeID() {
-	m.runtime_id = nil
-}
-
 // SetProvider sets the "provider" field.
 func (m *FabricOperationMutation) SetProvider(s string) {
 	m.provider = &s
@@ -748,258 +703,6 @@ func (m *FabricOperationMutation) ResetRetryable() {
 	m.retryable = nil
 }
 
-// SetURL sets the "url" field.
-func (m *FabricOperationMutation) SetURL(s string) {
-	m.url = &s
-}
-
-// URL returns the value of the "url" field in the mutation.
-func (m *FabricOperationMutation) URL() (r string, exists bool) {
-	v := m.url
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldURL returns the old "url" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldURL(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldURL is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldURL requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldURL: %w", err)
-	}
-	return oldValue.URL, nil
-}
-
-// ResetURL resets all changes to the "url" field.
-func (m *FabricOperationMutation) ResetURL() {
-	m.url = nil
-}
-
-// SetServiceName sets the "service_name" field.
-func (m *FabricOperationMutation) SetServiceName(s string) {
-	m.service_name = &s
-}
-
-// ServiceName returns the value of the "service_name" field in the mutation.
-func (m *FabricOperationMutation) ServiceName() (r string, exists bool) {
-	v := m.service_name
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldServiceName returns the old "service_name" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldServiceName(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldServiceName is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldServiceName requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldServiceName: %w", err)
-	}
-	return oldValue.ServiceName, nil
-}
-
-// ResetServiceName resets all changes to the "service_name" field.
-func (m *FabricOperationMutation) ResetServiceName() {
-	m.service_name = nil
-}
-
-// SetUsername sets the "username" field.
-func (m *FabricOperationMutation) SetUsername(s string) {
-	m.username = &s
-}
-
-// Username returns the value of the "username" field in the mutation.
-func (m *FabricOperationMutation) Username() (r string, exists bool) {
-	v := m.username
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUsername returns the old "username" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldUsername(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUsername is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUsername requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUsername: %w", err)
-	}
-	return oldValue.Username, nil
-}
-
-// ResetUsername resets all changes to the "username" field.
-func (m *FabricOperationMutation) ResetUsername() {
-	m.username = nil
-}
-
-// SetPassword sets the "password" field.
-func (m *FabricOperationMutation) SetPassword(s string) {
-	m.password = &s
-}
-
-// Password returns the value of the "password" field in the mutation.
-func (m *FabricOperationMutation) Password() (r string, exists bool) {
-	v := m.password
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldPassword returns the old "password" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldPassword(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldPassword is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldPassword requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldPassword: %w", err)
-	}
-	return oldValue.Password, nil
-}
-
-// ResetPassword resets all changes to the "password" field.
-func (m *FabricOperationMutation) ResetPassword() {
-	m.password = nil
-}
-
-// SetCredentialStatus sets the "credential_status" field.
-func (m *FabricOperationMutation) SetCredentialStatus(s string) {
-	m.credential_status = &s
-}
-
-// CredentialStatus returns the value of the "credential_status" field in the mutation.
-func (m *FabricOperationMutation) CredentialStatus() (r string, exists bool) {
-	v := m.credential_status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCredentialStatus returns the old "credential_status" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldCredentialStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCredentialStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCredentialStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCredentialStatus: %w", err)
-	}
-	return oldValue.CredentialStatus, nil
-}
-
-// ResetCredentialStatus resets all changes to the "credential_status" field.
-func (m *FabricOperationMutation) ResetCredentialStatus() {
-	m.credential_status = nil
-}
-
-// SetCredentialVersion sets the "credential_version" field.
-func (m *FabricOperationMutation) SetCredentialVersion(s string) {
-	m.credential_version = &s
-}
-
-// CredentialVersion returns the value of the "credential_version" field in the mutation.
-func (m *FabricOperationMutation) CredentialVersion() (r string, exists bool) {
-	v := m.credential_version
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCredentialVersion returns the old "credential_version" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldCredentialVersion(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCredentialVersion is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCredentialVersion requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCredentialVersion: %w", err)
-	}
-	return oldValue.CredentialVersion, nil
-}
-
-// ResetCredentialVersion resets all changes to the "credential_version" field.
-func (m *FabricOperationMutation) ResetCredentialVersion() {
-	m.credential_version = nil
-}
-
-// SetSecretRef sets the "secret_ref" field.
-func (m *FabricOperationMutation) SetSecretRef(s string) {
-	m.secret_ref = &s
-}
-
-// SecretRef returns the value of the "secret_ref" field in the mutation.
-func (m *FabricOperationMutation) SecretRef() (r string, exists bool) {
-	v := m.secret_ref
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldSecretRef returns the old "secret_ref" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldSecretRef(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldSecretRef is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldSecretRef requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldSecretRef: %w", err)
-	}
-	return oldValue.SecretRef, nil
-}
-
-// ResetSecretRef resets all changes to the "secret_ref" field.
-func (m *FabricOperationMutation) ResetSecretRef() {
-	m.secret_ref = nil
-}
-
 // SetStartedAt sets the "started_at" field.
 func (m *FabricOperationMutation) SetStartedAt(t time.Time) {
 	m.started_at = &t
@@ -1121,42 +824,6 @@ func (m *FabricOperationMutation) ResetCreatedAt() {
 	m.created_at = nil
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (m *FabricOperationMutation) SetUpdatedAt(t time.Time) {
-	m.updated_at = &t
-}
-
-// UpdatedAt returns the value of the "updated_at" field in the mutation.
-func (m *FabricOperationMutation) UpdatedAt() (r time.Time, exists bool) {
-	v := m.updated_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldUpdatedAt returns the old "updated_at" field's value of the FabricOperation entity.
-// If the FabricOperation object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *FabricOperationMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
-	}
-	return oldValue.UpdatedAt, nil
-}
-
-// ResetUpdatedAt resets all changes to the "updated_at" field.
-func (m *FabricOperationMutation) ResetUpdatedAt() {
-	m.updated_at = nil
-}
-
 // Where appends a list predicates to the FabricOperationMutation builder.
 func (m *FabricOperationMutation) Where(ps ...predicate.FabricOperation) {
 	m.predicates = append(m.predicates, ps...)
@@ -1191,7 +858,7 @@ func (m *FabricOperationMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *FabricOperationMutation) Fields() []string {
-	fields := make([]string, 0, 27)
+	fields := make([]string, 0, 18)
 	if m.operation_id != nil {
 		fields = append(fields, fabricoperation.FieldOperationID)
 	}
@@ -1212,9 +879,6 @@ func (m *FabricOperationMutation) Fields() []string {
 	}
 	if m.workspace_id != nil {
 		fields = append(fields, fabricoperation.FieldWorkspaceID)
-	}
-	if m.runtime_id != nil {
-		fields = append(fields, fabricoperation.FieldRuntimeID)
 	}
 	if m.provider != nil {
 		fields = append(fields, fabricoperation.FieldProvider)
@@ -1240,27 +904,6 @@ func (m *FabricOperationMutation) Fields() []string {
 	if m.retryable != nil {
 		fields = append(fields, fabricoperation.FieldRetryable)
 	}
-	if m.url != nil {
-		fields = append(fields, fabricoperation.FieldURL)
-	}
-	if m.service_name != nil {
-		fields = append(fields, fabricoperation.FieldServiceName)
-	}
-	if m.username != nil {
-		fields = append(fields, fabricoperation.FieldUsername)
-	}
-	if m.password != nil {
-		fields = append(fields, fabricoperation.FieldPassword)
-	}
-	if m.credential_status != nil {
-		fields = append(fields, fabricoperation.FieldCredentialStatus)
-	}
-	if m.credential_version != nil {
-		fields = append(fields, fabricoperation.FieldCredentialVersion)
-	}
-	if m.secret_ref != nil {
-		fields = append(fields, fabricoperation.FieldSecretRef)
-	}
 	if m.started_at != nil {
 		fields = append(fields, fabricoperation.FieldStartedAt)
 	}
@@ -1269,9 +912,6 @@ func (m *FabricOperationMutation) Fields() []string {
 	}
 	if m.created_at != nil {
 		fields = append(fields, fabricoperation.FieldCreatedAt)
-	}
-	if m.updated_at != nil {
-		fields = append(fields, fabricoperation.FieldUpdatedAt)
 	}
 	return fields
 }
@@ -1295,8 +935,6 @@ func (m *FabricOperationMutation) Field(name string) (ent.Value, bool) {
 		return m.AccountID()
 	case fabricoperation.FieldWorkspaceID:
 		return m.WorkspaceID()
-	case fabricoperation.FieldRuntimeID:
-		return m.RuntimeID()
 	case fabricoperation.FieldProvider:
 		return m.Provider()
 	case fabricoperation.FieldProviderRequestID:
@@ -1313,28 +951,12 @@ func (m *FabricOperationMutation) Field(name string) (ent.Value, bool) {
 		return m.ErrorCode()
 	case fabricoperation.FieldRetryable:
 		return m.Retryable()
-	case fabricoperation.FieldURL:
-		return m.URL()
-	case fabricoperation.FieldServiceName:
-		return m.ServiceName()
-	case fabricoperation.FieldUsername:
-		return m.Username()
-	case fabricoperation.FieldPassword:
-		return m.Password()
-	case fabricoperation.FieldCredentialStatus:
-		return m.CredentialStatus()
-	case fabricoperation.FieldCredentialVersion:
-		return m.CredentialVersion()
-	case fabricoperation.FieldSecretRef:
-		return m.SecretRef()
 	case fabricoperation.FieldStartedAt:
 		return m.StartedAt()
 	case fabricoperation.FieldFinishedAt:
 		return m.FinishedAt()
 	case fabricoperation.FieldCreatedAt:
 		return m.CreatedAt()
-	case fabricoperation.FieldUpdatedAt:
-		return m.UpdatedAt()
 	}
 	return nil, false
 }
@@ -1358,8 +980,6 @@ func (m *FabricOperationMutation) OldField(ctx context.Context, name string) (en
 		return m.OldAccountID(ctx)
 	case fabricoperation.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
-	case fabricoperation.FieldRuntimeID:
-		return m.OldRuntimeID(ctx)
 	case fabricoperation.FieldProvider:
 		return m.OldProvider(ctx)
 	case fabricoperation.FieldProviderRequestID:
@@ -1376,28 +996,12 @@ func (m *FabricOperationMutation) OldField(ctx context.Context, name string) (en
 		return m.OldErrorCode(ctx)
 	case fabricoperation.FieldRetryable:
 		return m.OldRetryable(ctx)
-	case fabricoperation.FieldURL:
-		return m.OldURL(ctx)
-	case fabricoperation.FieldServiceName:
-		return m.OldServiceName(ctx)
-	case fabricoperation.FieldUsername:
-		return m.OldUsername(ctx)
-	case fabricoperation.FieldPassword:
-		return m.OldPassword(ctx)
-	case fabricoperation.FieldCredentialStatus:
-		return m.OldCredentialStatus(ctx)
-	case fabricoperation.FieldCredentialVersion:
-		return m.OldCredentialVersion(ctx)
-	case fabricoperation.FieldSecretRef:
-		return m.OldSecretRef(ctx)
 	case fabricoperation.FieldStartedAt:
 		return m.OldStartedAt(ctx)
 	case fabricoperation.FieldFinishedAt:
 		return m.OldFinishedAt(ctx)
 	case fabricoperation.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
-	case fabricoperation.FieldUpdatedAt:
-		return m.OldUpdatedAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown FabricOperation field %s", name)
 }
@@ -1456,13 +1060,6 @@ func (m *FabricOperationMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetWorkspaceID(v)
 		return nil
-	case fabricoperation.FieldRuntimeID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRuntimeID(v)
-		return nil
 	case fabricoperation.FieldProvider:
 		v, ok := value.(string)
 		if !ok {
@@ -1519,55 +1116,6 @@ func (m *FabricOperationMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRetryable(v)
 		return nil
-	case fabricoperation.FieldURL:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetURL(v)
-		return nil
-	case fabricoperation.FieldServiceName:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetServiceName(v)
-		return nil
-	case fabricoperation.FieldUsername:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUsername(v)
-		return nil
-	case fabricoperation.FieldPassword:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetPassword(v)
-		return nil
-	case fabricoperation.FieldCredentialStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCredentialStatus(v)
-		return nil
-	case fabricoperation.FieldCredentialVersion:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCredentialVersion(v)
-		return nil
-	case fabricoperation.FieldSecretRef:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetSecretRef(v)
-		return nil
 	case fabricoperation.FieldStartedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -1588,13 +1136,6 @@ func (m *FabricOperationMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCreatedAt(v)
-		return nil
-	case fabricoperation.FieldUpdatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetUpdatedAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown FabricOperation field %s", name)
@@ -1675,9 +1216,6 @@ func (m *FabricOperationMutation) ResetField(name string) error {
 	case fabricoperation.FieldWorkspaceID:
 		m.ResetWorkspaceID()
 		return nil
-	case fabricoperation.FieldRuntimeID:
-		m.ResetRuntimeID()
-		return nil
 	case fabricoperation.FieldProvider:
 		m.ResetProvider()
 		return nil
@@ -1702,27 +1240,6 @@ func (m *FabricOperationMutation) ResetField(name string) error {
 	case fabricoperation.FieldRetryable:
 		m.ResetRetryable()
 		return nil
-	case fabricoperation.FieldURL:
-		m.ResetURL()
-		return nil
-	case fabricoperation.FieldServiceName:
-		m.ResetServiceName()
-		return nil
-	case fabricoperation.FieldUsername:
-		m.ResetUsername()
-		return nil
-	case fabricoperation.FieldPassword:
-		m.ResetPassword()
-		return nil
-	case fabricoperation.FieldCredentialStatus:
-		m.ResetCredentialStatus()
-		return nil
-	case fabricoperation.FieldCredentialVersion:
-		m.ResetCredentialVersion()
-		return nil
-	case fabricoperation.FieldSecretRef:
-		m.ResetSecretRef()
-		return nil
 	case fabricoperation.FieldStartedAt:
 		m.ResetStartedAt()
 		return nil
@@ -1731,9 +1248,6 @@ func (m *FabricOperationMutation) ResetField(name string) error {
 		return nil
 	case fabricoperation.FieldCreatedAt:
 		m.ResetCreatedAt()
-		return nil
-	case fabricoperation.FieldUpdatedAt:
-		m.ResetUpdatedAt()
 		return nil
 	}
 	return fmt.Errorf("unknown FabricOperation field %s", name)
@@ -1790,40 +1304,22 @@ func (m *FabricOperationMutation) ResetEdge(name string) error {
 // WorkspaceRuntimeAccessMutation represents an operation that mutates the WorkspaceRuntimeAccess nodes in the graph.
 type WorkspaceRuntimeAccessMutation struct {
 	config
-	op                        Op
-	typ                       string
-	id                        *string
-	operation_id              *string
-	caller_service            *string
-	action                    *string
-	resource_kind             *string
-	resource_id               *string
-	account_id                *string
-	workspace_id              *string
-	runtime_id                *string
-	provider                  *string
-	provider_request_id       *string
-	idempotency_key           *string
-	request_hash              *string
-	redacted_provider_payload *string
-	status                    *string
-	error_code                *string
-	retryable                 *bool
-	url                       *string
-	service_name              *string
-	username                  *string
-	password                  *string
-	credential_status         *string
-	credential_version        *string
-	secret_ref                *string
-	started_at                *time.Time
-	finished_at               *time.Time
-	created_at                *time.Time
-	updated_at                *time.Time
-	clearedFields             map[string]struct{}
-	done                      bool
-	oldValue                  func(context.Context) (*WorkspaceRuntimeAccess, error)
-	predicates                []predicate.WorkspaceRuntimeAccess
+	op                 Op
+	typ                string
+	id                 *string
+	runtime_id         *string
+	url                *string
+	service_name       *string
+	username           *string
+	password           *string
+	credential_status  *string
+	credential_version *string
+	secret_ref         *string
+	updated_at         *time.Time
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*WorkspaceRuntimeAccess, error)
+	predicates         []predicate.WorkspaceRuntimeAccess
 }
 
 var _ ent.Mutation = (*WorkspaceRuntimeAccessMutation)(nil)
@@ -1930,258 +1426,6 @@ func (m *WorkspaceRuntimeAccessMutation) IDs(ctx context.Context) ([]string, err
 	}
 }
 
-// SetOperationID sets the "operation_id" field.
-func (m *WorkspaceRuntimeAccessMutation) SetOperationID(s string) {
-	m.operation_id = &s
-}
-
-// OperationID returns the value of the "operation_id" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) OperationID() (r string, exists bool) {
-	v := m.operation_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldOperationID returns the old "operation_id" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldOperationID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldOperationID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldOperationID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldOperationID: %w", err)
-	}
-	return oldValue.OperationID, nil
-}
-
-// ResetOperationID resets all changes to the "operation_id" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetOperationID() {
-	m.operation_id = nil
-}
-
-// SetCallerService sets the "caller_service" field.
-func (m *WorkspaceRuntimeAccessMutation) SetCallerService(s string) {
-	m.caller_service = &s
-}
-
-// CallerService returns the value of the "caller_service" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) CallerService() (r string, exists bool) {
-	v := m.caller_service
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCallerService returns the old "caller_service" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldCallerService(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCallerService is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCallerService requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCallerService: %w", err)
-	}
-	return oldValue.CallerService, nil
-}
-
-// ResetCallerService resets all changes to the "caller_service" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetCallerService() {
-	m.caller_service = nil
-}
-
-// SetAction sets the "action" field.
-func (m *WorkspaceRuntimeAccessMutation) SetAction(s string) {
-	m.action = &s
-}
-
-// Action returns the value of the "action" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) Action() (r string, exists bool) {
-	v := m.action
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAction returns the old "action" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldAction(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAction is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAction requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAction: %w", err)
-	}
-	return oldValue.Action, nil
-}
-
-// ResetAction resets all changes to the "action" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetAction() {
-	m.action = nil
-}
-
-// SetResourceKind sets the "resource_kind" field.
-func (m *WorkspaceRuntimeAccessMutation) SetResourceKind(s string) {
-	m.resource_kind = &s
-}
-
-// ResourceKind returns the value of the "resource_kind" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) ResourceKind() (r string, exists bool) {
-	v := m.resource_kind
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceKind returns the old "resource_kind" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldResourceKind(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceKind is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceKind requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceKind: %w", err)
-	}
-	return oldValue.ResourceKind, nil
-}
-
-// ResetResourceKind resets all changes to the "resource_kind" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetResourceKind() {
-	m.resource_kind = nil
-}
-
-// SetResourceID sets the "resource_id" field.
-func (m *WorkspaceRuntimeAccessMutation) SetResourceID(s string) {
-	m.resource_id = &s
-}
-
-// ResourceID returns the value of the "resource_id" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) ResourceID() (r string, exists bool) {
-	v := m.resource_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldResourceID returns the old "resource_id" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldResourceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldResourceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
-	}
-	return oldValue.ResourceID, nil
-}
-
-// ResetResourceID resets all changes to the "resource_id" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetResourceID() {
-	m.resource_id = nil
-}
-
-// SetAccountID sets the "account_id" field.
-func (m *WorkspaceRuntimeAccessMutation) SetAccountID(s string) {
-	m.account_id = &s
-}
-
-// AccountID returns the value of the "account_id" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) AccountID() (r string, exists bool) {
-	v := m.account_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldAccountID returns the old "account_id" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldAccountID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldAccountID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
-	}
-	return oldValue.AccountID, nil
-}
-
-// ResetAccountID resets all changes to the "account_id" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetAccountID() {
-	m.account_id = nil
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (m *WorkspaceRuntimeAccessMutation) SetWorkspaceID(s string) {
-	m.workspace_id = &s
-}
-
-// WorkspaceID returns the value of the "workspace_id" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) WorkspaceID() (r string, exists bool) {
-	v := m.workspace_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldWorkspaceID returns the old "workspace_id" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
-	}
-	return oldValue.WorkspaceID, nil
-}
-
-// ResetWorkspaceID resets all changes to the "workspace_id" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetWorkspaceID() {
-	m.workspace_id = nil
-}
-
 // SetRuntimeID sets the "runtime_id" field.
 func (m *WorkspaceRuntimeAccessMutation) SetRuntimeID(s string) {
 	m.runtime_id = &s
@@ -2216,294 +1460,6 @@ func (m *WorkspaceRuntimeAccessMutation) OldRuntimeID(ctx context.Context) (v st
 // ResetRuntimeID resets all changes to the "runtime_id" field.
 func (m *WorkspaceRuntimeAccessMutation) ResetRuntimeID() {
 	m.runtime_id = nil
-}
-
-// SetProvider sets the "provider" field.
-func (m *WorkspaceRuntimeAccessMutation) SetProvider(s string) {
-	m.provider = &s
-}
-
-// Provider returns the value of the "provider" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) Provider() (r string, exists bool) {
-	v := m.provider
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProvider returns the old "provider" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldProvider(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProvider is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProvider requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProvider: %w", err)
-	}
-	return oldValue.Provider, nil
-}
-
-// ResetProvider resets all changes to the "provider" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetProvider() {
-	m.provider = nil
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (m *WorkspaceRuntimeAccessMutation) SetProviderRequestID(s string) {
-	m.provider_request_id = &s
-}
-
-// ProviderRequestID returns the value of the "provider_request_id" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) ProviderRequestID() (r string, exists bool) {
-	v := m.provider_request_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldProviderRequestID returns the old "provider_request_id" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldProviderRequestID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldProviderRequestID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldProviderRequestID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldProviderRequestID: %w", err)
-	}
-	return oldValue.ProviderRequestID, nil
-}
-
-// ResetProviderRequestID resets all changes to the "provider_request_id" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetProviderRequestID() {
-	m.provider_request_id = nil
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (m *WorkspaceRuntimeAccessMutation) SetIdempotencyKey(s string) {
-	m.idempotency_key = &s
-}
-
-// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) IdempotencyKey() (r string, exists bool) {
-	v := m.idempotency_key
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldIdempotencyKey returns the old "idempotency_key" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
-	}
-	return oldValue.IdempotencyKey, nil
-}
-
-// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetIdempotencyKey() {
-	m.idempotency_key = nil
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (m *WorkspaceRuntimeAccessMutation) SetRequestHash(s string) {
-	m.request_hash = &s
-}
-
-// RequestHash returns the value of the "request_hash" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) RequestHash() (r string, exists bool) {
-	v := m.request_hash
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRequestHash returns the old "request_hash" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldRequestHash(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRequestHash requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
-	}
-	return oldValue.RequestHash, nil
-}
-
-// ResetRequestHash resets all changes to the "request_hash" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetRequestHash() {
-	m.request_hash = nil
-}
-
-// SetRedactedProviderPayload sets the "redacted_provider_payload" field.
-func (m *WorkspaceRuntimeAccessMutation) SetRedactedProviderPayload(s string) {
-	m.redacted_provider_payload = &s
-}
-
-// RedactedProviderPayload returns the value of the "redacted_provider_payload" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) RedactedProviderPayload() (r string, exists bool) {
-	v := m.redacted_provider_payload
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRedactedProviderPayload returns the old "redacted_provider_payload" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldRedactedProviderPayload(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRedactedProviderPayload is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRedactedProviderPayload requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRedactedProviderPayload: %w", err)
-	}
-	return oldValue.RedactedProviderPayload, nil
-}
-
-// ResetRedactedProviderPayload resets all changes to the "redacted_provider_payload" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetRedactedProviderPayload() {
-	m.redacted_provider_payload = nil
-}
-
-// SetStatus sets the "status" field.
-func (m *WorkspaceRuntimeAccessMutation) SetStatus(s string) {
-	m.status = &s
-}
-
-// Status returns the value of the "status" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) Status() (r string, exists bool) {
-	v := m.status
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStatus returns the old "status" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldStatus(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStatus requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
-	}
-	return oldValue.Status, nil
-}
-
-// ResetStatus resets all changes to the "status" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetStatus() {
-	m.status = nil
-}
-
-// SetErrorCode sets the "error_code" field.
-func (m *WorkspaceRuntimeAccessMutation) SetErrorCode(s string) {
-	m.error_code = &s
-}
-
-// ErrorCode returns the value of the "error_code" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) ErrorCode() (r string, exists bool) {
-	v := m.error_code
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldErrorCode returns the old "error_code" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldErrorCode(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldErrorCode is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldErrorCode requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldErrorCode: %w", err)
-	}
-	return oldValue.ErrorCode, nil
-}
-
-// ResetErrorCode resets all changes to the "error_code" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetErrorCode() {
-	m.error_code = nil
-}
-
-// SetRetryable sets the "retryable" field.
-func (m *WorkspaceRuntimeAccessMutation) SetRetryable(b bool) {
-	m.retryable = &b
-}
-
-// Retryable returns the value of the "retryable" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) Retryable() (r bool, exists bool) {
-	v := m.retryable
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldRetryable returns the old "retryable" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldRetryable(ctx context.Context) (v bool, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldRetryable is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldRetryable requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldRetryable: %w", err)
-	}
-	return oldValue.Retryable, nil
-}
-
-// ResetRetryable resets all changes to the "retryable" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetRetryable() {
-	m.retryable = nil
 }
 
 // SetURL sets the "url" field.
@@ -2758,127 +1714,6 @@ func (m *WorkspaceRuntimeAccessMutation) ResetSecretRef() {
 	m.secret_ref = nil
 }
 
-// SetStartedAt sets the "started_at" field.
-func (m *WorkspaceRuntimeAccessMutation) SetStartedAt(t time.Time) {
-	m.started_at = &t
-}
-
-// StartedAt returns the value of the "started_at" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) StartedAt() (r time.Time, exists bool) {
-	v := m.started_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldStartedAt returns the old "started_at" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldStartedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldStartedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldStartedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldStartedAt: %w", err)
-	}
-	return oldValue.StartedAt, nil
-}
-
-// ResetStartedAt resets all changes to the "started_at" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetStartedAt() {
-	m.started_at = nil
-}
-
-// SetFinishedAt sets the "finished_at" field.
-func (m *WorkspaceRuntimeAccessMutation) SetFinishedAt(t time.Time) {
-	m.finished_at = &t
-}
-
-// FinishedAt returns the value of the "finished_at" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) FinishedAt() (r time.Time, exists bool) {
-	v := m.finished_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldFinishedAt returns the old "finished_at" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldFinishedAt(ctx context.Context) (v *time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldFinishedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldFinishedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldFinishedAt: %w", err)
-	}
-	return oldValue.FinishedAt, nil
-}
-
-// ClearFinishedAt clears the value of the "finished_at" field.
-func (m *WorkspaceRuntimeAccessMutation) ClearFinishedAt() {
-	m.finished_at = nil
-	m.clearedFields[workspaceruntimeaccess.FieldFinishedAt] = struct{}{}
-}
-
-// FinishedAtCleared returns if the "finished_at" field was cleared in this mutation.
-func (m *WorkspaceRuntimeAccessMutation) FinishedAtCleared() bool {
-	_, ok := m.clearedFields[workspaceruntimeaccess.FieldFinishedAt]
-	return ok
-}
-
-// ResetFinishedAt resets all changes to the "finished_at" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetFinishedAt() {
-	m.finished_at = nil
-	delete(m.clearedFields, workspaceruntimeaccess.FieldFinishedAt)
-}
-
-// SetCreatedAt sets the "created_at" field.
-func (m *WorkspaceRuntimeAccessMutation) SetCreatedAt(t time.Time) {
-	m.created_at = &t
-}
-
-// CreatedAt returns the value of the "created_at" field in the mutation.
-func (m *WorkspaceRuntimeAccessMutation) CreatedAt() (r time.Time, exists bool) {
-	v := m.created_at
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldCreatedAt returns the old "created_at" field's value of the WorkspaceRuntimeAccess entity.
-// If the WorkspaceRuntimeAccess object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *WorkspaceRuntimeAccessMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
-	}
-	return oldValue.CreatedAt, nil
-}
-
-// ResetCreatedAt resets all changes to the "created_at" field.
-func (m *WorkspaceRuntimeAccessMutation) ResetCreatedAt() {
-	m.created_at = nil
-}
-
 // SetUpdatedAt sets the "updated_at" field.
 func (m *WorkspaceRuntimeAccessMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
@@ -2949,54 +1784,9 @@ func (m *WorkspaceRuntimeAccessMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *WorkspaceRuntimeAccessMutation) Fields() []string {
-	fields := make([]string, 0, 27)
-	if m.operation_id != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldOperationID)
-	}
-	if m.caller_service != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldCallerService)
-	}
-	if m.action != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldAction)
-	}
-	if m.resource_kind != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldResourceKind)
-	}
-	if m.resource_id != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldResourceID)
-	}
-	if m.account_id != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldAccountID)
-	}
-	if m.workspace_id != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldWorkspaceID)
-	}
+	fields := make([]string, 0, 9)
 	if m.runtime_id != nil {
 		fields = append(fields, workspaceruntimeaccess.FieldRuntimeID)
-	}
-	if m.provider != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldProvider)
-	}
-	if m.provider_request_id != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldProviderRequestID)
-	}
-	if m.idempotency_key != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldIdempotencyKey)
-	}
-	if m.request_hash != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldRequestHash)
-	}
-	if m.redacted_provider_payload != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldRedactedProviderPayload)
-	}
-	if m.status != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldStatus)
-	}
-	if m.error_code != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldErrorCode)
-	}
-	if m.retryable != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldRetryable)
 	}
 	if m.url != nil {
 		fields = append(fields, workspaceruntimeaccess.FieldURL)
@@ -3019,15 +1809,6 @@ func (m *WorkspaceRuntimeAccessMutation) Fields() []string {
 	if m.secret_ref != nil {
 		fields = append(fields, workspaceruntimeaccess.FieldSecretRef)
 	}
-	if m.started_at != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldStartedAt)
-	}
-	if m.finished_at != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldFinishedAt)
-	}
-	if m.created_at != nil {
-		fields = append(fields, workspaceruntimeaccess.FieldCreatedAt)
-	}
 	if m.updated_at != nil {
 		fields = append(fields, workspaceruntimeaccess.FieldUpdatedAt)
 	}
@@ -3039,38 +1820,8 @@ func (m *WorkspaceRuntimeAccessMutation) Fields() []string {
 // schema.
 func (m *WorkspaceRuntimeAccessMutation) Field(name string) (ent.Value, bool) {
 	switch name {
-	case workspaceruntimeaccess.FieldOperationID:
-		return m.OperationID()
-	case workspaceruntimeaccess.FieldCallerService:
-		return m.CallerService()
-	case workspaceruntimeaccess.FieldAction:
-		return m.Action()
-	case workspaceruntimeaccess.FieldResourceKind:
-		return m.ResourceKind()
-	case workspaceruntimeaccess.FieldResourceID:
-		return m.ResourceID()
-	case workspaceruntimeaccess.FieldAccountID:
-		return m.AccountID()
-	case workspaceruntimeaccess.FieldWorkspaceID:
-		return m.WorkspaceID()
 	case workspaceruntimeaccess.FieldRuntimeID:
 		return m.RuntimeID()
-	case workspaceruntimeaccess.FieldProvider:
-		return m.Provider()
-	case workspaceruntimeaccess.FieldProviderRequestID:
-		return m.ProviderRequestID()
-	case workspaceruntimeaccess.FieldIdempotencyKey:
-		return m.IdempotencyKey()
-	case workspaceruntimeaccess.FieldRequestHash:
-		return m.RequestHash()
-	case workspaceruntimeaccess.FieldRedactedProviderPayload:
-		return m.RedactedProviderPayload()
-	case workspaceruntimeaccess.FieldStatus:
-		return m.Status()
-	case workspaceruntimeaccess.FieldErrorCode:
-		return m.ErrorCode()
-	case workspaceruntimeaccess.FieldRetryable:
-		return m.Retryable()
 	case workspaceruntimeaccess.FieldURL:
 		return m.URL()
 	case workspaceruntimeaccess.FieldServiceName:
@@ -3085,12 +1836,6 @@ func (m *WorkspaceRuntimeAccessMutation) Field(name string) (ent.Value, bool) {
 		return m.CredentialVersion()
 	case workspaceruntimeaccess.FieldSecretRef:
 		return m.SecretRef()
-	case workspaceruntimeaccess.FieldStartedAt:
-		return m.StartedAt()
-	case workspaceruntimeaccess.FieldFinishedAt:
-		return m.FinishedAt()
-	case workspaceruntimeaccess.FieldCreatedAt:
-		return m.CreatedAt()
 	case workspaceruntimeaccess.FieldUpdatedAt:
 		return m.UpdatedAt()
 	}
@@ -3102,38 +1847,8 @@ func (m *WorkspaceRuntimeAccessMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *WorkspaceRuntimeAccessMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
-	case workspaceruntimeaccess.FieldOperationID:
-		return m.OldOperationID(ctx)
-	case workspaceruntimeaccess.FieldCallerService:
-		return m.OldCallerService(ctx)
-	case workspaceruntimeaccess.FieldAction:
-		return m.OldAction(ctx)
-	case workspaceruntimeaccess.FieldResourceKind:
-		return m.OldResourceKind(ctx)
-	case workspaceruntimeaccess.FieldResourceID:
-		return m.OldResourceID(ctx)
-	case workspaceruntimeaccess.FieldAccountID:
-		return m.OldAccountID(ctx)
-	case workspaceruntimeaccess.FieldWorkspaceID:
-		return m.OldWorkspaceID(ctx)
 	case workspaceruntimeaccess.FieldRuntimeID:
 		return m.OldRuntimeID(ctx)
-	case workspaceruntimeaccess.FieldProvider:
-		return m.OldProvider(ctx)
-	case workspaceruntimeaccess.FieldProviderRequestID:
-		return m.OldProviderRequestID(ctx)
-	case workspaceruntimeaccess.FieldIdempotencyKey:
-		return m.OldIdempotencyKey(ctx)
-	case workspaceruntimeaccess.FieldRequestHash:
-		return m.OldRequestHash(ctx)
-	case workspaceruntimeaccess.FieldRedactedProviderPayload:
-		return m.OldRedactedProviderPayload(ctx)
-	case workspaceruntimeaccess.FieldStatus:
-		return m.OldStatus(ctx)
-	case workspaceruntimeaccess.FieldErrorCode:
-		return m.OldErrorCode(ctx)
-	case workspaceruntimeaccess.FieldRetryable:
-		return m.OldRetryable(ctx)
 	case workspaceruntimeaccess.FieldURL:
 		return m.OldURL(ctx)
 	case workspaceruntimeaccess.FieldServiceName:
@@ -3148,12 +1863,6 @@ func (m *WorkspaceRuntimeAccessMutation) OldField(ctx context.Context, name stri
 		return m.OldCredentialVersion(ctx)
 	case workspaceruntimeaccess.FieldSecretRef:
 		return m.OldSecretRef(ctx)
-	case workspaceruntimeaccess.FieldStartedAt:
-		return m.OldStartedAt(ctx)
-	case workspaceruntimeaccess.FieldFinishedAt:
-		return m.OldFinishedAt(ctx)
-	case workspaceruntimeaccess.FieldCreatedAt:
-		return m.OldCreatedAt(ctx)
 	case workspaceruntimeaccess.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	}
@@ -3165,117 +1874,12 @@ func (m *WorkspaceRuntimeAccessMutation) OldField(ctx context.Context, name stri
 // type.
 func (m *WorkspaceRuntimeAccessMutation) SetField(name string, value ent.Value) error {
 	switch name {
-	case workspaceruntimeaccess.FieldOperationID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetOperationID(v)
-		return nil
-	case workspaceruntimeaccess.FieldCallerService:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCallerService(v)
-		return nil
-	case workspaceruntimeaccess.FieldAction:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAction(v)
-		return nil
-	case workspaceruntimeaccess.FieldResourceKind:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceKind(v)
-		return nil
-	case workspaceruntimeaccess.FieldResourceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetResourceID(v)
-		return nil
-	case workspaceruntimeaccess.FieldAccountID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetAccountID(v)
-		return nil
-	case workspaceruntimeaccess.FieldWorkspaceID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetWorkspaceID(v)
-		return nil
 	case workspaceruntimeaccess.FieldRuntimeID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRuntimeID(v)
-		return nil
-	case workspaceruntimeaccess.FieldProvider:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProvider(v)
-		return nil
-	case workspaceruntimeaccess.FieldProviderRequestID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetProviderRequestID(v)
-		return nil
-	case workspaceruntimeaccess.FieldIdempotencyKey:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetIdempotencyKey(v)
-		return nil
-	case workspaceruntimeaccess.FieldRequestHash:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRequestHash(v)
-		return nil
-	case workspaceruntimeaccess.FieldRedactedProviderPayload:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRedactedProviderPayload(v)
-		return nil
-	case workspaceruntimeaccess.FieldStatus:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStatus(v)
-		return nil
-	case workspaceruntimeaccess.FieldErrorCode:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetErrorCode(v)
-		return nil
-	case workspaceruntimeaccess.FieldRetryable:
-		v, ok := value.(bool)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetRetryable(v)
 		return nil
 	case workspaceruntimeaccess.FieldURL:
 		v, ok := value.(string)
@@ -3326,27 +1930,6 @@ func (m *WorkspaceRuntimeAccessMutation) SetField(name string, value ent.Value) 
 		}
 		m.SetSecretRef(v)
 		return nil
-	case workspaceruntimeaccess.FieldStartedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetStartedAt(v)
-		return nil
-	case workspaceruntimeaccess.FieldFinishedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetFinishedAt(v)
-		return nil
-	case workspaceruntimeaccess.FieldCreatedAt:
-		v, ok := value.(time.Time)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetCreatedAt(v)
-		return nil
 	case workspaceruntimeaccess.FieldUpdatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -3383,11 +1966,7 @@ func (m *WorkspaceRuntimeAccessMutation) AddField(name string, value ent.Value) 
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *WorkspaceRuntimeAccessMutation) ClearedFields() []string {
-	var fields []string
-	if m.FieldCleared(workspaceruntimeaccess.FieldFinishedAt) {
-		fields = append(fields, workspaceruntimeaccess.FieldFinishedAt)
-	}
-	return fields
+	return nil
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -3400,11 +1979,6 @@ func (m *WorkspaceRuntimeAccessMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *WorkspaceRuntimeAccessMutation) ClearField(name string) error {
-	switch name {
-	case workspaceruntimeaccess.FieldFinishedAt:
-		m.ClearFinishedAt()
-		return nil
-	}
 	return fmt.Errorf("unknown WorkspaceRuntimeAccess nullable field %s", name)
 }
 
@@ -3412,53 +1986,8 @@ func (m *WorkspaceRuntimeAccessMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *WorkspaceRuntimeAccessMutation) ResetField(name string) error {
 	switch name {
-	case workspaceruntimeaccess.FieldOperationID:
-		m.ResetOperationID()
-		return nil
-	case workspaceruntimeaccess.FieldCallerService:
-		m.ResetCallerService()
-		return nil
-	case workspaceruntimeaccess.FieldAction:
-		m.ResetAction()
-		return nil
-	case workspaceruntimeaccess.FieldResourceKind:
-		m.ResetResourceKind()
-		return nil
-	case workspaceruntimeaccess.FieldResourceID:
-		m.ResetResourceID()
-		return nil
-	case workspaceruntimeaccess.FieldAccountID:
-		m.ResetAccountID()
-		return nil
-	case workspaceruntimeaccess.FieldWorkspaceID:
-		m.ResetWorkspaceID()
-		return nil
 	case workspaceruntimeaccess.FieldRuntimeID:
 		m.ResetRuntimeID()
-		return nil
-	case workspaceruntimeaccess.FieldProvider:
-		m.ResetProvider()
-		return nil
-	case workspaceruntimeaccess.FieldProviderRequestID:
-		m.ResetProviderRequestID()
-		return nil
-	case workspaceruntimeaccess.FieldIdempotencyKey:
-		m.ResetIdempotencyKey()
-		return nil
-	case workspaceruntimeaccess.FieldRequestHash:
-		m.ResetRequestHash()
-		return nil
-	case workspaceruntimeaccess.FieldRedactedProviderPayload:
-		m.ResetRedactedProviderPayload()
-		return nil
-	case workspaceruntimeaccess.FieldStatus:
-		m.ResetStatus()
-		return nil
-	case workspaceruntimeaccess.FieldErrorCode:
-		m.ResetErrorCode()
-		return nil
-	case workspaceruntimeaccess.FieldRetryable:
-		m.ResetRetryable()
 		return nil
 	case workspaceruntimeaccess.FieldURL:
 		m.ResetURL()
@@ -3480,15 +2009,6 @@ func (m *WorkspaceRuntimeAccessMutation) ResetField(name string) error {
 		return nil
 	case workspaceruntimeaccess.FieldSecretRef:
 		m.ResetSecretRef()
-		return nil
-	case workspaceruntimeaccess.FieldStartedAt:
-		m.ResetStartedAt()
-		return nil
-	case workspaceruntimeaccess.FieldFinishedAt:
-		m.ResetFinishedAt()
-		return nil
-	case workspaceruntimeaccess.FieldCreatedAt:
-		m.ResetCreatedAt()
 		return nil
 	case workspaceruntimeaccess.FieldUpdatedAt:
 		m.ResetUpdatedAt()

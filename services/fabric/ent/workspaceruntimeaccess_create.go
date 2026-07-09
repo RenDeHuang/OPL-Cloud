@@ -20,241 +20,15 @@ type WorkspaceRuntimeAccessCreate struct {
 	hooks    []Hook
 }
 
-// SetOperationID sets the "operation_id" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetOperationID(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetOperationID(s)
-	return wrac
-}
-
-// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableOperationID(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetOperationID(*s)
-	}
-	return wrac
-}
-
-// SetCallerService sets the "caller_service" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetCallerService(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetCallerService(s)
-	return wrac
-}
-
-// SetNillableCallerService sets the "caller_service" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableCallerService(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetCallerService(*s)
-	}
-	return wrac
-}
-
-// SetAction sets the "action" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetAction(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetAction(s)
-	return wrac
-}
-
-// SetNillableAction sets the "action" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableAction(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetAction(*s)
-	}
-	return wrac
-}
-
-// SetResourceKind sets the "resource_kind" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetResourceKind(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetResourceKind(s)
-	return wrac
-}
-
-// SetNillableResourceKind sets the "resource_kind" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableResourceKind(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetResourceKind(*s)
-	}
-	return wrac
-}
-
-// SetResourceID sets the "resource_id" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetResourceID(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetResourceID(s)
-	return wrac
-}
-
-// SetNillableResourceID sets the "resource_id" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableResourceID(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetResourceID(*s)
-	}
-	return wrac
-}
-
-// SetAccountID sets the "account_id" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetAccountID(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetAccountID(s)
-	return wrac
-}
-
-// SetNillableAccountID sets the "account_id" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableAccountID(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetAccountID(*s)
-	}
-	return wrac
-}
-
-// SetWorkspaceID sets the "workspace_id" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetWorkspaceID(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetWorkspaceID(s)
-	return wrac
-}
-
-// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableWorkspaceID(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetWorkspaceID(*s)
-	}
-	return wrac
-}
-
 // SetRuntimeID sets the "runtime_id" field.
 func (wrac *WorkspaceRuntimeAccessCreate) SetRuntimeID(s string) *WorkspaceRuntimeAccessCreate {
 	wrac.mutation.SetRuntimeID(s)
 	return wrac
 }
 
-// SetNillableRuntimeID sets the "runtime_id" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableRuntimeID(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetRuntimeID(*s)
-	}
-	return wrac
-}
-
-// SetProvider sets the "provider" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetProvider(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetProvider(s)
-	return wrac
-}
-
-// SetNillableProvider sets the "provider" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableProvider(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetProvider(*s)
-	}
-	return wrac
-}
-
-// SetProviderRequestID sets the "provider_request_id" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetProviderRequestID(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetProviderRequestID(s)
-	return wrac
-}
-
-// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableProviderRequestID(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetProviderRequestID(*s)
-	}
-	return wrac
-}
-
-// SetIdempotencyKey sets the "idempotency_key" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetIdempotencyKey(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetIdempotencyKey(s)
-	return wrac
-}
-
-// SetNillableIdempotencyKey sets the "idempotency_key" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableIdempotencyKey(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetIdempotencyKey(*s)
-	}
-	return wrac
-}
-
-// SetRequestHash sets the "request_hash" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetRequestHash(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetRequestHash(s)
-	return wrac
-}
-
-// SetNillableRequestHash sets the "request_hash" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableRequestHash(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetRequestHash(*s)
-	}
-	return wrac
-}
-
-// SetRedactedProviderPayload sets the "redacted_provider_payload" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetRedactedProviderPayload(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetRedactedProviderPayload(s)
-	return wrac
-}
-
-// SetNillableRedactedProviderPayload sets the "redacted_provider_payload" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableRedactedProviderPayload(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetRedactedProviderPayload(*s)
-	}
-	return wrac
-}
-
-// SetStatus sets the "status" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetStatus(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetStatus(s)
-	return wrac
-}
-
-// SetNillableStatus sets the "status" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableStatus(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetStatus(*s)
-	}
-	return wrac
-}
-
-// SetErrorCode sets the "error_code" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetErrorCode(s string) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetErrorCode(s)
-	return wrac
-}
-
-// SetNillableErrorCode sets the "error_code" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableErrorCode(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetErrorCode(*s)
-	}
-	return wrac
-}
-
-// SetRetryable sets the "retryable" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetRetryable(b bool) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetRetryable(b)
-	return wrac
-}
-
-// SetNillableRetryable sets the "retryable" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableRetryable(b *bool) *WorkspaceRuntimeAccessCreate {
-	if b != nil {
-		wrac.SetRetryable(*b)
-	}
-	return wrac
-}
-
 // SetURL sets the "url" field.
 func (wrac *WorkspaceRuntimeAccessCreate) SetURL(s string) *WorkspaceRuntimeAccessCreate {
 	wrac.mutation.SetURL(s)
-	return wrac
-}
-
-// SetNillableURL sets the "url" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableURL(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetURL(*s)
-	}
 	return wrac
 }
 
@@ -278,25 +52,9 @@ func (wrac *WorkspaceRuntimeAccessCreate) SetUsername(s string) *WorkspaceRuntim
 	return wrac
 }
 
-// SetNillableUsername sets the "username" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableUsername(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetUsername(*s)
-	}
-	return wrac
-}
-
 // SetPassword sets the "password" field.
 func (wrac *WorkspaceRuntimeAccessCreate) SetPassword(s string) *WorkspaceRuntimeAccessCreate {
 	wrac.mutation.SetPassword(s)
-	return wrac
-}
-
-// SetNillablePassword sets the "password" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillablePassword(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetPassword(*s)
-	}
 	return wrac
 }
 
@@ -306,25 +64,9 @@ func (wrac *WorkspaceRuntimeAccessCreate) SetCredentialStatus(s string) *Workspa
 	return wrac
 }
 
-// SetNillableCredentialStatus sets the "credential_status" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableCredentialStatus(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetCredentialStatus(*s)
-	}
-	return wrac
-}
-
 // SetCredentialVersion sets the "credential_version" field.
 func (wrac *WorkspaceRuntimeAccessCreate) SetCredentialVersion(s string) *WorkspaceRuntimeAccessCreate {
 	wrac.mutation.SetCredentialVersion(s)
-	return wrac
-}
-
-// SetNillableCredentialVersion sets the "credential_version" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableCredentialVersion(s *string) *WorkspaceRuntimeAccessCreate {
-	if s != nil {
-		wrac.SetCredentialVersion(*s)
-	}
 	return wrac
 }
 
@@ -338,48 +80,6 @@ func (wrac *WorkspaceRuntimeAccessCreate) SetSecretRef(s string) *WorkspaceRunti
 func (wrac *WorkspaceRuntimeAccessCreate) SetNillableSecretRef(s *string) *WorkspaceRuntimeAccessCreate {
 	if s != nil {
 		wrac.SetSecretRef(*s)
-	}
-	return wrac
-}
-
-// SetStartedAt sets the "started_at" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetStartedAt(t time.Time) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetStartedAt(t)
-	return wrac
-}
-
-// SetNillableStartedAt sets the "started_at" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableStartedAt(t *time.Time) *WorkspaceRuntimeAccessCreate {
-	if t != nil {
-		wrac.SetStartedAt(*t)
-	}
-	return wrac
-}
-
-// SetFinishedAt sets the "finished_at" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetFinishedAt(t time.Time) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetFinishedAt(t)
-	return wrac
-}
-
-// SetNillableFinishedAt sets the "finished_at" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableFinishedAt(t *time.Time) *WorkspaceRuntimeAccessCreate {
-	if t != nil {
-		wrac.SetFinishedAt(*t)
-	}
-	return wrac
-}
-
-// SetCreatedAt sets the "created_at" field.
-func (wrac *WorkspaceRuntimeAccessCreate) SetCreatedAt(t time.Time) *WorkspaceRuntimeAccessCreate {
-	wrac.mutation.SetCreatedAt(t)
-	return wrac
-}
-
-// SetNillableCreatedAt sets the "created_at" field if the given value is not nil.
-func (wrac *WorkspaceRuntimeAccessCreate) SetNillableCreatedAt(t *time.Time) *WorkspaceRuntimeAccessCreate {
-	if t != nil {
-		wrac.SetCreatedAt(*t)
 	}
 	return wrac
 }
@@ -439,105 +139,13 @@ func (wrac *WorkspaceRuntimeAccessCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (wrac *WorkspaceRuntimeAccessCreate) defaults() {
-	if _, ok := wrac.mutation.OperationID(); !ok {
-		v := workspaceruntimeaccess.DefaultOperationID
-		wrac.mutation.SetOperationID(v)
-	}
-	if _, ok := wrac.mutation.CallerService(); !ok {
-		v := workspaceruntimeaccess.DefaultCallerService
-		wrac.mutation.SetCallerService(v)
-	}
-	if _, ok := wrac.mutation.Action(); !ok {
-		v := workspaceruntimeaccess.DefaultAction
-		wrac.mutation.SetAction(v)
-	}
-	if _, ok := wrac.mutation.ResourceKind(); !ok {
-		v := workspaceruntimeaccess.DefaultResourceKind
-		wrac.mutation.SetResourceKind(v)
-	}
-	if _, ok := wrac.mutation.ResourceID(); !ok {
-		v := workspaceruntimeaccess.DefaultResourceID
-		wrac.mutation.SetResourceID(v)
-	}
-	if _, ok := wrac.mutation.AccountID(); !ok {
-		v := workspaceruntimeaccess.DefaultAccountID
-		wrac.mutation.SetAccountID(v)
-	}
-	if _, ok := wrac.mutation.WorkspaceID(); !ok {
-		v := workspaceruntimeaccess.DefaultWorkspaceID
-		wrac.mutation.SetWorkspaceID(v)
-	}
-	if _, ok := wrac.mutation.RuntimeID(); !ok {
-		v := workspaceruntimeaccess.DefaultRuntimeID
-		wrac.mutation.SetRuntimeID(v)
-	}
-	if _, ok := wrac.mutation.Provider(); !ok {
-		v := workspaceruntimeaccess.DefaultProvider
-		wrac.mutation.SetProvider(v)
-	}
-	if _, ok := wrac.mutation.ProviderRequestID(); !ok {
-		v := workspaceruntimeaccess.DefaultProviderRequestID
-		wrac.mutation.SetProviderRequestID(v)
-	}
-	if _, ok := wrac.mutation.IdempotencyKey(); !ok {
-		v := workspaceruntimeaccess.DefaultIdempotencyKey
-		wrac.mutation.SetIdempotencyKey(v)
-	}
-	if _, ok := wrac.mutation.RequestHash(); !ok {
-		v := workspaceruntimeaccess.DefaultRequestHash
-		wrac.mutation.SetRequestHash(v)
-	}
-	if _, ok := wrac.mutation.RedactedProviderPayload(); !ok {
-		v := workspaceruntimeaccess.DefaultRedactedProviderPayload
-		wrac.mutation.SetRedactedProviderPayload(v)
-	}
-	if _, ok := wrac.mutation.Status(); !ok {
-		v := workspaceruntimeaccess.DefaultStatus
-		wrac.mutation.SetStatus(v)
-	}
-	if _, ok := wrac.mutation.ErrorCode(); !ok {
-		v := workspaceruntimeaccess.DefaultErrorCode
-		wrac.mutation.SetErrorCode(v)
-	}
-	if _, ok := wrac.mutation.Retryable(); !ok {
-		v := workspaceruntimeaccess.DefaultRetryable
-		wrac.mutation.SetRetryable(v)
-	}
-	if _, ok := wrac.mutation.URL(); !ok {
-		v := workspaceruntimeaccess.DefaultURL
-		wrac.mutation.SetURL(v)
-	}
 	if _, ok := wrac.mutation.ServiceName(); !ok {
 		v := workspaceruntimeaccess.DefaultServiceName
 		wrac.mutation.SetServiceName(v)
 	}
-	if _, ok := wrac.mutation.Username(); !ok {
-		v := workspaceruntimeaccess.DefaultUsername
-		wrac.mutation.SetUsername(v)
-	}
-	if _, ok := wrac.mutation.Password(); !ok {
-		v := workspaceruntimeaccess.DefaultPassword
-		wrac.mutation.SetPassword(v)
-	}
-	if _, ok := wrac.mutation.CredentialStatus(); !ok {
-		v := workspaceruntimeaccess.DefaultCredentialStatus
-		wrac.mutation.SetCredentialStatus(v)
-	}
-	if _, ok := wrac.mutation.CredentialVersion(); !ok {
-		v := workspaceruntimeaccess.DefaultCredentialVersion
-		wrac.mutation.SetCredentialVersion(v)
-	}
 	if _, ok := wrac.mutation.SecretRef(); !ok {
 		v := workspaceruntimeaccess.DefaultSecretRef
 		wrac.mutation.SetSecretRef(v)
-	}
-	if _, ok := wrac.mutation.StartedAt(); !ok {
-		v := workspaceruntimeaccess.DefaultStartedAt()
-		wrac.mutation.SetStartedAt(v)
-	}
-	if _, ok := wrac.mutation.CreatedAt(); !ok {
-		v := workspaceruntimeaccess.DefaultCreatedAt()
-		wrac.mutation.SetCreatedAt(v)
 	}
 	if _, ok := wrac.mutation.UpdatedAt(); !ok {
 		v := workspaceruntimeaccess.DefaultUpdatedAt()
@@ -547,56 +155,21 @@ func (wrac *WorkspaceRuntimeAccessCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (wrac *WorkspaceRuntimeAccessCreate) check() error {
-	if _, ok := wrac.mutation.OperationID(); !ok {
-		return &ValidationError{Name: "operation_id", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.operation_id"`)}
-	}
-	if _, ok := wrac.mutation.CallerService(); !ok {
-		return &ValidationError{Name: "caller_service", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.caller_service"`)}
-	}
-	if _, ok := wrac.mutation.Action(); !ok {
-		return &ValidationError{Name: "action", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.action"`)}
-	}
-	if _, ok := wrac.mutation.ResourceKind(); !ok {
-		return &ValidationError{Name: "resource_kind", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.resource_kind"`)}
-	}
-	if _, ok := wrac.mutation.ResourceID(); !ok {
-		return &ValidationError{Name: "resource_id", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.resource_id"`)}
-	}
-	if _, ok := wrac.mutation.AccountID(); !ok {
-		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.account_id"`)}
-	}
-	if _, ok := wrac.mutation.WorkspaceID(); !ok {
-		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.workspace_id"`)}
-	}
 	if _, ok := wrac.mutation.RuntimeID(); !ok {
 		return &ValidationError{Name: "runtime_id", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.runtime_id"`)}
 	}
-	if _, ok := wrac.mutation.Provider(); !ok {
-		return &ValidationError{Name: "provider", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.provider"`)}
-	}
-	if _, ok := wrac.mutation.ProviderRequestID(); !ok {
-		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.provider_request_id"`)}
-	}
-	if _, ok := wrac.mutation.IdempotencyKey(); !ok {
-		return &ValidationError{Name: "idempotency_key", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.idempotency_key"`)}
-	}
-	if _, ok := wrac.mutation.RequestHash(); !ok {
-		return &ValidationError{Name: "request_hash", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.request_hash"`)}
-	}
-	if _, ok := wrac.mutation.RedactedProviderPayload(); !ok {
-		return &ValidationError{Name: "redacted_provider_payload", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.redacted_provider_payload"`)}
-	}
-	if _, ok := wrac.mutation.Status(); !ok {
-		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.status"`)}
-	}
-	if _, ok := wrac.mutation.ErrorCode(); !ok {
-		return &ValidationError{Name: "error_code", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.error_code"`)}
-	}
-	if _, ok := wrac.mutation.Retryable(); !ok {
-		return &ValidationError{Name: "retryable", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.retryable"`)}
+	if v, ok := wrac.mutation.RuntimeID(); ok {
+		if err := workspaceruntimeaccess.RuntimeIDValidator(v); err != nil {
+			return &ValidationError{Name: "runtime_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.runtime_id": %w`, err)}
+		}
 	}
 	if _, ok := wrac.mutation.URL(); !ok {
 		return &ValidationError{Name: "url", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.url"`)}
+	}
+	if v, ok := wrac.mutation.URL(); ok {
+		if err := workspaceruntimeaccess.URLValidator(v); err != nil {
+			return &ValidationError{Name: "url", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.url": %w`, err)}
+		}
 	}
 	if _, ok := wrac.mutation.ServiceName(); !ok {
 		return &ValidationError{Name: "service_name", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.service_name"`)}
@@ -604,23 +177,37 @@ func (wrac *WorkspaceRuntimeAccessCreate) check() error {
 	if _, ok := wrac.mutation.Username(); !ok {
 		return &ValidationError{Name: "username", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.username"`)}
 	}
+	if v, ok := wrac.mutation.Username(); ok {
+		if err := workspaceruntimeaccess.UsernameValidator(v); err != nil {
+			return &ValidationError{Name: "username", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.username": %w`, err)}
+		}
+	}
 	if _, ok := wrac.mutation.Password(); !ok {
 		return &ValidationError{Name: "password", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.password"`)}
+	}
+	if v, ok := wrac.mutation.Password(); ok {
+		if err := workspaceruntimeaccess.PasswordValidator(v); err != nil {
+			return &ValidationError{Name: "password", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.password": %w`, err)}
+		}
 	}
 	if _, ok := wrac.mutation.CredentialStatus(); !ok {
 		return &ValidationError{Name: "credential_status", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.credential_status"`)}
 	}
+	if v, ok := wrac.mutation.CredentialStatus(); ok {
+		if err := workspaceruntimeaccess.CredentialStatusValidator(v); err != nil {
+			return &ValidationError{Name: "credential_status", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.credential_status": %w`, err)}
+		}
+	}
 	if _, ok := wrac.mutation.CredentialVersion(); !ok {
 		return &ValidationError{Name: "credential_version", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.credential_version"`)}
 	}
+	if v, ok := wrac.mutation.CredentialVersion(); ok {
+		if err := workspaceruntimeaccess.CredentialVersionValidator(v); err != nil {
+			return &ValidationError{Name: "credential_version", err: fmt.Errorf(`ent: validator failed for field "WorkspaceRuntimeAccess.credential_version": %w`, err)}
+		}
+	}
 	if _, ok := wrac.mutation.SecretRef(); !ok {
 		return &ValidationError{Name: "secret_ref", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.secret_ref"`)}
-	}
-	if _, ok := wrac.mutation.StartedAt(); !ok {
-		return &ValidationError{Name: "started_at", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.started_at"`)}
-	}
-	if _, ok := wrac.mutation.CreatedAt(); !ok {
-		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.created_at"`)}
 	}
 	if _, ok := wrac.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "WorkspaceRuntimeAccess.updated_at"`)}
@@ -665,69 +252,9 @@ func (wrac *WorkspaceRuntimeAccessCreate) createSpec() (*WorkspaceRuntimeAccess,
 		_node.ID = id
 		_spec.ID.Value = id
 	}
-	if value, ok := wrac.mutation.OperationID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldOperationID, field.TypeString, value)
-		_node.OperationID = value
-	}
-	if value, ok := wrac.mutation.CallerService(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldCallerService, field.TypeString, value)
-		_node.CallerService = value
-	}
-	if value, ok := wrac.mutation.Action(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldAction, field.TypeString, value)
-		_node.Action = value
-	}
-	if value, ok := wrac.mutation.ResourceKind(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldResourceKind, field.TypeString, value)
-		_node.ResourceKind = value
-	}
-	if value, ok := wrac.mutation.ResourceID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldResourceID, field.TypeString, value)
-		_node.ResourceID = value
-	}
-	if value, ok := wrac.mutation.AccountID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldAccountID, field.TypeString, value)
-		_node.AccountID = value
-	}
-	if value, ok := wrac.mutation.WorkspaceID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldWorkspaceID, field.TypeString, value)
-		_node.WorkspaceID = value
-	}
 	if value, ok := wrac.mutation.RuntimeID(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldRuntimeID, field.TypeString, value)
 		_node.RuntimeID = value
-	}
-	if value, ok := wrac.mutation.Provider(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldProvider, field.TypeString, value)
-		_node.Provider = value
-	}
-	if value, ok := wrac.mutation.ProviderRequestID(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldProviderRequestID, field.TypeString, value)
-		_node.ProviderRequestID = value
-	}
-	if value, ok := wrac.mutation.IdempotencyKey(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldIdempotencyKey, field.TypeString, value)
-		_node.IdempotencyKey = value
-	}
-	if value, ok := wrac.mutation.RequestHash(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRequestHash, field.TypeString, value)
-		_node.RequestHash = value
-	}
-	if value, ok := wrac.mutation.RedactedProviderPayload(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRedactedProviderPayload, field.TypeString, value)
-		_node.RedactedProviderPayload = value
-	}
-	if value, ok := wrac.mutation.Status(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldStatus, field.TypeString, value)
-		_node.Status = value
-	}
-	if value, ok := wrac.mutation.ErrorCode(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldErrorCode, field.TypeString, value)
-		_node.ErrorCode = value
-	}
-	if value, ok := wrac.mutation.Retryable(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldRetryable, field.TypeBool, value)
-		_node.Retryable = value
 	}
 	if value, ok := wrac.mutation.URL(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldURL, field.TypeString, value)
@@ -756,18 +283,6 @@ func (wrac *WorkspaceRuntimeAccessCreate) createSpec() (*WorkspaceRuntimeAccess,
 	if value, ok := wrac.mutation.SecretRef(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldSecretRef, field.TypeString, value)
 		_node.SecretRef = value
-	}
-	if value, ok := wrac.mutation.StartedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldStartedAt, field.TypeTime, value)
-		_node.StartedAt = value
-	}
-	if value, ok := wrac.mutation.FinishedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldFinishedAt, field.TypeTime, value)
-		_node.FinishedAt = &value
-	}
-	if value, ok := wrac.mutation.CreatedAt(); ok {
-		_spec.SetField(workspaceruntimeaccess.FieldCreatedAt, field.TypeTime, value)
-		_node.CreatedAt = value
 	}
 	if value, ok := wrac.mutation.UpdatedAt(); ok {
 		_spec.SetField(workspaceruntimeaccess.FieldUpdatedAt, field.TypeTime, value)

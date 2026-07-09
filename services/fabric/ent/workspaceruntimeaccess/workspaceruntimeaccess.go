@@ -12,39 +12,9 @@ const (
 	// Label holds the string label denoting the workspaceruntimeaccess type in the database.
 	Label = "workspace_runtime_access"
 	// FieldID holds the string denoting the id field in the database.
-	FieldID = "id"
-	// FieldOperationID holds the string denoting the operation_id field in the database.
-	FieldOperationID = "operation_id"
-	// FieldCallerService holds the string denoting the caller_service field in the database.
-	FieldCallerService = "caller_service"
-	// FieldAction holds the string denoting the action field in the database.
-	FieldAction = "action"
-	// FieldResourceKind holds the string denoting the resource_kind field in the database.
-	FieldResourceKind = "resource_kind"
-	// FieldResourceID holds the string denoting the resource_id field in the database.
-	FieldResourceID = "resource_id"
-	// FieldAccountID holds the string denoting the account_id field in the database.
-	FieldAccountID = "account_id"
-	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
-	FieldWorkspaceID = "workspace_id"
+	FieldID = "workspace_id"
 	// FieldRuntimeID holds the string denoting the runtime_id field in the database.
 	FieldRuntimeID = "runtime_id"
-	// FieldProvider holds the string denoting the provider field in the database.
-	FieldProvider = "provider"
-	// FieldProviderRequestID holds the string denoting the provider_request_id field in the database.
-	FieldProviderRequestID = "provider_request_id"
-	// FieldIdempotencyKey holds the string denoting the idempotency_key field in the database.
-	FieldIdempotencyKey = "idempotency_key"
-	// FieldRequestHash holds the string denoting the request_hash field in the database.
-	FieldRequestHash = "request_hash"
-	// FieldRedactedProviderPayload holds the string denoting the redacted_provider_payload field in the database.
-	FieldRedactedProviderPayload = "redacted_provider_payload"
-	// FieldStatus holds the string denoting the status field in the database.
-	FieldStatus = "status"
-	// FieldErrorCode holds the string denoting the error_code field in the database.
-	FieldErrorCode = "error_code"
-	// FieldRetryable holds the string denoting the retryable field in the database.
-	FieldRetryable = "retryable"
 	// FieldURL holds the string denoting the url field in the database.
 	FieldURL = "url"
 	// FieldServiceName holds the string denoting the service_name field in the database.
@@ -59,12 +29,6 @@ const (
 	FieldCredentialVersion = "credential_version"
 	// FieldSecretRef holds the string denoting the secret_ref field in the database.
 	FieldSecretRef = "secret_ref"
-	// FieldStartedAt holds the string denoting the started_at field in the database.
-	FieldStartedAt = "started_at"
-	// FieldFinishedAt holds the string denoting the finished_at field in the database.
-	FieldFinishedAt = "finished_at"
-	// FieldCreatedAt holds the string denoting the created_at field in the database.
-	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// Table holds the table name of the workspaceruntimeaccess in the database.
@@ -74,22 +38,7 @@ const (
 // Columns holds all SQL columns for workspaceruntimeaccess fields.
 var Columns = []string{
 	FieldID,
-	FieldOperationID,
-	FieldCallerService,
-	FieldAction,
-	FieldResourceKind,
-	FieldResourceID,
-	FieldAccountID,
-	FieldWorkspaceID,
 	FieldRuntimeID,
-	FieldProvider,
-	FieldProviderRequestID,
-	FieldIdempotencyKey,
-	FieldRequestHash,
-	FieldRedactedProviderPayload,
-	FieldStatus,
-	FieldErrorCode,
-	FieldRetryable,
 	FieldURL,
 	FieldServiceName,
 	FieldUsername,
@@ -97,9 +46,6 @@ var Columns = []string{
 	FieldCredentialStatus,
 	FieldCredentialVersion,
 	FieldSecretRef,
-	FieldStartedAt,
-	FieldFinishedAt,
-	FieldCreatedAt,
 	FieldUpdatedAt,
 }
 
@@ -114,56 +60,22 @@ func ValidColumn(column string) bool {
 }
 
 var (
-	// DefaultOperationID holds the default value on creation for the "operation_id" field.
-	DefaultOperationID string
-	// DefaultCallerService holds the default value on creation for the "caller_service" field.
-	DefaultCallerService string
-	// DefaultAction holds the default value on creation for the "action" field.
-	DefaultAction string
-	// DefaultResourceKind holds the default value on creation for the "resource_kind" field.
-	DefaultResourceKind string
-	// DefaultResourceID holds the default value on creation for the "resource_id" field.
-	DefaultResourceID string
-	// DefaultAccountID holds the default value on creation for the "account_id" field.
-	DefaultAccountID string
-	// DefaultWorkspaceID holds the default value on creation for the "workspace_id" field.
-	DefaultWorkspaceID string
-	// DefaultRuntimeID holds the default value on creation for the "runtime_id" field.
-	DefaultRuntimeID string
-	// DefaultProvider holds the default value on creation for the "provider" field.
-	DefaultProvider string
-	// DefaultProviderRequestID holds the default value on creation for the "provider_request_id" field.
-	DefaultProviderRequestID string
-	// DefaultIdempotencyKey holds the default value on creation for the "idempotency_key" field.
-	DefaultIdempotencyKey string
-	// DefaultRequestHash holds the default value on creation for the "request_hash" field.
-	DefaultRequestHash string
-	// DefaultRedactedProviderPayload holds the default value on creation for the "redacted_provider_payload" field.
-	DefaultRedactedProviderPayload string
-	// DefaultStatus holds the default value on creation for the "status" field.
-	DefaultStatus string
-	// DefaultErrorCode holds the default value on creation for the "error_code" field.
-	DefaultErrorCode string
-	// DefaultRetryable holds the default value on creation for the "retryable" field.
-	DefaultRetryable bool
-	// DefaultURL holds the default value on creation for the "url" field.
-	DefaultURL string
+	// RuntimeIDValidator is a validator for the "runtime_id" field. It is called by the builders before save.
+	RuntimeIDValidator func(string) error
+	// URLValidator is a validator for the "url" field. It is called by the builders before save.
+	URLValidator func(string) error
 	// DefaultServiceName holds the default value on creation for the "service_name" field.
 	DefaultServiceName string
-	// DefaultUsername holds the default value on creation for the "username" field.
-	DefaultUsername string
-	// DefaultPassword holds the default value on creation for the "password" field.
-	DefaultPassword string
-	// DefaultCredentialStatus holds the default value on creation for the "credential_status" field.
-	DefaultCredentialStatus string
-	// DefaultCredentialVersion holds the default value on creation for the "credential_version" field.
-	DefaultCredentialVersion string
+	// UsernameValidator is a validator for the "username" field. It is called by the builders before save.
+	UsernameValidator func(string) error
+	// PasswordValidator is a validator for the "password" field. It is called by the builders before save.
+	PasswordValidator func(string) error
+	// CredentialStatusValidator is a validator for the "credential_status" field. It is called by the builders before save.
+	CredentialStatusValidator func(string) error
+	// CredentialVersionValidator is a validator for the "credential_version" field. It is called by the builders before save.
+	CredentialVersionValidator func(string) error
 	// DefaultSecretRef holds the default value on creation for the "secret_ref" field.
 	DefaultSecretRef string
-	// DefaultStartedAt holds the default value on creation for the "started_at" field.
-	DefaultStartedAt func() time.Time
-	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
-	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
@@ -180,84 +92,9 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
 }
 
-// ByOperationID orders the results by the operation_id field.
-func ByOperationID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldOperationID, opts...).ToFunc()
-}
-
-// ByCallerService orders the results by the caller_service field.
-func ByCallerService(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCallerService, opts...).ToFunc()
-}
-
-// ByAction orders the results by the action field.
-func ByAction(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldAction, opts...).ToFunc()
-}
-
-// ByResourceKind orders the results by the resource_kind field.
-func ByResourceKind(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldResourceKind, opts...).ToFunc()
-}
-
-// ByResourceID orders the results by the resource_id field.
-func ByResourceID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldResourceID, opts...).ToFunc()
-}
-
-// ByAccountID orders the results by the account_id field.
-func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
-}
-
-// ByWorkspaceID orders the results by the workspace_id field.
-func ByWorkspaceID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWorkspaceID, opts...).ToFunc()
-}
-
 // ByRuntimeID orders the results by the runtime_id field.
 func ByRuntimeID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRuntimeID, opts...).ToFunc()
-}
-
-// ByProvider orders the results by the provider field.
-func ByProvider(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldProvider, opts...).ToFunc()
-}
-
-// ByProviderRequestID orders the results by the provider_request_id field.
-func ByProviderRequestID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldProviderRequestID, opts...).ToFunc()
-}
-
-// ByIdempotencyKey orders the results by the idempotency_key field.
-func ByIdempotencyKey(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldIdempotencyKey, opts...).ToFunc()
-}
-
-// ByRequestHash orders the results by the request_hash field.
-func ByRequestHash(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRequestHash, opts...).ToFunc()
-}
-
-// ByRedactedProviderPayload orders the results by the redacted_provider_payload field.
-func ByRedactedProviderPayload(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRedactedProviderPayload, opts...).ToFunc()
-}
-
-// ByStatus orders the results by the status field.
-func ByStatus(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldStatus, opts...).ToFunc()
-}
-
-// ByErrorCode orders the results by the error_code field.
-func ByErrorCode(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldErrorCode, opts...).ToFunc()
-}
-
-// ByRetryable orders the results by the retryable field.
-func ByRetryable(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldRetryable, opts...).ToFunc()
 }
 
 // ByURL orders the results by the url field.
@@ -293,21 +130,6 @@ func ByCredentialVersion(opts ...sql.OrderTermOption) OrderOption {
 // BySecretRef orders the results by the secret_ref field.
 func BySecretRef(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSecretRef, opts...).ToFunc()
-}
-
-// ByStartedAt orders the results by the started_at field.
-func ByStartedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldStartedAt, opts...).ToFunc()
-}
-
-// ByFinishedAt orders the results by the finished_at field.
-func ByFinishedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldFinishedAt, opts...).ToFunc()
-}
-
-// ByCreatedAt orders the results by the created_at field.
-func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldCreatedAt, opts...).ToFunc()
 }
 
 // ByUpdatedAt orders the results by the updated_at field.

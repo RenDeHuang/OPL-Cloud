@@ -126,20 +126,6 @@ func (fou *FabricOperationUpdate) SetNillableWorkspaceID(s *string) *FabricOpera
 	return fou
 }
 
-// SetRuntimeID sets the "runtime_id" field.
-func (fou *FabricOperationUpdate) SetRuntimeID(s string) *FabricOperationUpdate {
-	fou.mutation.SetRuntimeID(s)
-	return fou
-}
-
-// SetNillableRuntimeID sets the "runtime_id" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableRuntimeID(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetRuntimeID(*s)
-	}
-	return fou
-}
-
 // SetProvider sets the "provider" field.
 func (fou *FabricOperationUpdate) SetProvider(s string) *FabricOperationUpdate {
 	fou.mutation.SetProvider(s)
@@ -252,104 +238,6 @@ func (fou *FabricOperationUpdate) SetNillableRetryable(b *bool) *FabricOperation
 	return fou
 }
 
-// SetURL sets the "url" field.
-func (fou *FabricOperationUpdate) SetURL(s string) *FabricOperationUpdate {
-	fou.mutation.SetURL(s)
-	return fou
-}
-
-// SetNillableURL sets the "url" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableURL(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetURL(*s)
-	}
-	return fou
-}
-
-// SetServiceName sets the "service_name" field.
-func (fou *FabricOperationUpdate) SetServiceName(s string) *FabricOperationUpdate {
-	fou.mutation.SetServiceName(s)
-	return fou
-}
-
-// SetNillableServiceName sets the "service_name" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableServiceName(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetServiceName(*s)
-	}
-	return fou
-}
-
-// SetUsername sets the "username" field.
-func (fou *FabricOperationUpdate) SetUsername(s string) *FabricOperationUpdate {
-	fou.mutation.SetUsername(s)
-	return fou
-}
-
-// SetNillableUsername sets the "username" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableUsername(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetUsername(*s)
-	}
-	return fou
-}
-
-// SetPassword sets the "password" field.
-func (fou *FabricOperationUpdate) SetPassword(s string) *FabricOperationUpdate {
-	fou.mutation.SetPassword(s)
-	return fou
-}
-
-// SetNillablePassword sets the "password" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillablePassword(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetPassword(*s)
-	}
-	return fou
-}
-
-// SetCredentialStatus sets the "credential_status" field.
-func (fou *FabricOperationUpdate) SetCredentialStatus(s string) *FabricOperationUpdate {
-	fou.mutation.SetCredentialStatus(s)
-	return fou
-}
-
-// SetNillableCredentialStatus sets the "credential_status" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableCredentialStatus(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetCredentialStatus(*s)
-	}
-	return fou
-}
-
-// SetCredentialVersion sets the "credential_version" field.
-func (fou *FabricOperationUpdate) SetCredentialVersion(s string) *FabricOperationUpdate {
-	fou.mutation.SetCredentialVersion(s)
-	return fou
-}
-
-// SetNillableCredentialVersion sets the "credential_version" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableCredentialVersion(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetCredentialVersion(*s)
-	}
-	return fou
-}
-
-// SetSecretRef sets the "secret_ref" field.
-func (fou *FabricOperationUpdate) SetSecretRef(s string) *FabricOperationUpdate {
-	fou.mutation.SetSecretRef(s)
-	return fou
-}
-
-// SetNillableSecretRef sets the "secret_ref" field if the given value is not nil.
-func (fou *FabricOperationUpdate) SetNillableSecretRef(s *string) *FabricOperationUpdate {
-	if s != nil {
-		fou.SetSecretRef(*s)
-	}
-	return fou
-}
-
 // SetStartedAt sets the "started_at" field.
 func (fou *FabricOperationUpdate) SetStartedAt(t time.Time) *FabricOperationUpdate {
 	fou.mutation.SetStartedAt(t)
@@ -398,12 +286,6 @@ func (fou *FabricOperationUpdate) SetNillableCreatedAt(t *time.Time) *FabricOper
 	return fou
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (fou *FabricOperationUpdate) SetUpdatedAt(t time.Time) *FabricOperationUpdate {
-	fou.mutation.SetUpdatedAt(t)
-	return fou
-}
-
 // Mutation returns the FabricOperationMutation object of the builder.
 func (fou *FabricOperationUpdate) Mutation() *FabricOperationMutation {
 	return fou.mutation
@@ -411,7 +293,6 @@ func (fou *FabricOperationUpdate) Mutation() *FabricOperationMutation {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (fou *FabricOperationUpdate) Save(ctx context.Context) (int, error) {
-	fou.defaults()
 	return withHooks(ctx, fou.sqlSave, fou.mutation, fou.hooks)
 }
 
@@ -437,15 +318,45 @@ func (fou *FabricOperationUpdate) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (fou *FabricOperationUpdate) defaults() {
-	if _, ok := fou.mutation.UpdatedAt(); !ok {
-		v := fabricoperation.UpdateDefaultUpdatedAt()
-		fou.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (fou *FabricOperationUpdate) check() error {
+	if v, ok := fou.mutation.OperationID(); ok {
+		if err := fabricoperation.OperationIDValidator(v); err != nil {
+			return &ValidationError{Name: "operation_id", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.operation_id": %w`, err)}
+		}
 	}
+	if v, ok := fou.mutation.CallerService(); ok {
+		if err := fabricoperation.CallerServiceValidator(v); err != nil {
+			return &ValidationError{Name: "caller_service", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.caller_service": %w`, err)}
+		}
+	}
+	if v, ok := fou.mutation.Action(); ok {
+		if err := fabricoperation.ActionValidator(v); err != nil {
+			return &ValidationError{Name: "action", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.action": %w`, err)}
+		}
+	}
+	if v, ok := fou.mutation.ResourceKind(); ok {
+		if err := fabricoperation.ResourceKindValidator(v); err != nil {
+			return &ValidationError{Name: "resource_kind", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.resource_kind": %w`, err)}
+		}
+	}
+	if v, ok := fou.mutation.ResourceID(); ok {
+		if err := fabricoperation.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.resource_id": %w`, err)}
+		}
+	}
+	if v, ok := fou.mutation.Status(); ok {
+		if err := fabricoperation.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.status": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (fou *FabricOperationUpdate) sqlSave(ctx context.Context) (n int, err error) {
+	if err := fou.check(); err != nil {
+		return n, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(fabricoperation.Table, fabricoperation.Columns, sqlgraph.NewFieldSpec(fabricoperation.FieldID, field.TypeString))
 	if ps := fou.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -475,9 +386,6 @@ func (fou *FabricOperationUpdate) sqlSave(ctx context.Context) (n int, err error
 	if value, ok := fou.mutation.WorkspaceID(); ok {
 		_spec.SetField(fabricoperation.FieldWorkspaceID, field.TypeString, value)
 	}
-	if value, ok := fou.mutation.RuntimeID(); ok {
-		_spec.SetField(fabricoperation.FieldRuntimeID, field.TypeString, value)
-	}
 	if value, ok := fou.mutation.Provider(); ok {
 		_spec.SetField(fabricoperation.FieldProvider, field.TypeString, value)
 	}
@@ -502,27 +410,6 @@ func (fou *FabricOperationUpdate) sqlSave(ctx context.Context) (n int, err error
 	if value, ok := fou.mutation.Retryable(); ok {
 		_spec.SetField(fabricoperation.FieldRetryable, field.TypeBool, value)
 	}
-	if value, ok := fou.mutation.URL(); ok {
-		_spec.SetField(fabricoperation.FieldURL, field.TypeString, value)
-	}
-	if value, ok := fou.mutation.ServiceName(); ok {
-		_spec.SetField(fabricoperation.FieldServiceName, field.TypeString, value)
-	}
-	if value, ok := fou.mutation.Username(); ok {
-		_spec.SetField(fabricoperation.FieldUsername, field.TypeString, value)
-	}
-	if value, ok := fou.mutation.Password(); ok {
-		_spec.SetField(fabricoperation.FieldPassword, field.TypeString, value)
-	}
-	if value, ok := fou.mutation.CredentialStatus(); ok {
-		_spec.SetField(fabricoperation.FieldCredentialStatus, field.TypeString, value)
-	}
-	if value, ok := fou.mutation.CredentialVersion(); ok {
-		_spec.SetField(fabricoperation.FieldCredentialVersion, field.TypeString, value)
-	}
-	if value, ok := fou.mutation.SecretRef(); ok {
-		_spec.SetField(fabricoperation.FieldSecretRef, field.TypeString, value)
-	}
 	if value, ok := fou.mutation.StartedAt(); ok {
 		_spec.SetField(fabricoperation.FieldStartedAt, field.TypeTime, value)
 	}
@@ -534,9 +421,6 @@ func (fou *FabricOperationUpdate) sqlSave(ctx context.Context) (n int, err error
 	}
 	if value, ok := fou.mutation.CreatedAt(); ok {
 		_spec.SetField(fabricoperation.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := fou.mutation.UpdatedAt(); ok {
-		_spec.SetField(fabricoperation.FieldUpdatedAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, fou.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -656,20 +540,6 @@ func (fouo *FabricOperationUpdateOne) SetNillableWorkspaceID(s *string) *FabricO
 	return fouo
 }
 
-// SetRuntimeID sets the "runtime_id" field.
-func (fouo *FabricOperationUpdateOne) SetRuntimeID(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetRuntimeID(s)
-	return fouo
-}
-
-// SetNillableRuntimeID sets the "runtime_id" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableRuntimeID(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetRuntimeID(*s)
-	}
-	return fouo
-}
-
 // SetProvider sets the "provider" field.
 func (fouo *FabricOperationUpdateOne) SetProvider(s string) *FabricOperationUpdateOne {
 	fouo.mutation.SetProvider(s)
@@ -782,104 +652,6 @@ func (fouo *FabricOperationUpdateOne) SetNillableRetryable(b *bool) *FabricOpera
 	return fouo
 }
 
-// SetURL sets the "url" field.
-func (fouo *FabricOperationUpdateOne) SetURL(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetURL(s)
-	return fouo
-}
-
-// SetNillableURL sets the "url" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableURL(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetURL(*s)
-	}
-	return fouo
-}
-
-// SetServiceName sets the "service_name" field.
-func (fouo *FabricOperationUpdateOne) SetServiceName(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetServiceName(s)
-	return fouo
-}
-
-// SetNillableServiceName sets the "service_name" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableServiceName(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetServiceName(*s)
-	}
-	return fouo
-}
-
-// SetUsername sets the "username" field.
-func (fouo *FabricOperationUpdateOne) SetUsername(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetUsername(s)
-	return fouo
-}
-
-// SetNillableUsername sets the "username" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableUsername(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetUsername(*s)
-	}
-	return fouo
-}
-
-// SetPassword sets the "password" field.
-func (fouo *FabricOperationUpdateOne) SetPassword(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetPassword(s)
-	return fouo
-}
-
-// SetNillablePassword sets the "password" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillablePassword(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetPassword(*s)
-	}
-	return fouo
-}
-
-// SetCredentialStatus sets the "credential_status" field.
-func (fouo *FabricOperationUpdateOne) SetCredentialStatus(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetCredentialStatus(s)
-	return fouo
-}
-
-// SetNillableCredentialStatus sets the "credential_status" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableCredentialStatus(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetCredentialStatus(*s)
-	}
-	return fouo
-}
-
-// SetCredentialVersion sets the "credential_version" field.
-func (fouo *FabricOperationUpdateOne) SetCredentialVersion(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetCredentialVersion(s)
-	return fouo
-}
-
-// SetNillableCredentialVersion sets the "credential_version" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableCredentialVersion(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetCredentialVersion(*s)
-	}
-	return fouo
-}
-
-// SetSecretRef sets the "secret_ref" field.
-func (fouo *FabricOperationUpdateOne) SetSecretRef(s string) *FabricOperationUpdateOne {
-	fouo.mutation.SetSecretRef(s)
-	return fouo
-}
-
-// SetNillableSecretRef sets the "secret_ref" field if the given value is not nil.
-func (fouo *FabricOperationUpdateOne) SetNillableSecretRef(s *string) *FabricOperationUpdateOne {
-	if s != nil {
-		fouo.SetSecretRef(*s)
-	}
-	return fouo
-}
-
 // SetStartedAt sets the "started_at" field.
 func (fouo *FabricOperationUpdateOne) SetStartedAt(t time.Time) *FabricOperationUpdateOne {
 	fouo.mutation.SetStartedAt(t)
@@ -928,12 +700,6 @@ func (fouo *FabricOperationUpdateOne) SetNillableCreatedAt(t *time.Time) *Fabric
 	return fouo
 }
 
-// SetUpdatedAt sets the "updated_at" field.
-func (fouo *FabricOperationUpdateOne) SetUpdatedAt(t time.Time) *FabricOperationUpdateOne {
-	fouo.mutation.SetUpdatedAt(t)
-	return fouo
-}
-
 // Mutation returns the FabricOperationMutation object of the builder.
 func (fouo *FabricOperationUpdateOne) Mutation() *FabricOperationMutation {
 	return fouo.mutation
@@ -954,7 +720,6 @@ func (fouo *FabricOperationUpdateOne) Select(field string, fields ...string) *Fa
 
 // Save executes the query and returns the updated FabricOperation entity.
 func (fouo *FabricOperationUpdateOne) Save(ctx context.Context) (*FabricOperation, error) {
-	fouo.defaults()
 	return withHooks(ctx, fouo.sqlSave, fouo.mutation, fouo.hooks)
 }
 
@@ -980,15 +745,45 @@ func (fouo *FabricOperationUpdateOne) ExecX(ctx context.Context) {
 	}
 }
 
-// defaults sets the default values of the builder before save.
-func (fouo *FabricOperationUpdateOne) defaults() {
-	if _, ok := fouo.mutation.UpdatedAt(); !ok {
-		v := fabricoperation.UpdateDefaultUpdatedAt()
-		fouo.mutation.SetUpdatedAt(v)
+// check runs all checks and user-defined validators on the builder.
+func (fouo *FabricOperationUpdateOne) check() error {
+	if v, ok := fouo.mutation.OperationID(); ok {
+		if err := fabricoperation.OperationIDValidator(v); err != nil {
+			return &ValidationError{Name: "operation_id", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.operation_id": %w`, err)}
+		}
 	}
+	if v, ok := fouo.mutation.CallerService(); ok {
+		if err := fabricoperation.CallerServiceValidator(v); err != nil {
+			return &ValidationError{Name: "caller_service", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.caller_service": %w`, err)}
+		}
+	}
+	if v, ok := fouo.mutation.Action(); ok {
+		if err := fabricoperation.ActionValidator(v); err != nil {
+			return &ValidationError{Name: "action", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.action": %w`, err)}
+		}
+	}
+	if v, ok := fouo.mutation.ResourceKind(); ok {
+		if err := fabricoperation.ResourceKindValidator(v); err != nil {
+			return &ValidationError{Name: "resource_kind", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.resource_kind": %w`, err)}
+		}
+	}
+	if v, ok := fouo.mutation.ResourceID(); ok {
+		if err := fabricoperation.ResourceIDValidator(v); err != nil {
+			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.resource_id": %w`, err)}
+		}
+	}
+	if v, ok := fouo.mutation.Status(); ok {
+		if err := fabricoperation.StatusValidator(v); err != nil {
+			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "FabricOperation.status": %w`, err)}
+		}
+	}
+	return nil
 }
 
 func (fouo *FabricOperationUpdateOne) sqlSave(ctx context.Context) (_node *FabricOperation, err error) {
+	if err := fouo.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(fabricoperation.Table, fabricoperation.Columns, sqlgraph.NewFieldSpec(fabricoperation.FieldID, field.TypeString))
 	id, ok := fouo.mutation.ID()
 	if !ok {
@@ -1035,9 +830,6 @@ func (fouo *FabricOperationUpdateOne) sqlSave(ctx context.Context) (_node *Fabri
 	if value, ok := fouo.mutation.WorkspaceID(); ok {
 		_spec.SetField(fabricoperation.FieldWorkspaceID, field.TypeString, value)
 	}
-	if value, ok := fouo.mutation.RuntimeID(); ok {
-		_spec.SetField(fabricoperation.FieldRuntimeID, field.TypeString, value)
-	}
 	if value, ok := fouo.mutation.Provider(); ok {
 		_spec.SetField(fabricoperation.FieldProvider, field.TypeString, value)
 	}
@@ -1062,27 +854,6 @@ func (fouo *FabricOperationUpdateOne) sqlSave(ctx context.Context) (_node *Fabri
 	if value, ok := fouo.mutation.Retryable(); ok {
 		_spec.SetField(fabricoperation.FieldRetryable, field.TypeBool, value)
 	}
-	if value, ok := fouo.mutation.URL(); ok {
-		_spec.SetField(fabricoperation.FieldURL, field.TypeString, value)
-	}
-	if value, ok := fouo.mutation.ServiceName(); ok {
-		_spec.SetField(fabricoperation.FieldServiceName, field.TypeString, value)
-	}
-	if value, ok := fouo.mutation.Username(); ok {
-		_spec.SetField(fabricoperation.FieldUsername, field.TypeString, value)
-	}
-	if value, ok := fouo.mutation.Password(); ok {
-		_spec.SetField(fabricoperation.FieldPassword, field.TypeString, value)
-	}
-	if value, ok := fouo.mutation.CredentialStatus(); ok {
-		_spec.SetField(fabricoperation.FieldCredentialStatus, field.TypeString, value)
-	}
-	if value, ok := fouo.mutation.CredentialVersion(); ok {
-		_spec.SetField(fabricoperation.FieldCredentialVersion, field.TypeString, value)
-	}
-	if value, ok := fouo.mutation.SecretRef(); ok {
-		_spec.SetField(fabricoperation.FieldSecretRef, field.TypeString, value)
-	}
 	if value, ok := fouo.mutation.StartedAt(); ok {
 		_spec.SetField(fabricoperation.FieldStartedAt, field.TypeTime, value)
 	}
@@ -1094,9 +865,6 @@ func (fouo *FabricOperationUpdateOne) sqlSave(ctx context.Context) (_node *Fabri
 	}
 	if value, ok := fouo.mutation.CreatedAt(); ok {
 		_spec.SetField(fabricoperation.FieldCreatedAt, field.TypeTime, value)
-	}
-	if value, ok := fouo.mutation.UpdatedAt(); ok {
-		_spec.SetField(fabricoperation.FieldUpdatedAt, field.TypeTime, value)
 	}
 	_node = &FabricOperation{config: fouo.config}
 	_spec.Assign = _node.assignValues

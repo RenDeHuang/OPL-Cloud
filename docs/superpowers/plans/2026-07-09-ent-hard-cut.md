@@ -44,10 +44,10 @@
 
 ## Phase 5: Fabric Ent Store
 
-- [ ] Replace `PostgresOperationStore` hand-written SQL with an Ent-backed operation/runtime access store.
-- [ ] Preserve resource replay from fabric operations.
-- [ ] Preserve controlled runtime credential API behavior.
-- [ ] Keep redacted provider payload as an audit evidence snapshot.
+- [x] Replace `PostgresOperationStore` hand-written SQL with an Ent-backed operation/runtime access store.
+- [x] Preserve resource replay from fabric operations.
+- [x] Preserve controlled runtime credential API behavior.
+- [x] Keep redacted provider payload as an audit evidence snapshot.
 
 ## Phase 6: Archive Domain
 
