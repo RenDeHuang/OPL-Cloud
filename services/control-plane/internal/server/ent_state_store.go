@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strconv"
 	"time"
 
 	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/lib/pq"
 
 	controlplaneent "opl-cloud/services/control-plane/ent"
@@ -69,10 +71,15 @@ type postgresEntStateStore struct {
 }
 
 func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
-	client, err := controlplaneent.Open(dialect.Postgres, databaseURL)
+	driver, err := entsql.Open(dialect.Postgres, databaseURL)
 	if err != nil {
 		return nil, err
 	}
+	if err := backfillControlPlaneTimestamps(context.Background(), driver); err != nil {
+		_ = driver.Close()
+		return nil, err
+	}
+	client := controlplaneent.NewClient(controlplaneent.Driver(driver))
 	if err := client.Schema.Create(context.Background()); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -83,6 +90,37 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func backfillControlPlaneTimestamps(ctx context.Context, driver dialect.Driver) error {
+	const query = `
+DO $$
+DECLARE
+  target_schema text;
+  target_table text;
+BEGIN
+  FOR target_schema, target_table IN
+    SELECT c.table_schema, c.table_name
+    FROM information_schema.columns c
+    JOIN information_schema.columns u
+      ON u.table_schema = c.table_schema
+      AND u.table_name = c.table_name
+      AND u.column_name = 'updated_at'
+    WHERE c.table_schema = 'public'
+      AND c.table_name LIKE 'control_plane_%'
+      AND c.column_name = 'created_at'
+  LOOP
+    EXECUTE format(
+      'UPDATE %I.%I SET created_at = COALESCE(created_at, NOW()), updated_at = COALESCE(updated_at, created_at, NOW()) WHERE created_at IS NULL OR updated_at IS NULL',
+      target_schema,
+      target_table
+    );
+  END LOOP;
+END $$;`
+	if err := driver.Exec(ctx, query, []any{}, nil); err != nil {
+		return fmt.Errorf("backfill control-plane timestamps: %w", err)
+	}
+	return nil
 }
 
 type entRecordField struct {

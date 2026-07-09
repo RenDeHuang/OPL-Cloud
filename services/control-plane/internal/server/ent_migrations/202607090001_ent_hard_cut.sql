@@ -1,3 +1,27 @@
+DO $$
+DECLARE
+  target_schema text;
+  target_table text;
+BEGIN
+  FOR target_schema, target_table IN
+    SELECT c.table_schema, c.table_name
+    FROM information_schema.columns c
+    JOIN information_schema.columns u
+      ON u.table_schema = c.table_schema
+      AND u.table_name = c.table_name
+      AND u.column_name = 'updated_at'
+    WHERE c.table_schema = 'public'
+      AND c.table_name LIKE 'control_plane_%'
+      AND c.column_name = 'created_at'
+  LOOP
+    EXECUTE format(
+      'UPDATE %I.%I SET created_at = COALESCE(created_at, NOW()), updated_at = COALESCE(updated_at, created_at, NOW()) WHERE created_at IS NULL OR updated_at IS NULL',
+      target_schema,
+      target_table
+    );
+  END LOOP;
+END $$;
+
 CREATE TABLE IF NOT EXISTS control_plane_accounts (id TEXT NOT NULL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, owner_user_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active');
 CREATE TABLE IF NOT EXISTS control_plane_admin_audit_events (id TEXT NOT NULL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', actor_account_id TEXT NOT NULL DEFAULT '', target_account_id TEXT NOT NULL DEFAULT '', action TEXT NOT NULL DEFAULT '', resource_kind TEXT NOT NULL DEFAULT '', resource_id TEXT NOT NULL DEFAULT '', ip_address TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS control_plane_archive_jobs (id TEXT NOT NULL PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL, resource_kind TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', amount_cents BIGINT NOT NULL DEFAULT 0);
