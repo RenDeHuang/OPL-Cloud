@@ -93,7 +93,7 @@ func (app *controlPlaneApp) factsLocked() controlPlaneState {
 		Version:     1,
 		Computes:    cloneStateTable(app.computes),
 		Storages:    cloneStateTable(app.storages),
-		Attachments: cloneStateTable(app.attachments),
+		Attachments: app.attachmentFactsLocked(),
 		Workspaces:  cloneStateTable(app.workspaces),
 		Users:       cloneStateTable(app.users),
 		Sessions:    app.sessionFactsLocked(),

@@ -78,21 +78,7 @@ func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]
 		row["mountPath"] = firstNonEmpty(stringValue(row["mountPath"]), stringField(input, "mountPath", "/data"))
 		app.mu.Lock()
 		defer app.mu.Unlock()
-		ownerAccountID := firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
-		if ownerAccountID == "" {
-			compute := app.computes[stringValue(row["computeAllocationId"])]
-			storage := app.storages[stringValue(row["storageId"])]
-			computeAccountID := firstNonEmpty(stringValue(compute["ownerAccountId"]), stringValue(compute["accountId"]))
-			storageAccountID := firstNonEmpty(stringValue(storage["ownerAccountId"]), stringValue(storage["accountId"]))
-			switch {
-			case computeAccountID != "" && storageAccountID != "" && computeAccountID == storageAccountID:
-				ownerAccountID = computeAccountID
-			case computeAccountID != "":
-				ownerAccountID = computeAccountID
-			case storageAccountID != "":
-				ownerAccountID = storageAccountID
-			}
-		}
+		ownerAccountID := app.attachmentAccountIDLocked(row)
 		if ownerAccountID != "" {
 			row["ownerAccountId"] = ownerAccountID
 			row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), ownerAccountID)
@@ -104,6 +90,37 @@ func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]
 		return app.persistLocked()
 	}
 	return nil
+}
+
+func (app *controlPlaneApp) attachmentFactsLocked() controlPlaneRecordSet {
+	rows := cloneStateTable(app.attachments)
+	for _, row := range rows {
+		if accountID := app.attachmentAccountIDLocked(row); accountID != "" {
+			row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), accountID)
+			row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), accountID)
+		}
+	}
+	return rows
+}
+
+func (app *controlPlaneApp) attachmentAccountIDLocked(row map[string]any) string {
+	if row == nil {
+		return ""
+	}
+	if accountID := firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])); accountID != "" {
+		return accountID
+	}
+	compute := app.computes[firstNonEmpty(stringValue(row["computeAllocationId"]), stringValue(row["computeId"]))]
+	storage := app.storages[firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"]))]
+	workspace := app.workspaces[stringValue(row["workspaceId"])]
+	return firstNonEmpty(
+		stringValue(compute["accountId"]),
+		stringValue(compute["ownerAccountId"]),
+		stringValue(storage["accountId"]),
+		stringValue(storage["ownerAccountId"]),
+		stringValue(workspace["accountId"]),
+		stringValue(workspace["ownerAccountId"]),
+	)
 }
 
 func providerSyncFacts(row map[string]any, err error) map[string]any {

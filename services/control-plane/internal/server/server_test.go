@@ -1189,6 +1189,29 @@ func TestRememberAttachmentDerivesAccountFromLinkedResources(t *testing.T) {
 	}
 }
 
+func TestPersistDerivesAttachmentAccountFromExistingFacts(t *testing.T) {
+	app := newControlPlaneApp()
+	app.store = NewTestEntStateStore(t, t.TempDir()+"/attachment-account.sqlite")
+	app.computes["compute-alpha"] = map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}
+	app.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}
+	app.attachments["attach-alpha"] = map[string]any{
+		"id":                  "attach-alpha",
+		"computeAllocationId": "compute-alpha",
+		"storageId":           "storage-alpha",
+		"status":              "attached",
+	}
+	if err := app.persistLocked(); err != nil {
+		t.Fatalf("persist should derive attachment accountId: %v", err)
+	}
+	facts, err := app.store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stringValue(facts.Attachments["attach-alpha"]["accountId"]); got != "acct-alpha" {
+		t.Fatalf("persisted attachment accountId = %q, want acct-alpha", got)
+	}
+}
+
 func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 
