@@ -7,7 +7,9 @@ cd "$root"
 fail=0
 for pattern in \
   "type controlPlaneApp|type controlPlaneState|factsLocked|applyFacts|persistLocked" \
+  "runtimeAuthState|runtimeResourceState|runtimeBillingState" \
   "rememberCompute|rememberStorage|rememberAttachment|rememberWorkspaceProjection|rememberManualTopUp|rememberResourceSettlement" \
+  "app\\.(auth|resources|billing)" \
   "app\\.(users|sessions|loginFailures|computes|storages|attachments|workspaces|wallets|ledger|walletTx|topups|auditEvents)"
 do
   if rg -n "$pattern" services/control-plane/internal; then
