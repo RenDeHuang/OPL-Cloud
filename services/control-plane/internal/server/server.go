@@ -455,11 +455,11 @@ func workspaceResponse(row map[string]any) map[string]any {
 
 func billingStatusFor(row map[string]any) string {
 	status := stringValue(row["status"])
-	if billingStatus := stringValue(row["billingStatus"]); billingStatus != "" && !(billingStatus == "pending" && status != "pending" && status != "provisioning") {
-		return billingStatus
-	}
 	if isTerminalResourceStatus(status) {
 		return "stopped"
+	}
+	if billingStatus := stringValue(row["billingStatus"]); billingStatus != "" && !(billingStatus == "pending" && status != "pending" && status != "provisioning") {
+		return billingStatus
 	}
 	switch status {
 	case "detached", "failed":

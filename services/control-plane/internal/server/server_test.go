@@ -918,6 +918,13 @@ func TestStorageResponseActivatesBillingWhenProviderIsAvailable(t *testing.T) {
 	}
 }
 
+func TestTerminalResourceStatusStopsBilling(t *testing.T) {
+	body := computeResponse(map[string]any{"id": "compute-alpha", "status": "destroyed", "billingStatus": "active"})
+	if body["billingStatus"] != "stopped" {
+		t.Fatalf("terminal resource should stop billing, got %#v", body)
+	}
+}
+
 func TestSyncComputeAllocationExternalDeleteStopsBillingAndSuspendsWorkspace(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
