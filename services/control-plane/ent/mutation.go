@@ -20024,24 +20024,31 @@ func (m *StorageVolumeMutation) ResetEdge(name string) error {
 // SupportTicketMappingMutation represents an operation that mutates the SupportTicketMapping nodes in the graph.
 type SupportTicketMappingMutation struct {
 	config
-	op            Op
-	typ           string
-	id            *string
-	created_at    *time.Time
-	updated_at    *time.Time
-	account_id    *string
-	user_id       *string
-	workspace_id  *string
-	resource_id   *string
-	resource_kind *string
-	status        *string
-	source        *string
-	url           *string
-	reason        *string
-	clearedFields map[string]struct{}
-	done          bool
-	oldValue      func(context.Context) (*SupportTicketMapping, error)
-	predicates    []predicate.SupportTicketMapping
+	op                 Op
+	typ                string
+	id                 *string
+	created_at         *time.Time
+	updated_at         *time.Time
+	account_id         *string
+	user_id            *string
+	workspace_id       *string
+	external_system    *string
+	external_ticket_id *string
+	external_url       *string
+	operation_id       *string
+	resource_id        *string
+	resource_kind      *string
+	title              *string
+	category           *string
+	priority           *string
+	status             *string
+	source             *string
+	url                *string
+	reason             *string
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*SupportTicketMapping, error)
+	predicates         []predicate.SupportTicketMapping
 }
 
 var _ ent.Mutation = (*SupportTicketMappingMutation)(nil)
@@ -20328,6 +20335,150 @@ func (m *SupportTicketMappingMutation) ResetWorkspaceID() {
 	m.workspace_id = nil
 }
 
+// SetExternalSystem sets the "external_system" field.
+func (m *SupportTicketMappingMutation) SetExternalSystem(s string) {
+	m.external_system = &s
+}
+
+// ExternalSystem returns the value of the "external_system" field in the mutation.
+func (m *SupportTicketMappingMutation) ExternalSystem() (r string, exists bool) {
+	v := m.external_system
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExternalSystem returns the old "external_system" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldExternalSystem(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExternalSystem is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExternalSystem requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExternalSystem: %w", err)
+	}
+	return oldValue.ExternalSystem, nil
+}
+
+// ResetExternalSystem resets all changes to the "external_system" field.
+func (m *SupportTicketMappingMutation) ResetExternalSystem() {
+	m.external_system = nil
+}
+
+// SetExternalTicketID sets the "external_ticket_id" field.
+func (m *SupportTicketMappingMutation) SetExternalTicketID(s string) {
+	m.external_ticket_id = &s
+}
+
+// ExternalTicketID returns the value of the "external_ticket_id" field in the mutation.
+func (m *SupportTicketMappingMutation) ExternalTicketID() (r string, exists bool) {
+	v := m.external_ticket_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExternalTicketID returns the old "external_ticket_id" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldExternalTicketID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExternalTicketID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExternalTicketID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExternalTicketID: %w", err)
+	}
+	return oldValue.ExternalTicketID, nil
+}
+
+// ResetExternalTicketID resets all changes to the "external_ticket_id" field.
+func (m *SupportTicketMappingMutation) ResetExternalTicketID() {
+	m.external_ticket_id = nil
+}
+
+// SetExternalURL sets the "external_url" field.
+func (m *SupportTicketMappingMutation) SetExternalURL(s string) {
+	m.external_url = &s
+}
+
+// ExternalURL returns the value of the "external_url" field in the mutation.
+func (m *SupportTicketMappingMutation) ExternalURL() (r string, exists bool) {
+	v := m.external_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExternalURL returns the old "external_url" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldExternalURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExternalURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExternalURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExternalURL: %w", err)
+	}
+	return oldValue.ExternalURL, nil
+}
+
+// ResetExternalURL resets all changes to the "external_url" field.
+func (m *SupportTicketMappingMutation) ResetExternalURL() {
+	m.external_url = nil
+}
+
+// SetOperationID sets the "operation_id" field.
+func (m *SupportTicketMappingMutation) SetOperationID(s string) {
+	m.operation_id = &s
+}
+
+// OperationID returns the value of the "operation_id" field in the mutation.
+func (m *SupportTicketMappingMutation) OperationID() (r string, exists bool) {
+	v := m.operation_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOperationID returns the old "operation_id" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldOperationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOperationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOperationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOperationID: %w", err)
+	}
+	return oldValue.OperationID, nil
+}
+
+// ResetOperationID resets all changes to the "operation_id" field.
+func (m *SupportTicketMappingMutation) ResetOperationID() {
+	m.operation_id = nil
+}
+
 // SetResourceID sets the "resource_id" field.
 func (m *SupportTicketMappingMutation) SetResourceID(s string) {
 	m.resource_id = &s
@@ -20398,6 +20549,114 @@ func (m *SupportTicketMappingMutation) OldResourceKind(ctx context.Context) (v s
 // ResetResourceKind resets all changes to the "resource_kind" field.
 func (m *SupportTicketMappingMutation) ResetResourceKind() {
 	m.resource_kind = nil
+}
+
+// SetTitle sets the "title" field.
+func (m *SupportTicketMappingMutation) SetTitle(s string) {
+	m.title = &s
+}
+
+// Title returns the value of the "title" field in the mutation.
+func (m *SupportTicketMappingMutation) Title() (r string, exists bool) {
+	v := m.title
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTitle returns the old "title" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldTitle(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTitle is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTitle requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTitle: %w", err)
+	}
+	return oldValue.Title, nil
+}
+
+// ResetTitle resets all changes to the "title" field.
+func (m *SupportTicketMappingMutation) ResetTitle() {
+	m.title = nil
+}
+
+// SetCategory sets the "category" field.
+func (m *SupportTicketMappingMutation) SetCategory(s string) {
+	m.category = &s
+}
+
+// Category returns the value of the "category" field in the mutation.
+func (m *SupportTicketMappingMutation) Category() (r string, exists bool) {
+	v := m.category
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCategory returns the old "category" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldCategory(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCategory is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCategory requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCategory: %w", err)
+	}
+	return oldValue.Category, nil
+}
+
+// ResetCategory resets all changes to the "category" field.
+func (m *SupportTicketMappingMutation) ResetCategory() {
+	m.category = nil
+}
+
+// SetPriority sets the "priority" field.
+func (m *SupportTicketMappingMutation) SetPriority(s string) {
+	m.priority = &s
+}
+
+// Priority returns the value of the "priority" field in the mutation.
+func (m *SupportTicketMappingMutation) Priority() (r string, exists bool) {
+	v := m.priority
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPriority returns the old "priority" field's value of the SupportTicketMapping entity.
+// If the SupportTicketMapping object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SupportTicketMappingMutation) OldPriority(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPriority is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPriority requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPriority: %w", err)
+	}
+	return oldValue.Priority, nil
+}
+
+// ResetPriority resets all changes to the "priority" field.
+func (m *SupportTicketMappingMutation) ResetPriority() {
+	m.priority = nil
 }
 
 // SetStatus sets the "status" field.
@@ -20578,7 +20837,7 @@ func (m *SupportTicketMappingMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SupportTicketMappingMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 18)
 	if m.created_at != nil {
 		fields = append(fields, supportticketmapping.FieldCreatedAt)
 	}
@@ -20594,11 +20853,32 @@ func (m *SupportTicketMappingMutation) Fields() []string {
 	if m.workspace_id != nil {
 		fields = append(fields, supportticketmapping.FieldWorkspaceID)
 	}
+	if m.external_system != nil {
+		fields = append(fields, supportticketmapping.FieldExternalSystem)
+	}
+	if m.external_ticket_id != nil {
+		fields = append(fields, supportticketmapping.FieldExternalTicketID)
+	}
+	if m.external_url != nil {
+		fields = append(fields, supportticketmapping.FieldExternalURL)
+	}
+	if m.operation_id != nil {
+		fields = append(fields, supportticketmapping.FieldOperationID)
+	}
 	if m.resource_id != nil {
 		fields = append(fields, supportticketmapping.FieldResourceID)
 	}
 	if m.resource_kind != nil {
 		fields = append(fields, supportticketmapping.FieldResourceKind)
+	}
+	if m.title != nil {
+		fields = append(fields, supportticketmapping.FieldTitle)
+	}
+	if m.category != nil {
+		fields = append(fields, supportticketmapping.FieldCategory)
+	}
+	if m.priority != nil {
+		fields = append(fields, supportticketmapping.FieldPriority)
 	}
 	if m.status != nil {
 		fields = append(fields, supportticketmapping.FieldStatus)
@@ -20630,10 +20910,24 @@ func (m *SupportTicketMappingMutation) Field(name string) (ent.Value, bool) {
 		return m.UserID()
 	case supportticketmapping.FieldWorkspaceID:
 		return m.WorkspaceID()
+	case supportticketmapping.FieldExternalSystem:
+		return m.ExternalSystem()
+	case supportticketmapping.FieldExternalTicketID:
+		return m.ExternalTicketID()
+	case supportticketmapping.FieldExternalURL:
+		return m.ExternalURL()
+	case supportticketmapping.FieldOperationID:
+		return m.OperationID()
 	case supportticketmapping.FieldResourceID:
 		return m.ResourceID()
 	case supportticketmapping.FieldResourceKind:
 		return m.ResourceKind()
+	case supportticketmapping.FieldTitle:
+		return m.Title()
+	case supportticketmapping.FieldCategory:
+		return m.Category()
+	case supportticketmapping.FieldPriority:
+		return m.Priority()
 	case supportticketmapping.FieldStatus:
 		return m.Status()
 	case supportticketmapping.FieldSource:
@@ -20661,10 +20955,24 @@ func (m *SupportTicketMappingMutation) OldField(ctx context.Context, name string
 		return m.OldUserID(ctx)
 	case supportticketmapping.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
+	case supportticketmapping.FieldExternalSystem:
+		return m.OldExternalSystem(ctx)
+	case supportticketmapping.FieldExternalTicketID:
+		return m.OldExternalTicketID(ctx)
+	case supportticketmapping.FieldExternalURL:
+		return m.OldExternalURL(ctx)
+	case supportticketmapping.FieldOperationID:
+		return m.OldOperationID(ctx)
 	case supportticketmapping.FieldResourceID:
 		return m.OldResourceID(ctx)
 	case supportticketmapping.FieldResourceKind:
 		return m.OldResourceKind(ctx)
+	case supportticketmapping.FieldTitle:
+		return m.OldTitle(ctx)
+	case supportticketmapping.FieldCategory:
+		return m.OldCategory(ctx)
+	case supportticketmapping.FieldPriority:
+		return m.OldPriority(ctx)
 	case supportticketmapping.FieldStatus:
 		return m.OldStatus(ctx)
 	case supportticketmapping.FieldSource:
@@ -20717,6 +21025,34 @@ func (m *SupportTicketMappingMutation) SetField(name string, value ent.Value) er
 		}
 		m.SetWorkspaceID(v)
 		return nil
+	case supportticketmapping.FieldExternalSystem:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExternalSystem(v)
+		return nil
+	case supportticketmapping.FieldExternalTicketID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExternalTicketID(v)
+		return nil
+	case supportticketmapping.FieldExternalURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExternalURL(v)
+		return nil
+	case supportticketmapping.FieldOperationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOperationID(v)
+		return nil
 	case supportticketmapping.FieldResourceID:
 		v, ok := value.(string)
 		if !ok {
@@ -20730,6 +21066,27 @@ func (m *SupportTicketMappingMutation) SetField(name string, value ent.Value) er
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetResourceKind(v)
+		return nil
+	case supportticketmapping.FieldTitle:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTitle(v)
+		return nil
+	case supportticketmapping.FieldCategory:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCategory(v)
+		return nil
+	case supportticketmapping.FieldPriority:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPriority(v)
 		return nil
 	case supportticketmapping.FieldStatus:
 		v, ok := value.(string)
@@ -20823,11 +21180,32 @@ func (m *SupportTicketMappingMutation) ResetField(name string) error {
 	case supportticketmapping.FieldWorkspaceID:
 		m.ResetWorkspaceID()
 		return nil
+	case supportticketmapping.FieldExternalSystem:
+		m.ResetExternalSystem()
+		return nil
+	case supportticketmapping.FieldExternalTicketID:
+		m.ResetExternalTicketID()
+		return nil
+	case supportticketmapping.FieldExternalURL:
+		m.ResetExternalURL()
+		return nil
+	case supportticketmapping.FieldOperationID:
+		m.ResetOperationID()
+		return nil
 	case supportticketmapping.FieldResourceID:
 		m.ResetResourceID()
 		return nil
 	case supportticketmapping.FieldResourceKind:
 		m.ResetResourceKind()
+		return nil
+	case supportticketmapping.FieldTitle:
+		m.ResetTitle()
+		return nil
+	case supportticketmapping.FieldCategory:
+		m.ResetCategory()
+		return nil
+	case supportticketmapping.FieldPriority:
+		m.ResetPriority()
 		return nil
 	case supportticketmapping.FieldStatus:
 		m.ResetStatus()

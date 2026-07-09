@@ -156,6 +156,8 @@ test("Control Plane current facts are not backed by retired JSON read model symb
     "readModelSnapshot",
     "control_plane_read_model",
     "NewJSONReadModelStore",
+    "NewMemoryStateStore",
+    "memoryStateStore",
     "OPL_CONTROL_PLANE_STATE_FILE",
     "runtimeApp",
     "read_model_persist_failed"

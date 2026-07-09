@@ -32,7 +32,7 @@
 - [x] Replace `FactStore` with typed Ent repositories.
 - [x] Remove file fact store and `OPL_CONTROL_PLANE_FACTS_FILE`.
 - [x] Make `/api/state` and `/api/management/state` aggregate Ent facts plus Ledger/Fabric HTTP reads only.
-- [ ] Delete old fact-store tests once Ent repository tests cover the behavior.
+- [x] Delete old fact-store tests once Ent repository tests cover the behavior.
 - [x] Confirm frontend-facing DTOs still expose price, wallet, resources, URL, account, audit, and support facts from backend responses.
 
 ## Phase 4: Ledger Ent Store

@@ -90,6 +90,62 @@ func (stmu *SupportTicketMappingUpdate) SetNillableWorkspaceID(s *string) *Suppo
 	return stmu
 }
 
+// SetExternalSystem sets the "external_system" field.
+func (stmu *SupportTicketMappingUpdate) SetExternalSystem(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetExternalSystem(s)
+	return stmu
+}
+
+// SetNillableExternalSystem sets the "external_system" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillableExternalSystem(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetExternalSystem(*s)
+	}
+	return stmu
+}
+
+// SetExternalTicketID sets the "external_ticket_id" field.
+func (stmu *SupportTicketMappingUpdate) SetExternalTicketID(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetExternalTicketID(s)
+	return stmu
+}
+
+// SetNillableExternalTicketID sets the "external_ticket_id" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillableExternalTicketID(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetExternalTicketID(*s)
+	}
+	return stmu
+}
+
+// SetExternalURL sets the "external_url" field.
+func (stmu *SupportTicketMappingUpdate) SetExternalURL(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetExternalURL(s)
+	return stmu
+}
+
+// SetNillableExternalURL sets the "external_url" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillableExternalURL(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetExternalURL(*s)
+	}
+	return stmu
+}
+
+// SetOperationID sets the "operation_id" field.
+func (stmu *SupportTicketMappingUpdate) SetOperationID(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetOperationID(s)
+	return stmu
+}
+
+// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillableOperationID(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetOperationID(*s)
+	}
+	return stmu
+}
+
 // SetResourceID sets the "resource_id" field.
 func (stmu *SupportTicketMappingUpdate) SetResourceID(s string) *SupportTicketMappingUpdate {
 	stmu.mutation.SetResourceID(s)
@@ -114,6 +170,48 @@ func (stmu *SupportTicketMappingUpdate) SetResourceKind(s string) *SupportTicket
 func (stmu *SupportTicketMappingUpdate) SetNillableResourceKind(s *string) *SupportTicketMappingUpdate {
 	if s != nil {
 		stmu.SetResourceKind(*s)
+	}
+	return stmu
+}
+
+// SetTitle sets the "title" field.
+func (stmu *SupportTicketMappingUpdate) SetTitle(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetTitle(s)
+	return stmu
+}
+
+// SetNillableTitle sets the "title" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillableTitle(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetTitle(*s)
+	}
+	return stmu
+}
+
+// SetCategory sets the "category" field.
+func (stmu *SupportTicketMappingUpdate) SetCategory(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetCategory(s)
+	return stmu
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillableCategory(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetCategory(*s)
+	}
+	return stmu
+}
+
+// SetPriority sets the "priority" field.
+func (stmu *SupportTicketMappingUpdate) SetPriority(s string) *SupportTicketMappingUpdate {
+	stmu.mutation.SetPriority(s)
+	return stmu
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (stmu *SupportTicketMappingUpdate) SetNillablePriority(s *string) *SupportTicketMappingUpdate {
+	if s != nil {
+		stmu.SetPriority(*s)
 	}
 	return stmu
 }
@@ -239,11 +337,32 @@ func (stmu *SupportTicketMappingUpdate) sqlSave(ctx context.Context) (n int, err
 	if value, ok := stmu.mutation.WorkspaceID(); ok {
 		_spec.SetField(supportticketmapping.FieldWorkspaceID, field.TypeString, value)
 	}
+	if value, ok := stmu.mutation.ExternalSystem(); ok {
+		_spec.SetField(supportticketmapping.FieldExternalSystem, field.TypeString, value)
+	}
+	if value, ok := stmu.mutation.ExternalTicketID(); ok {
+		_spec.SetField(supportticketmapping.FieldExternalTicketID, field.TypeString, value)
+	}
+	if value, ok := stmu.mutation.ExternalURL(); ok {
+		_spec.SetField(supportticketmapping.FieldExternalURL, field.TypeString, value)
+	}
+	if value, ok := stmu.mutation.OperationID(); ok {
+		_spec.SetField(supportticketmapping.FieldOperationID, field.TypeString, value)
+	}
 	if value, ok := stmu.mutation.ResourceID(); ok {
 		_spec.SetField(supportticketmapping.FieldResourceID, field.TypeString, value)
 	}
 	if value, ok := stmu.mutation.ResourceKind(); ok {
 		_spec.SetField(supportticketmapping.FieldResourceKind, field.TypeString, value)
+	}
+	if value, ok := stmu.mutation.Title(); ok {
+		_spec.SetField(supportticketmapping.FieldTitle, field.TypeString, value)
+	}
+	if value, ok := stmu.mutation.Category(); ok {
+		_spec.SetField(supportticketmapping.FieldCategory, field.TypeString, value)
+	}
+	if value, ok := stmu.mutation.Priority(); ok {
+		_spec.SetField(supportticketmapping.FieldPriority, field.TypeString, value)
 	}
 	if value, ok := stmu.mutation.Status(); ok {
 		_spec.SetField(supportticketmapping.FieldStatus, field.TypeString, value)
@@ -339,6 +458,62 @@ func (stmuo *SupportTicketMappingUpdateOne) SetNillableWorkspaceID(s *string) *S
 	return stmuo
 }
 
+// SetExternalSystem sets the "external_system" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetExternalSystem(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetExternalSystem(s)
+	return stmuo
+}
+
+// SetNillableExternalSystem sets the "external_system" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillableExternalSystem(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetExternalSystem(*s)
+	}
+	return stmuo
+}
+
+// SetExternalTicketID sets the "external_ticket_id" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetExternalTicketID(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetExternalTicketID(s)
+	return stmuo
+}
+
+// SetNillableExternalTicketID sets the "external_ticket_id" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillableExternalTicketID(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetExternalTicketID(*s)
+	}
+	return stmuo
+}
+
+// SetExternalURL sets the "external_url" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetExternalURL(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetExternalURL(s)
+	return stmuo
+}
+
+// SetNillableExternalURL sets the "external_url" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillableExternalURL(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetExternalURL(*s)
+	}
+	return stmuo
+}
+
+// SetOperationID sets the "operation_id" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetOperationID(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetOperationID(s)
+	return stmuo
+}
+
+// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillableOperationID(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetOperationID(*s)
+	}
+	return stmuo
+}
+
 // SetResourceID sets the "resource_id" field.
 func (stmuo *SupportTicketMappingUpdateOne) SetResourceID(s string) *SupportTicketMappingUpdateOne {
 	stmuo.mutation.SetResourceID(s)
@@ -363,6 +538,48 @@ func (stmuo *SupportTicketMappingUpdateOne) SetResourceKind(s string) *SupportTi
 func (stmuo *SupportTicketMappingUpdateOne) SetNillableResourceKind(s *string) *SupportTicketMappingUpdateOne {
 	if s != nil {
 		stmuo.SetResourceKind(*s)
+	}
+	return stmuo
+}
+
+// SetTitle sets the "title" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetTitle(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetTitle(s)
+	return stmuo
+}
+
+// SetNillableTitle sets the "title" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillableTitle(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetTitle(*s)
+	}
+	return stmuo
+}
+
+// SetCategory sets the "category" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetCategory(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetCategory(s)
+	return stmuo
+}
+
+// SetNillableCategory sets the "category" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillableCategory(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetCategory(*s)
+	}
+	return stmuo
+}
+
+// SetPriority sets the "priority" field.
+func (stmuo *SupportTicketMappingUpdateOne) SetPriority(s string) *SupportTicketMappingUpdateOne {
+	stmuo.mutation.SetPriority(s)
+	return stmuo
+}
+
+// SetNillablePriority sets the "priority" field if the given value is not nil.
+func (stmuo *SupportTicketMappingUpdateOne) SetNillablePriority(s *string) *SupportTicketMappingUpdateOne {
+	if s != nil {
+		stmuo.SetPriority(*s)
 	}
 	return stmuo
 }
@@ -518,11 +735,32 @@ func (stmuo *SupportTicketMappingUpdateOne) sqlSave(ctx context.Context) (_node 
 	if value, ok := stmuo.mutation.WorkspaceID(); ok {
 		_spec.SetField(supportticketmapping.FieldWorkspaceID, field.TypeString, value)
 	}
+	if value, ok := stmuo.mutation.ExternalSystem(); ok {
+		_spec.SetField(supportticketmapping.FieldExternalSystem, field.TypeString, value)
+	}
+	if value, ok := stmuo.mutation.ExternalTicketID(); ok {
+		_spec.SetField(supportticketmapping.FieldExternalTicketID, field.TypeString, value)
+	}
+	if value, ok := stmuo.mutation.ExternalURL(); ok {
+		_spec.SetField(supportticketmapping.FieldExternalURL, field.TypeString, value)
+	}
+	if value, ok := stmuo.mutation.OperationID(); ok {
+		_spec.SetField(supportticketmapping.FieldOperationID, field.TypeString, value)
+	}
 	if value, ok := stmuo.mutation.ResourceID(); ok {
 		_spec.SetField(supportticketmapping.FieldResourceID, field.TypeString, value)
 	}
 	if value, ok := stmuo.mutation.ResourceKind(); ok {
 		_spec.SetField(supportticketmapping.FieldResourceKind, field.TypeString, value)
+	}
+	if value, ok := stmuo.mutation.Title(); ok {
+		_spec.SetField(supportticketmapping.FieldTitle, field.TypeString, value)
+	}
+	if value, ok := stmuo.mutation.Category(); ok {
+		_spec.SetField(supportticketmapping.FieldCategory, field.TypeString, value)
+	}
+	if value, ok := stmuo.mutation.Priority(); ok {
+		_spec.SetField(supportticketmapping.FieldPriority, field.TypeString, value)
 	}
 	if value, ok := stmuo.mutation.Status(); ok {
 		_spec.SetField(supportticketmapping.FieldStatus, field.TypeString, value)

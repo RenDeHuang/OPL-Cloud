@@ -27,10 +27,24 @@ type SupportTicketMapping struct {
 	UserID string `json:"user_id,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
 	WorkspaceID string `json:"workspace_id,omitempty"`
+	// ExternalSystem holds the value of the "external_system" field.
+	ExternalSystem string `json:"external_system,omitempty"`
+	// ExternalTicketID holds the value of the "external_ticket_id" field.
+	ExternalTicketID string `json:"external_ticket_id,omitempty"`
+	// ExternalURL holds the value of the "external_url" field.
+	ExternalURL string `json:"external_url,omitempty"`
+	// OperationID holds the value of the "operation_id" field.
+	OperationID string `json:"operation_id,omitempty"`
 	// ResourceID holds the value of the "resource_id" field.
 	ResourceID string `json:"resource_id,omitempty"`
 	// ResourceKind holds the value of the "resource_kind" field.
 	ResourceKind string `json:"resource_kind,omitempty"`
+	// Title holds the value of the "title" field.
+	Title string `json:"title,omitempty"`
+	// Category holds the value of the "category" field.
+	Category string `json:"category,omitempty"`
+	// Priority holds the value of the "priority" field.
+	Priority string `json:"priority,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
 	// Source holds the value of the "source" field.
@@ -47,7 +61,7 @@ func (*SupportTicketMapping) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case supportticketmapping.FieldID, supportticketmapping.FieldAccountID, supportticketmapping.FieldUserID, supportticketmapping.FieldWorkspaceID, supportticketmapping.FieldResourceID, supportticketmapping.FieldResourceKind, supportticketmapping.FieldStatus, supportticketmapping.FieldSource, supportticketmapping.FieldURL, supportticketmapping.FieldReason:
+		case supportticketmapping.FieldID, supportticketmapping.FieldAccountID, supportticketmapping.FieldUserID, supportticketmapping.FieldWorkspaceID, supportticketmapping.FieldExternalSystem, supportticketmapping.FieldExternalTicketID, supportticketmapping.FieldExternalURL, supportticketmapping.FieldOperationID, supportticketmapping.FieldResourceID, supportticketmapping.FieldResourceKind, supportticketmapping.FieldTitle, supportticketmapping.FieldCategory, supportticketmapping.FieldPriority, supportticketmapping.FieldStatus, supportticketmapping.FieldSource, supportticketmapping.FieldURL, supportticketmapping.FieldReason:
 			values[i] = new(sql.NullString)
 		case supportticketmapping.FieldCreatedAt, supportticketmapping.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -102,6 +116,30 @@ func (stm *SupportTicketMapping) assignValues(columns []string, values []any) er
 			} else if value.Valid {
 				stm.WorkspaceID = value.String
 			}
+		case supportticketmapping.FieldExternalSystem:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field external_system", values[i])
+			} else if value.Valid {
+				stm.ExternalSystem = value.String
+			}
+		case supportticketmapping.FieldExternalTicketID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field external_ticket_id", values[i])
+			} else if value.Valid {
+				stm.ExternalTicketID = value.String
+			}
+		case supportticketmapping.FieldExternalURL:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field external_url", values[i])
+			} else if value.Valid {
+				stm.ExternalURL = value.String
+			}
+		case supportticketmapping.FieldOperationID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field operation_id", values[i])
+			} else if value.Valid {
+				stm.OperationID = value.String
+			}
 		case supportticketmapping.FieldResourceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field resource_id", values[i])
@@ -113,6 +151,24 @@ func (stm *SupportTicketMapping) assignValues(columns []string, values []any) er
 				return fmt.Errorf("unexpected type %T for field resource_kind", values[i])
 			} else if value.Valid {
 				stm.ResourceKind = value.String
+			}
+		case supportticketmapping.FieldTitle:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field title", values[i])
+			} else if value.Valid {
+				stm.Title = value.String
+			}
+		case supportticketmapping.FieldCategory:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field category", values[i])
+			} else if value.Valid {
+				stm.Category = value.String
+			}
+		case supportticketmapping.FieldPriority:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field priority", values[i])
+			} else if value.Valid {
+				stm.Priority = value.String
 			}
 		case supportticketmapping.FieldStatus:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -189,11 +245,32 @@ func (stm *SupportTicketMapping) String() string {
 	builder.WriteString("workspace_id=")
 	builder.WriteString(stm.WorkspaceID)
 	builder.WriteString(", ")
+	builder.WriteString("external_system=")
+	builder.WriteString(stm.ExternalSystem)
+	builder.WriteString(", ")
+	builder.WriteString("external_ticket_id=")
+	builder.WriteString(stm.ExternalTicketID)
+	builder.WriteString(", ")
+	builder.WriteString("external_url=")
+	builder.WriteString(stm.ExternalURL)
+	builder.WriteString(", ")
+	builder.WriteString("operation_id=")
+	builder.WriteString(stm.OperationID)
+	builder.WriteString(", ")
 	builder.WriteString("resource_id=")
 	builder.WriteString(stm.ResourceID)
 	builder.WriteString(", ")
 	builder.WriteString("resource_kind=")
 	builder.WriteString(stm.ResourceKind)
+	builder.WriteString(", ")
+	builder.WriteString("title=")
+	builder.WriteString(stm.Title)
+	builder.WriteString(", ")
+	builder.WriteString("category=")
+	builder.WriteString(stm.Category)
+	builder.WriteString(", ")
+	builder.WriteString("priority=")
+	builder.WriteString(stm.Priority)
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(stm.Status)

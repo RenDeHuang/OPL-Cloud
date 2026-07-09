@@ -23,10 +23,24 @@ const (
 	FieldUserID = "user_id"
 	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
 	FieldWorkspaceID = "workspace_id"
+	// FieldExternalSystem holds the string denoting the external_system field in the database.
+	FieldExternalSystem = "external_system"
+	// FieldExternalTicketID holds the string denoting the external_ticket_id field in the database.
+	FieldExternalTicketID = "external_ticket_id"
+	// FieldExternalURL holds the string denoting the external_url field in the database.
+	FieldExternalURL = "external_url"
+	// FieldOperationID holds the string denoting the operation_id field in the database.
+	FieldOperationID = "operation_id"
 	// FieldResourceID holds the string denoting the resource_id field in the database.
 	FieldResourceID = "resource_id"
 	// FieldResourceKind holds the string denoting the resource_kind field in the database.
 	FieldResourceKind = "resource_kind"
+	// FieldTitle holds the string denoting the title field in the database.
+	FieldTitle = "title"
+	// FieldCategory holds the string denoting the category field in the database.
+	FieldCategory = "category"
+	// FieldPriority holds the string denoting the priority field in the database.
+	FieldPriority = "priority"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
 	// FieldSource holds the string denoting the source field in the database.
@@ -47,8 +61,15 @@ var Columns = []string{
 	FieldAccountID,
 	FieldUserID,
 	FieldWorkspaceID,
+	FieldExternalSystem,
+	FieldExternalTicketID,
+	FieldExternalURL,
+	FieldOperationID,
 	FieldResourceID,
 	FieldResourceKind,
+	FieldTitle,
+	FieldCategory,
+	FieldPriority,
 	FieldStatus,
 	FieldSource,
 	FieldURL,
@@ -78,10 +99,24 @@ var (
 	DefaultUserID string
 	// DefaultWorkspaceID holds the default value on creation for the "workspace_id" field.
 	DefaultWorkspaceID string
+	// DefaultExternalSystem holds the default value on creation for the "external_system" field.
+	DefaultExternalSystem string
+	// DefaultExternalTicketID holds the default value on creation for the "external_ticket_id" field.
+	DefaultExternalTicketID string
+	// DefaultExternalURL holds the default value on creation for the "external_url" field.
+	DefaultExternalURL string
+	// DefaultOperationID holds the default value on creation for the "operation_id" field.
+	DefaultOperationID string
 	// DefaultResourceID holds the default value on creation for the "resource_id" field.
 	DefaultResourceID string
 	// DefaultResourceKind holds the default value on creation for the "resource_kind" field.
 	DefaultResourceKind string
+	// DefaultTitle holds the default value on creation for the "title" field.
+	DefaultTitle string
+	// DefaultCategory holds the default value on creation for the "category" field.
+	DefaultCategory string
+	// DefaultPriority holds the default value on creation for the "priority" field.
+	DefaultPriority string
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// DefaultSource holds the default value on creation for the "source" field.
@@ -127,6 +162,26 @@ func ByWorkspaceID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWorkspaceID, opts...).ToFunc()
 }
 
+// ByExternalSystem orders the results by the external_system field.
+func ByExternalSystem(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldExternalSystem, opts...).ToFunc()
+}
+
+// ByExternalTicketID orders the results by the external_ticket_id field.
+func ByExternalTicketID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldExternalTicketID, opts...).ToFunc()
+}
+
+// ByExternalURL orders the results by the external_url field.
+func ByExternalURL(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldExternalURL, opts...).ToFunc()
+}
+
+// ByOperationID orders the results by the operation_id field.
+func ByOperationID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOperationID, opts...).ToFunc()
+}
+
 // ByResourceID orders the results by the resource_id field.
 func ByResourceID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldResourceID, opts...).ToFunc()
@@ -135,6 +190,21 @@ func ByResourceID(opts ...sql.OrderTermOption) OrderOption {
 // ByResourceKind orders the results by the resource_kind field.
 func ByResourceKind(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldResourceKind, opts...).ToFunc()
+}
+
+// ByTitle orders the results by the title field.
+func ByTitle(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldTitle, opts...).ToFunc()
+}
+
+// ByCategory orders the results by the category field.
+func ByCategory(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCategory, opts...).ToFunc()
+}
+
+// ByPriority orders the results by the priority field.
+func ByPriority(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPriority, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

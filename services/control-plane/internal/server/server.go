@@ -685,6 +685,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)
+		body["accountId"] = accountID
 		if err := app.rememberAttachment(body, input); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
