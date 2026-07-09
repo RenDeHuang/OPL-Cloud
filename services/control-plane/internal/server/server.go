@@ -856,7 +856,12 @@ func (app *controlPlaneApp) consoleStatic(w http.ResponseWriter, r *http.Request
 		http.FileServer(http.Dir(dist)).ServeHTTP(w, r)
 		return
 	}
-	http.ServeFile(w, r, filepath.Join(dist, "index.html"))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if data, err := os.ReadFile(filepath.Join(dist, "index.html")); err == nil {
+		_, _ = w.Write(data)
+		return
+	}
+	_, _ = w.Write([]byte(`<!doctype html><html><head><title>OPL Console</title></head><body><div id="root"></div></body></html>`))
 }
 
 func consoleDistDir() string {
