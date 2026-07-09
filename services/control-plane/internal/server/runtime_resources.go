@@ -82,8 +82,15 @@ func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]
 		if ownerAccountID == "" {
 			compute := app.computes[stringValue(row["computeAllocationId"])]
 			storage := app.storages[stringValue(row["storageId"])]
-			if stringValue(compute["ownerAccountId"]) != "" && stringValue(compute["ownerAccountId"]) == stringValue(storage["ownerAccountId"]) {
-				ownerAccountID = stringValue(compute["ownerAccountId"])
+			computeAccountID := firstNonEmpty(stringValue(compute["ownerAccountId"]), stringValue(compute["accountId"]))
+			storageAccountID := firstNonEmpty(stringValue(storage["ownerAccountId"]), stringValue(storage["accountId"]))
+			switch {
+			case computeAccountID != "" && storageAccountID != "" && computeAccountID == storageAccountID:
+				ownerAccountID = computeAccountID
+			case computeAccountID != "":
+				ownerAccountID = computeAccountID
+			case storageAccountID != "":
+				ownerAccountID = storageAccountID
 			}
 		}
 		if ownerAccountID != "" {

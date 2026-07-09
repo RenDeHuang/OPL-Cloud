@@ -1172,6 +1172,23 @@ func TestDetachStorageAttachmentPreservesOwnershipFacts(t *testing.T) {
 	}
 }
 
+func TestRememberAttachmentDerivesAccountFromLinkedResources(t *testing.T) {
+	app := newControlPlaneApp()
+	app.computes["compute-alpha"] = map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}
+	app.storages["storage-alpha"] = map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}
+	if err := app.rememberAttachment(map[string]any{
+		"id":                  "attach-alpha",
+		"computeAllocationId": "compute-alpha",
+		"storageId":           "storage-alpha",
+		"status":              "attached",
+	}, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stringValue(app.attachments["attach-alpha"]["accountId"]); got != "acct-alpha" {
+		t.Fatalf("attachment accountId = %q, want acct-alpha", got)
+	}
+}
+
 func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 
