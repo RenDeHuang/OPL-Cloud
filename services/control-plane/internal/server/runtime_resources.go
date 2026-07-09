@@ -4,11 +4,11 @@ import "context"
 import "net/http"
 import "time"
 
-func (app *controlPlaneApp) rememberCompute(allocation any) error {
+func (app *controlPlaneServer) saveComputeFact(allocation any) error {
 	if row, ok := allocation.(map[string]any); ok {
 		accountID := stringValue(row["accountId"])
 		if isTerminalResourceStatus(stringValue(row["status"])) {
-			if err := app.rememberRelease(accountID, "compute", stringValue(row["id"]), row); err != nil {
+			if err := app.saveReleaseProjection(accountID, "compute", stringValue(row["id"]), row); err != nil {
 				return err
 			}
 			if err := app.suspendWorkspacesForCompute(stringValue(row["id"])); err != nil {
@@ -16,7 +16,7 @@ func (app *controlPlaneApp) rememberCompute(allocation any) error {
 			}
 			return app.tables.SaveCompute(context.Background(), row)
 		}
-		if err := app.rememberHold(accountID, "compute", stringValue(row["id"]), row); err != nil {
+		if err := app.saveHoldProjection(accountID, "compute", stringValue(row["id"]), row); err != nil {
 			return err
 		}
 		return app.tables.SaveCompute(context.Background(), row)
@@ -24,11 +24,11 @@ func (app *controlPlaneApp) rememberCompute(allocation any) error {
 	return nil
 }
 
-func (app *controlPlaneApp) rememberStorage(volume any) error {
+func (app *controlPlaneServer) saveStorageFact(volume any) error {
 	if row, ok := volume.(map[string]any); ok {
 		accountID := stringValue(row["accountId"])
 		if isTerminalResourceStatus(stringValue(row["status"])) {
-			if err := app.rememberRelease(accountID, "storage", stringValue(row["id"]), row); err != nil {
+			if err := app.saveReleaseProjection(accountID, "storage", stringValue(row["id"]), row); err != nil {
 				return err
 			}
 			if err := app.markWorkspacesStorageDestroyed(stringValue(row["id"])); err != nil {
@@ -36,7 +36,7 @@ func (app *controlPlaneApp) rememberStorage(volume any) error {
 			}
 			return app.tables.SaveStorage(context.Background(), row)
 		}
-		if err := app.rememberHold(accountID, "storage", stringValue(row["id"]), row); err != nil {
+		if err := app.saveHoldProjection(accountID, "storage", stringValue(row["id"]), row); err != nil {
 			return err
 		}
 		return app.tables.SaveStorage(context.Background(), row)
@@ -44,7 +44,7 @@ func (app *controlPlaneApp) rememberStorage(volume any) error {
 	return nil
 }
 
-func (app *controlPlaneApp) rememberHold(accountID string, resourceType string, resourceID string, row map[string]any) error {
+func (app *controlPlaneServer) saveHoldProjection(accountID string, resourceType string, resourceID string, row map[string]any) error {
 	holdID := stringValue(row["holdId"])
 	if accountID == "" || holdID == "" {
 		return nil
@@ -63,7 +63,7 @@ func (app *controlPlaneApp) rememberHold(accountID string, resourceType string, 
 	return app.tables.SaveLedgerEntry(context.Background(), ledger)
 }
 
-func (app *controlPlaneApp) rememberRelease(accountID string, resourceType string, resourceID string, row map[string]any) error {
+func (app *controlPlaneServer) saveReleaseProjection(accountID string, resourceType string, resourceID string, row map[string]any) error {
 	releaseID := stringValue(row["holdReleaseId"])
 	if accountID == "" || releaseID == "" {
 		return nil
@@ -82,7 +82,7 @@ func (app *controlPlaneApp) rememberRelease(accountID string, resourceType strin
 	return app.tables.SaveLedgerEntry(context.Background(), ledger)
 }
 
-func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]any) error {
+func (app *controlPlaneServer) saveAttachmentFact(attachment any, input map[string]any) error {
 	if row, ok := attachment.(map[string]any); ok {
 		row["computeAllocationId"] = firstNonEmpty(stringValue(row["computeAllocationId"]), stringValue(row["computeId"]), stringField(input, "computeAllocationId", ""))
 		row["storageId"] = firstNonEmpty(stringValue(row["storageId"]), stringValue(row["volumeId"]), stringField(input, "storageId", ""))
@@ -102,7 +102,7 @@ func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]
 	return nil
 }
 
-func (app *controlPlaneApp) attachmentFactsLocked() controlPlaneRecordSet {
+func (app *controlPlaneServer) attachmentFactsLocked() controlPlaneRecordSet {
 	rows := app.attachmentRecordSet("")
 	for _, row := range rows {
 		if accountID := app.attachmentAccountID(row); accountID != "" {
@@ -113,7 +113,7 @@ func (app *controlPlaneApp) attachmentFactsLocked() controlPlaneRecordSet {
 	return rows
 }
 
-func (app *controlPlaneApp) attachmentAccountID(row map[string]any) string {
+func (app *controlPlaneServer) attachmentAccountID(row map[string]any) string {
 	if row == nil {
 		return ""
 	}
@@ -165,14 +165,14 @@ func customerSafeProviderError(err error) string {
 	return err.Error()
 }
 
-func (app *controlPlaneApp) resourceBelongsToAccount(row map[string]any, accountID string) bool {
+func (app *controlPlaneServer) resourceBelongsToAccount(row map[string]any, accountID string) bool {
 	if accountID == "" {
 		return false
 	}
 	return firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) == accountID
 }
 
-func (app *controlPlaneApp) getCompute(id string) (map[string]any, bool) {
+func (app *controlPlaneServer) getCompute(id string) (map[string]any, bool) {
 	for _, compute := range app.listComputes("") {
 		if stringValue(compute["id"]) == id {
 			return cloneMap(compute), true
@@ -181,7 +181,7 @@ func (app *controlPlaneApp) getCompute(id string) (map[string]any, bool) {
 	return nil, false
 }
 
-func (app *controlPlaneApp) getStorage(id string) (map[string]any, bool) {
+func (app *controlPlaneServer) getStorage(id string) (map[string]any, bool) {
 	for _, storage := range app.listStorages("") {
 		if stringValue(storage["id"]) == id {
 			return cloneMap(storage), true
@@ -190,7 +190,7 @@ func (app *controlPlaneApp) getStorage(id string) (map[string]any, bool) {
 	return nil, false
 }
 
-func (app *controlPlaneApp) getAttachment(id string) (map[string]any, bool) {
+func (app *controlPlaneServer) getAttachment(id string) (map[string]any, bool) {
 	for _, attachment := range app.listAttachments("") {
 		if stringValue(attachment["id"]) == id {
 			return cloneMap(attachment), true
@@ -199,7 +199,7 @@ func (app *controlPlaneApp) getAttachment(id string) (map[string]any, bool) {
 	return nil, false
 }
 
-func (app *controlPlaneApp) canAccessResource(r *http.Request, row map[string]any) bool {
+func (app *controlPlaneServer) canAccessResource(r *http.Request, row map[string]any) bool {
 	user, ok := app.sessionUserContext(r)
 	if !ok {
 		return false

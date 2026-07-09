@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneApp) {
+func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if !limitJSONBody(w, r) {
 			return

@@ -24,7 +24,7 @@ func mustStore(t *testing.T, err error) {
 	}
 }
 
-func storedWorkspace(t *testing.T, app *controlPlaneApp, id string) map[string]any {
+func storedWorkspace(t *testing.T, app *controlPlaneServer, id string) map[string]any {
 	t.Helper()
 	workspace, ok := app.getWorkspace(id)
 	if !ok {
@@ -33,7 +33,7 @@ func storedWorkspace(t *testing.T, app *controlPlaneApp, id string) map[string]a
 	return workspace
 }
 
-func storedAttachment(t *testing.T, app *controlPlaneApp, id string) map[string]any {
+func storedAttachment(t *testing.T, app *controlPlaneServer, id string) map[string]any {
 	t.Helper()
 	attachment, ok := app.getAttachment(id)
 	if !ok {
@@ -1175,7 +1175,7 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 		"access":                     map[string]any{"tokenStatus": "active"},
 	}))
 
-	mustStore(t, app.rememberCompute(map[string]any{
+	mustStore(t, app.saveComputeFact(map[string]any{
 		"id":              "compute-alpha",
 		"accountId":       "acct-alpha",
 		"status":          "destroyed",
@@ -1189,13 +1189,13 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 		t.Fatalf("compute destroy did not suspend and clear compute pointer: %#v", workspace)
 	}
 
-	mustStore(t, app.rememberAttachment(map[string]any{"id": "attach-alpha", "status": "detached"}, map[string]any{}))
+	mustStore(t, app.saveAttachmentFact(map[string]any{"id": "attach-alpha", "status": "detached"}, map[string]any{}))
 	workspace = storedWorkspace(t, app, "ws-alpha")
 	if workspace["currentAttachmentId"] != "" || workspace["attachmentId"] != "" {
 		t.Fatalf("attachment detach did not clear workspace pointer: %#v", workspace)
 	}
 
-	mustStore(t, app.rememberStorage(map[string]any{
+	mustStore(t, app.saveStorageFact(map[string]any{
 		"id":              "storage-alpha",
 		"accountId":       "acct-alpha",
 		"status":          "destroyed",
@@ -1234,7 +1234,7 @@ func TestRememberAttachmentDerivesAccountFromLinkedResources(t *testing.T) {
 	app := newControlPlaneApp()
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}))
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}))
-	if err := app.rememberAttachment(map[string]any{
+	if err := app.saveAttachmentFact(map[string]any{
 		"id":                  "attach-alpha",
 		"computeAllocationId": "compute-alpha",
 		"storageId":           "storage-alpha",
@@ -1253,7 +1253,7 @@ func TestPersistDerivesAttachmentAccountFromExistingFacts(t *testing.T) {
 	app.tables = app.store.(controlPlaneTableStore)
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha"}))
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha"}))
-	mustStore(t, app.rememberAttachment(map[string]any{
+	mustStore(t, app.saveAttachmentFact(map[string]any{
 		"id":                  "attach-alpha",
 		"computeAllocationId": "compute-alpha",
 		"storageId":           "storage-alpha",
@@ -1336,29 +1336,30 @@ func TestOperatorAccountTotalsIgnoreDeletedUserWalletResiduals(t *testing.T) {
 
 func TestCleanupWorkspaceAccessDisablesInvalidActiveURL(t *testing.T) {
 	app := newControlPlaneApp()
-	app.resources.workspaces["ws-alpha"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":             "ws-alpha",
 		"ownerAccountId": "acct-alpha",
 		"storageId":      "missing-storage",
 		"access":         map[string]any{"tokenStatus": "active"},
-	}
+	}))
 
 	result, err := app.cleanupWorkspaceAccess(map[string]any{"reason": "test"})
 	if err != nil {
 		t.Fatalf("cleanup workspace access: %v", err)
 	}
-	if len(result["cleaned"].([]any)) != 1 || nested(app.resources.workspaces["ws-alpha"], "access", "tokenStatus") != "disabled" {
-		t.Fatalf("cleanup did not disable invalid URL: result=%#v workspace=%#v", result, app.resources.workspaces["ws-alpha"])
+	workspace := storedWorkspace(t, app, "ws-alpha")
+	if len(result["cleaned"].([]any)) != 1 || nested(workspace, "access", "tokenStatus") != "disabled" {
+		t.Fatalf("cleanup did not disable invalid URL: result=%#v workspace=%#v", result, workspace)
 	}
 }
 
 func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) {
 	app := newControlPlaneApp()
-	app.resources.computes["compute-dead"] = map[string]any{"id": "compute-dead", "status": "destroyed"}
-	app.resources.storages["storage-dead"] = map[string]any{"id": "storage-dead", "status": "destroyed"}
-	app.resources.attachments["attach-dead"] = map[string]any{"id": "attach-dead", "status": "detached"}
-	app.resources.workspaces["ws-dead"] = map[string]any{"id": "ws-dead", "state": "unrecoverable"}
-	app.billing.ledger = []map[string]any{{"id": "ledger-kept"}}
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "status": "destroyed"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-dead", "status": "destroyed"}))
+	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-dead", "status": "detached"}))
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-dead", "state": "unrecoverable"}))
+	mustStore(t, app.tables.SaveLedgerEntry(context.Background(), map[string]any{"id": "ledger-kept"}))
 
 	result, err := app.archiveTerminalResources(context.Background(), map[string]any{"reason": "test"})
 	if err != nil {
@@ -1367,22 +1368,20 @@ func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) 
 	if result["currentStateRemoved"] != 4 {
 		t.Fatalf("archive removed count = %#v, want 4", result)
 	}
-	if len(app.resources.computes) != 0 || len(app.resources.storages) != 0 || len(app.resources.attachments) != 0 || len(app.resources.workspaces) != 0 {
-		t.Fatalf("terminal resources still in current state: computes=%#v storages=%#v attachments=%#v workspaces=%#v", app.resources.computes, app.resources.storages, app.resources.attachments, app.resources.workspaces)
+	if len(app.listComputes("")) != 0 || len(app.listStorages("")) != 0 || len(app.listAttachments("")) != 0 || len(app.listWorkspaces("")) != 0 {
+		t.Fatalf("terminal resources still in current state")
 	}
-	if len(app.billing.ledger) != 1 {
-		t.Fatalf("archive must not remove ledger facts: %#v", app.billing.ledger)
+	ledger, err := app.tables.ListLedger(context.Background(), "")
+	mustStore(t, err)
+	if len(ledger) != 1 {
+		t.Fatalf("archive must not remove ledger facts: %#v", ledger)
 	}
 }
 
 func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.sqlite"
 	store := NewTestEntStateStore(t, path)
-	if err := store.Save(context.Background(), controlPlaneState{
-		Computes: controlPlaneRecordSet{
-			"compute-dead": {"id": "compute-dead", "accountId": "acct-alpha", "status": "destroyed"},
-		},
-	}); err != nil {
+	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "accountId": "acct-alpha", "status": "destroyed"}); err != nil {
 		t.Fatalf("seed terminal compute: %v", err)
 	}
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
@@ -1408,12 +1407,12 @@ func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.
 
 func TestManagementStateIncludesBackendCleanupAndAnomalySummary(t *testing.T) {
 	app := newControlPlaneApp()
-	app.resources.workspaces["ws-missing-storage"] = map[string]any{
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
 		"id":             "ws-missing-storage",
 		"ownerAccountId": "acct-alpha",
 		"storageId":      "missing-storage",
 		"access":         map[string]any{"tokenStatus": "active"},
-	}
+	}))
 
 	management := app.managementState(false, nil)
 	cleanup := management["workspaceAccessCleanup"].(map[string]any)

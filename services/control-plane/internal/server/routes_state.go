@@ -6,7 +6,7 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func registerStateRoutes(mux *http.ServeMux, app *controlPlaneApp, service *controlplane.Service) {
+func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/state", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		accountID, ok := app.scopedAccountID(w, r, nil)
 		if !ok {
@@ -16,9 +16,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneApp, service *cont
 			return
 		}
 		if !app.syncLedgerFacts(w, r, service, accountID) {
-			return
-		}
-		if !app.refreshFacts(w, r) {
 			return
 		}
 		computePools, ok := fabricComputePools(w, r, service)
@@ -63,9 +60,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneApp, service *cont
 		if !app.syncLedgerFacts(w, r, service, "") {
 			return
 		}
-		if !app.refreshFacts(w, r) {
-			return
-		}
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {
 			return
@@ -77,9 +71,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneApp, service *cont
 			return
 		}
 		if !app.syncLedgerFacts(w, r, service, "") {
-			return
-		}
-		if !app.refreshFacts(w, r) {
 			return
 		}
 		writeJSON(w, http.StatusOK, app.operatorSummary())

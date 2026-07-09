@@ -41,7 +41,7 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-func (app *controlPlaneApp) startProviderReconcileWorker(ctx context.Context, service *controlplane.Service, interval time.Duration) {
+func (app *controlPlaneServer) startProviderReconcileWorker(ctx context.Context, service *controlplane.Service, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultProviderReconcileInterval
 	}
@@ -64,7 +64,7 @@ func (app *controlPlaneApp) startProviderReconcileWorker(ctx context.Context, se
 	}()
 }
 
-func (app *controlPlaneApp) runProviderReconcileOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
+func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
 	computes, storages, err := app.settlementResourceRows(ctx)
 	if err != nil {
 		return err
@@ -75,13 +75,13 @@ func (app *controlPlaneApp) runProviderReconcileOnce(ctx context.Context, servic
 		}
 		result, err := service.SyncComputeAllocation(ctx, destroyResourceInput(id, row), "provider-reconcile:compute:"+id)
 		if err != nil {
-			if saveErr := app.rememberCompute(providerSyncFacts(row, err)); saveErr != nil {
+			if saveErr := app.saveComputeFact(providerSyncFacts(row, err)); saveErr != nil {
 				return saveErr
 			}
 			continue
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil)
-		if err := app.rememberCompute(body); err != nil {
+		if err := app.saveComputeFact(body); err != nil {
 			return err
 		}
 	}
@@ -91,13 +91,13 @@ func (app *controlPlaneApp) runProviderReconcileOnce(ctx context.Context, servic
 		}
 		result, err := service.SyncStorageVolume(ctx, destroyResourceInput(id, row), "provider-reconcile:storage:"+id)
 		if err != nil {
-			if saveErr := app.rememberStorage(providerSyncFacts(row, err)); saveErr != nil {
+			if saveErr := app.saveStorageFact(providerSyncFacts(row, err)); saveErr != nil {
 				return saveErr
 			}
 			continue
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(row, structToMap(result))), nil)
-		if err := app.rememberStorage(body); err != nil {
+		if err := app.saveStorageFact(body); err != nil {
 			return err
 		}
 	}

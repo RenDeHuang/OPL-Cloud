@@ -6,13 +6,10 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *controlplane.Service) {
+func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/workspaces", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		accountID, ok := app.scopedAccountID(w, r, nil)
 		if !ok {
-			return
-		}
-		if !app.refreshFacts(w, r) {
 			return
 		}
 		writeJSON(w, http.StatusOK, app.state(accountID, nil)["workspaces"])
@@ -108,7 +105,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *
 			writeUpstreamError(w)
 			return
 		}
-		if err := app.rememberWorkspaceProjection(workspace); err != nil {
+		if err := app.saveWorkspaceProjection(workspace); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}

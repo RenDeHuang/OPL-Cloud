@@ -1,25 +1,20 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
 )
 
-func (app *controlPlaneApp) supportTickets(scopeAll bool, accountID string) []any {
-	app.mu.Lock()
-	defer app.mu.Unlock()
+func (app *controlPlaneServer) supportTickets(scopeAll bool, accountID string) []any {
 	if scopeAll || accountID == "" {
-		return values(app.support)
+		return rowsAsAnyFromMaps(app.listSupportMappings(""))
 	}
-	return filteredValues(app.support, func(item map[string]any) bool {
-		return stringValue(item["accountId"]) == accountID
-	})
+	return rowsAsAnyFromMaps(app.listSupportMappings(accountID))
 }
 
-func (app *controlPlaneApp) createSupportMapping(input map[string]any) (map[string]any, error) {
-	app.mu.Lock()
-	defer app.mu.Unlock()
+func (app *controlPlaneServer) createSupportMapping(input map[string]any) (map[string]any, error) {
 	externalTicketID := stringField(input, "externalTicketId", "")
 	if externalTicketID == "" {
 		return nil, errors.New("missing_external_ticket_id")
@@ -52,6 +47,5 @@ func (app *controlPlaneApp) createSupportMapping(input map[string]any) (map[stri
 	if message != "" {
 		row["messages"] = []any{map[string]any{"author": "requester", "text": message, "createdAt": now}}
 	}
-	app.support[id] = row
-	return cloneMap(row), app.persistLocked()
+	return cloneMap(row), app.tables.SaveSupportMapping(context.Background(), row)
 }

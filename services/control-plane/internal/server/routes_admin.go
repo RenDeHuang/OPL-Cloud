@@ -2,7 +2,7 @@ package server
 
 import "net/http"
 
-func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneApp) {
+func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 	mux.HandleFunc("GET /api/ledger/task-receipts", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"receipts": []any{}})
 	}))

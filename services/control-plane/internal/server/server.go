@@ -55,7 +55,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	return mux, nil
 }
 
-func (app *controlPlaneApp) consoleStatic(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneServer) consoleStatic(w http.ResponseWriter, r *http.Request) {
 	if isWorkspaceRequest(r) {
 		app.proxyWorkspaceRoot(w, r)
 		return
@@ -89,7 +89,7 @@ func consoleDistDir() string {
 	return "dist"
 }
 
-func (app *controlPlaneApp) protected(requiresAdmin bool, next http.HandlerFunc) http.HandlerFunc {
+func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		payload, ok := app.session(r)
 		if !ok {
@@ -114,7 +114,7 @@ func (app *controlPlaneApp) protected(requiresAdmin bool, next http.HandlerFunc)
 	}
 }
 
-func (app *controlPlaneApp) syncRuntimeOperations(w http.ResponseWriter, r *http.Request, service *controlplane.Service) bool {
+func (app *controlPlaneServer) syncRuntimeOperations(w http.ResponseWriter, r *http.Request, service *controlplane.Service) bool {
 	operations, err := service.FabricOperations(r.Context())
 	if err != nil {
 		writeUpstreamError(w)
@@ -127,7 +127,7 @@ func (app *controlPlaneApp) syncRuntimeOperations(w http.ResponseWriter, r *http
 	return true
 }
 
-func (app *controlPlaneApp) syncLedgerFacts(w http.ResponseWriter, r *http.Request, service *controlplane.Service, accountID string) bool {
+func (app *controlPlaneServer) syncLedgerFacts(w http.ResponseWriter, r *http.Request, service *controlplane.Service, accountID string) bool {
 	entries, err := service.ListLedgerEntries(r.Context(), accountID)
 	if err != nil {
 		writeUpstreamError(w)
@@ -158,14 +158,6 @@ func (app *controlPlaneApp) syncLedgerFacts(w http.ResponseWriter, r *http.Reque
 	}
 	if err := app.applyLedgerFacts(accountID, wallet, entries, transactions, topups, settlements); err != nil {
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
-		return false
-	}
-	return true
-}
-
-func (app *controlPlaneApp) refreshFacts(w http.ResponseWriter, r *http.Request) bool {
-	if err := app.refreshFactsFromStore(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "state_load_failed")
 		return false
 	}
 	return true
@@ -264,7 +256,7 @@ func withSessionUserContext(input map[string]any, user map[string]any, ok bool) 
 	}
 }
 
-func (app *controlPlaneApp) scopedAccountID(w http.ResponseWriter, r *http.Request, input map[string]any) (string, bool) {
+func (app *controlPlaneServer) scopedAccountID(w http.ResponseWriter, r *http.Request, input map[string]any) (string, bool) {
 	user, ok := app.sessionUserContext(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "not_authenticated")

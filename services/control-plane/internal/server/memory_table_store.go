@@ -18,6 +18,7 @@ type memoryTableStore struct {
 	walletTx    []map[string]any
 	topups      []map[string]any
 	auditEvents []map[string]any
+	support     controlPlaneRecordSet
 }
 
 func newMemoryTableStore() *memoryTableStore {
@@ -29,6 +30,7 @@ func newMemoryTableStore() *memoryTableStore {
 		attachments: controlPlaneRecordSet{},
 		workspaces:  controlPlaneRecordSet{},
 		wallets:     controlPlaneRecordSet{},
+		support:     controlPlaneRecordSet{},
 	}
 }
 
@@ -92,6 +94,13 @@ func (s *memoryTableStore) SaveCompute(_ context.Context, row map[string]any) er
 	return nil
 }
 
+func (s *memoryTableStore) DeleteCompute(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.computes, id)
+	return nil
+}
+
 func (s *memoryTableStore) ListStorages(_ context.Context, accountID string) ([]map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,6 +111,13 @@ func (s *memoryTableStore) SaveStorage(_ context.Context, row map[string]any) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.storages[stringValue(row["id"])] = cloneMap(row)
+	return nil
+}
+
+func (s *memoryTableStore) DeleteStorage(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.storages, id)
 	return nil
 }
 
@@ -118,6 +134,13 @@ func (s *memoryTableStore) SaveAttachment(_ context.Context, row map[string]any)
 	return nil
 }
 
+func (s *memoryTableStore) DeleteAttachment(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.attachments, id)
+	return nil
+}
+
 func (s *memoryTableStore) ListWorkspaces(_ context.Context, accountID string) ([]map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,6 +151,13 @@ func (s *memoryTableStore) SaveWorkspace(_ context.Context, row map[string]any) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.workspaces[stringValue(row["id"])] = cloneMap(row)
+	return nil
+}
+
+func (s *memoryTableStore) DeleteWorkspace(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.workspaces, id)
 	return nil
 }
 
@@ -193,5 +223,18 @@ func (s *memoryTableStore) SaveAuditEvent(_ context.Context, row map[string]any)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.auditEvents = upsertProjectionByID(s.auditEvents, cloneMap(row))
+	return nil
+}
+
+func (s *memoryTableStore) ListSupportMappings(_ context.Context, accountID string) ([]map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return filteredRecords(s.support, accountID)
+}
+
+func (s *memoryTableStore) SaveSupportMapping(_ context.Context, row map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.support[stringValue(row["id"])] = cloneMap(row)
 	return nil
 }

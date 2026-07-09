@@ -9,7 +9,7 @@ import (
 	"opl-cloud/services/control-plane/internal/domain"
 )
 
-func (app *controlPlaneApp) workspaceStateRowsLocked(accountID string) []any {
+func (app *controlPlaneServer) workspaceStateRowsLocked(accountID string) []any {
 	rows := app.listWorkspaces(accountID)
 	output := make([]any, 0, len(rows))
 	for _, row := range rows {
@@ -20,7 +20,7 @@ func (app *controlPlaneApp) workspaceStateRowsLocked(accountID string) []any {
 	return output
 }
 
-func (app *controlPlaneApp) workspaceBillingLocked(workspace map[string]any) map[string]any {
+func (app *controlPlaneServer) workspaceBillingLocked(workspace map[string]any) map[string]any {
 	workspaceID := stringValue(workspace["id"])
 	compute, _ := app.getCompute(stringValue(workspace["currentComputeAllocationId"]))
 	storage, _ := app.getStorage(stringValue(workspace["storageId"]))
@@ -30,7 +30,7 @@ func (app *controlPlaneApp) workspaceBillingLocked(workspace map[string]any) map
 	}
 }
 
-func (app *controlPlaneApp) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
+func (app *controlPlaneServer) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {
 	workspace, ok := app.getWorkspace(workspaceID)
 	if !ok {
 		return nil, false, nil
@@ -43,7 +43,7 @@ func (app *controlPlaneApp) setWorkspaceAccess(workspaceID string, tokenStatus s
 	return cloneMap(workspace), true, app.tables.SaveWorkspace(context.Background(), workspace)
 }
 
-func (app *controlPlaneApp) rememberWorkspaceProjection(workspace domain.WorkspaceProjection) error {
+func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.WorkspaceProjection) error {
 	access := map[string]any{"tokenStatus": "active", "requiresLogin": false}
 	if workspace.RuntimeUsername != "" {
 		access["account"] = workspace.RuntimeUsername
@@ -85,7 +85,7 @@ func (app *controlPlaneApp) rememberWorkspaceProjection(workspace domain.Workspa
 	return app.tables.SaveWorkspace(context.Background(), row)
 }
 
-func (app *controlPlaneApp) suspendWorkspacesForCompute(computeID string) error {
+func (app *controlPlaneServer) suspendWorkspacesForCompute(computeID string) error {
 	for _, workspace := range app.listWorkspaces("") {
 		if stringValue(workspace["currentComputeAllocationId"]) == computeID || stringValue(workspace["computeAllocationId"]) == computeID {
 			workspace["currentComputeAllocationId"] = ""
@@ -105,7 +105,7 @@ func (app *controlPlaneApp) suspendWorkspacesForCompute(computeID string) error 
 	return nil
 }
 
-func (app *controlPlaneApp) clearWorkspacesForAttachment(attachmentID string) error {
+func (app *controlPlaneServer) clearWorkspacesForAttachment(attachmentID string) error {
 	for _, workspace := range app.listWorkspaces("") {
 		if stringValue(workspace["currentAttachmentId"]) == attachmentID || stringValue(workspace["attachmentId"]) == attachmentID {
 			workspace["currentAttachmentId"] = ""
@@ -122,7 +122,7 @@ func (app *controlPlaneApp) clearWorkspacesForAttachment(attachmentID string) er
 	return nil
 }
 
-func (app *controlPlaneApp) markWorkspacesStorageDestroyed(storageID string) error {
+func (app *controlPlaneServer) markWorkspacesStorageDestroyed(storageID string) error {
 	for _, workspace := range app.listWorkspaces("") {
 		if stringValue(workspace["storageId"]) == storageID {
 			workspace["state"] = "data_deleted"
@@ -144,7 +144,7 @@ func (app *controlPlaneApp) markWorkspacesStorageDestroyed(storageID string) err
 	return nil
 }
 
-func (app *controlPlaneApp) getWorkspace(id string) (map[string]any, bool) {
+func (app *controlPlaneServer) getWorkspace(id string) (map[string]any, bool) {
 	for _, workspace := range app.listWorkspaces("") {
 		if stringValue(workspace["id"]) == id {
 			return cloneMap(workspace), true
@@ -153,7 +153,7 @@ func (app *controlPlaneApp) getWorkspace(id string) (map[string]any, bool) {
 	return nil, false
 }
 
-func (app *controlPlaneApp) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneServer) proxyWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromPath(r.URL.Path)
 	if workspaceID == "" {
 		http.NotFound(w, r)
@@ -172,7 +172,7 @@ func (app *controlPlaneApp) proxyWorkspace(w http.ResponseWriter, r *http.Reques
 	app.proxyWorkspaceTo(w, r, workspaceID, suffix)
 }
 
-func (app *controlPlaneApp) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request) {
+func (app *controlPlaneServer) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Request) {
 	if !isWorkspaceRequest(r) {
 		http.NotFound(w, r)
 		return
@@ -185,7 +185,7 @@ func (app *controlPlaneApp) proxyWorkspaceRoot(w http.ResponseWriter, r *http.Re
 	app.proxyWorkspaceTo(w, r, workspaceID, r.URL.Path)
 }
 
-func (app *controlPlaneApp) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, workspaceID string, proxyPath string) {
+func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.Request, workspaceID string, proxyPath string) {
 	workspace, _ := app.getWorkspace(workspaceID)
 	if stringValue(workspace["state"]) == "data_deleted" || stringValue(nested(workspace, "access", "tokenStatus")) == "disabled" {
 		writeError(w, http.StatusGone, "workspace_storage_destroyed")

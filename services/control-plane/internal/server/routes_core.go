@@ -6,7 +6,7 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func registerCoreRoutes(mux *http.ServeMux, app *controlPlaneApp, service *controlplane.Service) {
+func registerCoreRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("/w/", app.proxyWorkspace)
 	mux.HandleFunc("/api/", app.proxyWorkspaceRoot)
 	mux.HandleFunc("/ws", app.proxyWorkspaceRoot)

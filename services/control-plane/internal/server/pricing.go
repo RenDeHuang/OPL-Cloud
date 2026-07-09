@@ -47,7 +47,7 @@ func pricingCatalogResponse() map[string]any {
 	return pricingCatalogDTO(defaultPricingCatalog())
 }
 
-func (app *controlPlaneApp) pricingCatalog(ctx context.Context) (pricingCatalogData, error) {
+func (app *controlPlaneServer) pricingCatalog(ctx context.Context) (pricingCatalogData, error) {
 	if store, ok := app.store.(pricingCatalogStore); ok {
 		catalog, err := store.PricingCatalog(ctx)
 		if err != nil {
@@ -60,7 +60,7 @@ func (app *controlPlaneApp) pricingCatalog(ctx context.Context) (pricingCatalogD
 	return defaultPricingCatalog(), nil
 }
 
-func (app *controlPlaneApp) pricingCatalogResponse(ctx context.Context) (map[string]any, error) {
+func (app *controlPlaneServer) pricingCatalogResponse(ctx context.Context) (map[string]any, error) {
 	catalog, err := app.pricingCatalog(ctx)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func pricingPreviewResponse(input map[string]any, wallet map[string]any) map[str
 	return pricingPreviewFromCatalog(defaultPricingCatalog(), input, wallet)
 }
 
-func (app *controlPlaneApp) pricingPreviewResponse(ctx context.Context, input map[string]any, wallet map[string]any) (map[string]any, error) {
+func (app *controlPlaneServer) pricingPreviewResponse(ctx context.Context, input map[string]any, wallet map[string]any) (map[string]any, error) {
 	catalog, err := app.pricingCatalog(ctx)
 	if err != nil {
 		return nil, err

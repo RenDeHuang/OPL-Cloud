@@ -8,7 +8,7 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *controlplane.Service) {
+func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/compute-pools", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {
@@ -62,7 +62,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			"holdAmountCents": int64(numberField(preview, "holdAmountCents", 0)),
 			"createdAt":       time.Now().UTC().Format(time.RFC3339Nano),
 		})
-		if err := app.rememberCompute(pending); err != nil {
+		if err := app.saveComputeFact(pending); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -78,7 +78,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			return
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), nil)
-		if err := app.rememberCompute(body); err != nil {
+		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -102,7 +102,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		fresh, err := service.GetComputeAllocation(r.Context(), id)
 		if err == nil && fresh.ID != "" {
 			body := computeResponse(structToMap(fresh))
-			if err := app.rememberCompute(body); err != nil {
+			if err := app.saveComputeFact(body); err != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
 			}
@@ -138,12 +138,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		}
 		compute, err := service.SyncComputeAllocation(r.Context(), releaseInput, mutationKey(r, input))
 		if err != nil {
-			_ = app.rememberCompute(providerSyncFacts(existing, err))
+			_ = app.saveComputeFact(providerSyncFacts(existing, err))
 			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil)
-		if err := app.rememberCompute(body); err != nil {
+		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -167,12 +167,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		}
 		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
-			_ = app.rememberCompute(providerSyncFacts(existing, err))
+			_ = app.saveComputeFact(providerSyncFacts(existing, err))
 			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil)
-		if err := app.rememberCompute(body); err != nil {
+		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -224,7 +224,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			"holdAmountCents": int64(numberField(preview, "holdAmountCents", 0)),
 			"createdAt":       time.Now().UTC().Format(time.RFC3339Nano),
 		})
-		if err := app.rememberStorage(pending); err != nil {
+		if err := app.saveStorageFact(pending); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -240,7 +240,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			return
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), nil)
-		if err := app.rememberStorage(body); err != nil {
+		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -264,12 +264,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		}
 		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
-			_ = app.rememberStorage(providerSyncFacts(existing, err))
+			_ = app.saveStorageFact(providerSyncFacts(existing, err))
 			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil)
-		if err := app.rememberStorage(body); err != nil {
+		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -298,12 +298,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		}
 		storage, err := service.SyncStorageVolume(r.Context(), releaseInput, mutationKey(r, input))
 		if err != nil {
-			_ = app.rememberStorage(providerSyncFacts(existing, err))
+			_ = app.saveStorageFact(providerSyncFacts(existing, err))
 			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil)
-		if err := app.rememberStorage(body); err != nil {
+		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -337,7 +337,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		}
 		body := attachmentResponse(structToMap(attachment), input)
 		body["accountId"] = accountID
-		if err := app.rememberAttachment(body, input); err != nil {
+		if err := app.saveAttachmentFact(body, input); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -361,7 +361,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			return
 		}
 		body := attachmentResponse(mergeMaps(existing, structToMap(attachment)), input)
-		if err := app.rememberAttachment(body, input); err != nil {
+		if err := app.saveAttachmentFact(body, input); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}

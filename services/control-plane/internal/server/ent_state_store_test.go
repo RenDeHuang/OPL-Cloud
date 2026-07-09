@@ -49,44 +49,39 @@ func TestEntStateStorePricingCatalogReadsPricingTables(t *testing.T) {
 
 func TestEntStateStoreIgnoresDuplicateEventProjectionIDs(t *testing.T) {
 	store := NewTestEntStateStore(t, t.TempDir()+"/duplicate-events.sqlite")
-	facts := controlPlaneState{
-		Ledger: []controlPlaneRecord{
-			{"id": "ledger-alpha", "accountId": "acct-alpha", "type": "compute_debit", "amountCents": int64(-100)},
-			{"id": "ledger-alpha", "accountId": "acct-alpha", "type": "compute_debit", "amountCents": int64(-100)},
-		},
+	row := map[string]any{"id": "ledger-alpha", "accountId": "acct-alpha", "type": "compute_debit", "amountCents": int64(-100)}
+	if err := store.SaveLedgerEntry(context.Background(), row); err != nil {
+		t.Fatalf("save ledger projection: %v", err)
 	}
-	if err := store.Save(context.Background(), facts); err != nil {
-		t.Fatalf("duplicate event projections should not break state persistence: %v", err)
+	if err := store.SaveLedgerEntry(context.Background(), row); err != nil {
+		t.Fatalf("duplicate event projections should not break table persistence: %v", err)
 	}
 }
 
 func TestEntStateStorePersistsWalletTransactionWalletAfter(t *testing.T) {
 	store := NewTestEntStateStore(t, t.TempDir()+"/wallet-after.sqlite")
-	facts := controlPlaneState{
-		WalletTx: []controlPlaneRecord{{
-			"id":              "wallet-tx-alpha",
-			"accountId":       "acct-alpha",
-			"type":            "compute_debit",
-			"ledgerEntryId":   "ledger-alpha",
-			"amountCents":     int64(-100),
-			"balanceCents":    int64(900),
-			"frozenCents":     int64(10),
-			"availableCents":  int64(890),
-			"totalSpentCents": int64(100),
-			"currency":        "CNY",
-			"metadata": map[string]any{
-				"computeAllocationId": "compute-alpha",
-			},
-		}},
-	}
-	if err := store.Save(context.Background(), facts); err != nil {
+	if err := store.SaveWalletTransaction(context.Background(), map[string]any{
+		"id":              "wallet-tx-alpha",
+		"accountId":       "acct-alpha",
+		"type":            "compute_debit",
+		"ledgerEntryId":   "ledger-alpha",
+		"amountCents":     int64(-100),
+		"balanceCents":    int64(900),
+		"frozenCents":     int64(10),
+		"availableCents":  int64(890),
+		"totalSpentCents": int64(100),
+		"currency":        "CNY",
+		"metadata": map[string]any{
+			"computeAllocationId": "compute-alpha",
+		},
+	}); err != nil {
 		t.Fatalf("save wallet transaction projection: %v", err)
 	}
-	loaded, err := store.Load(context.Background())
+	loaded, err := store.ListWalletTransactions(context.Background(), "acct-alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx := loaded.WalletTx[0]
+	tx := loaded[0]
 	for key, want := range map[string]int64{
 		"balanceCents":    900,
 		"frozenCents":     10,

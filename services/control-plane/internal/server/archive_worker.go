@@ -28,7 +28,7 @@ func archiveRetentionWorkerInterval() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-func (app *controlPlaneApp) startArchiveRetentionWorker(ctx context.Context, interval time.Duration) {
+func (app *controlPlaneServer) startArchiveRetentionWorker(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultArchiveRetentionInterval
 	}
@@ -51,7 +51,7 @@ func (app *controlPlaneApp) startArchiveRetentionWorker(ctx context.Context, int
 	}()
 }
 
-func (app *controlPlaneApp) runArchiveRetentionOnce(ctx context.Context) error {
+func (app *controlPlaneServer) runArchiveRetentionOnce(ctx context.Context) error {
 	if _, err := app.archiveTerminalResources(ctx, map[string]any{"reason": "scheduled_terminal_retention"}); err != nil {
 		return err
 	}

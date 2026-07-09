@@ -6,7 +6,7 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *controlplane.Service) {
+func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/billing/summary", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		accountID, ok := app.scopedAccountID(w, r, nil)
 		if !ok {
@@ -45,7 +45,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *co
 			writeUpstreamError(w, err)
 			return
 		}
-		if err := app.rememberManualTopUp(result); err != nil {
+		if err := app.saveManualTopUpProjection(result); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -87,7 +87,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *co
 			return
 		}
 		result = completeSettlementResult(result, settlement)
-		if err := app.rememberResourceSettlement(result); err != nil {
+		if err := app.saveResourceSettlementProjection(result); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}

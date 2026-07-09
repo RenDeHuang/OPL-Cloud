@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (app *controlPlaneApp) createUser(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneServer) createUser(input map[string]any) (map[string]any, error) {
 	email := stringField(input, "email", "admin@medopl.cn")
 	users, err := app.tables.ListUsers(context.Background(), true)
 	if err != nil {
@@ -33,7 +33,7 @@ func (app *controlPlaneApp) createUser(input map[string]any) (map[string]any, er
 	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
 }
 
-func (app *controlPlaneApp) disableUser(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneServer) disableUser(input map[string]any) (map[string]any, error) {
 	id := stringField(input, "userId", "")
 	user, err := app.findUserByID(context.Background(), id)
 	if err != nil {
@@ -58,7 +58,7 @@ func (app *controlPlaneApp) disableUser(input map[string]any) (map[string]any, e
 	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
 }
 
-func (app *controlPlaneApp) softDeleteUser(input map[string]any) (map[string]any, error) {
+func (app *controlPlaneServer) softDeleteUser(input map[string]any) (map[string]any, error) {
 	id := stringField(input, "userId", "")
 	user, err := app.findUserByID(context.Background(), id)
 	if err != nil {
@@ -83,7 +83,7 @@ func (app *controlPlaneApp) softDeleteUser(input map[string]any) (map[string]any
 	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
 }
 
-func (app *controlPlaneApp) activeAdminCount() int {
+func (app *controlPlaneServer) activeAdminCount() int {
 	users, err := app.tables.ListUsers(context.Background(), false)
 	if err != nil {
 		return 0
@@ -97,7 +97,7 @@ func (app *controlPlaneApp) activeAdminCount() int {
 	return count
 }
 
-func (app *controlPlaneApp) revokeUserSessions(userID string) error {
+func (app *controlPlaneServer) revokeUserSessions(userID string) error {
 	sessions, err := app.tables.ListSessions(context.Background())
 	if err != nil {
 		return err
@@ -112,7 +112,7 @@ func (app *controlPlaneApp) revokeUserSessions(userID string) error {
 	return nil
 }
 
-func (app *controlPlaneApp) importBootstrapUsers() error {
+func (app *controlPlaneServer) importBootstrapUsers() error {
 	users, err := bootstrapUsersFromEnv()
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func (app *controlPlaneApp) importBootstrapUsers() error {
 	return nil
 }
 
-func (app *controlPlaneApp) dropLegacyOwnerUser() error {
+func (app *controlPlaneServer) dropLegacyOwnerUser() error {
 	users, err := app.tables.ListUsers(context.Background(), true)
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (app *controlPlaneApp) dropLegacyOwnerUser() error {
 	return nil
 }
 
-func (app *controlPlaneApp) upsertBootstrapUser(seed map[string]any) error {
+func (app *controlPlaneServer) upsertBootstrapUser(seed map[string]any) error {
 	id := stringValue(seed["id"])
 	users, err := app.tables.ListUsers(context.Background(), true)
 	if err != nil {
@@ -166,7 +166,7 @@ func (app *controlPlaneApp) upsertBootstrapUser(seed map[string]any) error {
 	return app.tables.SaveUser(context.Background(), seed)
 }
 
-func (app *controlPlaneApp) login(input map[string]any) (map[string]any, string, error) {
+func (app *controlPlaneServer) login(input map[string]any) (map[string]any, string, error) {
 	email := strings.ToLower(strings.TrimSpace(stringField(input, "email", "")))
 	password := stringField(input, "password", "")
 	users, err := app.tables.ListUsers(context.Background(), false)
@@ -185,35 +185,35 @@ func (app *controlPlaneApp) login(input map[string]any) (map[string]any, string,
 	return nil, "", errors.New("invalid_credentials")
 }
 
-func (app *controlPlaneApp) loginRateLimited(r *http.Request, input map[string]any) bool {
+func (app *controlPlaneServer) loginRateLimited(r *http.Request, input map[string]any) bool {
 	key := loginFailureKey(r, input)
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	failure := app.auth.failures[key]
+	failure := app.loginRateLimits[key]
 	if !failure.FirstAt.IsZero() && time.Since(failure.FirstAt) > 15*time.Minute {
-		delete(app.auth.failures, key)
+		delete(app.loginRateLimits, key)
 		return false
 	}
 	return failure.Count >= 5
 }
 
-func (app *controlPlaneApp) recordLoginFailure(r *http.Request, input map[string]any) {
+func (app *controlPlaneServer) recordLoginFailure(r *http.Request, input map[string]any) {
 	key := loginFailureKey(r, input)
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	failure := app.auth.failures[key]
+	failure := app.loginRateLimits[key]
 	if failure.FirstAt.IsZero() || time.Since(failure.FirstAt) > 15*time.Minute {
 		failure = loginFailure{FirstAt: time.Now().UTC()}
 	}
 	failure.Count++
-	app.auth.failures[key] = failure
+	app.loginRateLimits[key] = failure
 }
 
-func (app *controlPlaneApp) clearLoginFailures(r *http.Request, input map[string]any) {
+func (app *controlPlaneServer) clearLoginFailures(r *http.Request, input map[string]any) {
 	key := loginFailureKey(r, input)
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	delete(app.auth.failures, key)
+	delete(app.loginRateLimits, key)
 }
 
 func loginFailureKey(r *http.Request, input map[string]any) string {
@@ -225,7 +225,7 @@ func loginFailureKey(r *http.Request, input map[string]any) string {
 	return email + "|" + host
 }
 
-func (app *controlPlaneApp) operatorLogin() (map[string]any, string, error) {
+func (app *controlPlaneServer) operatorLogin() (map[string]any, string, error) {
 	users, err := app.tables.ListUsers(context.Background(), false)
 	if err != nil {
 		return nil, "", err
@@ -242,7 +242,7 @@ func (app *controlPlaneApp) operatorLogin() (map[string]any, string, error) {
 	return app.createSession(operator)
 }
 
-func (app *controlPlaneApp) createSession(user map[string]any) (map[string]any, string, error) {
+func (app *controlPlaneServer) createSession(user map[string]any) (map[string]any, string, error) {
 	sessionID, err := randomToken(32)
 	if err != nil {
 		return nil, "", err
@@ -259,7 +259,7 @@ func (app *controlPlaneApp) createSession(user map[string]any) (map[string]any, 
 	return map[string]any{"user": sanitizeUser(user), "csrfToken": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}, sessionID, nil
 }
 
-func (app *controlPlaneApp) session(r *http.Request) (map[string]any, bool) {
+func (app *controlPlaneServer) session(r *http.Request) (map[string]any, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || cookie.Value == "" {
 		return nil, false
@@ -285,7 +285,7 @@ func (app *controlPlaneApp) session(r *http.Request) (map[string]any, bool) {
 	return map[string]any{"user": sanitizeUser(user), "csrfToken": stringValue(session["csrf"]), "expiresAt": expiresAt.Format(time.RFC3339)}, true
 }
 
-func (app *controlPlaneApp) sessionUserID(r *http.Request) string {
+func (app *controlPlaneServer) sessionUserID(r *http.Request) string {
 	user, ok := app.sessionUserContext(r)
 	if !ok {
 		return ""
@@ -293,7 +293,7 @@ func (app *controlPlaneApp) sessionUserID(r *http.Request) string {
 	return stringValue(user["id"])
 }
 
-func (app *controlPlaneApp) sessionUserContext(r *http.Request) (map[string]any, bool) {
+func (app *controlPlaneServer) sessionUserContext(r *http.Request) (map[string]any, bool) {
 	payload, ok := app.session(r)
 	if !ok {
 		return nil, false
@@ -302,7 +302,7 @@ func (app *controlPlaneApp) sessionUserContext(r *http.Request) (map[string]any,
 	return user, user != nil
 }
 
-func (app *controlPlaneApp) logout(r *http.Request) error {
+func (app *controlPlaneServer) logout(r *http.Request) error {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return nil
@@ -310,7 +310,7 @@ func (app *controlPlaneApp) logout(r *http.Request) error {
 	return app.tables.DeleteSession(r.Context(), sessionLookupKey(cookie.Value))
 }
 
-func (app *controlPlaneApp) sessionFactsLocked() controlPlaneRecordSet {
+func (app *controlPlaneServer) sessionFactsLocked() controlPlaneRecordSet {
 	sessions, err := app.tables.ListSessions(context.Background())
 	if err != nil {
 		return controlPlaneRecordSet{}
@@ -318,7 +318,7 @@ func (app *controlPlaneApp) sessionFactsLocked() controlPlaneRecordSet {
 	return sessions
 }
 
-func (app *controlPlaneApp) findUserByID(ctx context.Context, id string) (map[string]any, error) {
+func (app *controlPlaneServer) findUserByID(ctx context.Context, id string) (map[string]any, error) {
 	users, err := app.tables.ListUsers(ctx, true)
 	if err != nil {
 		return nil, err

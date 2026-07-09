@@ -7,14 +7,14 @@ import (
 	"opl-cloud/services/control-plane/internal/clients"
 )
 
-func (app *controlPlaneApp) billingSummaryLocked(accountID string) map[string]any {
+func (app *controlPlaneServer) accountBillingSummary(accountID string) map[string]any {
 	return map[string]any{
-		"activeHourlyEstimate":     app.activeHourlyEstimateLocked(accountID),
+		"activeHourlyEstimate":     app.activeHourlyEstimate(accountID),
 		"recentResourceDebitTotal": resourceDebitTotal(rowsToRecords(app.listLedger(accountID)), accountID, ""),
 	}
 }
 
-func (app *controlPlaneApp) activeHourlyEstimateLocked(accountID string) float64 {
+func (app *controlPlaneServer) activeHourlyEstimate(accountID string) float64 {
 	total := float64(0)
 	for _, row := range app.listComputes(accountID) {
 		if accountID != "" && firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"])) != accountID {
@@ -31,7 +31,7 @@ func (app *controlPlaneApp) activeHourlyEstimateLocked(accountID string) float64
 	return total
 }
 
-func (app *controlPlaneApp) reconciliationProjectionLocked() map[string]any {
+func (app *controlPlaneServer) reconciliationProjectionLocked() map[string]any {
 	if app.reconcile == nil {
 		return map[string]any{"reports": 0, "guard": map[string]any{"status": "not_required", "blockNewWorkspaces": false, "reason": "billing_reconciliation_not_required"}}
 	}
@@ -40,7 +40,7 @@ func (app *controlPlaneApp) reconciliationProjectionLocked() map[string]any {
 	return row
 }
 
-func (app *controlPlaneApp) reconciliationBlocksNewWorkspaces() (map[string]any, bool) {
+func (app *controlPlaneServer) reconciliationBlocksNewWorkspaces() (map[string]any, bool) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	projection := app.reconciliationProjectionLocked()
@@ -52,14 +52,14 @@ func (app *controlPlaneApp) reconciliationBlocksNewWorkspaces() (map[string]any,
 	return projection, blocked
 }
 
-func (app *controlPlaneApp) rememberReconciliation(result clients.ReconciliationResult) error {
+func (app *controlPlaneServer) rememberReconciliation(result clients.ReconciliationResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	app.reconcile = reconciliationResponse(result)
-	return app.persistLocked()
+	return nil
 }
 
-func (app *controlPlaneApp) addLedgerLocked(accountID string, entryType string, ids map[string]any) map[string]any {
+func (app *controlPlaneServer) addLedgerLocked(accountID string, entryType string, ids map[string]any) map[string]any {
 	entry := map[string]any{"id": "ledger-" + stableID(accountID, entryType, time.Now().UTC().String())[:12], "accountId": accountID, "type": entryType}
 	for key, value := range ids {
 		entry[key] = value
@@ -68,7 +68,7 @@ func (app *controlPlaneApp) addLedgerLocked(accountID string, entryType string, 
 	return entry
 }
 
-func (app *controlPlaneApp) rememberManualTopUp(result clients.ManualTopUpResult) error {
+func (app *controlPlaneServer) saveManualTopUpProjection(result clients.ManualTopUpResult) error {
 	if err := app.tables.SaveManualTopup(context.Background(), structToMap(result.TopUp)); err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func (app *controlPlaneApp) rememberManualTopUp(result clients.ManualTopUpResult
 	return app.tables.SaveWallet(context.Background(), walletProjection(result.Wallet))
 }
 
-func (app *controlPlaneApp) rememberResourceSettlement(result clients.ResourceSettlementResult) error {
+func (app *controlPlaneServer) saveResourceSettlementProjection(result clients.ResourceSettlementResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
@@ -130,7 +130,7 @@ func (app *controlPlaneApp) rememberResourceSettlement(result clients.ResourceSe
 	return app.tables.SaveWallet(context.Background(), walletProjection(result.Wallet))
 }
 
-func (app *controlPlaneApp) applyLedgerFacts(accountID string, wallet clients.Wallet, entries []clients.LedgerEntry, transactions []clients.WalletTransaction, topups []clients.ManualTopUp, settlements []clients.ResourceSettlementResult) error {
+func (app *controlPlaneServer) applyLedgerFacts(accountID string, wallet clients.Wallet, entries []clients.LedgerEntry, transactions []clients.WalletTransaction, topups []clients.ManualTopUp, settlements []clients.ResourceSettlementResult) error {
 	if accountID != "" && wallet.AccountID != "" && walletHasMoneyFacts(wallet) {
 		if err := app.tables.SaveWallet(context.Background(), walletProjection(wallet)); err != nil {
 			return err
@@ -181,7 +181,7 @@ func (app *controlPlaneApp) applyLedgerFacts(accountID string, wallet clients.Wa
 	return nil
 }
 
-func (app *controlPlaneApp) resourceLedgerEvidenceLocked() []any {
+func (app *controlPlaneServer) resourceLedgerEvidenceLocked() []any {
 	rows := []any{}
 	for _, workspace := range app.listWorkspaces("") {
 		workspaceID := stringValue(workspace["id"])
@@ -213,8 +213,8 @@ func (app *controlPlaneApp) resourceLedgerEvidenceLocked() []any {
 			"providerRequestId":    firstNonEmpty(stringValue(compute["providerRequestId"]), stringValue(storage["providerRequestId"]), stringValue(attachment["providerRequestId"])),
 			"operationId":          firstNonEmpty(stringValue(operation["operationId"]), stringValue(compute["operationId"]), stringValue(storage["operationId"]), stringValue(attachment["operationId"])),
 			"costTags":             costTags,
-			"ledgerEntryIds":       app.ledgerEntryIDsLocked(workspaceID, computeID, storageID, attachmentID),
-			"walletTransactionIds": app.walletTransactionIDsLocked(workspaceID, computeID, storageID, attachmentID),
+			"ledgerEntryIds":       app.entryIDsForLedger(workspaceID, computeID, storageID, attachmentID),
+			"walletTransactionIds": app.transactionIDsForWallet(workspaceID, computeID, storageID, attachmentID),
 		})
 	}
 	return rows
@@ -247,7 +247,7 @@ func providerCostTags(accountID string, workspaceID string, resourceID string, o
 	}
 }
 
-func (app *controlPlaneApp) operationEvidenceForResourceLocked(ids ...string) map[string]any {
+func (app *controlPlaneServer) operationEvidenceForResourceLocked(ids ...string) map[string]any {
 	for index := len(app.runtimeOps) - 1; index >= 0; index-- {
 		operation := app.runtimeOps[index]
 		if mapContainsAnyID(operation, ids...) {
@@ -258,7 +258,7 @@ func (app *controlPlaneApp) operationEvidenceForResourceLocked(ids ...string) ma
 	return map[string]any{}
 }
 
-func (app *controlPlaneApp) ledgerEntryIDsLocked(ids ...string) []string {
+func (app *controlPlaneServer) entryIDsForLedger(ids ...string) []string {
 	output := []string{}
 	for _, entry := range app.listLedger("") {
 		if mapContainsAnyID(entry, ids...) {
@@ -268,7 +268,7 @@ func (app *controlPlaneApp) ledgerEntryIDsLocked(ids ...string) []string {
 	return uniqueStrings(output)
 }
 
-func (app *controlPlaneApp) walletTransactionIDsLocked(ids ...string) []string {
+func (app *controlPlaneServer) transactionIDsForWallet(ids ...string) []string {
 	output := []string{}
 	for _, tx := range app.listWalletTransactions("") {
 		metadata, _ := tx["metadata"].(map[string]any)
@@ -279,20 +279,17 @@ func (app *controlPlaneApp) walletTransactionIDsLocked(ids ...string) []string {
 	return uniqueStrings(output)
 }
 
-func (app *controlPlaneApp) addWalletTxLocked(accountID string, txType string, metadata map[string]any) {
+func (app *controlPlaneServer) addWalletTxLocked(accountID string, txType string, metadata map[string]any) {
 	_ = app.tables.SaveWalletTransaction(context.Background(), map[string]any{"id": "wallet-" + stableID(accountID, txType, time.Now().UTC().String())[:12], "accountId": accountID, "type": txType, "metadata": metadata})
 }
 
-func (app *controlPlaneApp) wallet(accountID string) map[string]any {
+func (app *controlPlaneServer) wallet(accountID string) map[string]any {
 	if accountID == "" {
 		accountID = "acct-local"
 	}
 	wallets, err := app.tables.ListWallets(context.Background(), accountID)
 	if err == nil && len(wallets) > 0 {
 		return cloneMap(wallets[0])
-	}
-	if wallet, ok := app.billing.wallets[accountID]; ok {
-		return wallet
 	}
 	return map[string]any{"id": accountID, "accountId": accountID, "balance": float64(0), "frozen": float64(0), "available": float64(0), "totalRecharged": float64(0)}
 }

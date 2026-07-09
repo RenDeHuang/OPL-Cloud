@@ -7,19 +7,21 @@ import (
 
 func TestArchiveRetentionWorkerArchivesTerminalCurrentStateOnly(t *testing.T) {
 	app := newControlPlaneAppEmpty()
-	app.resources.computes["compute-dead"] = map[string]any{"id": "compute-dead", "status": "destroyed"}
-	app.resources.storages["storage-dead"] = map[string]any{"id": "storage-dead", "status": "destroyed"}
-	app.resources.attachments["attach-dead"] = map[string]any{"id": "attach-dead", "status": "detached"}
-	app.resources.workspaces["ws-dead"] = map[string]any{"id": "ws-dead", "state": "unrecoverable"}
-	app.billing.ledger = []map[string]any{{"id": "ledger-kept"}}
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "status": "destroyed"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-dead", "status": "destroyed"}))
+	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-dead", "status": "detached"}))
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-dead", "state": "unrecoverable"}))
+	mustStore(t, app.tables.SaveLedgerEntry(context.Background(), map[string]any{"id": "ledger-kept"}))
 
 	if err := app.runArchiveRetentionOnce(context.Background()); err != nil {
 		t.Fatalf("run archive retention: %v", err)
 	}
-	if len(app.resources.computes) != 0 || len(app.resources.storages) != 0 || len(app.resources.attachments) != 0 || len(app.resources.workspaces) != 0 {
-		t.Fatalf("terminal current state remains: computes=%#v storages=%#v attachments=%#v workspaces=%#v", app.resources.computes, app.resources.storages, app.resources.attachments, app.resources.workspaces)
+	if len(app.listComputes("")) != 0 || len(app.listStorages("")) != 0 || len(app.listAttachments("")) != 0 || len(app.listWorkspaces("")) != 0 {
+		t.Fatalf("terminal current state remains")
 	}
-	if len(app.billing.ledger) != 1 {
-		t.Fatalf("ledger accounting facts must be retained: %#v", app.billing.ledger)
+	ledger, err := app.tables.ListLedger(context.Background(), "")
+	mustStore(t, err)
+	if len(ledger) != 1 {
+		t.Fatalf("ledger accounting facts must be retained: %#v", ledger)
 	}
 }

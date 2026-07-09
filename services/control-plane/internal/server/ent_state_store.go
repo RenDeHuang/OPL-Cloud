@@ -21,7 +21,6 @@ import (
 	"opl-cloud/services/control-plane/ent/pricingcatalog"
 	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
-	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/storageattachment"
 	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
@@ -35,28 +34,7 @@ type controlPlaneRecord = map[string]any
 type controlPlaneRecordSet = map[string]controlPlaneRecord
 
 type StateStore interface {
-	Load(ctx context.Context) (controlPlaneState, error)
-	Save(ctx context.Context, facts controlPlaneState) error
-}
-
-type controlPlaneState struct {
-	Version     int                   `json:"version"`
-	Computes    controlPlaneRecordSet `json:"computes,omitempty"`
-	Storages    controlPlaneRecordSet `json:"storages,omitempty"`
-	Attachments controlPlaneRecordSet `json:"attachments,omitempty"`
-	Workspaces  controlPlaneRecordSet `json:"workspaces,omitempty"`
-	Users       controlPlaneRecordSet `json:"users,omitempty"`
-	Sessions    controlPlaneRecordSet `json:"sessions,omitempty"`
-	Orgs        controlPlaneRecordSet `json:"orgs,omitempty"`
-	Memberships controlPlaneRecordSet `json:"memberships,omitempty"`
-	Support     controlPlaneRecordSet `json:"support,omitempty"`
-	Wallets     controlPlaneRecordSet `json:"wallets,omitempty"`
-	Ledger      []controlPlaneRecord  `json:"ledger,omitempty"`
-	WalletTx    []controlPlaneRecord  `json:"walletTx,omitempty"`
-	Topups      []controlPlaneRecord  `json:"topups,omitempty"`
-	RuntimeOps  []controlPlaneRecord  `json:"runtimeOperations,omitempty"`
-	AuditEvents []controlPlaneRecord  `json:"auditEvents,omitempty"`
-	Reconcile   controlPlaneRecord    `json:"billingReconciliation,omitempty"`
+	controlPlaneTableStore
 }
 
 func StateStoreFromEnv() (StateStore, error) {
@@ -560,65 +538,6 @@ var (
 	}
 )
 
-func (s *postgresEntStateStore) Load(ctx context.Context) (controlPlaneState, error) {
-	var facts controlPlaneState
-	var err error
-	if facts.Computes, err = loadRecordSet(ctx, s.client.ComputeAllocation.Query().All, computeEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Storages, err = loadRecordSet(ctx, s.client.StorageVolume.Query().All, storageEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Attachments, err = loadRecordSet(ctx, s.client.StorageAttachment.Query().All, attachmentEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Workspaces, err = loadRecordSet(ctx, s.client.Workspace.Query().All, workspaceEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Users, err = loadRecordSet(ctx, s.client.User.Query().All, userEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Sessions, err = loadRecordSet(ctx, s.client.Session.Query().All, sessionEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Orgs, err = loadRecordSet(ctx, s.client.Organization.Query().All, organizationEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Memberships, err = loadRecordSet(ctx, s.client.Membership.Query().All, membershipEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Support, err = loadRecordSet(ctx, s.client.SupportTicketMapping.Query().All, supportEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Wallets, err = loadRecordSet(ctx, s.client.WalletProjection.Query().All, walletEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Ledger, err = loadEventRows(ctx, s.client.LedgerProjection.Query().Order(controlplaneent.Asc(ledgerprojection.FieldCreatedAt, ledgerprojection.FieldID)).All, ledgerEntFields); err != nil {
-		return facts, err
-	}
-	if facts.WalletTx, err = loadEventRows(ctx, s.client.WalletTransactionProjection.Query().Order(controlplaneent.Asc(wallettransactionprojection.FieldCreatedAt, wallettransactionprojection.FieldID)).All, walletTxEntFields); err != nil {
-		return facts, err
-	}
-	if facts.Topups, err = loadEventRows(ctx, s.client.ManualTopupProjection.Query().Order(controlplaneent.Asc(manualtopupprojection.FieldCreatedAt, manualtopupprojection.FieldID)).All, topupEntFields); err != nil {
-		return facts, err
-	}
-	if facts.RuntimeOps, err = loadEventRows(ctx, s.client.RuntimeOperation.Query().Order(controlplaneent.Asc(runtimeoperation.FieldCreatedAt, runtimeoperation.FieldID)).All, runtimeOpEntFields); err != nil {
-		return facts, err
-	}
-	if facts.AuditEvents, err = loadEventRows(ctx, s.client.AdminAuditEvent.Query().Order(controlplaneent.Asc(adminauditevent.FieldCreatedAt, adminauditevent.FieldID)).All, auditEntFields); err != nil {
-		return facts, err
-	}
-	row, err := s.client.BillingReconciliation.Get(ctx, singletonFactID)
-	if controlplaneent.IsNotFound(err) {
-		return facts, nil
-	}
-	if err != nil {
-		return facts, err
-	}
-	facts.Reconcile = recordFromEnt(row, reconcileEntFields)
-	return facts, nil
-}
-
 func (s *postgresEntStateStore) ListUsers(ctx context.Context, includeDeleted bool) ([]map[string]any, error) {
 	rows, err := loadRecordSet(ctx, s.client.User.Query().All, userEntFields)
 	if err != nil {
@@ -674,6 +593,14 @@ func (s *postgresEntStateStore) SaveCompute(ctx context.Context, row map[string]
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ComputeAllocation.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ComputeAllocation.Create() }, computeEntFields)
 }
 
+func (s *postgresEntStateStore) DeleteCompute(ctx context.Context, id string) error {
+	err := s.client.ComputeAllocation.DeleteOneID(id).Exec(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 func (s *postgresEntStateStore) ListStorages(ctx context.Context, accountID string) ([]map[string]any, error) {
 	rows, err := loadRecordSet(ctx, s.client.StorageVolume.Query().All, storageEntFields)
 	if err != nil {
@@ -684,6 +611,14 @@ func (s *postgresEntStateStore) ListStorages(ctx context.Context, accountID stri
 
 func (s *postgresEntStateStore) SaveStorage(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.StorageVolume.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.StorageVolume.Create() }, storageEntFields)
+}
+
+func (s *postgresEntStateStore) DeleteStorage(ctx context.Context, id string) error {
+	err := s.client.StorageVolume.DeleteOneID(id).Exec(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (s *postgresEntStateStore) ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error) {
@@ -698,6 +633,14 @@ func (s *postgresEntStateStore) SaveAttachment(ctx context.Context, row map[stri
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.StorageAttachment.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.StorageAttachment.Create() }, attachmentEntFields)
 }
 
+func (s *postgresEntStateStore) DeleteAttachment(ctx context.Context, id string) error {
+	err := s.client.StorageAttachment.DeleteOneID(id).Exec(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 func (s *postgresEntStateStore) ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error) {
 	rows, err := loadRecordSet(ctx, s.client.Workspace.Query().All, workspaceEntFields)
 	if err != nil {
@@ -708,6 +651,14 @@ func (s *postgresEntStateStore) ListWorkspaces(ctx context.Context, accountID st
 
 func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Workspace.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Workspace.Create() }, workspaceEntFields)
+}
+
+func (s *postgresEntStateStore) DeleteWorkspace(ctx context.Context, id string) error {
+	err := s.client.Workspace.DeleteOneID(id).Exec(ctx)
+	if controlplaneent.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func (s *postgresEntStateStore) ListWallets(ctx context.Context, accountID string) ([]map[string]any, error) {
@@ -756,6 +707,18 @@ func (s *postgresEntStateStore) ListAuditEvents(ctx context.Context, accountID s
 
 func (s *postgresEntStateStore) SaveAuditEvent(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.AdminAuditEvent.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.AdminAuditEvent.Create() }, auditEntFields)
+}
+
+func (s *postgresEntStateStore) ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.SupportTicketMapping.Query().All, supportEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, accountID)
+}
+
+func (s *postgresEntStateStore) SaveSupportMapping(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.SupportTicketMapping.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.SupportTicketMapping.Create() }, supportEntFields)
 }
 
 func (s *postgresEntStateStore) SettlementResourceRows(ctx context.Context) (controlPlaneRecordSet, controlPlaneRecordSet, error) {
@@ -1073,114 +1036,6 @@ func (s *postgresEntStateStore) ApplyRetention(ctx context.Context, policy reten
 		return nil, err
 	}
 	return result, tx.Commit()
-}
-
-func (s *postgresEntStateStore) Save(ctx context.Context, facts controlPlaneState) error {
-	tx, err := s.client.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ComputeAllocation.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Computes, func() any { return tx.ComputeAllocation.Create() }, computeEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.StorageVolume.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Storages, func() any { return tx.StorageVolume.Create() }, storageEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.StorageAttachment.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Attachments, func() any { return tx.StorageAttachment.Create() }, attachmentEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.Workspace.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Workspaces, func() any { return tx.Workspace.Create() }, workspaceEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.User.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Users, func() any { return tx.User.Create() }, userEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.Session.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Sessions, func() any { return tx.Session.Create() }, sessionEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.Organization.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Orgs, func() any { return tx.Organization.Create() }, organizationEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.Membership.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Memberships, func() any { return tx.Membership.Create() }, membershipEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.SupportTicketMapping.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Support, func() any { return tx.SupportTicketMapping.Create() }, supportEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.WalletProjection.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveRecordSet(ctx, facts.Wallets, func() any { return tx.WalletProjection.Create() }, walletEntFields); err != nil {
-		return err
-	}
-	if _, err := tx.LedgerProjection.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveEventRows(ctx, facts.Ledger, func() any { return tx.LedgerProjection.Create() }, ledgerEntFields, "ledger"); err != nil {
-		return err
-	}
-	if _, err := tx.WalletTransactionProjection.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveEventRows(ctx, facts.WalletTx, func() any { return tx.WalletTransactionProjection.Create() }, walletTxEntFields, "wallet_tx"); err != nil {
-		return err
-	}
-	if _, err := tx.ManualTopupProjection.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveEventRows(ctx, facts.Topups, func() any { return tx.ManualTopupProjection.Create() }, topupEntFields, "topup"); err != nil {
-		return err
-	}
-	if _, err := tx.RuntimeOperation.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveEventRows(ctx, facts.RuntimeOps, func() any { return tx.RuntimeOperation.Create() }, runtimeOpEntFields, "runtime_op"); err != nil {
-		return err
-	}
-	if _, err := tx.AdminAuditEvent.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if err := saveEventRows(ctx, facts.AuditEvents, func() any { return tx.AdminAuditEvent.Create() }, auditEntFields, "audit"); err != nil {
-		return err
-	}
-	if _, err := tx.BillingReconciliation.Delete().Exec(ctx); err != nil {
-		return err
-	}
-	if facts.Reconcile != nil {
-		if err := saveRecord(ctx, singletonFactID, facts.Reconcile, tx.BillingReconciliation.Create(), reconcileEntFields); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func loadRecordSet[T any](ctx context.Context, all func(context.Context) ([]*T, error), fields []entRecordField) (controlPlaneRecordSet, error) {
