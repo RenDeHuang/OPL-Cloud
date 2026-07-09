@@ -271,13 +271,13 @@ func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 func TestPersistentFactsSurviveServerRestart(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewFileFactStore(path))
+	server, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
 	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 
-	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
+	restarted, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}
@@ -309,13 +309,13 @@ func TestPersistentFactsSurviveServerRestart(t *testing.T) {
 func TestSessionFactSurvivesServerRestart(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewFileFactStore(path))
+	server, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
 	session := operatorSessionForTest(t, server)
 
-	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
+	restarted, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestSessionFactSurvivesServerRestart(t *testing.T) {
 func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewFileFactStore(path))
+	server, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 	workspace := createResource(t, server, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	createResource(t, server, http.MethodPost, "/api/workspaces/delete-token", `{"workspaceId":"`+stringValue(workspace["id"])+`"}`)
 
-	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
+	restarted, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}
@@ -2068,7 +2068,7 @@ func TestSupportTicketMappingRequiresExternalTicket(t *testing.T) {
 func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.json"
 	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewFileFactStore(path))
+	server, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
@@ -2078,7 +2078,7 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 		t.Fatalf("support mapping did not keep external context: %#v", created)
 	}
 
-	restarted, err := NewPersistentServer(service, NewFileFactStore(path))
+	restarted, err := NewPersistentServer(service, NewMemoryStateStore(path))
 	if err != nil {
 		t.Fatalf("restart persistent server: %v", err)
 	}

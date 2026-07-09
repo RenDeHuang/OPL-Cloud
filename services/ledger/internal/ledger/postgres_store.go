@@ -3,293 +3,16 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
-const postgresSchema = `
-	CREATE TABLE IF NOT EXISTS wallets (
-	  account_id TEXT PRIMARY KEY,
-	  balance_cents BIGINT NOT NULL DEFAULT 0,
-	  frozen_cents BIGINT NOT NULL DEFAULT 0,
-	  total_spent_cents BIGINT NOT NULL DEFAULT 0,
-	  currency TEXT NOT NULL DEFAULT 'CNY',
-	  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
-
-	ALTER TABLE wallets ADD COLUMN IF NOT EXISTS frozen_cents BIGINT NOT NULL DEFAULT 0;
-	ALTER TABLE wallets ADD COLUMN IF NOT EXISTS total_spent_cents BIGINT NOT NULL DEFAULT 0;
-
-CREATE TABLE IF NOT EXISTS ledger_entries (
-  id TEXT PRIMARY KEY,
-  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-  amount_cents BIGINT NOT NULL,
-  currency TEXT NOT NULL,
-  direction TEXT NOT NULL,
-  source TEXT NOT NULL,
-  operator_user_id TEXT NOT NULL,
-  reason TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS reason TEXT;
-
-CREATE TABLE IF NOT EXISTS wallet_transactions (
-  id TEXT PRIMARY KEY,
-  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
-  amount_cents BIGINT NOT NULL,
-  balance_cents BIGINT NOT NULL,
-  frozen_cents BIGINT NOT NULL DEFAULT 0,
-  available_cents BIGINT NOT NULL DEFAULT 0,
-  total_spent_cents BIGINT NOT NULL DEFAULT 0,
-  currency TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT;
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS amount_cents BIGINT;
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_cents BIGINT;
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS frozen_cents BIGINT;
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS available_cents BIGINT;
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS total_spent_cents BIGINT;
-ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS currency TEXT;
-UPDATE wallet_transactions SET ledger_entry_id = id WHERE ledger_entry_id IS NULL;
-UPDATE wallet_transactions SET amount_cents = 0 WHERE amount_cents IS NULL;
-UPDATE wallet_transactions SET balance_cents = 0 WHERE balance_cents IS NULL;
-UPDATE wallet_transactions SET frozen_cents = 0 WHERE frozen_cents IS NULL;
-UPDATE wallet_transactions SET available_cents = balance_cents WHERE available_cents IS NULL;
-UPDATE wallet_transactions SET total_spent_cents = 0 WHERE total_spent_cents IS NULL;
-UPDATE wallet_transactions SET currency = 'CNY' WHERE currency IS NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN ledger_entry_id SET NOT NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN amount_cents SET NOT NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN balance_cents SET NOT NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN frozen_cents SET NOT NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN available_cents SET NOT NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN total_spent_cents SET NOT NULL;
-ALTER TABLE wallet_transactions ALTER COLUMN currency SET NOT NULL;
-ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS user_id;
-ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS workspace_id;
-ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS transaction_type;
-ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS source_event_id;
-ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS state;
-
-	CREATE TABLE IF NOT EXISTS manual_topups (
-  id TEXT PRIMARY KEY,
-  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-  amount_cents BIGINT NOT NULL,
-  currency TEXT NOT NULL,
-  operator_user_id TEXT NOT NULL,
-  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
-  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
-  idempotency_key TEXT NOT NULL,
-  request_hash TEXT NOT NULL,
-  reason TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
-
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS account_id TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS amount_cents BIGINT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS currency TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS operator_user_id TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS wallet_transaction_id TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS request_hash TEXT;
-	ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS reason TEXT;
-	DO $$
-	BEGIN
-	  IF EXISTS (
-	    SELECT 1 FROM information_schema.columns
-	    WHERE table_schema = 'public' AND table_name = 'manual_topups' AND column_name = 'target_account_id'
-	  ) THEN
-	    EXECUTE 'UPDATE manual_topups SET account_id = target_account_id WHERE account_id IS NULL';
-	  END IF;
-	END $$;
-	UPDATE manual_topups SET account_id = id WHERE account_id IS NULL;
-	UPDATE manual_topups SET amount_cents = 0 WHERE amount_cents IS NULL;
-	UPDATE manual_topups SET currency = 'CNY' WHERE currency IS NULL;
-	UPDATE manual_topups SET operator_user_id = '' WHERE operator_user_id IS NULL;
-	UPDATE manual_topups SET ledger_entry_id = id WHERE ledger_entry_id IS NULL;
-	UPDATE manual_topups SET wallet_transaction_id = id WHERE wallet_transaction_id IS NULL;
-	UPDATE manual_topups SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
-	UPDATE manual_topups SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
-	ALTER TABLE manual_topups ALTER COLUMN account_id SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN amount_cents SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN currency SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN operator_user_id SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN ledger_entry_id SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN wallet_transaction_id SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN idempotency_key SET NOT NULL;
-	ALTER TABLE manual_topups ALTER COLUMN request_hash SET NOT NULL;
-	ALTER TABLE manual_topups DROP COLUMN IF EXISTS target_user_id;
-	ALTER TABLE manual_topups DROP COLUMN IF EXISTS target_account_id;
-	ALTER TABLE manual_topups DROP COLUMN IF EXISTS state;
-
-	CREATE TABLE IF NOT EXISTS holds (
-	  id TEXT PRIMARY KEY,
-	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-	  workspace_id TEXT NOT NULL,
-	  resource_type TEXT NOT NULL,
-	  resource_id TEXT NOT NULL,
-	  amount_cents BIGINT NOT NULL,
-	  currency TEXT NOT NULL,
-	  status TEXT NOT NULL,
-	  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
-	  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
-	  idempotency_key TEXT NOT NULL,
-	  request_hash TEXT NOT NULL,
-	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
-
-	ALTER TABLE holds ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
-	ALTER TABLE holds ADD COLUMN IF NOT EXISTS request_hash TEXT;
-	ALTER TABLE holds ADD COLUMN IF NOT EXISTS resource_type TEXT;
-	ALTER TABLE holds ADD COLUMN IF NOT EXISTS resource_id TEXT;
-	UPDATE holds SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
-	UPDATE holds SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
-	UPDATE holds SET resource_type = 'migrated' WHERE resource_type IS NULL;
-	UPDATE holds SET resource_id = workspace_id WHERE resource_id IS NULL;
-	ALTER TABLE holds ALTER COLUMN idempotency_key SET NOT NULL;
-	ALTER TABLE holds ALTER COLUMN request_hash SET NOT NULL;
-	ALTER TABLE holds ALTER COLUMN resource_type SET NOT NULL;
-	ALTER TABLE holds ALTER COLUMN resource_id SET NOT NULL;
-
-	CREATE TABLE IF NOT EXISTS evidence_receipts (
-	  id TEXT PRIMARY KEY,
-	  workspace_id TEXT NOT NULL,
-	  provider_request_id TEXT NOT NULL,
-	  redacted_url TEXT NOT NULL,
-	  token_version TEXT NOT NULL,
-	  idempotency_key TEXT NOT NULL,
-	  request_hash TEXT NOT NULL,
-	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
-
-	ALTER TABLE evidence_receipts ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
-	ALTER TABLE evidence_receipts ADD COLUMN IF NOT EXISTS request_hash TEXT;
-	UPDATE evidence_receipts SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
-	UPDATE evidence_receipts SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
-	ALTER TABLE evidence_receipts ALTER COLUMN idempotency_key SET NOT NULL;
-	ALTER TABLE evidence_receipts ALTER COLUMN request_hash SET NOT NULL;
-
-CREATE TABLE IF NOT EXISTS resource_settlements (
-  id TEXT PRIMARY KEY,
-  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-  workspace_id TEXT NOT NULL,
-	  resource_type TEXT NOT NULL,
-	  resource_id TEXT NOT NULL,
-	  amount_cents BIGINT NOT NULL,
-	  currency TEXT NOT NULL,
-	  status TEXT NOT NULL,
-	  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
-  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
-  pricing_version TEXT NOT NULL DEFAULT '',
-  price_snapshot_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-  usage_period_start TEXT NOT NULL DEFAULT '',
-  usage_period_end TEXT NOT NULL DEFAULT '',
-  quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
-  unit TEXT NOT NULL DEFAULT '',
-  provider_cost_evidence_ref TEXT NOT NULL DEFAULT '',
-  idempotency_key TEXT NOT NULL,
-  request_hash TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS request_hash TEXT;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS pricing_version TEXT;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS price_snapshot_json JSONB;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS usage_period_start TEXT;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS usage_period_end TEXT;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS quantity DOUBLE PRECISION;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS unit TEXT;
-	ALTER TABLE resource_settlements ADD COLUMN IF NOT EXISTS provider_cost_evidence_ref TEXT;
-	UPDATE resource_settlements SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
-	UPDATE resource_settlements SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
-	UPDATE resource_settlements SET pricing_version = '' WHERE pricing_version IS NULL;
-	UPDATE resource_settlements SET price_snapshot_json = '{}'::jsonb WHERE price_snapshot_json IS NULL;
-	UPDATE resource_settlements SET usage_period_start = '' WHERE usage_period_start IS NULL;
-	UPDATE resource_settlements SET usage_period_end = '' WHERE usage_period_end IS NULL;
-	UPDATE resource_settlements SET quantity = 0 WHERE quantity IS NULL;
-	UPDATE resource_settlements SET unit = '' WHERE unit IS NULL;
-	UPDATE resource_settlements SET provider_cost_evidence_ref = '' WHERE provider_cost_evidence_ref IS NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN idempotency_key SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN request_hash SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN pricing_version SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN price_snapshot_json SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN usage_period_start SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN usage_period_end SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN quantity SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN unit SET NOT NULL;
-	ALTER TABLE resource_settlements ALTER COLUMN provider_cost_evidence_ref SET NOT NULL;
-
-	CREATE TABLE IF NOT EXISTS hold_releases (
-	  id TEXT PRIMARY KEY,
-	  account_id TEXT NOT NULL REFERENCES wallets(account_id),
-	  workspace_id TEXT NOT NULL,
-	  resource_type TEXT NOT NULL,
-	  resource_id TEXT NOT NULL,
-	  hold_id TEXT NOT NULL,
-	  amount_cents BIGINT NOT NULL,
-	  currency TEXT NOT NULL,
-	  status TEXT NOT NULL,
-	  ledger_entry_id TEXT NOT NULL REFERENCES ledger_entries(id),
-	  wallet_transaction_id TEXT NOT NULL REFERENCES wallet_transactions(id),
-	  idempotency_key TEXT NOT NULL,
-	  request_hash TEXT NOT NULL,
-	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
-
-	ALTER TABLE hold_releases ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
-	ALTER TABLE hold_releases ADD COLUMN IF NOT EXISTS request_hash TEXT;
-	UPDATE hold_releases SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
-	UPDATE hold_releases SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
-	ALTER TABLE hold_releases ALTER COLUMN idempotency_key SET NOT NULL;
-	ALTER TABLE hold_releases ALTER COLUMN request_hash SET NOT NULL;
-
-	CREATE TABLE IF NOT EXISTS reconciliation_reports (
-	  id TEXT PRIMARY KEY,
-	  status TEXT NOT NULL,
-	  report_json TEXT NOT NULL,
-	  block_new_workspaces BOOLEAN NOT NULL,
-	  reason TEXT NOT NULL,
-	  idempotency_key TEXT NOT NULL,
-	  request_hash TEXT NOT NULL,
-	  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-	);
-
-	ALTER TABLE reconciliation_reports ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
-	ALTER TABLE reconciliation_reports ADD COLUMN IF NOT EXISTS request_hash TEXT;
-	UPDATE reconciliation_reports SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL;
-	UPDATE reconciliation_reports SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL;
-	ALTER TABLE reconciliation_reports ALTER COLUMN idempotency_key SET NOT NULL;
-	ALTER TABLE reconciliation_reports ALTER COLUMN request_hash SET NOT NULL;
-
-CREATE TABLE IF NOT EXISTS idempotency_keys (
-  service TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL,
-  request_hash TEXT NOT NULL,
-  response_ref TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (service, idempotency_key)
-);
-
-	CREATE UNIQUE INDEX IF NOT EXISTS manual_topups_idempotency_key_idx
-	  ON manual_topups(idempotency_key);
-	CREATE UNIQUE INDEX IF NOT EXISTS holds_idempotency_key_idx
-	  ON holds(idempotency_key);
-	CREATE UNIQUE INDEX IF NOT EXISTS evidence_receipts_idempotency_key_idx
-	  ON evidence_receipts(idempotency_key);
-	CREATE UNIQUE INDEX IF NOT EXISTS resource_settlements_idempotency_key_idx
-	  ON resource_settlements(idempotency_key);
-	CREATE UNIQUE INDEX IF NOT EXISTS hold_releases_idempotency_key_idx
-	  ON hold_releases(idempotency_key);
-	CREATE UNIQUE INDEX IF NOT EXISTS reconciliation_reports_idempotency_key_idx
-	  ON reconciliation_reports(idempotency_key);
-	`
+//go:embed ent_migrations/*.sql
+var ledgerMigrations embed.FS
 
 type PostgresStore struct {
 	db  *sql.DB
@@ -297,7 +20,23 @@ type PostgresStore struct {
 }
 
 func PostgresSchemaSQL() string {
-	return postgresSchema
+	entries, err := ledgerMigrations.ReadDir("ent_migrations")
+	if err != nil {
+		return ""
+	}
+	var out strings.Builder
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		data, err := ledgerMigrations.ReadFile("ent_migrations/" + entry.Name())
+		if err != nil {
+			return ""
+		}
+		out.Write(data)
+		out.WriteByte('\n')
+	}
+	return out.String()
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {

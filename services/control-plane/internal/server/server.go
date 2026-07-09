@@ -26,7 +26,7 @@ func NewServer(service *controlplane.Service) http.Handler {
 	return handler
 }
 
-func NewPersistentServer(service *controlplane.Service, store FactStore) (http.Handler, error) {
+func NewPersistentServer(service *controlplane.Service, store StateStore) (http.Handler, error) {
 	app, err := newControlPlaneAppWithStore(store)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 	}))
 	mux.HandleFunc("POST /api/auth/logout", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		if err := app.logout(r); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		http.SetCookie(w, sessionCookie("", -1))
@@ -205,7 +205,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		workspace, ok, err := app.setWorkspaceAccess(workspaceID, "active")
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if !ok {
@@ -213,7 +213,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.appendAuditEvent(r, "workspace.reset_token", "workspace", workspaceID, stringValue(workspace["accountId"]), before, workspace, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": workspace["id"], "tokenStatus": nested(workspace, "access", "tokenStatus"), "access": workspace["access"]})
@@ -228,7 +228,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		workspace, ok, err := app.setWorkspaceAccess(workspaceID, "disabled")
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if !ok {
@@ -236,7 +236,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.appendAuditEvent(r, "workspace.delete_token", "workspace", workspaceID, stringValue(workspace["accountId"]), before, workspace, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"id": workspace["id"], "tokenStatus": nested(workspace, "access", "tokenStatus"), "access": workspace["access"]})
@@ -287,12 +287,12 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.rememberWorkspaceProjection(workspace); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		body := workspaceResponse(structToMap(workspace))
 		if err := app.appendAuditEvent(r, "workspace.create", "workspace", workspace.ID, workspace.AccountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -308,7 +308,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.applyLedgerFacts(accountID, wallet, nil, nil, nil, nil); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, walletProjection(wallet))
@@ -336,11 +336,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.rememberManualTopUp(result); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "billing.topup", "account", result.TopUp.AccountID, result.TopUp.AccountID, nil, manualTopUpResponse(result), "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, manualTopUpResponse(result))
@@ -378,12 +378,12 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		result = completeSettlementResult(result, settlement)
 		if err := app.rememberResourceSettlement(result); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		body := settlementResponse(result)
 		if err := app.appendAuditEvent(r, "billing.settle_resource", "ledger_settlement", stringValue(body["id"]), result.AccountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -409,11 +409,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.rememberReconciliation(result); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "billing.reconciliation", "billing_reconciliation", stringField(report, "id", ""), "", nil, result, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, reconciliationResponse(result))
@@ -454,11 +454,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := computeResponse(structToMap(compute))
 		if err := app.rememberCompute(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "compute.create", "compute_allocation", stringValue(body["id"]), accountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusAccepted, body)
@@ -478,7 +478,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		if err == nil && fresh.ID != "" {
 			body := computeResponse(structToMap(fresh))
 			if err := app.rememberCompute(body); err != nil {
-				writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
 			}
 			writeJSON(w, http.StatusOK, body)
@@ -518,11 +518,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := computeResponse(mergeMaps(existing, structToMap(compute)))
 		if err := app.rememberCompute(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "compute.sync", "compute_allocation", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -546,11 +546,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := computeResponse(structToMap(compute))
 		if err := app.rememberCompute(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "compute.destroy", "compute_allocation", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -577,11 +577,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := storageResponse(structToMap(storage))
 		if err := app.rememberStorage(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "storage.create", "storage_volume", stringValue(body["id"]), accountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusAccepted, body)
@@ -605,11 +605,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := storageResponse(structToMap(storage))
 		if err := app.rememberStorage(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "storage.destroy", "storage_volume", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -638,11 +638,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := storageResponse(mergeMaps(existing, structToMap(storage)))
 		if err := app.rememberStorage(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "storage.sync", "storage_volume", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -671,11 +671,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := attachmentResponse(structToMap(attachment), input)
 		if err := app.rememberAttachment(body, input); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "attachment.create", "storage_attachment", stringValue(body["id"]), accountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusAccepted, body)
@@ -695,11 +695,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		body := attachmentResponse(structToMap(attachment), input)
 		if err := app.rememberAttachment(body, input); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "attachment.detach", "storage_attachment", attachmentID, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])), existing, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -727,7 +727,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.appendAuditEvent(r, "support.map_external_ticket", "support_ticket_mapping", stringValue(body["id"]), accountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -738,11 +738,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 	mux.HandleFunc("POST /api/organizations", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		body, err := app.createOrganization(decodeJSON(r))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "organization.create", "organization", stringValue(body["id"]), stringValue(body["billingAccountId"]), nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -750,11 +750,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 	mux.HandleFunc("POST /api/organizations/members", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		body, err := app.createMembership(decodeJSON(r))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "organization.member_add", "organization_membership", stringValue(body["id"]), "", nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -767,7 +767,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.appendAuditEvent(r, "user.create", "user", stringValue(body["id"]), stringValue(body["accountId"]), nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
@@ -781,7 +781,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.appendAuditEvent(r, "user.disable", "user", stringValue(body["id"]), stringValue(body["accountId"]), nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -799,7 +799,7 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 			return
 		}
 		if err := app.appendAuditEvent(r, "user.delete", "user", stringValue(body["id"]), stringValue(body["accountId"]), nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
@@ -812,11 +812,11 @@ func NewPersistentServer(service *controlplane.Service, store FactStore) (http.H
 		}
 		result, err := app.cleanupWorkspaceAccess(input)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.appendAuditEvent(r, "operator.cleanup_workspace_access", "workspace_access_cleanup", "", "", nil, result, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
@@ -886,7 +886,7 @@ func (app *controlPlaneApp) syncRuntimeOperations(w http.ResponseWriter, r *http
 		return false
 	}
 	if err := app.rememberRuntimeOperations(operations); err != nil {
-		writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+		writeError(w, http.StatusInternalServerError, "state_persist_failed")
 		return false
 	}
 	return true
@@ -922,7 +922,7 @@ func (app *controlPlaneApp) syncLedgerFacts(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if err := app.applyLedgerFacts(accountID, wallet, entries, transactions, topups, settlements); err != nil {
-		writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+		writeError(w, http.StatusInternalServerError, "state_persist_failed")
 		return false
 	}
 	return true
@@ -977,7 +977,7 @@ func writeUserLifecycleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, errLastActiveAdmin), errors.Is(err, errUserDeleted):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "fact_persist_failed")
+		writeError(w, http.StatusInternalServerError, "state_persist_failed")
 	}
 }
 

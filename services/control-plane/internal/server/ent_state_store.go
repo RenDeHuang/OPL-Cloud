@@ -3,111 +3,67 @@ package server
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	_ "github.com/lib/pq"
 )
 
 const singletonFactID = "default"
 
-type factRow = map[string]any
-type factTable = map[string]factRow
+//go:embed ent_migrations/*.sql
+var controlPlaneMigrations embed.FS
 
-type FactStore interface {
-	Load(ctx context.Context) (controlPlaneFacts, error)
-	Save(ctx context.Context, facts controlPlaneFacts) error
+type stateRow = map[string]any
+type stateTable = map[string]stateRow
+
+type StateStore interface {
+	Load(ctx context.Context) (controlPlaneState, error)
+	Save(ctx context.Context, facts controlPlaneState) error
 }
 
-type controlPlaneFacts struct {
-	Version     int       `json:"version"`
-	Computes    factTable `json:"computes,omitempty"`
-	Storages    factTable `json:"storages,omitempty"`
-	Attachments factTable `json:"attachments,omitempty"`
-	Workspaces  factTable `json:"workspaces,omitempty"`
-	Users       factTable `json:"users,omitempty"`
-	Sessions    factTable `json:"sessions,omitempty"`
-	Orgs        factTable `json:"orgs,omitempty"`
-	Memberships factTable `json:"memberships,omitempty"`
-	Support     factTable `json:"support,omitempty"`
-	Wallets     factTable `json:"wallets,omitempty"`
-	Ledger      []factRow `json:"ledger,omitempty"`
-	WalletTx    []factRow `json:"walletTx,omitempty"`
-	Topups      []factRow `json:"topups,omitempty"`
-	RuntimeOps  []factRow `json:"runtimeOperations,omitempty"`
-	AuditEvents []factRow `json:"auditEvents,omitempty"`
-	Reconcile   factRow   `json:"billingReconciliation,omitempty"`
+type controlPlaneState struct {
+	Version     int        `json:"version"`
+	Computes    stateTable `json:"computes,omitempty"`
+	Storages    stateTable `json:"storages,omitempty"`
+	Attachments stateTable `json:"attachments,omitempty"`
+	Workspaces  stateTable `json:"workspaces,omitempty"`
+	Users       stateTable `json:"users,omitempty"`
+	Sessions    stateTable `json:"sessions,omitempty"`
+	Orgs        stateTable `json:"orgs,omitempty"`
+	Memberships stateTable `json:"memberships,omitempty"`
+	Support     stateTable `json:"support,omitempty"`
+	Wallets     stateTable `json:"wallets,omitempty"`
+	Ledger      []stateRow `json:"ledger,omitempty"`
+	WalletTx    []stateRow `json:"walletTx,omitempty"`
+	Topups      []stateRow `json:"topups,omitempty"`
+	RuntimeOps  []stateRow `json:"runtimeOperations,omitempty"`
+	AuditEvents []stateRow `json:"auditEvents,omitempty"`
+	Reconcile   stateRow   `json:"billingReconciliation,omitempty"`
 }
 
-func FactStoreFromEnv() (FactStore, error) {
-	if path := os.Getenv("OPL_CONTROL_PLANE_FACTS_FILE"); path != "" {
-		return NewFileFactStore(path), nil
-	}
+func StateStoreFromEnv() (StateStore, error) {
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
-		return NewPostgresFactStore(databaseURL)
+		return NewPostgresEntStateStore(databaseURL)
 	}
 	return nil, nil
 }
 
-type fileFactStore struct {
-	path string
-	mu   sync.Mutex
-}
-
-func NewFileFactStore(path string) FactStore {
-	return &fileFactStore{path: path}
-}
-
-func (s *fileFactStore) Load(_ context.Context) (controlPlaneFacts, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return controlPlaneFacts{}, nil
-	}
-	if err != nil {
-		return controlPlaneFacts{}, err
-	}
-	var facts controlPlaneFacts
-	if err := json.Unmarshal(data, &facts); err != nil {
-		return controlPlaneFacts{}, err
-	}
-	return facts, nil
-}
-
-func (s *fileFactStore) Save(_ context.Context, facts controlPlaneFacts) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(facts, "", "  ")
-	if err != nil {
-		return err
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
-}
-
-type postgresFactStore struct {
+type postgresEntStateStore struct {
 	db *sql.DB
 }
 
-func NewPostgresFactStore(databaseURL string) (FactStore, error) {
+func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 	db, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		return nil, err
 	}
-	store := &postgresFactStore{db: db}
+	store := &postgresEntStateStore{db: db}
 	if err := store.install(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -136,13 +92,13 @@ var postgresFactEventTables = []string{
 	"control_plane_admin_audit_events",
 }
 
-type factColumn struct {
+type stateColumn struct {
 	Name string
 	Path []string
 	Kind string
 }
 
-var postgresFactColumns = []factColumn{
+var postgresStateColumns = []stateColumn{
 	{Name: "owner_account_id", Path: []string{"ownerAccountId"}, Kind: "text"},
 	{Name: "owner_user_id", Path: []string{"ownerUserId"}, Kind: "text"},
 	{Name: "user_id", Path: []string{"userId"}, Kind: "text"},
@@ -262,101 +218,28 @@ var postgresFactColumns = []factColumn{
 	{Name: "guard_block_new_workspaces", Path: []string{"guard", "blockNewWorkspaces"}, Kind: "bool"},
 }
 
-func (s *postgresFactStore) install(ctx context.Context) error {
-	for _, table := range postgresFactTables {
-		if err := s.installFactTable(ctx, table, "updated_at"); err != nil {
-			return err
-		}
-	}
-	for _, table := range postgresFactEventTables {
-		if err := s.installFactTable(ctx, table, "created_at"); err != nil {
-			return err
-		}
-	}
-	return s.installFactTable(ctx, "control_plane_billing_reconciliation", "updated_at")
-}
-
-func (s *postgresFactStore) installFactTable(ctx context.Context, table string, timestampColumn string) error {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (
-  id TEXT PRIMARY KEY,
-  account_id TEXT NOT NULL DEFAULT '',
-  `+timestampColumn+` TIMESTAMPTZ NOT NULL DEFAULT now()
-)`); err != nil {
+func (s *postgresEntStateStore) install(ctx context.Context) error {
+	entries, err := controlPlaneMigrations.ReadDir("ent_migrations")
+	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT ''`); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN IF NOT EXISTS `+timestampColumn+` TIMESTAMPTZ NOT NULL DEFAULT now()`); err != nil {
-		return err
-	}
-	for _, column := range postgresFactColumns {
-		if _, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN IF NOT EXISTS `+column.Name+` `+postgresColumnType(column.Kind)); err != nil {
-			return err
-		}
-	}
-	return s.migrateLegacyPayload(ctx, table)
-}
-
-func postgresColumnType(kind string) string {
-	switch kind {
-	case "bigint":
-		return "BIGINT"
-	case "double":
-		return "DOUBLE PRECISION"
-	case "bool":
-		return "BOOLEAN"
-	default:
-		return "TEXT"
-	}
-}
-
-func (s *postgresFactStore) migrateLegacyPayload(ctx context.Context, table string) error {
-	if !s.columnExists(ctx, table, "payload") {
-		return nil
-	}
-	set := []string{}
-	for _, column := range postgresFactColumns {
-		expr := legacyPayloadExpr(column)
-		if expr == "" {
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		set = append(set, fmt.Sprintf("%s = COALESCE(%s, %s)", column.Name, column.Name, expr))
+		sqlText, err := controlPlaneMigrations.ReadFile("ent_migrations/" + entry.Name())
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, string(sqlText)); err != nil {
+			return err
+		}
 	}
-	set = append(set, "account_id = COALESCE(NULLIF(account_id, ''), NULLIF(payload #>> '{accountId}', ''), '')")
-	if _, err := s.db.ExecContext(ctx, `UPDATE `+table+` SET `+strings.Join(set, ", ")); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` DROP COLUMN IF EXISTS payload`)
-	return err
+	return nil
 }
 
-func (s *postgresFactStore) columnExists(ctx context.Context, table string, column string) bool {
-	var exists bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
- SELECT 1 FROM information_schema.columns
- WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2
-)`, table, column).Scan(&exists)
-	return err == nil && exists
-}
-
-func legacyPayloadExpr(column factColumn) string {
-	path := strings.Join(column.Path, ",")
-	raw := "NULLIF(payload #>> '{" + path + "}', '')"
-	switch column.Kind {
-	case "bigint":
-		return "CASE WHEN " + raw + " ~ '^-?[0-9]+(\\.0+)?$' THEN (" + raw + ")::numeric::bigint ELSE NULL END"
-	case "double":
-		return "CASE WHEN " + raw + " ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (" + raw + ")::double precision ELSE NULL END"
-	case "bool":
-		return "CASE WHEN lower(" + raw + ") IN ('true','t','1','yes') THEN true WHEN lower(" + raw + ") IN ('false','f','0','no') THEN false ELSE NULL END"
-	default:
-		return raw
-	}
-}
-
-func (s *postgresFactStore) Load(ctx context.Context) (controlPlaneFacts, error) {
-	var facts controlPlaneFacts
+func (s *postgresEntStateStore) Load(ctx context.Context) (controlPlaneState, error) {
+	var facts controlPlaneState
 	var err error
 	if facts.Computes, err = s.loadFactTable(ctx, "control_plane_compute_allocations"); err != nil {
 		return facts, err
@@ -407,54 +290,54 @@ func (s *postgresFactStore) Load(ctx context.Context) (controlPlaneFacts, error)
 	return facts, err
 }
 
-func (s *postgresFactStore) Save(ctx context.Context, facts controlPlaneFacts) error {
+func (s *postgresEntStateStore) Save(ctx context.Context, facts controlPlaneState) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_compute_allocations", facts.Computes); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_compute_allocations", facts.Computes); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_storage_volumes", facts.Storages); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_storage_volumes", facts.Storages); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_storage_attachments", facts.Attachments); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_storage_attachments", facts.Attachments); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_workspaces", facts.Workspaces); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_workspaces", facts.Workspaces); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_users", facts.Users); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_users", facts.Users); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_sessions", facts.Sessions); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_sessions", facts.Sessions); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_organizations", facts.Orgs); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_organizations", facts.Orgs); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_memberships", facts.Memberships); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_memberships", facts.Memberships); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_support_ticket_mappings", facts.Support); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_support_ticket_mappings", facts.Support); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactTable(ctx, tx, "control_plane_wallet_projections", facts.Wallets); err != nil {
+	if err := replaceStateTable(ctx, tx, "control_plane_wallet_projections", facts.Wallets); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactEvents(ctx, tx, "control_plane_ledger_projections", facts.Ledger); err != nil {
+	if err := replaceStateEvents(ctx, tx, "control_plane_ledger_projections", facts.Ledger); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactEvents(ctx, tx, "control_plane_wallet_transaction_projections", facts.WalletTx); err != nil {
+	if err := replaceStateEvents(ctx, tx, "control_plane_wallet_transaction_projections", facts.WalletTx); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactEvents(ctx, tx, "control_plane_manual_topup_projections", facts.Topups); err != nil {
+	if err := replaceStateEvents(ctx, tx, "control_plane_manual_topup_projections", facts.Topups); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactEvents(ctx, tx, "control_plane_runtime_operations", facts.RuntimeOps); err != nil {
+	if err := replaceStateEvents(ctx, tx, "control_plane_runtime_operations", facts.RuntimeOps); err != nil {
 		return rollback(tx, err)
 	}
-	if err := replaceFactEvents(ctx, tx, "control_plane_admin_audit_events", facts.AuditEvents); err != nil {
+	if err := replaceStateEvents(ctx, tx, "control_plane_admin_audit_events", facts.AuditEvents); err != nil {
 		return rollback(tx, err)
 	}
 	if err := replaceSingleton(ctx, tx, "control_plane_billing_reconciliation", facts.Reconcile); err != nil {
@@ -463,15 +346,15 @@ func (s *postgresFactStore) Save(ctx context.Context, facts controlPlaneFacts) e
 	return tx.Commit()
 }
 
-func (s *postgresFactStore) loadFactTable(ctx context.Context, table string) (factTable, error) {
+func (s *postgresEntStateStore) loadFactTable(ctx context.Context, table string) (stateTable, error) {
 	rows, err := s.db.QueryContext(ctx, selectFactSQL(table, ""))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := factTable{}
+	out := stateTable{}
 	for rows.Next() {
-		row, err := scanFactRow(rows)
+		row, err := scanStateRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -480,15 +363,15 @@ func (s *postgresFactStore) loadFactTable(ctx context.Context, table string) (fa
 	return out, rows.Err()
 }
 
-func (s *postgresFactStore) loadFactEvents(ctx context.Context, table string) ([]factRow, error) {
+func (s *postgresEntStateStore) loadFactEvents(ctx context.Context, table string) ([]stateRow, error) {
 	rows, err := s.db.QueryContext(ctx, selectFactSQL(table, " ORDER BY created_at, id"))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []factRow
+	var out []stateRow
 	for rows.Next() {
-		row, err := scanFactRow(rows)
+		row, err := scanStateRow(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -497,7 +380,7 @@ func (s *postgresFactStore) loadFactEvents(ctx context.Context, table string) ([
 	return out, rows.Err()
 }
 
-func (s *postgresFactStore) loadSingleton(ctx context.Context, table string) (factRow, error) {
+func (s *postgresEntStateStore) loadSingleton(ctx context.Context, table string) (stateRow, error) {
 	rows, err := s.db.QueryContext(ctx, selectFactSQL(table, " WHERE id = $1"), singletonFactID)
 	if err != nil {
 		return nil, err
@@ -509,32 +392,32 @@ func (s *postgresFactStore) loadSingleton(ctx context.Context, table string) (fa
 		}
 		return nil, nil
 	}
-	row, err := scanFactRow(rows)
+	row, err := scanStateRow(rows)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return row, err
 }
 
-func replaceFactTable(ctx context.Context, tx *sql.Tx, table string, rows factTable) error {
+func replaceStateTable(ctx context.Context, tx *sql.Tx, table string, rows stateTable) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
 		return err
 	}
 	for id, row := range rows {
-		if _, err := tx.ExecContext(ctx, insertFactSQL(table, "updated_at"), factValues(id, row, stringValue(row["accountId"]))...); err != nil {
+		if _, err := tx.ExecContext(ctx, insertFactSQL(table, "updated_at"), stateValues(id, row, stringValue(row["accountId"]))...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func replaceFactEvents(ctx context.Context, tx *sql.Tx, table string, rows []factRow) error {
+func replaceStateEvents(ctx context.Context, tx *sql.Tx, table string, rows []stateRow) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
 		return err
 	}
 	for index, row := range rows {
 		id := firstNonEmpty(stringValue(row["id"]), stableID(table, stringValue(row["accountId"]), stringValue(row["createdAt"]), stringValue(row["type"]))[:12])
-		values := factValues(id, row, stringValue(row["accountId"]))
+		values := stateValues(id, row, stringValue(row["accountId"]))
 		values = append(values, index)
 		if _, err := tx.ExecContext(ctx, insertFactSQL(table, "created_at"), values...); err != nil {
 			return err
@@ -543,27 +426,27 @@ func replaceFactEvents(ctx context.Context, tx *sql.Tx, table string, rows []fac
 	return nil
 }
 
-func replaceSingleton(ctx context.Context, tx *sql.Tx, table string, row factRow) error {
+func replaceSingleton(ctx context.Context, tx *sql.Tx, table string, row stateRow) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
 		return err
 	}
 	if row == nil {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, insertFactSQL(table, "updated_at"), factValues(singletonFactID, row, "")...)
+	_, err := tx.ExecContext(ctx, insertFactSQL(table, "updated_at"), stateValues(singletonFactID, row, "")...)
 	return err
 }
 
 func selectFactSQL(table string, suffix string) string {
 	columns := []string{"id", "account_id"}
-	for _, column := range postgresFactColumns {
+	for _, column := range postgresStateColumns {
 		columns = append(columns, column.Name+"::text")
 	}
 	return `SELECT ` + strings.Join(columns, ", ") + ` FROM ` + table + suffix
 }
 
-func scanFactRow(rows *sql.Rows) (factRow, error) {
-	values := make([]sql.NullString, len(postgresFactColumns)+2)
+func scanStateRow(rows *sql.Rows) (stateRow, error) {
+	values := make([]sql.NullString, len(postgresStateColumns)+2)
 	dest := make([]any, len(values))
 	for index := range values {
 		dest[index] = &values[index]
@@ -571,11 +454,11 @@ func scanFactRow(rows *sql.Rows) (factRow, error) {
 	if err := rows.Scan(dest...); err != nil {
 		return nil, err
 	}
-	row := factRow{"id": values[0].String}
+	row := stateRow{"id": values[0].String}
 	if values[1].Valid && values[1].String != "" {
 		row["accountId"] = values[1].String
 	}
-	for index, column := range postgresFactColumns {
+	for index, column := range postgresStateColumns {
 		value := values[index+2]
 		if !value.Valid || value.String == "" {
 			continue
@@ -607,7 +490,7 @@ func parseColumnValue(value string, kind string) (any, bool) {
 func insertFactSQL(table string, timestampColumn string) string {
 	columns := []string{"id", "account_id"}
 	placeholders := []string{"$1", "$2"}
-	for index, column := range postgresFactColumns {
+	for index, column := range postgresStateColumns {
 		columns = append(columns, column.Name)
 		placeholders = append(placeholders, fmt.Sprintf("$%d", index+3))
 	}
@@ -620,15 +503,15 @@ func insertFactSQL(table string, timestampColumn string) string {
 	return `INSERT INTO ` + table + ` (` + strings.Join(columns, ", ") + `) VALUES (` + strings.Join(placeholders, ", ") + `)`
 }
 
-func factValues(id string, row factRow, accountID string) []any {
+func stateValues(id string, row stateRow, accountID string) []any {
 	values := []any{id, accountID}
-	for _, column := range postgresFactColumns {
+	for _, column := range postgresStateColumns {
 		values = append(values, columnValue(row, column))
 	}
 	return values
 }
 
-func columnValue(row factRow, column factColumn) any {
+func columnValue(row stateRow, column stateColumn) any {
 	value, ok := valueAtPath(row, column.Path)
 	if !ok || value == nil {
 		return nil
@@ -656,7 +539,7 @@ func columnValue(row factRow, column factColumn) any {
 	}
 }
 
-func valueAtPath(row factRow, path []string) (any, bool) {
+func valueAtPath(row stateRow, path []string) (any, bool) {
 	var current any = row
 	for _, part := range path {
 		asMap, ok := current.(map[string]any)
@@ -671,7 +554,7 @@ func valueAtPath(row factRow, path []string) (any, bool) {
 	return current, true
 }
 
-func setPath(row factRow, path []string, value any) {
+func setPath(row stateRow, path []string, value any) {
 	if len(path) == 0 {
 		return
 	}
