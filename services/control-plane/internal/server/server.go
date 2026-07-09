@@ -454,10 +454,10 @@ func workspaceResponse(row map[string]any) map[string]any {
 }
 
 func billingStatusFor(row map[string]any) string {
-	if status := stringValue(row["billingStatus"]); status != "" {
-		return status
-	}
 	status := stringValue(row["status"])
+	if billingStatus := stringValue(row["billingStatus"]); billingStatus != "" && !(billingStatus == "pending" && status != "pending" && status != "provisioning") {
+		return billingStatus
+	}
 	if isTerminalResourceStatus(status) {
 		return "stopped"
 	}

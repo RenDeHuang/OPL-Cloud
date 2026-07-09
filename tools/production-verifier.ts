@@ -984,6 +984,48 @@ function assertStorageShape(checks, storage) {
   ), { storageId: storage?.id });
 }
 
+async function waitForStorageReady({
+  fetchImpl,
+  origin,
+  accountId,
+  storage,
+  attempts,
+  retryDelayMs,
+  auth = null,
+  checks
+}) {
+  let current = storage;
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    if (
+      current?.id &&
+      current?.provider === "tencent-tke" &&
+      current?.providerResourceId?.startsWith("pvc/") &&
+      current?.status === "available" &&
+      current?.billingStatus === "active" &&
+      Number(current?.sizeGb || 0) > 0
+    ) {
+      addCheck(checks, "storage_created", true, {
+        storageId: current.id,
+        attempts: attempt + 1
+      });
+      return current;
+    }
+    if (!current?.id) break;
+    if (attempt >= attempts) break;
+    if (attempt > 0) await sleep(retryDelayMs);
+    current = await requestJson({
+      fetchImpl,
+      origin,
+      path: `/api/storage-volumes/${encodeURIComponent(current.id)}/sync`,
+      method: "POST",
+      auth,
+      body: { accountId, storageId: current.id }
+    });
+  }
+  assertStorageShape(checks, current);
+  return current;
+}
+
 function assertAttachmentShape(checks, attachment, { compute, storage }, name = "storage_attached") {
   addCheck(checks, name, Boolean(
     attachment?.id &&
@@ -1370,7 +1412,16 @@ export async function verifyProductionChain({
       auth,
       body: { accountId, packageId, name: storageName }
     });
-    assertStorageShape(checks, storage);
+    storage = await waitForStorageReady({
+      fetchImpl,
+      origin: normalizedOrigin,
+      accountId,
+      storage,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs,
+      auth,
+      checks
+    });
 
     attachment = await requestJson({
       fetchImpl,

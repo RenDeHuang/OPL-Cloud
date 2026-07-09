@@ -911,6 +911,13 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 	}
 }
 
+func TestStorageResponseActivatesBillingWhenProviderIsAvailable(t *testing.T) {
+	body := storageResponse(map[string]any{"id": "storage-alpha", "status": "ready", "billingStatus": "pending"})
+	if body["status"] != "available" || body["billingStatus"] != "active" {
+		t.Fatalf("storage response should activate available provider resource, got %#v", body)
+	}
+}
+
 func TestSyncComputeAllocationExternalDeleteStopsBillingAndSuspendsWorkspace(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
