@@ -1106,6 +1106,75 @@ func (app *controlPlaneApp) cleanupWorkspaceAccess(input map[string]any) (map[st
 	return map[string]any{"cleaned": cleaned, "skipped": skipped}, nil
 }
 
+type terminalArchiveStore interface {
+	ArchiveTerminalResources(ctx context.Context, reason string) (map[string]any, error)
+}
+
+func (app *controlPlaneApp) archiveTerminalResources(ctx context.Context, input map[string]any) (map[string]any, error) {
+	reason := stringField(input, "reason", "operator_archive_terminal_resources")
+	result := map[string]any{"reason": reason}
+	if store, ok := app.store.(terminalArchiveStore); ok {
+		archived, err := store.ArchiveTerminalResources(ctx, reason)
+		if err != nil {
+			return nil, err
+		}
+		result = archived
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	result["currentStateRemoved"] = app.removeTerminalResourcesLocked()
+	if err := app.persistLocked(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (app *controlPlaneApp) removeTerminalResourcesLocked() int {
+	removed := 0
+	for id, row := range app.computes {
+		if terminalComputeStatus(stringValue(row["status"])) {
+			delete(app.computes, id)
+			removed++
+		}
+	}
+	for id, row := range app.storages {
+		if terminalStorageStatus(stringValue(row["status"])) {
+			delete(app.storages, id)
+			removed++
+		}
+	}
+	for id, row := range app.attachments {
+		if terminalAttachmentStatus(stringValue(row["status"])) {
+			delete(app.attachments, id)
+			removed++
+		}
+	}
+	for id, row := range app.workspaces {
+		if terminalWorkspaceStatus(firstNonEmpty(stringValue(row["state"]), stringValue(row["status"]))) {
+			delete(app.workspaces, id)
+			removed++
+		}
+	}
+	return removed
+}
+
+func terminalComputeStatus(status string) bool {
+	return status == "destroyed" || status == "deleted"
+}
+
+func terminalStorageStatus(status string) bool {
+	return status == "destroyed" || status == "deleted"
+}
+
+func terminalAttachmentStatus(status string) bool {
+	return status == "detached" || status == "deleted"
+}
+
+func terminalWorkspaceStatus(status string) bool {
+	return status == "data_deleted" || status == "unrecoverable" || status == "deleted" || status == "destroyed"
+}
+
 func (app *controlPlaneApp) workspaceCleanupReasonLocked(workspace map[string]any) string {
 	if stringValue(workspace["ownerAccountId"]) == "" && stringValue(workspace["accountId"]) == "" {
 		return "missing_owner"

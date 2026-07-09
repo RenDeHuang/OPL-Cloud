@@ -1232,6 +1232,29 @@ func TestCleanupWorkspaceAccessDisablesInvalidActiveURL(t *testing.T) {
 	}
 }
 
+func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) {
+	app := newControlPlaneApp()
+	app.computes["compute-dead"] = map[string]any{"id": "compute-dead", "status": "destroyed"}
+	app.storages["storage-dead"] = map[string]any{"id": "storage-dead", "status": "destroyed"}
+	app.attachments["attach-dead"] = map[string]any{"id": "attach-dead", "status": "detached"}
+	app.workspaces["ws-dead"] = map[string]any{"id": "ws-dead", "state": "unrecoverable"}
+	app.ledger = []map[string]any{{"id": "ledger-kept"}}
+
+	result, err := app.archiveTerminalResources(context.Background(), map[string]any{"reason": "test"})
+	if err != nil {
+		t.Fatalf("archive terminal resources: %v", err)
+	}
+	if result["currentStateRemoved"] != 4 {
+		t.Fatalf("archive removed count = %#v, want 4", result)
+	}
+	if len(app.computes) != 0 || len(app.storages) != 0 || len(app.attachments) != 0 || len(app.workspaces) != 0 {
+		t.Fatalf("terminal resources still in current state: computes=%#v storages=%#v attachments=%#v workspaces=%#v", app.computes, app.storages, app.attachments, app.workspaces)
+	}
+	if len(app.ledger) != 1 {
+		t.Fatalf("archive must not remove ledger facts: %#v", app.ledger)
+	}
+}
+
 func TestManagementStateIncludesBackendCleanupAndAnomalySummary(t *testing.T) {
 	app := newControlPlaneApp()
 	app.workspaces["ws-missing-storage"] = map[string]any{
@@ -1793,6 +1816,7 @@ func TestHighRiskMutationsRequireBackendConfirmation(t *testing.T) {
 		{http.MethodPost, "/api/compute-allocations/compute-alpha/destroy", `{}`},
 		{http.MethodPost, "/api/storage-volumes/destroy", `{"storageId":"storage-alpha"}`},
 		{http.MethodPost, "/api/operator/cleanup-workspace-access", `{"reason":"test"}`},
+		{http.MethodPost, "/api/operator/archive-terminal-resources", `{"reason":"test"}`},
 	} {
 		rec := requestWithSession(t, server, admin, tc.method, tc.path, tc.body)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "confirmation_required") {
@@ -2139,6 +2163,7 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 		{http.MethodPost, "/api/workspaces/delete-token", `{"workspaceId":"ws-alpha"}`},
 		{http.MethodPost, "/api/workspaces/runtime-status", `{"workspaceId":"ws-alpha"}`},
 		{http.MethodPost, "/api/operator/cleanup-workspace-access", `{"reason":"test"}`},
+		{http.MethodPost, "/api/operator/archive-terminal-resources", `{"reason":"test"}`},
 	}
 
 	for _, tc := range cases {

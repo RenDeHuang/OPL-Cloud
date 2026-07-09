@@ -2,7 +2,7 @@ import React from "react";
 import { Alert, Button, Drawer, Form, Input, InputNumber, Select, Typography } from "antd";
 import { Plus } from "lucide-react";
 import { manualTopUp, recordBillingReconciliation, settleResourceBilling } from "../../api/billing-api.ts";
-import { addOrganizationMember, cleanupWorkspaceAccess, createOrganization, createUser, deleteUser, disableUser } from "../../api/console-read-api.ts";
+import { addOrganizationMember, archiveTerminalResources, cleanupWorkspaceAccess, createOrganization, createUser, deleteUser, disableUser } from "../../api/console-read-api.ts";
 import {
   ActionGroup,
   CleanupResourceTable,
@@ -779,6 +779,18 @@ export function AdminCleanupPage({ managementState, session, runAction }: any) {
             { label: "清理条件", value: "资源已销毁或挂载已解除", meta: "可用 URL 变为不可用", status: "当前", tone: "info" },
             { label: "证据", value: "workspace_access_cleaned", meta: "账本金额 0", status: "审计", tone: "info" }
           ]}
+        />
+        <OperationConfirmButton
+          label="归档终态资源"
+          title="确认归档终态资源"
+          description="已销毁计算、已销毁存储、已解除挂载和不可恢复工作区会移出当前态；账本不会归档或删除。"
+          danger
+          disabled={(destroyedCompute + destroyedStorage + detachedAttachments) === 0}
+          onConfirm={() => runAction(
+            () => archiveTerminalResources({ reason: "operator_archive_terminal_resources", confirm: true }, session.csrfToken),
+            "终态资源已归档",
+            { actionKey: "admin-archive-terminal-resources" }
+          )}
         />
       </InsightPanel>
     </ConsoleSurface>

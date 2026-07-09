@@ -12,10 +12,14 @@ import (
 
 	controlplaneent "opl-cloud/services/control-plane/ent"
 	"opl-cloud/services/control-plane/ent/adminauditevent"
+	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/ledgerprojection"
 	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
+	"opl-cloud/services/control-plane/ent/storageattachment"
+	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/wallettransactionprojection"
+	"opl-cloud/services/control-plane/ent/workspace"
 )
 
 const singletonFactID = "default"
@@ -426,6 +430,108 @@ func (s *postgresEntStateStore) SettlementResourceRows(ctx context.Context) (con
 	return computes, storages, nil
 }
 
+func (s *postgresEntStateStore) ArchiveTerminalResources(ctx context.Context, reason string) (map[string]any, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().UTC()
+	result := map[string]any{
+		"computeArchived":    0,
+		"storageArchived":    0,
+		"attachmentArchived": 0,
+		"workspaceArchived":  0,
+	}
+
+	computes, err := tx.ComputeAllocation.Query().All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range computes {
+		if !terminalComputeStatus(row.Status) {
+			continue
+		}
+		if err := saveArchivedResource(ctx, tx.ArchivedComputeAllocation.Create(), "compute", row.ID, row.AccountID, row.WorkspaceID, row.Name, row.Status, reason, now); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ComputeAllocation.Delete().Where(computeallocation.ID(row.ID)).Exec(ctx); err != nil {
+			return nil, err
+		}
+		result["computeArchived"] = result["computeArchived"].(int) + 1
+	}
+
+	storages, err := tx.StorageVolume.Query().All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range storages {
+		if !terminalStorageStatus(row.Status) {
+			continue
+		}
+		if err := saveArchivedResource(ctx, tx.ArchivedStorageVolume.Create(), "storage", row.ID, row.AccountID, row.WorkspaceID, row.Name, row.Status, reason, now); err != nil {
+			return nil, err
+		}
+		if _, err := tx.StorageVolume.Delete().Where(storagevolume.ID(row.ID)).Exec(ctx); err != nil {
+			return nil, err
+		}
+		result["storageArchived"] = result["storageArchived"].(int) + 1
+	}
+
+	attachments, err := tx.StorageAttachment.Query().All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range attachments {
+		if !terminalAttachmentStatus(row.Status) {
+			continue
+		}
+		if err := saveArchivedResource(ctx, tx.ArchivedStorageAttachment.Create(), "attachment", row.ID, row.AccountID, row.WorkspaceID, row.ID, row.Status, reason, now); err != nil {
+			return nil, err
+		}
+		if _, err := tx.StorageAttachment.Delete().Where(storageattachment.ID(row.ID)).Exec(ctx); err != nil {
+			return nil, err
+		}
+		result["attachmentArchived"] = result["attachmentArchived"].(int) + 1
+	}
+
+	workspaces, err := tx.Workspace.Query().All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range workspaces {
+		if !terminalWorkspaceStatus(firstNonEmpty(row.State, row.Status)) {
+			continue
+		}
+		if err := saveArchivedResource(ctx, tx.ArchivedWorkspace.Create(), "workspace", row.ID, firstNonEmpty(row.OwnerAccountID, row.AccountID), row.ID, row.Name, firstNonEmpty(row.State, row.Status), reason, now); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Workspace.Delete().Where(workspace.ID(row.ID)).Exec(ctx); err != nil {
+			return nil, err
+		}
+		result["workspaceArchived"] = result["workspaceArchived"].(int) + 1
+	}
+
+	total := result["computeArchived"].(int) + result["storageArchived"].(int) + result["attachmentArchived"].(int) + result["workspaceArchived"].(int)
+	if total > 0 {
+		if err := tx.ArchiveJob.Create().
+			SetID("archive-job-" + stableID(now.Format(time.RFC3339Nano), reason)[:12]).
+			SetResourceKind("terminal_control_plane_resources").
+			SetStatus("succeeded").
+			SetReason(reason).
+			SetAmountCents(int64(total)).
+			SetCreatedAt(now).
+			SetUpdatedAt(now).
+			Exec(ctx); err != nil {
+			return nil, err
+		}
+	}
+	result["archived"] = total
+	result["reason"] = reason
+	return result, tx.Commit()
+}
+
 func (s *postgresEntStateStore) Save(ctx context.Context, facts controlPlaneState) error {
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
@@ -623,6 +729,25 @@ func saveRecord(ctx context.Context, id string, row controlPlaneRecord, builder 
 		}
 	}
 	return execCreate(ctx, builder)
+}
+
+func saveArchivedResource(ctx context.Context, builder any, kind string, id string, accountID string, workspaceID string, name string, status string, reason string, archivedAt time.Time) error {
+	callSetter(builder, "SetID", "archived-"+kind+"-"+id)
+	callSetter(builder, "SetAccountID", accountID)
+	callSetter(builder, "SetWorkspaceID", workspaceID)
+	callSetter(builder, "SetResourceID", id)
+	callSetter(builder, "SetResourceKind", kind)
+	callSetter(builder, "SetName", name)
+	callSetter(builder, "SetStatus", status)
+	callSetter(builder, "SetReason", reason)
+	callSetter(builder, "SetArchivedAt", archivedAt)
+	callSetter(builder, "SetCreatedAt", archivedAt)
+	callSetter(builder, "SetUpdatedAt", archivedAt)
+	err := execCreate(ctx, builder)
+	if controlplaneent.IsConstraintError(err) {
+		return nil
+	}
+	return err
 }
 
 func callSetter(builder any, name string, value any) {

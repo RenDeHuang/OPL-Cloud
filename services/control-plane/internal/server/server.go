@@ -821,6 +821,23 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
+	mux.HandleFunc("POST /api/operator/archive-terminal-resources", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		input := decodeJSON(r)
+		if !confirmed(input, "confirm") {
+			writeError(w, http.StatusBadRequest, "confirmation_required")
+			return
+		}
+		result, err := app.archiveTerminalResources(r.Context(), input)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		if err := app.appendAuditEvent(r, "operator.archive_terminal_resources", "archive_job", stringValue(result["id"]), "", nil, result, "succeeded"); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}))
 	mux.HandleFunc("/", app.consoleStatic)
 	return mux, nil
 }

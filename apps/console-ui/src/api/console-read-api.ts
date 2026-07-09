@@ -50,3 +50,7 @@ export function deleteUser(input, csrfToken) {
 export function cleanupWorkspaceAccess(input, csrfToken) {
   return postJson("/api/operator/cleanup-workspace-access", input, csrfToken);
 }
+
+export function archiveTerminalResources(input, csrfToken) {
+  return postJson("/api/operator/archive-terminal-resources", input, csrfToken);
+}

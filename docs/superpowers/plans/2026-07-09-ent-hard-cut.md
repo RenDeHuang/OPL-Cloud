@@ -52,10 +52,11 @@
 ## Phase 6: Archive Domain
 
 - [x] Add archive tables for destroyed compute allocations, storage volumes, storage attachments, workspaces, and admin audit events.
-- [ ] Add `ArchiveService` and retention worker for terminal Control Plane facts.
-- [ ] Exclude archived resources from customer current-state pages.
-- [ ] Add admin archive API and frontend API client surface.
-- [ ] Do not archive or delete Ledger accounting facts in this phase.
+- [x] Add `ArchiveService` for terminal Control Plane facts.
+- [ ] Add scheduled retention worker for terminal Control Plane facts.
+- [x] Exclude archived resources from customer current-state pages.
+- [x] Add admin archive API and frontend API client surface.
+- [x] Do not archive or delete Ledger accounting facts in this phase.
 
 ## Phase 7: Periodic Settlement Ent Path
 
@@ -67,7 +68,7 @@
 ## Phase 8: Hard Cut Cleanup
 
 - [ ] Delete old compatibility paths, file persistence, generic fact store, and demo/fallback data.
-- [ ] Run `rg "fact_store|postgresFactStore|fileFactStore|controlPlaneFacts|payload JSONB|demo|fallback|compat|legacy"` and leave only tests/history docs that intentionally forbid retired paths.
+- [x] Run `rg "fact_store|postgresFactStore|fileFactStore|controlPlaneFacts|payload JSONB|demo|fallback|compat|legacy"` and leave only tests/history docs that intentionally forbid retired paths.
 - [ ] Run `go test ./...` in all three services.
 - [ ] Run `npm test`, `npm run typecheck`, and `sentrux check .`.
 - [ ] Commit and push the feature branch. Do not rollout.
