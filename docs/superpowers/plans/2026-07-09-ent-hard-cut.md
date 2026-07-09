@@ -60,8 +60,8 @@
 ## Phase 7: Periodic Settlement Ent Path
 
 - [ ] Make the periodic settlement worker scan Ent-backed active compute and storage resources.
-- [ ] Update last-settled metadata after successful Ledger settlement.
-- [ ] Keep stable settlement idempotency keys.
+- [x] Update last-settled metadata after successful Ledger settlement.
+- [x] Keep stable settlement idempotency keys.
 - [x] Prove repeated worker runs do not double-charge.
 
 ## Phase 8: Hard Cut Cleanup

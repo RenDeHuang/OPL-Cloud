@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -69,6 +70,9 @@ func (app *controlPlaneApp) runPeriodicSettlementOnce(ctx context.Context, servi
 		if err := app.rememberResourceSettlement(result); err != nil {
 			return err
 		}
+		if err := app.markResourceSettlement(result); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -78,13 +82,13 @@ func (app *controlPlaneApp) periodicSettlementInputs(periodStart time.Time, peri
 	defer app.mu.Unlock()
 	inputs := []controlplane.ResourceSettlementInput{}
 	for _, row := range app.computes {
-		if !billableCompute(row) {
+		if !billableCompute(row) || alreadySettledForPeriod(row, periodEnd) {
 			continue
 		}
 		inputs = append(inputs, periodicSettlementInput(row, "compute", periodStart, periodEnd))
 	}
 	for _, row := range app.storages {
-		if !billableStorage(row) {
+		if !billableStorage(row) || alreadySettledForPeriod(row, periodEnd) {
 			continue
 		}
 		inputs = append(inputs, periodicSettlementInput(row, "storage", periodStart, periodEnd))
@@ -124,6 +128,10 @@ func periodicSettlementInput(row map[string]any, resourceType string, periodStar
 	}
 }
 
+func alreadySettledForPeriod(row map[string]any, periodEnd time.Time) bool {
+	return stringValue(row["settlementId"]) != "" && stringValue(row["usagePeriodEnd"]) == periodEnd.UTC().Format(time.RFC3339)
+}
+
 func periodicSettlementAmountCents(row map[string]any, resourceType string, plan map[string]any) int64 {
 	if resourceType == "storage" {
 		sizeGB := numberField(row, "sizeGb", 10)
@@ -134,4 +142,25 @@ func periodicSettlementAmountCents(row map[string]any, resourceType string, plan
 
 func periodicSettlementKey(input controlplane.ResourceSettlementInput) string {
 	return strings.Join([]string{"periodic-settlement", input.AccountID, input.ResourceType, input.ResourceID, input.UsagePeriodEnd}, ":")
+}
+
+func (app *controlPlaneApp) markResourceSettlement(result clients.ResourceSettlementResult) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	var table stateTable
+	switch result.ResourceType {
+	case "storage":
+		table = app.storages
+	default:
+		table = app.computes
+	}
+	row := table[result.ResourceID]
+	if row == nil {
+		return nil
+	}
+	row["settlementId"] = result.ID
+	row["ledgerEntryId"] = result.LedgerEntryID
+	row["walletTransactionId"] = result.WalletTransactionID
+	row["usagePeriodEnd"] = result.UsagePeriodEnd
+	return app.persistLocked()
 }
