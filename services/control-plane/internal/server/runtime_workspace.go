@@ -26,7 +26,7 @@ func (app *controlPlaneApp) workspaceBillingLocked(workspace map[string]any) map
 	storage := app.resources.storages[stringValue(workspace["storageId"])]
 	return map[string]any{
 		"activeHourlyEstimate": activeHourlyForResource(compute) + activeHourlyForResource(storage),
-		"currentChargeTotal":   resourceDebitTotal(app.ledger, firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])), workspaceID),
+		"currentChargeTotal":   resourceDebitTotal(app.billing.ledger, firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])), workspaceID),
 	}
 }
 

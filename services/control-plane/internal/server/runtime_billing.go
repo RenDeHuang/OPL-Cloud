@@ -9,7 +9,7 @@ import (
 func (app *controlPlaneApp) billingSummaryLocked(accountID string) map[string]any {
 	return map[string]any{
 		"activeHourlyEstimate":     app.activeHourlyEstimateLocked(accountID),
-		"recentResourceDebitTotal": resourceDebitTotal(app.ledger, accountID, ""),
+		"recentResourceDebitTotal": resourceDebitTotal(app.billing.ledger, accountID, ""),
 	}
 }
 
@@ -63,17 +63,17 @@ func (app *controlPlaneApp) addLedgerLocked(accountID string, entryType string, 
 	for key, value := range ids {
 		entry[key] = value
 	}
-	app.ledger = append(app.ledger, entry)
+	app.billing.ledger = append(app.billing.ledger, entry)
 	return entry
 }
 
 func (app *controlPlaneApp) rememberManualTopUp(result clients.ManualTopUpResult) error {
 	app.mu.Lock()
 	defer app.mu.Unlock()
-	app.topups = append(app.topups, structToMap(result.TopUp))
-	app.ledger = append(app.ledger, map[string]any{"id": result.LedgerEntry.ID, "accountId": result.LedgerEntry.AccountID, "type": "manual_topup", "amountCents": result.LedgerEntry.AmountCents})
-	app.walletTx = append(app.walletTx, map[string]any{"id": result.WalletTransaction.ID, "accountId": result.WalletTransaction.AccountID, "type": "manual_topup", "ledgerEntryId": result.WalletTransaction.LedgerEntryID, "amountCents": result.WalletTransaction.AmountCents})
-	app.wallets[result.Wallet.AccountID] = walletProjection(result.Wallet)
+	app.billing.topups = append(app.billing.topups, structToMap(result.TopUp))
+	app.billing.ledger = append(app.billing.ledger, map[string]any{"id": result.LedgerEntry.ID, "accountId": result.LedgerEntry.AccountID, "type": "manual_topup", "amountCents": result.LedgerEntry.AmountCents})
+	app.billing.walletTx = append(app.billing.walletTx, map[string]any{"id": result.WalletTransaction.ID, "accountId": result.WalletTransaction.AccountID, "type": "manual_topup", "ledgerEntryId": result.WalletTransaction.LedgerEntryID, "amountCents": result.WalletTransaction.AmountCents})
+	app.billing.wallets[result.Wallet.AccountID] = walletProjection(result.Wallet)
 	return app.persistLocked()
 }
 
@@ -103,7 +103,7 @@ func (app *controlPlaneApp) rememberResourceSettlement(result clients.ResourceSe
 	ledger["quantity"] = result.Quantity
 	ledger["unit"] = result.Unit
 	ledger["providerCostEvidenceRef"] = result.ProviderCostEvidenceRef
-	app.ledger = upsertProjectionByID(app.ledger, ledger)
+	app.billing.ledger = upsertProjectionByID(app.billing.ledger, ledger)
 
 	walletTx := map[string]any{
 		"id":              result.WalletTransactionID,
@@ -118,8 +118,8 @@ func (app *controlPlaneApp) rememberResourceSettlement(result clients.ResourceSe
 		"totalSpentCents": result.Wallet.TotalSpentCents,
 		"currency":        result.Wallet.Currency,
 	}
-	app.walletTx = upsertProjectionByID(app.walletTx, walletTx)
-	app.wallets[result.AccountID] = walletProjection(result.Wallet)
+	app.billing.walletTx = upsertProjectionByID(app.billing.walletTx, walletTx)
+	app.billing.wallets[result.AccountID] = walletProjection(result.Wallet)
 	return app.persistLocked()
 }
 
@@ -127,12 +127,12 @@ func (app *controlPlaneApp) applyLedgerFacts(accountID string, wallet clients.Wa
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
-	if accountID != "" && wallet.AccountID != "" && (walletHasMoneyFacts(wallet) || app.wallets[wallet.AccountID] == nil) {
-		app.wallets[wallet.AccountID] = walletProjection(wallet)
+	if accountID != "" && wallet.AccountID != "" && (walletHasMoneyFacts(wallet) || app.billing.wallets[wallet.AccountID] == nil) {
+		app.billing.wallets[wallet.AccountID] = walletProjection(wallet)
 	}
 	for _, tx := range transactions {
 		if tx.AccountID != "" {
-			app.wallets[tx.AccountID] = walletProjection(clients.Wallet{
+			app.billing.wallets[tx.AccountID] = walletProjection(clients.Wallet{
 				AccountID:       tx.AccountID,
 				BalanceCents:    tx.BalanceCents,
 				FrozenCents:     tx.FrozenCents,
@@ -150,13 +150,13 @@ func (app *controlPlaneApp) applyLedgerFacts(accountID string, wallet clients.Wa
 		settlementsByWalletTx[settlement.WalletTransactionID] = settlement
 	}
 	if entries != nil {
-		app.ledger = ledgerEntryProjections(entries, settlementsByEntry)
+		app.billing.ledger = ledgerEntryProjections(entries, settlementsByEntry)
 	}
 	if transactions != nil {
-		app.walletTx = walletTransactionProjections(transactions, settlementsByWalletTx)
+		app.billing.walletTx = walletTransactionProjections(transactions, settlementsByWalletTx)
 	}
 	if topups != nil {
-		app.topups = manualTopUpProjections(topups)
+		app.billing.topups = manualTopUpProjections(topups)
 	}
 	return app.persistLocked()
 }
@@ -240,7 +240,7 @@ func (app *controlPlaneApp) operationEvidenceForResourceLocked(ids ...string) ma
 
 func (app *controlPlaneApp) ledgerEntryIDsLocked(ids ...string) []string {
 	output := []string{}
-	for _, entry := range app.ledger {
+	for _, entry := range app.billing.ledger {
 		if mapContainsAnyID(entry, ids...) {
 			output = append(output, stringValue(entry["id"]))
 		}
@@ -250,7 +250,7 @@ func (app *controlPlaneApp) ledgerEntryIDsLocked(ids ...string) []string {
 
 func (app *controlPlaneApp) walletTransactionIDsLocked(ids ...string) []string {
 	output := []string{}
-	for _, tx := range app.walletTx {
+	for _, tx := range app.billing.walletTx {
 		metadata, _ := tx["metadata"].(map[string]any)
 		if mapContainsAnyID(metadata, ids...) {
 			output = append(output, stringValue(tx["id"]))
@@ -260,14 +260,14 @@ func (app *controlPlaneApp) walletTransactionIDsLocked(ids ...string) []string {
 }
 
 func (app *controlPlaneApp) addWalletTxLocked(accountID string, txType string, metadata map[string]any) {
-	app.walletTx = append(app.walletTx, map[string]any{"id": "wallet-" + stableID(accountID, txType, time.Now().UTC().String())[:12], "accountId": accountID, "type": txType, "metadata": metadata})
+	app.billing.walletTx = append(app.billing.walletTx, map[string]any{"id": "wallet-" + stableID(accountID, txType, time.Now().UTC().String())[:12], "accountId": accountID, "type": txType, "metadata": metadata})
 }
 
 func (app *controlPlaneApp) wallet(accountID string) map[string]any {
 	if accountID == "" {
 		accountID = "acct-local"
 	}
-	if wallet, ok := app.wallets[accountID]; ok {
+	if wallet, ok := app.billing.wallets[accountID]; ok {
 		return wallet
 	}
 	return map[string]any{"id": accountID, "accountId": accountID, "balance": float64(0), "frozen": float64(0), "available": float64(0), "totalRecharged": float64(0)}

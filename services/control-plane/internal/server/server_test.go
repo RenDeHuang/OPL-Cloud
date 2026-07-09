@@ -1017,7 +1017,7 @@ func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
 	}
 	ledger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha"})
 	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha"})
-	wallet := app.walletTx[len(app.walletTx)-1]
+	wallet := app.billing.walletTx[len(app.billing.walletTx)-1]
 	app.mu.Unlock()
 
 	state := app.managementState(true, nil)
@@ -1182,8 +1182,8 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	if workspace["state"] != "data_deleted" || workspace["status"] != "unrecoverable" || !ok || access["tokenStatus"] != "disabled" {
 		t.Fatalf("storage destroy did not mark workspace unrecoverable: %#v", workspace)
 	}
-	if len(app.ledger) != 2 || app.ledger[0]["type"] != "compute_hold_released" || app.ledger[1]["type"] != "storage_hold_released" {
-		t.Fatalf("missing hold release ledger projection: %#v", app.ledger)
+	if len(app.billing.ledger) != 2 || app.billing.ledger[0]["type"] != "compute_hold_released" || app.billing.ledger[1]["type"] != "storage_hold_released" {
+		t.Fatalf("missing hold release ledger projection: %#v", app.billing.ledger)
 	}
 }
 
@@ -1293,9 +1293,9 @@ func TestOperatorAccountTotalsIgnoreDeletedUserWalletResiduals(t *testing.T) {
 	app.mu.Lock()
 	app.auth.users["usr-active"] = map[string]any{"id": "usr-active", "accountId": "acct-active", "status": "active", "email": "active@example.test"}
 	app.auth.users["usr-deleted"] = map[string]any{"id": "usr-deleted", "accountId": "acct-deleted", "status": "deleted", "email": "deleted@example.test"}
-	app.wallets["acct-active"] = map[string]any{"accountId": "acct-active", "balance": 10.0, "frozen": 2.0, "totalSpent": 3.0}
-	app.wallets["acct-deleted"] = map[string]any{"accountId": "acct-deleted", "balance": 99.0, "frozen": 88.0, "totalSpent": 77.0}
-	app.wallets["acct-wallet-only"] = map[string]any{"accountId": "acct-wallet-only", "balance": 50.0, "frozen": 40.0, "totalSpent": 30.0}
+	app.billing.wallets["acct-active"] = map[string]any{"accountId": "acct-active", "balance": 10.0, "frozen": 2.0, "totalSpent": 3.0}
+	app.billing.wallets["acct-deleted"] = map[string]any{"accountId": "acct-deleted", "balance": 99.0, "frozen": 88.0, "totalSpent": 77.0}
+	app.billing.wallets["acct-wallet-only"] = map[string]any{"accountId": "acct-wallet-only", "balance": 50.0, "frozen": 40.0, "totalSpent": 30.0}
 	app.mu.Unlock()
 	summary := app.operatorSummary()
 
@@ -1335,7 +1335,7 @@ func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) 
 	app.resources.storages["storage-dead"] = map[string]any{"id": "storage-dead", "status": "destroyed"}
 	app.resources.attachments["attach-dead"] = map[string]any{"id": "attach-dead", "status": "detached"}
 	app.resources.workspaces["ws-dead"] = map[string]any{"id": "ws-dead", "state": "unrecoverable"}
-	app.ledger = []map[string]any{{"id": "ledger-kept"}}
+	app.billing.ledger = []map[string]any{{"id": "ledger-kept"}}
 
 	result, err := app.archiveTerminalResources(context.Background(), map[string]any{"reason": "test"})
 	if err != nil {
@@ -1347,8 +1347,8 @@ func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) 
 	if len(app.resources.computes) != 0 || len(app.resources.storages) != 0 || len(app.resources.attachments) != 0 || len(app.resources.workspaces) != 0 {
 		t.Fatalf("terminal resources still in current state: computes=%#v storages=%#v attachments=%#v workspaces=%#v", app.resources.computes, app.resources.storages, app.resources.attachments, app.resources.workspaces)
 	}
-	if len(app.ledger) != 1 {
-		t.Fatalf("archive must not remove ledger facts: %#v", app.ledger)
+	if len(app.billing.ledger) != 1 {
+		t.Fatalf("archive must not remove ledger facts: %#v", app.billing.ledger)
 	}
 }
 

@@ -23,15 +23,11 @@ type controlPlaneApp struct {
 	orgs        controlPlaneRecordSet
 	memberships controlPlaneRecordSet
 	support     controlPlaneRecordSet
-	wallets     controlPlaneRecordSet
-	ledger      []controlPlaneRecord
-	walletTx    []controlPlaneRecord
-	topups      []controlPlaneRecord
 	runtimeOps  []controlPlaneRecord
-	auditEvents []controlPlaneRecord
 	reconcile   controlPlaneRecord
 	auth        runtimeAuthState
 	resources   runtimeResourceState
+	billing     runtimeBillingState
 }
 
 type loginFailure struct {
@@ -51,6 +47,14 @@ type runtimeResourceState struct {
 	storages    controlPlaneRecordSet
 	attachments controlPlaneRecordSet
 	workspaces  controlPlaneRecordSet
+}
+
+type runtimeBillingState struct {
+	wallets     controlPlaneRecordSet
+	ledger      []controlPlaneRecord
+	walletTx    []controlPlaneRecord
+	topups      []controlPlaneRecord
+	auditEvents []controlPlaneRecord
 }
 
 var (
@@ -85,7 +89,9 @@ func newControlPlaneAppEmpty() *controlPlaneApp {
 		orgs:        controlPlaneRecordSet{},
 		memberships: controlPlaneRecordSet{},
 		support:     controlPlaneRecordSet{},
-		wallets:     controlPlaneRecordSet{},
+		billing: runtimeBillingState{
+			wallets: controlPlaneRecordSet{},
+		},
 		resources: runtimeResourceState{
 			computes:    controlPlaneRecordSet{},
 			storages:    controlPlaneRecordSet{},
@@ -112,12 +118,12 @@ func (app *controlPlaneApp) factsLocked() controlPlaneState {
 		Orgs:        cloneStateTable(app.orgs),
 		Memberships: cloneStateTable(app.memberships),
 		Support:     cloneStateTable(app.support),
-		Wallets:     cloneStateTable(app.wallets),
-		Ledger:      cloneStateRows(app.ledger),
-		WalletTx:    cloneStateRows(app.walletTx),
-		Topups:      cloneStateRows(app.topups),
+		Wallets:     cloneStateTable(app.billing.wallets),
+		Ledger:      cloneStateRows(app.billing.ledger),
+		WalletTx:    cloneStateRows(app.billing.walletTx),
+		Topups:      cloneStateRows(app.billing.topups),
 		RuntimeOps:  cloneStateRows(app.runtimeOps),
-		AuditEvents: cloneStateRows(app.auditEvents),
+		AuditEvents: cloneStateRows(app.billing.auditEvents),
 		Reconcile:   cloneMap(app.reconcile),
 	}
 }
@@ -154,22 +160,22 @@ func (app *controlPlaneApp) applyFacts(facts controlPlaneState) {
 		app.support = cloneStateTable(facts.Support)
 	}
 	if facts.Wallets != nil {
-		app.wallets = cloneStateTable(facts.Wallets)
+		app.billing.wallets = cloneStateTable(facts.Wallets)
 	}
 	if facts.Ledger != nil {
-		app.ledger = cloneStateRows(facts.Ledger)
+		app.billing.ledger = cloneStateRows(facts.Ledger)
 	}
 	if facts.WalletTx != nil {
-		app.walletTx = cloneStateRows(facts.WalletTx)
+		app.billing.walletTx = cloneStateRows(facts.WalletTx)
 	}
 	if facts.Topups != nil {
-		app.topups = cloneStateRows(facts.Topups)
+		app.billing.topups = cloneStateRows(facts.Topups)
 	}
 	if facts.RuntimeOps != nil {
 		app.runtimeOps = cloneStateRows(facts.RuntimeOps)
 	}
 	if facts.AuditEvents != nil {
-		app.auditEvents = cloneStateRows(facts.AuditEvents)
+		app.billing.auditEvents = cloneStateRows(facts.AuditEvents)
 	}
 	if facts.Reconcile != nil {
 		app.reconcile = cloneMap(facts.Reconcile)
@@ -223,11 +229,11 @@ func (app *controlPlaneApp) state(accountID string, computePools []any) map[stri
 		"storageAttachments":     accountValues(app.resources.attachments, accountID),
 		"accounts":               app.accountsLocked(),
 		"billingSummary":         app.billingSummaryLocked(accountID),
-		"billingLedger":          copySlice(app.ledger),
-		"walletTransactions":     copySlice(app.walletTx),
-		"manualTopups":           copySlice(app.topups),
+		"billingLedger":          copySlice(app.billing.ledger),
+		"walletTransactions":     copySlice(app.billing.walletTx),
+		"manualTopups":           copySlice(app.billing.topups),
 		"supportTickets":         values(app.support),
-		"auditEvents":            auditEventsForAccount(app.auditEvents, accountID),
+		"auditEvents":            auditEventsForAccount(app.billing.auditEvents, accountID),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"notifications":          []any{},

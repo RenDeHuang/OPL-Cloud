@@ -43,7 +43,7 @@ func (app *controlPlaneApp) rememberHoldLocked(accountID string, resourceType st
 		return
 	}
 	if wallet, ok := row["wallet"].(map[string]any); ok {
-		app.wallets[accountID] = walletProjection(walletFromMap(wallet))
+		app.billing.wallets[accountID] = walletProjection(walletFromMap(wallet))
 	}
 	ledger := map[string]any{"id": holdID, "accountId": accountID, "type": resourceType + "_hold", "resourceId": resourceID, "amountCents": int64(numberField(row, "holdAmountCents", 0))}
 	if resourceType == "storage" {
@@ -51,7 +51,7 @@ func (app *controlPlaneApp) rememberHoldLocked(accountID string, resourceType st
 	} else {
 		ledger["computeAllocationId"] = resourceID
 	}
-	app.ledger = append(app.ledger, ledger)
+	app.billing.ledger = append(app.billing.ledger, ledger)
 }
 
 func (app *controlPlaneApp) rememberReleaseLocked(accountID string, resourceType string, resourceID string, row map[string]any) {
@@ -60,7 +60,7 @@ func (app *controlPlaneApp) rememberReleaseLocked(accountID string, resourceType
 		return
 	}
 	if wallet, ok := row["wallet"].(map[string]any); ok {
-		app.wallets[accountID] = walletProjection(walletFromMap(wallet))
+		app.billing.wallets[accountID] = walletProjection(walletFromMap(wallet))
 	}
 	ledger := map[string]any{"id": releaseID, "accountId": accountID, "type": resourceType + "_hold_released", "resourceId": resourceID, "amountCents": int64(numberField(row, "holdAmountCents", 0))}
 	if resourceType == "storage" {
@@ -68,7 +68,7 @@ func (app *controlPlaneApp) rememberReleaseLocked(accountID string, resourceType
 	} else {
 		ledger["computeAllocationId"] = resourceID
 	}
-	app.ledger = append(app.ledger, ledger)
+	app.billing.ledger = append(app.billing.ledger, ledger)
 }
 
 func (app *controlPlaneApp) rememberAttachment(attachment any, input map[string]any) error {

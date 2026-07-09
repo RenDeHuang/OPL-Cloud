@@ -47,11 +47,11 @@ func (app *controlPlaneApp) managementState(includeDeleted bool, computePools []
 		"storageVolumes":         values(app.resources.storages),
 		"storageAttachments":     values(app.resources.attachments),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
-		"billingLedger":          copySlice(app.ledger),
-		"walletTransactions":     copySlice(app.walletTx),
-		"manualTopups":           copySlice(app.topups),
+		"billingLedger":          copySlice(app.billing.ledger),
+		"walletTransactions":     copySlice(app.billing.walletTx),
+		"manualTopups":           copySlice(app.billing.topups),
 		"runtimeOperations":      copySlice(app.runtimeOps),
-		"auditEvents":            copySlice(app.auditEvents),
+		"auditEvents":            copySlice(app.billing.auditEvents),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"workspaceAccessCleanup": app.workspaceAccessCleanupSummaryLocked(),
 		"archive":                app.archiveStateLocked(),
@@ -75,7 +75,7 @@ func (app *controlPlaneApp) operatorSummary() map[string]any {
 		"runtimeOperations":      app.runtimeOperationSummaryLocked(),
 		"failedOperations":       failedRuntimeOperations(app.runtimeOps),
 		"resourceAnomalies":      app.resourceAnomaliesLocked(),
-		"resourceLedgerEvidence": map[string]any{"total": len(app.ledger), "recent": copySlice(app.ledger)},
+		"resourceLedgerEvidence": map[string]any{"total": len(app.billing.ledger), "recent": copySlice(app.billing.ledger)},
 		"productionE2E":          productionE2ESummary(nil),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"retentionPolicy":        currentRetentionPolicy().dto(),
@@ -103,7 +103,7 @@ func (app *controlPlaneApp) appendAuditEvent(r *http.Request, action string, res
 		"result":          result,
 		"createdAt":       now,
 	}
-	app.auditEvents = append(app.auditEvents, event)
+	app.billing.auditEvents = append(app.billing.auditEvents, event)
 	return app.persistLocked()
 }
 
@@ -160,7 +160,7 @@ func (app *controlPlaneApp) runtimeOperationSummaryLocked() map[string]any {
 func (app *controlPlaneApp) accountsLocked() []any {
 	accountIDs := app.activeBusinessAccountIDsLocked()
 	if len(accountIDs) == 0 {
-		for accountID := range app.wallets {
+		for accountID := range app.billing.wallets {
 			accountIDs[accountID] = true
 		}
 	}
@@ -172,9 +172,9 @@ func (app *controlPlaneApp) accountsLocked() []any {
 	rows := make([]any, 0, len(keys))
 	for _, accountID := range keys {
 		row := app.wallet(accountID)
-		row["totalRecharged"] = totalTopupsForAccount(app.topups, accountID)
+		row["totalRecharged"] = totalTopupsForAccount(app.billing.topups, accountID)
 		if number(row["totalSpent"]) == 0 {
-			row["totalSpent"] = totalDebitsForAccount(accountID, app.walletTx, app.ledger)
+			row["totalSpent"] = totalDebitsForAccount(accountID, app.billing.walletTx, app.billing.ledger)
 		}
 		for _, user := range app.auth.users {
 			if stringValue(user["accountId"]) == accountID && stringValue(user["status"]) != "deleted" {

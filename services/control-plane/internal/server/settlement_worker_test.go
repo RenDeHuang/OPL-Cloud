@@ -80,11 +80,11 @@ func TestPeriodicSettlementWorkerDoesNotDuplicateControlPlaneProjectionsOnReplay
 	if len(ledger.keys) != 1 {
 		t.Fatalf("worker must skip already-settled resources for the same period, got keys %#v", ledger.keys)
 	}
-	if len(app.ledger) != 1 {
-		t.Fatalf("control-plane ledger projection duplicated replayed settlement: %#v", app.ledger)
+	if len(app.billing.ledger) != 1 {
+		t.Fatalf("control-plane ledger projection duplicated replayed settlement: %#v", app.billing.ledger)
 	}
-	if len(app.walletTx) != 1 {
-		t.Fatalf("control-plane wallet transaction projection duplicated replayed settlement: %#v", app.walletTx)
+	if len(app.billing.walletTx) != 1 {
+		t.Fatalf("control-plane wallet transaction projection duplicated replayed settlement: %#v", app.billing.walletTx)
 	}
 	compute := app.resources.computes["compute-alpha"]
 	if compute["settlementId"] != "settlement-compute-alpha" || compute["usagePeriodEnd"] != "2026-07-09T12:00:00Z" {
