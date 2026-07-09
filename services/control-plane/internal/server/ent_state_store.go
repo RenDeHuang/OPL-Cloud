@@ -84,6 +84,10 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		_ = client.Close()
 		return nil, err
 	}
+	if err := backfillControlPlaneMigrationNulls(context.Background(), driver); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
 	store := &postgresEntStateStore{client: client}
 	if err := store.ensureDefaultPricingCatalog(context.Background()); err != nil {
 		_ = client.Close()
@@ -116,6 +120,89 @@ BEGIN
       target_table
     );
   END LOOP;
+
+  IF to_regclass('public.control_plane_storage_attachments') IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'control_plane_storage_attachments' AND column_name = 'account_id'
+    )
+  THEN
+    IF to_regclass('public.control_plane_workspaces') IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_storage_attachments' AND column_name = 'workspace_id'
+      )
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_workspaces' AND column_name = 'account_id'
+      )
+    THEN
+      UPDATE control_plane_storage_attachments attachments
+      SET account_id = workspaces.account_id
+      FROM control_plane_workspaces workspaces
+      WHERE COALESCE(attachments.account_id, '') = ''
+        AND COALESCE(attachments.workspace_id, '') <> ''
+        AND attachments.workspace_id = workspaces.id
+        AND COALESCE(workspaces.account_id, '') <> '';
+    END IF;
+
+    IF to_regclass('public.control_plane_storage_volumes') IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_storage_attachments' AND column_name = 'storage_id'
+      )
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_storage_volumes' AND column_name = 'account_id'
+      )
+    THEN
+      UPDATE control_plane_storage_attachments attachments
+      SET account_id = volumes.account_id
+      FROM control_plane_storage_volumes volumes
+      WHERE COALESCE(attachments.account_id, '') = ''
+        AND COALESCE(attachments.storage_id, '') <> ''
+        AND attachments.storage_id = volumes.id
+        AND COALESCE(volumes.account_id, '') <> '';
+    END IF;
+
+    IF to_regclass('public.control_plane_storage_volumes') IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_storage_attachments' AND column_name = 'volume_id'
+      )
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_storage_volumes' AND column_name = 'account_id'
+      )
+    THEN
+      UPDATE control_plane_storage_attachments attachments
+      SET account_id = volumes.account_id
+      FROM control_plane_storage_volumes volumes
+      WHERE COALESCE(attachments.account_id, '') = ''
+        AND COALESCE(attachments.volume_id, '') <> ''
+        AND attachments.volume_id = volumes.id
+        AND COALESCE(volumes.account_id, '') <> '';
+    END IF;
+
+    IF to_regclass('public.control_plane_compute_allocations') IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_storage_attachments' AND column_name = 'compute_allocation_id'
+      )
+      AND EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'control_plane_compute_allocations' AND column_name = 'account_id'
+      )
+    THEN
+      UPDATE control_plane_storage_attachments attachments
+      SET account_id = computes.account_id
+      FROM control_plane_compute_allocations computes
+      WHERE COALESCE(attachments.account_id, '') = ''
+        AND COALESCE(attachments.compute_allocation_id, '') <> ''
+        AND attachments.compute_allocation_id = computes.id
+        AND COALESCE(computes.account_id, '') <> '';
+    END IF;
+  END IF;
 
   FOR target_schema, target_table, target_column, target_type IN
     SELECT c.table_schema, c.table_name, c.column_name, c.data_type
