@@ -74,7 +74,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			HoldAmountCents: int64(numberField(preview, "holdAmountCents", 0)),
 		}, key)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), nil)
@@ -139,7 +139,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		compute, err := service.SyncComputeAllocation(r.Context(), releaseInput, mutationKey(r, input))
 		if err != nil {
 			_ = app.rememberCompute(providerSyncFacts(existing, err))
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil)
@@ -168,7 +168,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
 			_ = app.rememberCompute(providerSyncFacts(existing, err))
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil)
@@ -236,7 +236,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			HoldAmountCents: int64(numberField(preview, "holdAmountCents", 0)),
 		}, key)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), nil)
@@ -265,7 +265,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
 		if err != nil {
 			_ = app.rememberStorage(providerSyncFacts(existing, err))
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil)
@@ -299,7 +299,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		storage, err := service.SyncStorageVolume(r.Context(), releaseInput, mutationKey(r, input))
 		if err != nil {
 			_ = app.rememberStorage(providerSyncFacts(existing, err))
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil)
@@ -332,7 +332,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 			VolumeID:    stringField(input, "storageId", ""),
 		}, mutationKey(r, input))
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)
@@ -357,7 +357,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneApp, service *c
 		}
 		attachment, err := service.DetachStorageAttachment(r.Context(), attachmentID, mutationKey(r, input))
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		body := attachmentResponse(structToMap(attachment), input)

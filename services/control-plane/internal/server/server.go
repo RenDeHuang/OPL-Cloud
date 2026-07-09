@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -189,7 +190,12 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
-func writeUpstreamError(w http.ResponseWriter) {
+func writeUpstreamError(w http.ResponseWriter, causes ...error) {
+	for _, cause := range causes {
+		if cause != nil {
+			log.Printf("upstream request failed: %v", cause)
+		}
+	}
 	writeError(w, http.StatusBadGateway, "upstream_unavailable")
 }
 

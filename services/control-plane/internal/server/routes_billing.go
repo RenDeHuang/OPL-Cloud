@@ -14,7 +14,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *co
 		}
 		wallet, err := service.Wallet(r.Context(), accountID)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		if err := app.applyLedgerFacts(accountID, wallet, nil, nil, nil, nil); err != nil {
@@ -42,7 +42,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *co
 			Reason:         stringField(input, "reason", ""),
 		}, idempotencyKey)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		if err := app.rememberManualTopUp(result); err != nil {
@@ -83,7 +83,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *co
 		}
 		result, err := service.SettleResource(r.Context(), settlement, idempotencyKey)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		result = completeSettlementResult(result, settlement)
@@ -115,7 +115,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneApp, service *co
 		}
 		result, err := service.RecordReconciliation(r.Context(), controlplane.ReconciliationInput{Report: report}, idempotencyKey)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		if err := app.rememberReconciliation(result); err != nil {

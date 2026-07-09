@@ -65,6 +65,7 @@ func NewServer(store ledger.Store) http.Handler {
 			return
 		}
 		if err != nil {
+			log.Printf("hold failed: %v", err)
 			writeError(w, http.StatusInternalServerError, "hold failed")
 			return
 		}
@@ -92,6 +93,7 @@ func NewServer(store ledger.Store) http.Handler {
 			return
 		}
 		if err != nil {
+			log.Printf("hold release failed: %v", err)
 			writeError(w, http.StatusInternalServerError, "hold release failed")
 			return
 		}
@@ -142,6 +144,7 @@ func NewServer(store ledger.Store) http.Handler {
 			return
 		}
 		if err != nil {
+			log.Printf("resource settlement failed: %v", err)
 			writeError(w, http.StatusInternalServerError, "resource settlement failed")
 			return
 		}
