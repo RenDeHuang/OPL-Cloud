@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -168,6 +169,29 @@ func TestEntStateStoreUpdatesExecutionRequestWithoutRecreatingIt(t *testing.T) {
 	}
 	if !after.CreatedAt.Equal(before.CreatedAt) || after.Status != "approved" {
 		t.Fatalf("request was recreated instead of updated: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestEntStateStoreRejectsExecutionIdentityOverwrite(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/execution-conflict.sqlite")
+	ctx := context.Background()
+	row := map[string]any{
+		"id":             "request-alpha",
+		"organizationId": "org-alpha",
+		"workspaceId":    "workspace-alpha",
+		"projectId":      "project-alpha",
+		"taskId":         "task-alpha",
+		"actorUserId":    "usr-alpha",
+		"environmentRef": "environment-alpha",
+		"status":         "awaiting_approval",
+		"idempotencyKey": "request-once",
+	}
+	if err := store.SaveExecutionRequest(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	row["environmentRef"] = "environment-beta"
+	if err := store.SaveExecutionRequest(ctx, row); !errors.Is(err, errIdempotencyConflict) {
+		t.Fatalf("overwrite error = %v, want errIdempotencyConflict", err)
 	}
 }
 

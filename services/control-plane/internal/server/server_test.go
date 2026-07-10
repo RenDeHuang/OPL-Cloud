@@ -840,6 +840,17 @@ func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
 	}
 }
 
+func TestExecutionRoutesRequireAdminUntilMembershipAuthorization(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	admin := operatorSessionForTest(t, server)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@execution.example","accountId":"acct-alpha","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	pi := loginForTest(t, server, "pi@execution.example", "CorrectHorseBatteryStaple!")
+	rec := requestWithSession(t, server, pi, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "admin_required") {
+		t.Fatalf("status = %d body=%s, want admin_required", rec.Code, rec.Body.String())
+	}
+}
+
 type fabricClientWithResourceOperations struct {
 	fakeFabricClient
 }

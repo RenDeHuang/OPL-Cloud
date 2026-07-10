@@ -32,6 +32,8 @@ import (
 
 const singletonFactID = "default"
 
+var errIdempotencyConflict = errors.New("idempotency_conflict")
+
 type controlPlaneRecord = map[string]any
 type controlPlaneRecordSet = map[string]controlPlaneRecord
 
@@ -644,7 +646,8 @@ func (s *postgresEntStateStore) ListProjectTaskSyncHeads(ctx context.Context) ([
 
 func (s *postgresEntStateStore) SaveProjectTaskSyncHead(ctx context.Context, row map[string]any) error {
 	return s.upsertRecord(ctx, row,
-		func(id string) error { _, err := s.client.ProjectTaskSyncHead.Get(ctx, id); return err },
+		func(id string) (any, error) { return s.client.ProjectTaskSyncHead.Get(ctx, id) },
+		projectTaskSyncHeadIdentityMatches,
 		func() any { return s.client.ProjectTaskSyncHead.Create() },
 		func(id string) any { return s.client.ProjectTaskSyncHead.UpdateOneID(id) },
 		projectTaskSyncHeadEntFields,
@@ -661,7 +664,8 @@ func (s *postgresEntStateStore) ListExecutionRequests(ctx context.Context) ([]ma
 
 func (s *postgresEntStateStore) SaveExecutionRequest(ctx context.Context, row map[string]any) error {
 	return s.upsertRecord(ctx, row,
-		func(id string) error { _, err := s.client.ExecutionRequest.Get(ctx, id); return err },
+		func(id string) (any, error) { return s.client.ExecutionRequest.Get(ctx, id) },
+		executionRequestIdentityMatches,
 		func() any { return s.client.ExecutionRequest.Create() },
 		func(id string) any { return s.client.ExecutionRequest.UpdateOneID(id) },
 		executionRequestEntFields,
@@ -1249,12 +1253,15 @@ func setRecordFields(builder any, row controlPlaneRecord, fields []entRecordFiel
 	}
 }
 
-func (s *postgresEntStateStore) upsertRecord(ctx context.Context, row map[string]any, get func(string) error, create func() any, update func(string) any, fields []entRecordField) error {
+func (s *postgresEntStateStore) upsertRecord(ctx context.Context, row map[string]any, get func(string) (any, error), identityMatches func(any, map[string]any) bool, create func() any, update func(string) any, fields []entRecordField) error {
 	id := stringValue(row["id"])
 	if id == "" {
 		return errors.New("missing_record_id")
 	}
-	if err := get(id); err == nil {
+	if existing, err := get(id); err == nil {
+		if !identityMatches(existing, row) {
+			return errIdempotencyConflict
+		}
 		builder := update(id)
 		setRecordFields(builder, row, fields)
 		return execCreate(ctx, builder)
@@ -1265,9 +1272,21 @@ func (s *postgresEntStateStore) upsertRecord(ctx context.Context, row map[string
 		return err
 	}
 	// Another writer inserted the canonical ID between the read and create.
-	builder := update(id)
-	setRecordFields(builder, row, fields)
-	return execCreate(ctx, builder)
+	existing, err := get(id)
+	if err != nil || !identityMatches(existing, row) {
+		return errIdempotencyConflict
+	}
+	return nil
+}
+
+func projectTaskSyncHeadIdentityMatches(existing any, row map[string]any) bool {
+	entity, ok := existing.(*controlplaneent.ProjectTaskSyncHead)
+	return ok && entity.Kind == stringValue(row["kind"]) && entity.OrganizationID == stringValue(row["organizationId"]) && entity.WorkspaceID == stringValue(row["workspaceId"]) && entity.ProjectID == stringValue(row["projectId"]) && entity.LocalAliasID == stringValue(row["localAliasId"])
+}
+
+func executionRequestIdentityMatches(existing any, row map[string]any) bool {
+	entity, ok := existing.(*controlplaneent.ExecutionRequest)
+	return ok && entity.OrganizationID == stringValue(row["organizationId"]) && entity.WorkspaceID == stringValue(row["workspaceId"]) && entity.ProjectID == stringValue(row["projectId"]) && entity.TaskID == stringValue(row["taskId"]) && entity.ActorUserID == stringValue(row["actorUserId"]) && entity.EnvironmentRef == stringValue(row["environmentRef"]) && entity.IdempotencyKey == stringValue(row["idempotencyKey"])
 }
 
 func (s *postgresEntStateStore) replaceRecord(ctx context.Context, row map[string]any, deleteOne func(string) error, create func() any, fields []entRecordField) error {

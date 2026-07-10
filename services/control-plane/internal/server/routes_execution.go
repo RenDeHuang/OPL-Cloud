@@ -13,7 +13,8 @@ import (
 var errExecutionNotFound = errors.New("execution_request_not_found")
 
 func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("POST /api/projects", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	// ponytail: admin-only until organization membership authorization is enforced for this execution boundary.
+	mux.HandleFunc("POST /api/projects", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		organizationID := stringField(input, "organizationId", "")
 		workspaceID := stringField(input, "workspaceId", "")
@@ -44,13 +45,17 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			return
 		}
 		if err := app.tables.SaveProjectTaskSyncHead(r.Context(), row); err != nil {
+			if errors.Is(err, errIdempotencyConflict) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, row)
 	}))
 
-	mux.HandleFunc("POST /api/projects/{projectId}/tasks", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/projects/{projectId}/tasks", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		projectID := strings.TrimSpace(r.PathValue("projectId"))
 		project, ok := app.projectTaskSyncHead(r.Context(), projectID)
@@ -89,13 +94,17 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			return
 		}
 		if err := app.tables.SaveProjectTaskSyncHead(r.Context(), row); err != nil {
+			if errors.Is(err, errIdempotencyConflict) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, row)
 	}))
 
-	mux.HandleFunc("POST /api/execution-requests", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/execution-requests", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		projectID := stringField(input, "projectId", "")
 		taskID := stringField(input, "taskId", "")
@@ -140,6 +149,10 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			"version":        int64(1),
 		}
 		if err := app.tables.SaveExecutionRequest(r.Context(), row); err != nil {
+			if errors.Is(err, errIdempotencyConflict) {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -173,7 +186,7 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusOK, row)
 	}))
 
-	mux.HandleFunc("POST /api/execution-requests/{requestId}/execute", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/execution-requests/{requestId}/execute", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := executionMutationKey(w, r)
 		if !ok {
 			return
@@ -217,7 +230,7 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusAccepted, row)
 	}))
 
-	mux.HandleFunc("GET /api/execution-requests/{requestId}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/execution-requests/{requestId}", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		row, ok := app.executionRequest(r.Context(), strings.TrimSpace(r.PathValue("requestId")))
 		if !ok {
 			writeError(w, http.StatusNotFound, errExecutionNotFound.Error())
