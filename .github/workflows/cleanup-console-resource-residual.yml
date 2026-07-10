@@ -178,6 +178,12 @@ jobs:
             process.exit(1);
           });
           NODE
+          if [ "$DRY_RUN" = "false" ]; then
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout restart deployment/opl-cloud-control-plane deployment/opl-cloud-ledger deployment/opl-cloud-fabric
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status deployment/opl-cloud-control-plane --timeout=180s
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status deployment/opl-cloud-ledger --timeout=180s
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status deployment/opl-cloud-fabric --timeout=180s
+          fi
 
       - name: Cleanup through Console API
         if: ${{ inputs.confirm_resource_id != 'clear-postgres-data' || inputs.compute_allocation_id != '' || inputs.storage_id != '' || inputs.attachment_id != '' }}
