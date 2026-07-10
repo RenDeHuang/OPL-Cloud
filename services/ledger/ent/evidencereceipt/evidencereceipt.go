@@ -13,8 +13,16 @@ const (
 	Label = "evidence_receipt"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldReceiptType holds the string denoting the receipt_type field in the database.
+	FieldReceiptType = "receipt_type"
+	// FieldStatus holds the string denoting the status field in the database.
+	FieldStatus = "status"
 	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
 	FieldWorkspaceID = "workspace_id"
+	// FieldPayloadJSON holds the string denoting the payload_json field in the database.
+	FieldPayloadJSON = "payload_json"
+	// FieldSupersedesReceiptID holds the string denoting the supersedes_receipt_id field in the database.
+	FieldSupersedesReceiptID = "supersedes_receipt_id"
 	// FieldProviderRequestID holds the string denoting the provider_request_id field in the database.
 	FieldProviderRequestID = "provider_request_id"
 	// FieldRedactedURL holds the string denoting the redacted_url field in the database.
@@ -34,7 +42,11 @@ const (
 // Columns holds all SQL columns for evidencereceipt fields.
 var Columns = []string{
 	FieldID,
+	FieldReceiptType,
+	FieldStatus,
 	FieldWorkspaceID,
+	FieldPayloadJSON,
+	FieldSupersedesReceiptID,
 	FieldProviderRequestID,
 	FieldRedactedURL,
 	FieldTokenVersion,
@@ -54,10 +66,18 @@ func ValidColumn(column string) bool {
 }
 
 var (
-	// WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
-	WorkspaceIDValidator func(string) error
-	// ProviderRequestIDValidator is a validator for the "provider_request_id" field. It is called by the builders before save.
-	ProviderRequestIDValidator func(string) error
+	// DefaultReceiptType holds the default value on creation for the "receipt_type" field.
+	DefaultReceiptType string
+	// DefaultStatus holds the default value on creation for the "status" field.
+	DefaultStatus string
+	// DefaultWorkspaceID holds the default value on creation for the "workspace_id" field.
+	DefaultWorkspaceID string
+	// DefaultPayloadJSON holds the default value on creation for the "payload_json" field.
+	DefaultPayloadJSON string
+	// DefaultSupersedesReceiptID holds the default value on creation for the "supersedes_receipt_id" field.
+	DefaultSupersedesReceiptID string
+	// DefaultProviderRequestID holds the default value on creation for the "provider_request_id" field.
+	DefaultProviderRequestID string
 	// DefaultRedactedURL holds the default value on creation for the "redacted_url" field.
 	DefaultRedactedURL string
 	// DefaultTokenVersion holds the default value on creation for the "token_version" field.
@@ -80,9 +100,29 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
 }
 
+// ByReceiptType orders the results by the receipt_type field.
+func ByReceiptType(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldReceiptType, opts...).ToFunc()
+}
+
+// ByStatus orders the results by the status field.
+func ByStatus(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
 // ByWorkspaceID orders the results by the workspace_id field.
 func ByWorkspaceID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWorkspaceID, opts...).ToFunc()
+}
+
+// ByPayloadJSON orders the results by the payload_json field.
+func ByPayloadJSON(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPayloadJSON, opts...).ToFunc()
+}
+
+// BySupersedesReceiptID orders the results by the supersedes_receipt_id field.
+func BySupersedesReceiptID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSupersedesReceiptID, opts...).ToFunc()
 }
 
 // ByProviderRequestID orders the results by the provider_request_id field.

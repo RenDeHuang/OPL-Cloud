@@ -28,6 +28,34 @@ func (eru *EvidenceReceiptUpdate) Where(ps ...predicate.EvidenceReceipt) *Eviden
 	return eru
 }
 
+// SetReceiptType sets the "receipt_type" field.
+func (eru *EvidenceReceiptUpdate) SetReceiptType(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetReceiptType(s)
+	return eru
+}
+
+// SetNillableReceiptType sets the "receipt_type" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillableReceiptType(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetReceiptType(*s)
+	}
+	return eru
+}
+
+// SetStatus sets the "status" field.
+func (eru *EvidenceReceiptUpdate) SetStatus(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetStatus(s)
+	return eru
+}
+
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillableStatus(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetStatus(*s)
+	}
+	return eru
+}
+
 // SetWorkspaceID sets the "workspace_id" field.
 func (eru *EvidenceReceiptUpdate) SetWorkspaceID(s string) *EvidenceReceiptUpdate {
 	eru.mutation.SetWorkspaceID(s)
@@ -38,6 +66,34 @@ func (eru *EvidenceReceiptUpdate) SetWorkspaceID(s string) *EvidenceReceiptUpdat
 func (eru *EvidenceReceiptUpdate) SetNillableWorkspaceID(s *string) *EvidenceReceiptUpdate {
 	if s != nil {
 		eru.SetWorkspaceID(*s)
+	}
+	return eru
+}
+
+// SetPayloadJSON sets the "payload_json" field.
+func (eru *EvidenceReceiptUpdate) SetPayloadJSON(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetPayloadJSON(s)
+	return eru
+}
+
+// SetNillablePayloadJSON sets the "payload_json" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillablePayloadJSON(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetPayloadJSON(*s)
+	}
+	return eru
+}
+
+// SetSupersedesReceiptID sets the "supersedes_receipt_id" field.
+func (eru *EvidenceReceiptUpdate) SetSupersedesReceiptID(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetSupersedesReceiptID(s)
+	return eru
+}
+
+// SetNillableSupersedesReceiptID sets the "supersedes_receipt_id" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillableSupersedesReceiptID(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetSupersedesReceiptID(*s)
 	}
 	return eru
 }
@@ -160,16 +216,6 @@ func (eru *EvidenceReceiptUpdate) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (eru *EvidenceReceiptUpdate) check() error {
-	if v, ok := eru.mutation.WorkspaceID(); ok {
-		if err := evidencereceipt.WorkspaceIDValidator(v); err != nil {
-			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.workspace_id": %w`, err)}
-		}
-	}
-	if v, ok := eru.mutation.ProviderRequestID(); ok {
-		if err := evidencereceipt.ProviderRequestIDValidator(v); err != nil {
-			return &ValidationError{Name: "provider_request_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.provider_request_id": %w`, err)}
-		}
-	}
 	if v, ok := eru.mutation.IdempotencyKey(); ok {
 		if err := evidencereceipt.IdempotencyKeyValidator(v); err != nil {
 			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.idempotency_key": %w`, err)}
@@ -195,8 +241,20 @@ func (eru *EvidenceReceiptUpdate) sqlSave(ctx context.Context) (n int, err error
 			}
 		}
 	}
+	if value, ok := eru.mutation.ReceiptType(); ok {
+		_spec.SetField(evidencereceipt.FieldReceiptType, field.TypeString, value)
+	}
+	if value, ok := eru.mutation.Status(); ok {
+		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
+	}
 	if value, ok := eru.mutation.WorkspaceID(); ok {
 		_spec.SetField(evidencereceipt.FieldWorkspaceID, field.TypeString, value)
+	}
+	if value, ok := eru.mutation.PayloadJSON(); ok {
+		_spec.SetField(evidencereceipt.FieldPayloadJSON, field.TypeString, value)
+	}
+	if value, ok := eru.mutation.SupersedesReceiptID(); ok {
+		_spec.SetField(evidencereceipt.FieldSupersedesReceiptID, field.TypeString, value)
 	}
 	if value, ok := eru.mutation.ProviderRequestID(); ok {
 		_spec.SetField(evidencereceipt.FieldProviderRequestID, field.TypeString, value)
@@ -236,6 +294,34 @@ type EvidenceReceiptUpdateOne struct {
 	mutation *EvidenceReceiptMutation
 }
 
+// SetReceiptType sets the "receipt_type" field.
+func (eruo *EvidenceReceiptUpdateOne) SetReceiptType(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetReceiptType(s)
+	return eruo
+}
+
+// SetNillableReceiptType sets the "receipt_type" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillableReceiptType(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetReceiptType(*s)
+	}
+	return eruo
+}
+
+// SetStatus sets the "status" field.
+func (eruo *EvidenceReceiptUpdateOne) SetStatus(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetStatus(s)
+	return eruo
+}
+
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillableStatus(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetStatus(*s)
+	}
+	return eruo
+}
+
 // SetWorkspaceID sets the "workspace_id" field.
 func (eruo *EvidenceReceiptUpdateOne) SetWorkspaceID(s string) *EvidenceReceiptUpdateOne {
 	eruo.mutation.SetWorkspaceID(s)
@@ -246,6 +332,34 @@ func (eruo *EvidenceReceiptUpdateOne) SetWorkspaceID(s string) *EvidenceReceiptU
 func (eruo *EvidenceReceiptUpdateOne) SetNillableWorkspaceID(s *string) *EvidenceReceiptUpdateOne {
 	if s != nil {
 		eruo.SetWorkspaceID(*s)
+	}
+	return eruo
+}
+
+// SetPayloadJSON sets the "payload_json" field.
+func (eruo *EvidenceReceiptUpdateOne) SetPayloadJSON(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetPayloadJSON(s)
+	return eruo
+}
+
+// SetNillablePayloadJSON sets the "payload_json" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillablePayloadJSON(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetPayloadJSON(*s)
+	}
+	return eruo
+}
+
+// SetSupersedesReceiptID sets the "supersedes_receipt_id" field.
+func (eruo *EvidenceReceiptUpdateOne) SetSupersedesReceiptID(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetSupersedesReceiptID(s)
+	return eruo
+}
+
+// SetNillableSupersedesReceiptID sets the "supersedes_receipt_id" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillableSupersedesReceiptID(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetSupersedesReceiptID(*s)
 	}
 	return eruo
 }
@@ -381,16 +495,6 @@ func (eruo *EvidenceReceiptUpdateOne) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (eruo *EvidenceReceiptUpdateOne) check() error {
-	if v, ok := eruo.mutation.WorkspaceID(); ok {
-		if err := evidencereceipt.WorkspaceIDValidator(v); err != nil {
-			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.workspace_id": %w`, err)}
-		}
-	}
-	if v, ok := eruo.mutation.ProviderRequestID(); ok {
-		if err := evidencereceipt.ProviderRequestIDValidator(v); err != nil {
-			return &ValidationError{Name: "provider_request_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.provider_request_id": %w`, err)}
-		}
-	}
 	if v, ok := eruo.mutation.IdempotencyKey(); ok {
 		if err := evidencereceipt.IdempotencyKeyValidator(v); err != nil {
 			return &ValidationError{Name: "idempotency_key", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.idempotency_key": %w`, err)}
@@ -433,8 +537,20 @@ func (eruo *EvidenceReceiptUpdateOne) sqlSave(ctx context.Context) (_node *Evide
 			}
 		}
 	}
+	if value, ok := eruo.mutation.ReceiptType(); ok {
+		_spec.SetField(evidencereceipt.FieldReceiptType, field.TypeString, value)
+	}
+	if value, ok := eruo.mutation.Status(); ok {
+		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
+	}
 	if value, ok := eruo.mutation.WorkspaceID(); ok {
 		_spec.SetField(evidencereceipt.FieldWorkspaceID, field.TypeString, value)
+	}
+	if value, ok := eruo.mutation.PayloadJSON(); ok {
+		_spec.SetField(evidencereceipt.FieldPayloadJSON, field.TypeString, value)
+	}
+	if value, ok := eruo.mutation.SupersedesReceiptID(); ok {
+		_spec.SetField(evidencereceipt.FieldSupersedesReceiptID, field.TypeString, value)
 	}
 	if value, ok := eruo.mutation.ProviderRequestID(); ok {
 		_spec.SetField(evidencereceipt.FieldProviderRequestID, field.TypeString, value)

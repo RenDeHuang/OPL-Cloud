@@ -17,8 +17,16 @@ type EvidenceReceipt struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID string `json:"id,omitempty"`
+	// ReceiptType holds the value of the "receipt_type" field.
+	ReceiptType string `json:"receipt_type,omitempty"`
+	// Status holds the value of the "status" field.
+	Status string `json:"status,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
 	WorkspaceID string `json:"workspace_id,omitempty"`
+	// PayloadJSON holds the value of the "payload_json" field.
+	PayloadJSON string `json:"payload_json,omitempty"`
+	// SupersedesReceiptID holds the value of the "supersedes_receipt_id" field.
+	SupersedesReceiptID string `json:"supersedes_receipt_id,omitempty"`
 	// ProviderRequestID holds the value of the "provider_request_id" field.
 	ProviderRequestID string `json:"provider_request_id,omitempty"`
 	// RedactedURL holds the value of the "redacted_url" field.
@@ -39,7 +47,7 @@ func (*EvidenceReceipt) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case evidencereceipt.FieldID, evidencereceipt.FieldWorkspaceID, evidencereceipt.FieldProviderRequestID, evidencereceipt.FieldRedactedURL, evidencereceipt.FieldTokenVersion, evidencereceipt.FieldIdempotencyKey, evidencereceipt.FieldRequestHash:
+		case evidencereceipt.FieldID, evidencereceipt.FieldReceiptType, evidencereceipt.FieldStatus, evidencereceipt.FieldWorkspaceID, evidencereceipt.FieldPayloadJSON, evidencereceipt.FieldSupersedesReceiptID, evidencereceipt.FieldProviderRequestID, evidencereceipt.FieldRedactedURL, evidencereceipt.FieldTokenVersion, evidencereceipt.FieldIdempotencyKey, evidencereceipt.FieldRequestHash:
 			values[i] = new(sql.NullString)
 		case evidencereceipt.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -64,11 +72,35 @@ func (er *EvidenceReceipt) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				er.ID = value.String
 			}
+		case evidencereceipt.FieldReceiptType:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field receipt_type", values[i])
+			} else if value.Valid {
+				er.ReceiptType = value.String
+			}
+		case evidencereceipt.FieldStatus:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field status", values[i])
+			} else if value.Valid {
+				er.Status = value.String
+			}
 		case evidencereceipt.FieldWorkspaceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field workspace_id", values[i])
 			} else if value.Valid {
 				er.WorkspaceID = value.String
+			}
+		case evidencereceipt.FieldPayloadJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field payload_json", values[i])
+			} else if value.Valid {
+				er.PayloadJSON = value.String
+			}
+		case evidencereceipt.FieldSupersedesReceiptID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field supersedes_receipt_id", values[i])
+			} else if value.Valid {
+				er.SupersedesReceiptID = value.String
 			}
 		case evidencereceipt.FieldProviderRequestID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -142,8 +174,20 @@ func (er *EvidenceReceipt) String() string {
 	var builder strings.Builder
 	builder.WriteString("EvidenceReceipt(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", er.ID))
+	builder.WriteString("receipt_type=")
+	builder.WriteString(er.ReceiptType)
+	builder.WriteString(", ")
+	builder.WriteString("status=")
+	builder.WriteString(er.Status)
+	builder.WriteString(", ")
 	builder.WriteString("workspace_id=")
 	builder.WriteString(er.WorkspaceID)
+	builder.WriteString(", ")
+	builder.WriteString("payload_json=")
+	builder.WriteString(er.PayloadJSON)
+	builder.WriteString(", ")
+	builder.WriteString("supersedes_receipt_id=")
+	builder.WriteString(er.SupersedesReceiptID)
 	builder.WriteString(", ")
 	builder.WriteString("provider_request_id=")
 	builder.WriteString(er.ProviderRequestID)

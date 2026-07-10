@@ -261,12 +261,12 @@ func (erq *EvidenceReceiptQuery) Clone() *EvidenceReceiptQuery {
 // Example:
 //
 //	var v []struct {
-//		WorkspaceID string `json:"workspace_id,omitempty"`
+//		ReceiptType string `json:"receipt_type,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.EvidenceReceipt.Query().
-//		GroupBy(evidencereceipt.FieldWorkspaceID).
+//		GroupBy(evidencereceipt.FieldReceiptType).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (erq *EvidenceReceiptQuery) GroupBy(field string, fields ...string) *EvidenceReceiptGroupBy {
@@ -284,11 +284,11 @@ func (erq *EvidenceReceiptQuery) GroupBy(field string, fields ...string) *Eviden
 // Example:
 //
 //	var v []struct {
-//		WorkspaceID string `json:"workspace_id,omitempty"`
+//		ReceiptType string `json:"receipt_type,omitempty"`
 //	}
 //
 //	client.EvidenceReceipt.Query().
-//		Select(evidencereceipt.FieldWorkspaceID).
+//		Select(evidencereceipt.FieldReceiptType).
 //		Scan(ctx, &v)
 func (erq *EvidenceReceiptQuery) Select(fields ...string) *EvidenceReceiptSelect {
 	erq.ctx.Fields = append(erq.ctx.Fields, fields...)

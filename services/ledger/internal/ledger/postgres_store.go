@@ -274,40 +274,56 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 	return result, tx.Commit()
 }
 
-func (s *PostgresStore) RecordEvidence(ctx context.Context, input EvidenceInput) (EvidenceReceipt, error) {
-	requestHash, err := hashJSON(struct {
-		WorkspaceID       string `json:"workspaceId"`
-		ProviderRequestID string `json:"providerRequestId"`
-		RedactedURL       string `json:"redactedUrl"`
-		TokenVersion      string `json:"tokenVersion"`
-	}{input.WorkspaceID, input.ProviderRequestID, input.RedactedURL, input.TokenVersion})
-	if err != nil {
-		return EvidenceReceipt{}, err
+func (s *PostgresStore) RecordReceipt(ctx context.Context, input ReceiptInput) (Receipt, error) {
+	if err := validateReceiptInput(input); err != nil {
+		return Receipt{}, err
 	}
-	if existing, existingHash, err := s.evidenceByIdempotencyKey(ctx, input.IdempotencyKey); err == nil {
+	hashInput := input
+	hashInput.IdempotencyKey = ""
+	requestHash, err := hashJSON(hashInput)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if existing, existingHash, err := s.receiptByIdempotencyKey(ctx, input.IdempotencyKey); err == nil {
 		if existingHash != requestHash {
-			return EvidenceReceipt{}, ErrIdempotencyConflict
+			return Receipt{}, ErrIdempotencyConflict
 		}
 		existing.Replayed = true
 		return existing, nil
 	} else if !ledgerent.IsNotFound(err) {
-		return EvidenceReceipt{}, err
+		return Receipt{}, err
+	}
+	payload, err := json.Marshal(hashInput)
+	if err != nil {
+		return Receipt{}, err
 	}
 	now := s.now()
-	receipt := EvidenceReceipt{ID: postgresID("ev", now), WorkspaceID: input.WorkspaceID, ProviderRequestID: input.ProviderRequestID, RedactedURL: input.RedactedURL, TokenVersion: input.TokenVersion, CreatedAt: now}
+	receipt := Receipt{ReceiptInput: hashInput, ReceiptID: postgresID("receipt", now), CreatedAt: now}
 	if err := s.client.EvidenceReceipt.Create().
-		SetID(receipt.ID).
+		SetID(receipt.ReceiptID).
+		SetReceiptType(receipt.Type).
+		SetStatus(receipt.Status).
 		SetWorkspaceID(receipt.WorkspaceID).
-		SetProviderRequestID(receipt.ProviderRequestID).
-		SetRedactedURL(receipt.RedactedURL).
-		SetTokenVersion(receipt.TokenVersion).
+		SetPayloadJSON(string(payload)).
+		SetSupersedesReceiptID(receipt.SupersedesReceiptID).
 		SetIdempotencyKey(input.IdempotencyKey).
 		SetRequestHash(requestHash).
 		SetCreatedAt(receipt.CreatedAt).
 		Exec(ctx); err != nil {
-		return EvidenceReceipt{}, err
+		return Receipt{}, err
 	}
 	return receipt, nil
+}
+
+func (s *PostgresStore) Receipt(ctx context.Context, receiptID string) (Receipt, error) {
+	row, err := s.client.EvidenceReceipt.Get(ctx, receiptID)
+	if ledgerent.IsNotFound(err) {
+		return Receipt{}, ErrReceiptNotFound
+	}
+	if err != nil {
+		return Receipt{}, err
+	}
+	return receiptFromEnt(row), nil
 }
 
 func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
@@ -610,12 +626,23 @@ func (s *PostgresStore) holdReleaseByIdempotencyKey(ctx context.Context, tx *led
 	return HoldReleaseResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, HoldID: row.HoldID, AmountCents: row.AmountCents, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, Wallet: wallet, CreatedAt: row.CreatedAt}, row.RequestHash, nil
 }
 
-func (s *PostgresStore) evidenceByIdempotencyKey(ctx context.Context, key string) (EvidenceReceipt, string, error) {
+func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string) (Receipt, string, error) {
 	row, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.IdempotencyKey(key)).Only(ctx)
 	if err != nil {
-		return EvidenceReceipt{}, "", err
+		return Receipt{}, "", err
 	}
-	return EvidenceReceipt{ID: row.ID, WorkspaceID: row.WorkspaceID, ProviderRequestID: row.ProviderRequestID, RedactedURL: row.RedactedURL, TokenVersion: row.TokenVersion, CreatedAt: row.CreatedAt}, row.RequestHash, nil
+	return receiptFromEnt(row), row.RequestHash, nil
+}
+
+func receiptFromEnt(row *ledgerent.EvidenceReceipt) Receipt {
+	// ponytail: payload is canonical; promote fields to columns only when a real query needs an index.
+	var input ReceiptInput
+	_ = json.Unmarshal([]byte(row.PayloadJSON), &input)
+	input.Type = row.ReceiptType
+	input.Status = row.Status
+	input.WorkspaceID = row.WorkspaceID
+	input.SupersedesReceiptID = row.SupersedesReceiptID
+	return Receipt{ReceiptInput: input, ReceiptID: row.ID, CreatedAt: row.CreatedAt}
 }
 
 func (s *PostgresStore) settlementByIdempotencyKey(ctx context.Context, tx *ledgerent.Tx, key string) (ResourceSettlementResult, string, error) {

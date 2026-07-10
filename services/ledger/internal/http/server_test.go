@@ -52,7 +52,7 @@ func TestTopUpAndWalletHTTP(t *testing.T) {
 	}
 }
 
-func TestHoldAndEvidenceHTTP(t *testing.T) {
+func TestHoldAndReceiptHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore())
 	topup := httptest.NewRequest(http.MethodPost, "/ledger/topups", bytes.NewBufferString(`{"accountId":"acct-alpha","amountCents":2000,"currency":"CNY","operatorUserId":"usr-admin","reason":"operator_credit"}`))
 	topup.Header.Set("Idempotency-Key", "http-hold-topup")
@@ -77,19 +77,33 @@ func TestHoldAndEvidenceHTTP(t *testing.T) {
 		t.Fatalf("unexpected hold body: %#v", holdBody)
 	}
 
-	evidence := httptest.NewRequest(http.MethodPost, "/ledger/evidence", bytes.NewBufferString(`{"workspaceId":"ws-alpha","providerRequestId":"runtime-req-alpha","redactedUrl":"https://workspace.medopl.cn/w/ws-alpha/","tokenVersion":"v1"}`))
-	evidence.Header.Set("Idempotency-Key", "http-evidence-once")
-	evidenceRec := httptest.NewRecorder()
-	server.ServeHTTP(evidenceRec, evidence)
-	if evidenceRec.Code != http.StatusCreated {
-		t.Fatalf("evidence status = %d, want %d: %s", evidenceRec.Code, http.StatusCreated, evidenceRec.Body.String())
+	receipt := httptest.NewRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"workspace.created","status":"completed","surface":"workspace","organizationId":"org-alpha","workspaceId":"ws-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","execution":{"providerRequestId":"runtime-req-alpha"},"outputRefs":{"redactedUrl":"https://workspace.medopl.cn/w/ws-alpha/"},"continuation":{"continuationId":"continuation-alpha"}}`))
+	receipt.Header.Set("Idempotency-Key", "http-receipt-once")
+	receiptRec := httptest.NewRecorder()
+	server.ServeHTTP(receiptRec, receipt)
+	if receiptRec.Code != http.StatusCreated {
+		t.Fatalf("receipt status = %d, want %d: %s", receiptRec.Code, http.StatusCreated, receiptRec.Body.String())
 	}
-	var evidenceBody map[string]any
-	if err := json.NewDecoder(evidenceRec.Body).Decode(&evidenceBody); err != nil {
-		t.Fatalf("decode evidence: %v", err)
+	var receiptBody map[string]any
+	if err := json.NewDecoder(receiptRec.Body).Decode(&receiptBody); err != nil {
+		t.Fatalf("decode receipt: %v", err)
 	}
-	if evidenceBody["workspaceId"] != "ws-alpha" || evidenceBody["providerRequestId"] != "runtime-req-alpha" {
-		t.Fatalf("unexpected evidence body: %#v", evidenceBody)
+	if receiptBody["workspaceId"] != "ws-alpha" || receiptBody["projectId"] != "project-alpha" || receiptBody["status"] != "completed" {
+		t.Fatalf("unexpected receipt body: %#v", receiptBody)
+	}
+
+	getReceipt := httptest.NewRequest(http.MethodGet, "/ledger/receipts/"+receiptBody["receiptId"].(string), nil)
+	getReceiptRec := httptest.NewRecorder()
+	server.ServeHTTP(getReceiptRec, getReceipt)
+	if getReceiptRec.Code != http.StatusOK {
+		t.Fatalf("get receipt status = %d, want %d: %s", getReceiptRec.Code, http.StatusOK, getReceiptRec.Body.String())
+	}
+
+	legacy := httptest.NewRequest(http.MethodPost, "/ledger/evidence", bytes.NewBufferString(`{}`))
+	legacyRec := httptest.NewRecorder()
+	server.ServeHTTP(legacyRec, legacy)
+	if legacyRec.Code != http.StatusNotFound {
+		t.Fatalf("legacy evidence route status = %d, want %d", legacyRec.Code, http.StatusNotFound)
 	}
 }
 

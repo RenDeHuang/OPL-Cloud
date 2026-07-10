@@ -99,28 +99,44 @@ func NewServer(store ledger.Store) http.Handler {
 		}
 		writeJSON(w, http.StatusCreated, result)
 	})
-	mux.HandleFunc("POST /ledger/evidence", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /ledger/receipts", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 		if idempotencyKey == "" {
 			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
 			return
 		}
-		var input ledger.EvidenceInput
+		var input ledger.ReceiptInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
 		input.IdempotencyKey = idempotencyKey
-		result, err := store.RecordEvidence(r.Context(), input)
+		result, err := store.RecordReceipt(r.Context(), input)
+		if errors.Is(err, ledger.ErrInvalidReceiptInput) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if errors.Is(err, ledger.ErrIdempotencyConflict) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "evidence failed")
+			writeError(w, http.StatusInternalServerError, "receipt failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, result)
+	})
+	mux.HandleFunc("GET /ledger/receipts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		result, err := store.Receipt(r.Context(), r.PathValue("id"))
+		if errors.Is(err, ledger.ErrReceiptNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "receipt query failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 	mux.HandleFunc("POST /ledger/resource-settlements", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")

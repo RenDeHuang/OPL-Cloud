@@ -20,8 +20,7 @@
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
     "workspace.access_token_deleted",
-    "execution.receipt.v1",
-    "task.evidence.v1"
+    "execution.receipt.v1"
   ],
   "requiredFields": [
     "id",
@@ -41,6 +40,10 @@
     "createdAt"
   ],
   "generalReceiptV1": {
+    "api": {
+      "record": "POST /ledger/receipts",
+      "query": "GET /ledger/receipts/<receiptId>"
+    },
     "statuses": [
       "planned",
       "approved",
@@ -170,28 +173,6 @@
         "full workspace.url"
       ]
     }
-  },
-  "taskEvidenceReceiptV1": {
-    "api": {
-      "record": "POST /api/ledger/task-receipts",
-      "query": "GET /api/ledger/task-receipts?accountId=<accountId>&workspaceId=<workspaceId>&taskId=<taskId>"
-    },
-    "requiredFields": [
-      "accountId",
-      "taskId",
-      "plan",
-      "approval",
-      "environment"
-    ],
-    "refs": [
-      "inputRefs",
-      "executionRefs",
-      "outputRefs"
-    ],
-    "review": "reviewResults",
-    "continuation": "continue_task",
-    "ownershipRule": "workspaceId must belong to accountId when provided",
-    "appendOnlyState": "evidenceLedger"
   },
   "nonGoals": [
     "artifact byte storage ownership",

@@ -14,7 +14,7 @@ type MemoryStore struct {
 	mu          sync.Mutex
 	wallets     map[string]Wallet
 	idempotency map[string]idempotencyRecord
-	evidence    map[string]EvidenceReceipt
+	receipts    map[string]Receipt
 	entries     []LedgerEntry
 	walletTx    []WalletTransaction
 	topups      []ManualTopUp
@@ -31,7 +31,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		wallets:     map[string]Wallet{},
 		idempotency: map[string]idempotencyRecord{},
-		evidence:    map[string]EvidenceReceipt{},
+		receipts:    map[string]Receipt{},
 	}
 }
 
@@ -263,38 +263,42 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 	return result, nil
 }
 
-func (s *MemoryStore) RecordEvidence(_ context.Context, input EvidenceInput) (EvidenceReceipt, error) {
+func (s *MemoryStore) RecordReceipt(_ context.Context, input ReceiptInput) (Receipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := validateReceiptInput(input); err != nil {
+		return Receipt{}, err
+	}
 
-	payloadHash, err := hashJSON(struct {
-		WorkspaceID       string `json:"workspaceId"`
-		ProviderRequestID string `json:"providerRequestId"`
-		RedactedURL       string `json:"redactedUrl"`
-		TokenVersion      string `json:"tokenVersion"`
-	}{input.WorkspaceID, input.ProviderRequestID, input.RedactedURL, input.TokenVersion})
+	hashInput := input
+	hashInput.IdempotencyKey = ""
+	payloadHash, err := hashJSON(hashInput)
 	if err != nil {
-		return EvidenceReceipt{}, err
+		return Receipt{}, err
 	}
 	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
 		if existing.payloadHash != payloadHash {
-			return EvidenceReceipt{}, ErrIdempotencyConflict
+			return Receipt{}, ErrIdempotencyConflict
 		}
-		result := existing.result.(EvidenceReceipt)
+		result := existing.result.(Receipt)
 		result.Replayed = true
 		return result, nil
 	}
 
-	receipt := EvidenceReceipt{
-		ID:                s.newID("ev"),
-		WorkspaceID:       input.WorkspaceID,
-		ProviderRequestID: input.ProviderRequestID,
-		RedactedURL:       input.RedactedURL,
-		TokenVersion:      input.TokenVersion,
-		CreatedAt:         time.Now().UTC(),
-	}
-	s.evidence[receipt.ID] = receipt
+	receipt := Receipt{ReceiptInput: input, ReceiptID: s.newID("receipt"), CreatedAt: time.Now().UTC()}
+	receipt.IdempotencyKey = ""
+	s.receipts[receipt.ReceiptID] = receipt
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: receipt}
+	return receipt, nil
+}
+
+func (s *MemoryStore) Receipt(_ context.Context, receiptID string) (Receipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	receipt, ok := s.receipts[receiptID]
+	if !ok {
+		return Receipt{}, ErrReceiptNotFound
+	}
 	return receipt, nil
 }
 

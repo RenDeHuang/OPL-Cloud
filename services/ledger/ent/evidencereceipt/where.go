@@ -64,9 +64,29 @@ func IDContainsFold(id string) predicate.EvidenceReceipt {
 	return predicate.EvidenceReceipt(sql.FieldContainsFold(FieldID, id))
 }
 
+// ReceiptType applies equality check predicate on the "receipt_type" field. It's identical to ReceiptTypeEQ.
+func ReceiptType(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldReceiptType, v))
+}
+
+// Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
+func Status(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldStatus, v))
+}
+
 // WorkspaceID applies equality check predicate on the "workspace_id" field. It's identical to WorkspaceIDEQ.
 func WorkspaceID(v string) predicate.EvidenceReceipt {
 	return predicate.EvidenceReceipt(sql.FieldEQ(FieldWorkspaceID, v))
+}
+
+// PayloadJSON applies equality check predicate on the "payload_json" field. It's identical to PayloadJSONEQ.
+func PayloadJSON(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldPayloadJSON, v))
+}
+
+// SupersedesReceiptID applies equality check predicate on the "supersedes_receipt_id" field. It's identical to SupersedesReceiptIDEQ.
+func SupersedesReceiptID(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldSupersedesReceiptID, v))
 }
 
 // ProviderRequestID applies equality check predicate on the "provider_request_id" field. It's identical to ProviderRequestIDEQ.
@@ -97,6 +117,136 @@ func RequestHash(v string) predicate.EvidenceReceipt {
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.EvidenceReceipt {
 	return predicate.EvidenceReceipt(sql.FieldEQ(FieldCreatedAt, v))
+}
+
+// ReceiptTypeEQ applies the EQ predicate on the "receipt_type" field.
+func ReceiptTypeEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldReceiptType, v))
+}
+
+// ReceiptTypeNEQ applies the NEQ predicate on the "receipt_type" field.
+func ReceiptTypeNEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNEQ(FieldReceiptType, v))
+}
+
+// ReceiptTypeIn applies the In predicate on the "receipt_type" field.
+func ReceiptTypeIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldIn(FieldReceiptType, vs...))
+}
+
+// ReceiptTypeNotIn applies the NotIn predicate on the "receipt_type" field.
+func ReceiptTypeNotIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNotIn(FieldReceiptType, vs...))
+}
+
+// ReceiptTypeGT applies the GT predicate on the "receipt_type" field.
+func ReceiptTypeGT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGT(FieldReceiptType, v))
+}
+
+// ReceiptTypeGTE applies the GTE predicate on the "receipt_type" field.
+func ReceiptTypeGTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGTE(FieldReceiptType, v))
+}
+
+// ReceiptTypeLT applies the LT predicate on the "receipt_type" field.
+func ReceiptTypeLT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLT(FieldReceiptType, v))
+}
+
+// ReceiptTypeLTE applies the LTE predicate on the "receipt_type" field.
+func ReceiptTypeLTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLTE(FieldReceiptType, v))
+}
+
+// ReceiptTypeContains applies the Contains predicate on the "receipt_type" field.
+func ReceiptTypeContains(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContains(FieldReceiptType, v))
+}
+
+// ReceiptTypeHasPrefix applies the HasPrefix predicate on the "receipt_type" field.
+func ReceiptTypeHasPrefix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasPrefix(FieldReceiptType, v))
+}
+
+// ReceiptTypeHasSuffix applies the HasSuffix predicate on the "receipt_type" field.
+func ReceiptTypeHasSuffix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasSuffix(FieldReceiptType, v))
+}
+
+// ReceiptTypeEqualFold applies the EqualFold predicate on the "receipt_type" field.
+func ReceiptTypeEqualFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEqualFold(FieldReceiptType, v))
+}
+
+// ReceiptTypeContainsFold applies the ContainsFold predicate on the "receipt_type" field.
+func ReceiptTypeContainsFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContainsFold(FieldReceiptType, v))
+}
+
+// StatusEQ applies the EQ predicate on the "status" field.
+func StatusEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldStatus, v))
+}
+
+// StatusNEQ applies the NEQ predicate on the "status" field.
+func StatusNEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNEQ(FieldStatus, v))
+}
+
+// StatusIn applies the In predicate on the "status" field.
+func StatusIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldIn(FieldStatus, vs...))
+}
+
+// StatusNotIn applies the NotIn predicate on the "status" field.
+func StatusNotIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNotIn(FieldStatus, vs...))
+}
+
+// StatusGT applies the GT predicate on the "status" field.
+func StatusGT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGT(FieldStatus, v))
+}
+
+// StatusGTE applies the GTE predicate on the "status" field.
+func StatusGTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGTE(FieldStatus, v))
+}
+
+// StatusLT applies the LT predicate on the "status" field.
+func StatusLT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLT(FieldStatus, v))
+}
+
+// StatusLTE applies the LTE predicate on the "status" field.
+func StatusLTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLTE(FieldStatus, v))
+}
+
+// StatusContains applies the Contains predicate on the "status" field.
+func StatusContains(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContains(FieldStatus, v))
+}
+
+// StatusHasPrefix applies the HasPrefix predicate on the "status" field.
+func StatusHasPrefix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasPrefix(FieldStatus, v))
+}
+
+// StatusHasSuffix applies the HasSuffix predicate on the "status" field.
+func StatusHasSuffix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasSuffix(FieldStatus, v))
+}
+
+// StatusEqualFold applies the EqualFold predicate on the "status" field.
+func StatusEqualFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEqualFold(FieldStatus, v))
+}
+
+// StatusContainsFold applies the ContainsFold predicate on the "status" field.
+func StatusContainsFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContainsFold(FieldStatus, v))
 }
 
 // WorkspaceIDEQ applies the EQ predicate on the "workspace_id" field.
@@ -162,6 +312,136 @@ func WorkspaceIDEqualFold(v string) predicate.EvidenceReceipt {
 // WorkspaceIDContainsFold applies the ContainsFold predicate on the "workspace_id" field.
 func WorkspaceIDContainsFold(v string) predicate.EvidenceReceipt {
 	return predicate.EvidenceReceipt(sql.FieldContainsFold(FieldWorkspaceID, v))
+}
+
+// PayloadJSONEQ applies the EQ predicate on the "payload_json" field.
+func PayloadJSONEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldPayloadJSON, v))
+}
+
+// PayloadJSONNEQ applies the NEQ predicate on the "payload_json" field.
+func PayloadJSONNEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNEQ(FieldPayloadJSON, v))
+}
+
+// PayloadJSONIn applies the In predicate on the "payload_json" field.
+func PayloadJSONIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldIn(FieldPayloadJSON, vs...))
+}
+
+// PayloadJSONNotIn applies the NotIn predicate on the "payload_json" field.
+func PayloadJSONNotIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNotIn(FieldPayloadJSON, vs...))
+}
+
+// PayloadJSONGT applies the GT predicate on the "payload_json" field.
+func PayloadJSONGT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGT(FieldPayloadJSON, v))
+}
+
+// PayloadJSONGTE applies the GTE predicate on the "payload_json" field.
+func PayloadJSONGTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGTE(FieldPayloadJSON, v))
+}
+
+// PayloadJSONLT applies the LT predicate on the "payload_json" field.
+func PayloadJSONLT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLT(FieldPayloadJSON, v))
+}
+
+// PayloadJSONLTE applies the LTE predicate on the "payload_json" field.
+func PayloadJSONLTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLTE(FieldPayloadJSON, v))
+}
+
+// PayloadJSONContains applies the Contains predicate on the "payload_json" field.
+func PayloadJSONContains(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContains(FieldPayloadJSON, v))
+}
+
+// PayloadJSONHasPrefix applies the HasPrefix predicate on the "payload_json" field.
+func PayloadJSONHasPrefix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasPrefix(FieldPayloadJSON, v))
+}
+
+// PayloadJSONHasSuffix applies the HasSuffix predicate on the "payload_json" field.
+func PayloadJSONHasSuffix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasSuffix(FieldPayloadJSON, v))
+}
+
+// PayloadJSONEqualFold applies the EqualFold predicate on the "payload_json" field.
+func PayloadJSONEqualFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEqualFold(FieldPayloadJSON, v))
+}
+
+// PayloadJSONContainsFold applies the ContainsFold predicate on the "payload_json" field.
+func PayloadJSONContainsFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContainsFold(FieldPayloadJSON, v))
+}
+
+// SupersedesReceiptIDEQ applies the EQ predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEQ(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDNEQ applies the NEQ predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDNEQ(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNEQ(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDIn applies the In predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldIn(FieldSupersedesReceiptID, vs...))
+}
+
+// SupersedesReceiptIDNotIn applies the NotIn predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDNotIn(vs ...string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldNotIn(FieldSupersedesReceiptID, vs...))
+}
+
+// SupersedesReceiptIDGT applies the GT predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDGT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGT(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDGTE applies the GTE predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDGTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldGTE(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDLT applies the LT predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDLT(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLT(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDLTE applies the LTE predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDLTE(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldLTE(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDContains applies the Contains predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDContains(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContains(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDHasPrefix applies the HasPrefix predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDHasPrefix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasPrefix(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDHasSuffix applies the HasSuffix predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDHasSuffix(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldHasSuffix(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDEqualFold applies the EqualFold predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDEqualFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldEqualFold(FieldSupersedesReceiptID, v))
+}
+
+// SupersedesReceiptIDContainsFold applies the ContainsFold predicate on the "supersedes_receipt_id" field.
+func SupersedesReceiptIDContainsFold(v string) predicate.EvidenceReceipt {
+	return predicate.EvidenceReceipt(sql.FieldContainsFold(FieldSupersedesReceiptID, v))
 }
 
 // ProviderRequestIDEQ applies the EQ predicate on the "provider_request_id" field.

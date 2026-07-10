@@ -20,15 +20,87 @@ type EvidenceReceiptCreate struct {
 	hooks    []Hook
 }
 
+// SetReceiptType sets the "receipt_type" field.
+func (erc *EvidenceReceiptCreate) SetReceiptType(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetReceiptType(s)
+	return erc
+}
+
+// SetNillableReceiptType sets the "receipt_type" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableReceiptType(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetReceiptType(*s)
+	}
+	return erc
+}
+
+// SetStatus sets the "status" field.
+func (erc *EvidenceReceiptCreate) SetStatus(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetStatus(s)
+	return erc
+}
+
+// SetNillableStatus sets the "status" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableStatus(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetStatus(*s)
+	}
+	return erc
+}
+
 // SetWorkspaceID sets the "workspace_id" field.
 func (erc *EvidenceReceiptCreate) SetWorkspaceID(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetWorkspaceID(s)
 	return erc
 }
 
+// SetNillableWorkspaceID sets the "workspace_id" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableWorkspaceID(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetWorkspaceID(*s)
+	}
+	return erc
+}
+
+// SetPayloadJSON sets the "payload_json" field.
+func (erc *EvidenceReceiptCreate) SetPayloadJSON(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetPayloadJSON(s)
+	return erc
+}
+
+// SetNillablePayloadJSON sets the "payload_json" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillablePayloadJSON(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetPayloadJSON(*s)
+	}
+	return erc
+}
+
+// SetSupersedesReceiptID sets the "supersedes_receipt_id" field.
+func (erc *EvidenceReceiptCreate) SetSupersedesReceiptID(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetSupersedesReceiptID(s)
+	return erc
+}
+
+// SetNillableSupersedesReceiptID sets the "supersedes_receipt_id" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableSupersedesReceiptID(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetSupersedesReceiptID(*s)
+	}
+	return erc
+}
+
 // SetProviderRequestID sets the "provider_request_id" field.
 func (erc *EvidenceReceiptCreate) SetProviderRequestID(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetProviderRequestID(s)
+	return erc
+}
+
+// SetNillableProviderRequestID sets the "provider_request_id" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableProviderRequestID(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetProviderRequestID(*s)
+	}
 	return erc
 }
 
@@ -127,6 +199,30 @@ func (erc *EvidenceReceiptCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (erc *EvidenceReceiptCreate) defaults() {
+	if _, ok := erc.mutation.ReceiptType(); !ok {
+		v := evidencereceipt.DefaultReceiptType
+		erc.mutation.SetReceiptType(v)
+	}
+	if _, ok := erc.mutation.Status(); !ok {
+		v := evidencereceipt.DefaultStatus
+		erc.mutation.SetStatus(v)
+	}
+	if _, ok := erc.mutation.WorkspaceID(); !ok {
+		v := evidencereceipt.DefaultWorkspaceID
+		erc.mutation.SetWorkspaceID(v)
+	}
+	if _, ok := erc.mutation.PayloadJSON(); !ok {
+		v := evidencereceipt.DefaultPayloadJSON
+		erc.mutation.SetPayloadJSON(v)
+	}
+	if _, ok := erc.mutation.SupersedesReceiptID(); !ok {
+		v := evidencereceipt.DefaultSupersedesReceiptID
+		erc.mutation.SetSupersedesReceiptID(v)
+	}
+	if _, ok := erc.mutation.ProviderRequestID(); !ok {
+		v := evidencereceipt.DefaultProviderRequestID
+		erc.mutation.SetProviderRequestID(v)
+	}
 	if _, ok := erc.mutation.RedactedURL(); !ok {
 		v := evidencereceipt.DefaultRedactedURL
 		erc.mutation.SetRedactedURL(v)
@@ -143,21 +239,23 @@ func (erc *EvidenceReceiptCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (erc *EvidenceReceiptCreate) check() error {
+	if _, ok := erc.mutation.ReceiptType(); !ok {
+		return &ValidationError{Name: "receipt_type", err: errors.New(`ent: missing required field "EvidenceReceipt.receipt_type"`)}
+	}
+	if _, ok := erc.mutation.Status(); !ok {
+		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "EvidenceReceipt.status"`)}
+	}
 	if _, ok := erc.mutation.WorkspaceID(); !ok {
 		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "EvidenceReceipt.workspace_id"`)}
 	}
-	if v, ok := erc.mutation.WorkspaceID(); ok {
-		if err := evidencereceipt.WorkspaceIDValidator(v); err != nil {
-			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.workspace_id": %w`, err)}
-		}
+	if _, ok := erc.mutation.PayloadJSON(); !ok {
+		return &ValidationError{Name: "payload_json", err: errors.New(`ent: missing required field "EvidenceReceipt.payload_json"`)}
+	}
+	if _, ok := erc.mutation.SupersedesReceiptID(); !ok {
+		return &ValidationError{Name: "supersedes_receipt_id", err: errors.New(`ent: missing required field "EvidenceReceipt.supersedes_receipt_id"`)}
 	}
 	if _, ok := erc.mutation.ProviderRequestID(); !ok {
 		return &ValidationError{Name: "provider_request_id", err: errors.New(`ent: missing required field "EvidenceReceipt.provider_request_id"`)}
-	}
-	if v, ok := erc.mutation.ProviderRequestID(); ok {
-		if err := evidencereceipt.ProviderRequestIDValidator(v); err != nil {
-			return &ValidationError{Name: "provider_request_id", err: fmt.Errorf(`ent: validator failed for field "EvidenceReceipt.provider_request_id": %w`, err)}
-		}
 	}
 	if _, ok := erc.mutation.RedactedURL(); !ok {
 		return &ValidationError{Name: "redacted_url", err: errors.New(`ent: missing required field "EvidenceReceipt.redacted_url"`)}
@@ -224,9 +322,25 @@ func (erc *EvidenceReceiptCreate) createSpec() (*EvidenceReceipt, *sqlgraph.Crea
 		_node.ID = id
 		_spec.ID.Value = id
 	}
+	if value, ok := erc.mutation.ReceiptType(); ok {
+		_spec.SetField(evidencereceipt.FieldReceiptType, field.TypeString, value)
+		_node.ReceiptType = value
+	}
+	if value, ok := erc.mutation.Status(); ok {
+		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
+		_node.Status = value
+	}
 	if value, ok := erc.mutation.WorkspaceID(); ok {
 		_spec.SetField(evidencereceipt.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
+	}
+	if value, ok := erc.mutation.PayloadJSON(); ok {
+		_spec.SetField(evidencereceipt.FieldPayloadJSON, field.TypeString, value)
+		_node.PayloadJSON = value
+	}
+	if value, ok := erc.mutation.SupersedesReceiptID(); ok {
+		_spec.SetField(evidencereceipt.FieldSupersedesReceiptID, field.TypeString, value)
+		_node.SupersedesReceiptID = value
 	}
 	if value, ok := erc.mutation.ProviderRequestID(); ok {
 		_spec.SetField(evidencereceipt.FieldProviderRequestID, field.TypeString, value)

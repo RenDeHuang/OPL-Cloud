@@ -62,6 +62,19 @@ func TestManualTopUpSameKeyDifferentPayloadConflicts(t *testing.T) {
 	}
 }
 
+func TestReceiptRejectsMissingIdentityAndSecretContent(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+
+	if _, err := store.RecordReceipt(ctx, ReceiptInput{WorkspaceID: "ws-alpha", IdempotencyKey: "invalid-receipt"}); !errors.Is(err, ErrInvalidReceiptInput) {
+		t.Fatalf("missing receipt fields error = %v, want ErrInvalidReceiptInput", err)
+	}
+	_, err := store.RecordReceipt(ctx, ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: "ws-alpha", Actor: map[string]any{"secret": "must-not-persist"}, IdempotencyKey: "secret-receipt"})
+	if !errors.Is(err, ErrInvalidReceiptInput) {
+		t.Fatalf("secret receipt error = %v, want ErrInvalidReceiptInput", err)
+	}
+}
+
 func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
@@ -192,12 +205,16 @@ func TestLedgerMutationsReturnStableAuditFacts(t *testing.T) {
 		t.Fatalf("settlement must preserve price and provider evidence snapshot, got %#v", settlement)
 	}
 
-	evidence, err := store.RecordEvidence(ctx, EvidenceInput{WorkspaceID: "ws-alpha", ProviderRequestID: "provider-request-alpha", RedactedURL: "https://workspace.example.test/w/ws-alpha", TokenVersion: "v1", IdempotencyKey: "audit-evidence"})
+	receipt, err := store.RecordReceipt(ctx, ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", OrganizationID: "org-alpha", WorkspaceID: "ws-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha", Execution: map[string]any{"providerRequestId": "provider-request-alpha"}, OutputRefs: map[string]any{"redactedUrl": "https://workspace.example.test/w/ws-alpha"}, Continuation: map[string]any{"continuationId": "continuation-alpha"}, IdempotencyKey: "audit-receipt"})
 	if err != nil {
-		t.Fatalf("evidence failed: %v", err)
+		t.Fatalf("receipt failed: %v", err)
 	}
-	if evidence.ID == "" || evidence.ProviderRequestID != "provider-request-alpha" || evidence.RedactedURL == "" {
-		t.Fatalf("evidence receipt must return provider provenance, got %#v", evidence)
+	if receipt.ReceiptID == "" || receipt.ProjectID != "project-alpha" || receipt.Status != "completed" {
+		t.Fatalf("general receipt must preserve execution identity, got %#v", receipt)
+	}
+	loaded, err := store.Receipt(ctx, receipt.ReceiptID)
+	if err != nil || loaded.JobID != "job-alpha" {
+		t.Fatalf("load receipt: %#v, %v", loaded, err)
 	}
 
 	reconciliation, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: map[string]any{"id": "recon-alpha", "status": "mismatch"}, IdempotencyKey: "audit-reconciliation"})

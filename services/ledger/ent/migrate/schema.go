@@ -11,8 +11,12 @@ var (
 	// EvidenceReceiptsColumns holds the columns for the "evidence_receipts" table.
 	EvidenceReceiptsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "workspace_id", Type: field.TypeString},
-		{Name: "provider_request_id", Type: field.TypeString},
+		{Name: "receipt_type", Type: field.TypeString, Default: ""},
+		{Name: "status", Type: field.TypeString, Default: ""},
+		{Name: "workspace_id", Type: field.TypeString, Default: ""},
+		{Name: "payload_json", Type: field.TypeString, Default: "{}"},
+		{Name: "supersedes_receipt_id", Type: field.TypeString, Default: ""},
+		{Name: "provider_request_id", Type: field.TypeString, Default: ""},
 		{Name: "redacted_url", Type: field.TypeString, Default: ""},
 		{Name: "token_version", Type: field.TypeString, Default: ""},
 		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
