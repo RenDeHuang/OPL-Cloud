@@ -1,6 +1,13 @@
 package fabric
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrJobNotFound = errors.New("job_not_found")
+var ErrJobIdempotencyConflict = errors.New("job_idempotency_conflict")
+var ErrInvalidJobInput = errors.New("invalid_job_input")
 
 type Catalog struct {
 	SchemaVersion     int                `json:"schemaVersion"`
@@ -149,6 +156,32 @@ type Check struct {
 	Name    string         `json:"name"`
 	OK      bool           `json:"ok"`
 	Details map[string]any `json:"details,omitempty"`
+}
+
+type JobInput struct {
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	TaskID         string `json:"taskId"`
+	RequestID      string `json:"requestId"`
+	ApprovalID     string `json:"approvalId"`
+	EnvironmentRef string `json:"environmentRef,omitempty"`
+	IdempotencyKey string `json:"-"`
+}
+
+type Job struct {
+	JobID          string    `json:"jobId"`
+	OrganizationID string    `json:"organizationId"`
+	WorkspaceID    string    `json:"workspaceId"`
+	ProjectID      string    `json:"projectId"`
+	TaskID         string    `json:"taskId"`
+	RequestID      string    `json:"requestId"`
+	ApprovalID     string    `json:"approvalId"`
+	EnvironmentRef string    `json:"environmentRef,omitempty"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+	Replayed       bool      `json:"replayed,omitempty"`
 }
 
 type FabricOperation struct {

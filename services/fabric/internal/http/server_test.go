@@ -134,6 +134,64 @@ func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 	t.Fatalf("missing storage operation in %#v", operations)
 }
 
+func TestJobHTTPLifecycle(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}))
+	create := httptest.NewRequest(http.MethodPost, "/fabric/jobs", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","requestId":"request-alpha","approvalId":"approval-alpha","environmentRef":"environment-alpha"}`))
+	create.Header.Set("Idempotency-Key", "http-job-once")
+	createRec := httptest.NewRecorder()
+	server.ServeHTTP(createRec, create)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d: %s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var created fabric.Job
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+
+	get := httptest.NewRequest(http.MethodGet, "/fabric/jobs/"+created.JobID, nil)
+	getRec := httptest.NewRecorder()
+	server.ServeHTTP(getRec, get)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want %d: %s", getRec.Code, http.StatusOK, getRec.Body.String())
+	}
+
+	cancel := httptest.NewRequest(http.MethodPost, "/fabric/jobs/"+created.JobID+"/cancel", bytes.NewBufferString(`{}`))
+	cancel.Header.Set("Idempotency-Key", "http-job-cancel")
+	cancelRec := httptest.NewRecorder()
+	server.ServeHTTP(cancelRec, cancel)
+	if cancelRec.Code != http.StatusAccepted {
+		t.Fatalf("cancel status = %d, want %d: %s", cancelRec.Code, http.StatusAccepted, cancelRec.Body.String())
+	}
+	var cancelled fabric.Job
+	if err := json.NewDecoder(cancelRec.Body).Decode(&cancelled); err != nil {
+		t.Fatalf("decode cancelled job: %v", err)
+	}
+	if cancelled.JobID != created.JobID || cancelled.Status != "cancelled" {
+		t.Fatalf("unexpected cancelled job: %#v", cancelled)
+	}
+}
+
+func TestJobHTTPReturnsNotFound(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}))
+	req := httptest.NewRequest(http.MethodGet, "/fabric/jobs/job-missing", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestJobHTTPRequiresCanonicalIdentity(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}))
+	req := httptest.NewRequest(http.MethodPost, "/fabric/jobs", bytes.NewBufferString(`{}`))
+	req.Header.Set("Idempotency-Key", "invalid-job")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 type testProvider struct{}
 
 func (testProvider) CreateComputeAllocation(_ context.Context, input fabric.ComputeAllocationInput) (fabric.ComputeAllocation, error) {

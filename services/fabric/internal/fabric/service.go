@@ -405,6 +405,89 @@ func (s *Service) ListOperations(ctx context.Context) ([]FabricOperation, error)
 	return s.operations.List(ctx)
 }
 
+func (s *Service) CreateJob(ctx context.Context, input JobInput) (Job, error) {
+	if input.OrganizationID == "" || input.WorkspaceID == "" || input.ProjectID == "" || input.TaskID == "" || input.RequestID == "" || input.ApprovalID == "" || input.IdempotencyKey == "" {
+		return Job{}, ErrInvalidJobInput
+	}
+	requestHash := hashInput(input)
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	// ponytail: linear scan is enough for the initial job volume; add an indexed store query when measured throughput requires it.
+	for _, operation := range operations {
+		if operation.ResourceKind != "job" || operation.Action != "create_job" || operation.IdempotencyKey != input.IdempotencyKey {
+			continue
+		}
+		if operation.RequestHash != requestHash {
+			return Job{}, ErrJobIdempotencyConflict
+		}
+		var job Job
+		if decodeOperationResource(operation, &job) {
+			job.Replayed = true
+			return job, nil
+		}
+	}
+	now := time.Now().UTC()
+	job := Job{
+		JobID:          "job-" + stableSuffix(input.IdempotencyKey, input.RequestID, input.TaskID)[:16],
+		OrganizationID: input.OrganizationID,
+		WorkspaceID:    input.WorkspaceID,
+		ProjectID:      input.ProjectID,
+		TaskID:         input.TaskID,
+		RequestID:      input.RequestID,
+		ApprovalID:     input.ApprovalID,
+		EnvironmentRef: input.EnvironmentRef,
+		Status:         "queued",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	operation := newOperation("create_job", "job", job.JobID, "", input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	operation.ProviderRequestID = job.JobID
+	if err := s.recordOperation(ctx, operation, job.Status, job, nil); err != nil {
+		return Job{}, err
+	}
+	return job, nil
+}
+
+func (s *Service) Job(ctx context.Context, jobID string) (Job, error) {
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return Job{}, err
+	}
+	var job Job
+	found := false
+	for _, operation := range operations {
+		if operation.ResourceKind == "job" && operation.ResourceID == jobID && decodeOperationResource(operation, &job) {
+			found = true
+		}
+	}
+	if !found {
+		return Job{}, ErrJobNotFound
+	}
+	return job, nil
+}
+
+func (s *Service) CancelJob(ctx context.Context, jobID string, idempotencyKey string) (Job, error) {
+	job, err := s.Job(ctx, jobID)
+	if err != nil {
+		return Job{}, err
+	}
+	if job.Status == "cancelled" {
+		job.Replayed = true
+		return job, nil
+	}
+	now := time.Now().UTC()
+	job.Status = "cancelled"
+	job.UpdatedAt = now
+	operation := newOperation("cancel_job", "job", jobID, "", job.WorkspaceID, idempotencyKey, hashInput(map[string]string{"jobId": jobID}), now)
+	operation.ProviderRequestID = jobID
+	if err := s.recordOperation(ctx, operation, job.Status, job, nil); err != nil {
+		return Job{}, err
+	}
+	return job, nil
+}
+
 func (s *Service) saveRuntimeAccess(ctx context.Context, runtime *WorkspaceRuntime) error {
 	if runtime.Access.CredentialStatus == "" && runtime.Access.Password != "" {
 		runtime.Access.CredentialStatus = "configured"
@@ -555,6 +638,11 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
 		operation.RedactedProviderPayload = map[string]any{"resource": redacted, "serviceName": value.ServiceName, "ready": value.Ready, "credentialConfigured": value.Access.Password != "", "credentialVersion": value.Access.CredentialVersion, "secretRef": value.Access.SecretRef, "costTags": value.CostTags}
+	case Job:
+		operation.ResourceID = value.JobID
+		operation.WorkspaceID = value.WorkspaceID
+		operation.ProviderRequestID = firstNonEmpty(operation.ProviderRequestID, value.JobID)
+		operation.RedactedProviderPayload = map[string]any{"resource": value}
 	}
 }
 

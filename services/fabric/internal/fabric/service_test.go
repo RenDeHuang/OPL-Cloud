@@ -2,11 +2,62 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestJobLifecycleUsesDurableOperationStore(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	ctx := context.Background()
+	input := JobInput{
+		OrganizationID: "org-alpha",
+		WorkspaceID:    "workspace-alpha",
+		ProjectID:      "project-alpha",
+		TaskID:         "task-alpha",
+		RequestID:      "request-alpha",
+		ApprovalID:     "approval-alpha",
+		EnvironmentRef: "environment-alpha",
+		IdempotencyKey: "job-once",
+	}
+
+	created, err := service.CreateJob(ctx, input)
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if created.JobID == "" || created.Status != "queued" || created.RequestID != "request-alpha" {
+		t.Fatalf("unexpected created job: %#v", created)
+	}
+	replayed, err := service.CreateJob(ctx, input)
+	if err != nil {
+		t.Fatalf("replay job: %v", err)
+	}
+	if !replayed.Replayed || replayed.JobID != created.JobID {
+		t.Fatalf("unexpected replayed job: %#v", replayed)
+	}
+
+	restarted := NewServiceWithOperationStore(testProvider{}, store)
+	queried, err := restarted.Job(ctx, created.JobID)
+	if err != nil || queried.Status != "queued" {
+		t.Fatalf("query durable job: %#v, %v", queried, err)
+	}
+	cancelled, err := restarted.CancelJob(ctx, created.JobID, "cancel-once")
+	if err != nil || cancelled.Status != "cancelled" {
+		t.Fatalf("cancel job: %#v, %v", cancelled, err)
+	}
+	queried, err = restarted.Job(ctx, created.JobID)
+	if err != nil || queried.Status != "cancelled" {
+		t.Fatalf("query cancelled job: %#v, %v", queried, err)
+	}
+
+	input.EnvironmentRef = "environment-beta"
+	if _, err := restarted.CreateJob(ctx, input); !errors.Is(err, ErrJobIdempotencyConflict) {
+		t.Fatalf("idempotency conflict = %v, want ErrJobIdempotencyConflict", err)
+	}
+}
 
 func TestCatalogExposesWorkspacePackages(t *testing.T) {
 	service := NewService(testProvider{})

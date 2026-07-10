@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -31,6 +32,27 @@ func NewServer(service *fabric.Service) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, operations)
+	})
+	mux.HandleFunc("POST /fabric/jobs", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.JobInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		job, err := service.CreateJob(r.Context(), input)
+		writeJobResult(w, http.StatusAccepted, job, err)
+	})
+	mux.HandleFunc("GET /fabric/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		job, err := service.Job(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		writeJobResult(w, http.StatusOK, job, err)
+	})
+	mux.HandleFunc("POST /fabric/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		job, err := service.CancelJob(r.Context(), strings.TrimSpace(r.PathValue("id")), idempotencyKey)
+		writeJobResult(w, http.StatusAccepted, job, err)
 	})
 	mux.HandleFunc("POST /fabric/compute-allocations", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.ComputeAllocationInput
@@ -130,6 +152,21 @@ func writeResult(w http.ResponseWriter, body any, err error) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, body)
+}
+
+func writeJobResult(w http.ResponseWriter, status int, body fabric.Job, err error) {
+	switch {
+	case errors.Is(err, fabric.ErrInvalidJobInput):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, fabric.ErrJobNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, fabric.ErrJobIdempotencyConflict):
+		writeError(w, http.StatusConflict, err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, status, body)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
