@@ -22,6 +22,8 @@ type memoryTableStore struct {
 	auditEvents    []map[string]any
 	support        controlPlaneRecordSet
 	runtimeOps     []map[string]any
+	projectTasks   controlPlaneRecordSet
+	executionReqs  controlPlaneRecordSet
 	reconciliation map[string]any
 }
 
@@ -37,6 +39,8 @@ func newMemoryTableStore() *memoryTableStore {
 		workspaces:    controlPlaneRecordSet{},
 		wallets:       controlPlaneRecordSet{},
 		support:       controlPlaneRecordSet{},
+		projectTasks:  controlPlaneRecordSet{},
+		executionReqs: controlPlaneRecordSet{},
 	}
 }
 
@@ -110,6 +114,32 @@ func (s *memoryTableStore) SaveMembership(_ context.Context, row map[string]any)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.memberships[stringValue(row["id"])] = cloneMap(row)
+	return nil
+}
+
+func (s *memoryTableStore) ListProjectTaskSyncHeads(_ context.Context) ([]map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return filteredRecords(s.projectTasks, "")
+}
+
+func (s *memoryTableStore) SaveProjectTaskSyncHead(_ context.Context, row map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projectTasks[stringValue(row["id"])] = cloneMap(row)
+	return nil
+}
+
+func (s *memoryTableStore) ListExecutionRequests(_ context.Context) ([]map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return filteredRecords(s.executionReqs, "")
+}
+
+func (s *memoryTableStore) SaveExecutionRequest(_ context.Context, row map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.executionReqs[stringValue(row["id"])] = cloneMap(row)
 	return nil
 }
 

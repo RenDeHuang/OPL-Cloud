@@ -17,6 +17,7 @@ import (
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
+	"opl-cloud/services/control-plane/ent/executionrequest"
 	"opl-cloud/services/control-plane/ent/ledgerprojection"
 	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
@@ -24,6 +25,7 @@ import (
 	"opl-cloud/services/control-plane/ent/pricingcatalog"
 	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
+	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -110,6 +112,7 @@ func checkColumn(table, column string) error {
 			authattempt.Table:                 authattempt.ValidColumn,
 			billingreconciliation.Table:       billingreconciliation.ValidColumn,
 			computeallocation.Table:           computeallocation.ValidColumn,
+			executionrequest.Table:            executionrequest.ValidColumn,
 			ledgerprojection.Table:            ledgerprojection.ValidColumn,
 			manualtopupprojection.Table:       manualtopupprojection.ValidColumn,
 			membership.Table:                  membership.ValidColumn,
@@ -117,6 +120,7 @@ func checkColumn(table, column string) error {
 			pricingcatalog.Table:              pricingcatalog.ValidColumn,
 			pricingitem.Table:                 pricingitem.ValidColumn,
 			productione2erecord.Table:         productione2erecord.ValidColumn,
+			projecttasksynchead.Table:         projecttasksynchead.ValidColumn,
 			runtimeoperation.Table:            runtimeoperation.ValidColumn,
 			session.Table:                     session.ValidColumn,
 			storageattachment.Table:           storageattachment.ValidColumn,

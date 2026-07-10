@@ -17,6 +17,7 @@ import (
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
+	"opl-cloud/services/control-plane/ent/executionrequest"
 	"opl-cloud/services/control-plane/ent/ledgerprojection"
 	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
@@ -25,6 +26,7 @@ import (
 	"opl-cloud/services/control-plane/ent/pricingcatalog"
 	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
+	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -61,6 +63,7 @@ const (
 	TypeAuthAttempt                 = "AuthAttempt"
 	TypeBillingReconciliation       = "BillingReconciliation"
 	TypeComputeAllocation           = "ComputeAllocation"
+	TypeExecutionRequest            = "ExecutionRequest"
 	TypeLedgerProjection            = "LedgerProjection"
 	TypeManualTopupProjection       = "ManualTopupProjection"
 	TypeMembership                  = "Membership"
@@ -68,6 +71,7 @@ const (
 	TypePricingCatalog              = "PricingCatalog"
 	TypePricingItem                 = "PricingItem"
 	TypeProductionE2ERecord         = "ProductionE2ERecord"
+	TypeProjectTaskSyncHead         = "ProjectTaskSyncHead"
 	TypeRuntimeOperation            = "RuntimeOperation"
 	TypeSession                     = "Session"
 	TypeStorageAttachment           = "StorageAttachment"
@@ -10767,6 +10771,1292 @@ func (m *ComputeAllocationMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown ComputeAllocation edge %s", name)
 }
 
+// ExecutionRequestMutation represents an operation that mutates the ExecutionRequest nodes in the graph.
+type ExecutionRequestMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *string
+	created_at      *time.Time
+	updated_at      *time.Time
+	organization_id *string
+	workspace_id    *string
+	project_id      *string
+	task_id         *string
+	actor_user_id   *string
+	approval_id     *string
+	approval_status *string
+	approved_by     *string
+	approved_at     *string
+	status          *string
+	environment_ref *string
+	job_id          *string
+	receipt_id      *string
+	continuation_id *string
+	idempotency_key *string
+	version         *int64
+	addversion      *int64
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*ExecutionRequest, error)
+	predicates      []predicate.ExecutionRequest
+}
+
+var _ ent.Mutation = (*ExecutionRequestMutation)(nil)
+
+// executionrequestOption allows management of the mutation configuration using functional options.
+type executionrequestOption func(*ExecutionRequestMutation)
+
+// newExecutionRequestMutation creates new mutation for the ExecutionRequest entity.
+func newExecutionRequestMutation(c config, op Op, opts ...executionrequestOption) *ExecutionRequestMutation {
+	m := &ExecutionRequestMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeExecutionRequest,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withExecutionRequestID sets the ID field of the mutation.
+func withExecutionRequestID(id string) executionrequestOption {
+	return func(m *ExecutionRequestMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ExecutionRequest
+		)
+		m.oldValue = func(ctx context.Context) (*ExecutionRequest, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ExecutionRequest.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withExecutionRequest sets the old ExecutionRequest of the mutation.
+func withExecutionRequest(node *ExecutionRequest) executionrequestOption {
+	return func(m *ExecutionRequestMutation) {
+		m.oldValue = func(context.Context) (*ExecutionRequest, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ExecutionRequestMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ExecutionRequestMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of ExecutionRequest entities.
+func (m *ExecutionRequestMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ExecutionRequestMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ExecutionRequestMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ExecutionRequest.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ExecutionRequestMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ExecutionRequestMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ExecutionRequestMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ExecutionRequestMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ExecutionRequestMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ExecutionRequestMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetOrganizationID sets the "organization_id" field.
+func (m *ExecutionRequestMutation) SetOrganizationID(s string) {
+	m.organization_id = &s
+}
+
+// OrganizationID returns the value of the "organization_id" field in the mutation.
+func (m *ExecutionRequestMutation) OrganizationID() (r string, exists bool) {
+	v := m.organization_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOrganizationID returns the old "organization_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldOrganizationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOrganizationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOrganizationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOrganizationID: %w", err)
+	}
+	return oldValue.OrganizationID, nil
+}
+
+// ResetOrganizationID resets all changes to the "organization_id" field.
+func (m *ExecutionRequestMutation) ResetOrganizationID() {
+	m.organization_id = nil
+}
+
+// SetWorkspaceID sets the "workspace_id" field.
+func (m *ExecutionRequestMutation) SetWorkspaceID(s string) {
+	m.workspace_id = &s
+}
+
+// WorkspaceID returns the value of the "workspace_id" field in the mutation.
+func (m *ExecutionRequestMutation) WorkspaceID() (r string, exists bool) {
+	v := m.workspace_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWorkspaceID returns the old "workspace_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
+	}
+	return oldValue.WorkspaceID, nil
+}
+
+// ResetWorkspaceID resets all changes to the "workspace_id" field.
+func (m *ExecutionRequestMutation) ResetWorkspaceID() {
+	m.workspace_id = nil
+}
+
+// SetProjectID sets the "project_id" field.
+func (m *ExecutionRequestMutation) SetProjectID(s string) {
+	m.project_id = &s
+}
+
+// ProjectID returns the value of the "project_id" field in the mutation.
+func (m *ExecutionRequestMutation) ProjectID() (r string, exists bool) {
+	v := m.project_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProjectID returns the old "project_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldProjectID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProjectID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProjectID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProjectID: %w", err)
+	}
+	return oldValue.ProjectID, nil
+}
+
+// ResetProjectID resets all changes to the "project_id" field.
+func (m *ExecutionRequestMutation) ResetProjectID() {
+	m.project_id = nil
+}
+
+// SetTaskID sets the "task_id" field.
+func (m *ExecutionRequestMutation) SetTaskID(s string) {
+	m.task_id = &s
+}
+
+// TaskID returns the value of the "task_id" field in the mutation.
+func (m *ExecutionRequestMutation) TaskID() (r string, exists bool) {
+	v := m.task_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTaskID returns the old "task_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldTaskID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTaskID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTaskID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTaskID: %w", err)
+	}
+	return oldValue.TaskID, nil
+}
+
+// ResetTaskID resets all changes to the "task_id" field.
+func (m *ExecutionRequestMutation) ResetTaskID() {
+	m.task_id = nil
+}
+
+// SetActorUserID sets the "actor_user_id" field.
+func (m *ExecutionRequestMutation) SetActorUserID(s string) {
+	m.actor_user_id = &s
+}
+
+// ActorUserID returns the value of the "actor_user_id" field in the mutation.
+func (m *ExecutionRequestMutation) ActorUserID() (r string, exists bool) {
+	v := m.actor_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActorUserID returns the old "actor_user_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldActorUserID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActorUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActorUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActorUserID: %w", err)
+	}
+	return oldValue.ActorUserID, nil
+}
+
+// ResetActorUserID resets all changes to the "actor_user_id" field.
+func (m *ExecutionRequestMutation) ResetActorUserID() {
+	m.actor_user_id = nil
+}
+
+// SetApprovalID sets the "approval_id" field.
+func (m *ExecutionRequestMutation) SetApprovalID(s string) {
+	m.approval_id = &s
+}
+
+// ApprovalID returns the value of the "approval_id" field in the mutation.
+func (m *ExecutionRequestMutation) ApprovalID() (r string, exists bool) {
+	v := m.approval_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldApprovalID returns the old "approval_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldApprovalID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldApprovalID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldApprovalID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldApprovalID: %w", err)
+	}
+	return oldValue.ApprovalID, nil
+}
+
+// ResetApprovalID resets all changes to the "approval_id" field.
+func (m *ExecutionRequestMutation) ResetApprovalID() {
+	m.approval_id = nil
+}
+
+// SetApprovalStatus sets the "approval_status" field.
+func (m *ExecutionRequestMutation) SetApprovalStatus(s string) {
+	m.approval_status = &s
+}
+
+// ApprovalStatus returns the value of the "approval_status" field in the mutation.
+func (m *ExecutionRequestMutation) ApprovalStatus() (r string, exists bool) {
+	v := m.approval_status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldApprovalStatus returns the old "approval_status" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldApprovalStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldApprovalStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldApprovalStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldApprovalStatus: %w", err)
+	}
+	return oldValue.ApprovalStatus, nil
+}
+
+// ResetApprovalStatus resets all changes to the "approval_status" field.
+func (m *ExecutionRequestMutation) ResetApprovalStatus() {
+	m.approval_status = nil
+}
+
+// SetApprovedBy sets the "approved_by" field.
+func (m *ExecutionRequestMutation) SetApprovedBy(s string) {
+	m.approved_by = &s
+}
+
+// ApprovedBy returns the value of the "approved_by" field in the mutation.
+func (m *ExecutionRequestMutation) ApprovedBy() (r string, exists bool) {
+	v := m.approved_by
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldApprovedBy returns the old "approved_by" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldApprovedBy(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldApprovedBy is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldApprovedBy requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldApprovedBy: %w", err)
+	}
+	return oldValue.ApprovedBy, nil
+}
+
+// ResetApprovedBy resets all changes to the "approved_by" field.
+func (m *ExecutionRequestMutation) ResetApprovedBy() {
+	m.approved_by = nil
+}
+
+// SetApprovedAt sets the "approved_at" field.
+func (m *ExecutionRequestMutation) SetApprovedAt(s string) {
+	m.approved_at = &s
+}
+
+// ApprovedAt returns the value of the "approved_at" field in the mutation.
+func (m *ExecutionRequestMutation) ApprovedAt() (r string, exists bool) {
+	v := m.approved_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldApprovedAt returns the old "approved_at" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldApprovedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldApprovedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldApprovedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldApprovedAt: %w", err)
+	}
+	return oldValue.ApprovedAt, nil
+}
+
+// ResetApprovedAt resets all changes to the "approved_at" field.
+func (m *ExecutionRequestMutation) ResetApprovedAt() {
+	m.approved_at = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ExecutionRequestMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ExecutionRequestMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ExecutionRequestMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetEnvironmentRef sets the "environment_ref" field.
+func (m *ExecutionRequestMutation) SetEnvironmentRef(s string) {
+	m.environment_ref = &s
+}
+
+// EnvironmentRef returns the value of the "environment_ref" field in the mutation.
+func (m *ExecutionRequestMutation) EnvironmentRef() (r string, exists bool) {
+	v := m.environment_ref
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEnvironmentRef returns the old "environment_ref" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldEnvironmentRef(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEnvironmentRef is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEnvironmentRef requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEnvironmentRef: %w", err)
+	}
+	return oldValue.EnvironmentRef, nil
+}
+
+// ResetEnvironmentRef resets all changes to the "environment_ref" field.
+func (m *ExecutionRequestMutation) ResetEnvironmentRef() {
+	m.environment_ref = nil
+}
+
+// SetJobID sets the "job_id" field.
+func (m *ExecutionRequestMutation) SetJobID(s string) {
+	m.job_id = &s
+}
+
+// JobID returns the value of the "job_id" field in the mutation.
+func (m *ExecutionRequestMutation) JobID() (r string, exists bool) {
+	v := m.job_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldJobID returns the old "job_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldJobID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldJobID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldJobID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldJobID: %w", err)
+	}
+	return oldValue.JobID, nil
+}
+
+// ResetJobID resets all changes to the "job_id" field.
+func (m *ExecutionRequestMutation) ResetJobID() {
+	m.job_id = nil
+}
+
+// SetReceiptID sets the "receipt_id" field.
+func (m *ExecutionRequestMutation) SetReceiptID(s string) {
+	m.receipt_id = &s
+}
+
+// ReceiptID returns the value of the "receipt_id" field in the mutation.
+func (m *ExecutionRequestMutation) ReceiptID() (r string, exists bool) {
+	v := m.receipt_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReceiptID returns the old "receipt_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldReceiptID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReceiptID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReceiptID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReceiptID: %w", err)
+	}
+	return oldValue.ReceiptID, nil
+}
+
+// ResetReceiptID resets all changes to the "receipt_id" field.
+func (m *ExecutionRequestMutation) ResetReceiptID() {
+	m.receipt_id = nil
+}
+
+// SetContinuationID sets the "continuation_id" field.
+func (m *ExecutionRequestMutation) SetContinuationID(s string) {
+	m.continuation_id = &s
+}
+
+// ContinuationID returns the value of the "continuation_id" field in the mutation.
+func (m *ExecutionRequestMutation) ContinuationID() (r string, exists bool) {
+	v := m.continuation_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContinuationID returns the old "continuation_id" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldContinuationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContinuationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContinuationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContinuationID: %w", err)
+	}
+	return oldValue.ContinuationID, nil
+}
+
+// ResetContinuationID resets all changes to the "continuation_id" field.
+func (m *ExecutionRequestMutation) ResetContinuationID() {
+	m.continuation_id = nil
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (m *ExecutionRequestMutation) SetIdempotencyKey(s string) {
+	m.idempotency_key = &s
+}
+
+// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
+func (m *ExecutionRequestMutation) IdempotencyKey() (r string, exists bool) {
+	v := m.idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdempotencyKey returns the old "idempotency_key" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
+	}
+	return oldValue.IdempotencyKey, nil
+}
+
+// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
+func (m *ExecutionRequestMutation) ResetIdempotencyKey() {
+	m.idempotency_key = nil
+}
+
+// SetVersion sets the "version" field.
+func (m *ExecutionRequestMutation) SetVersion(i int64) {
+	m.version = &i
+	m.addversion = nil
+}
+
+// Version returns the value of the "version" field in the mutation.
+func (m *ExecutionRequestMutation) Version() (r int64, exists bool) {
+	v := m.version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersion returns the old "version" field's value of the ExecutionRequest entity.
+// If the ExecutionRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ExecutionRequestMutation) OldVersion(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersion: %w", err)
+	}
+	return oldValue.Version, nil
+}
+
+// AddVersion adds i to the "version" field.
+func (m *ExecutionRequestMutation) AddVersion(i int64) {
+	if m.addversion != nil {
+		*m.addversion += i
+	} else {
+		m.addversion = &i
+	}
+}
+
+// AddedVersion returns the value that was added to the "version" field in this mutation.
+func (m *ExecutionRequestMutation) AddedVersion() (r int64, exists bool) {
+	v := m.addversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetVersion resets all changes to the "version" field.
+func (m *ExecutionRequestMutation) ResetVersion() {
+	m.version = nil
+	m.addversion = nil
+}
+
+// Where appends a list predicates to the ExecutionRequestMutation builder.
+func (m *ExecutionRequestMutation) Where(ps ...predicate.ExecutionRequest) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ExecutionRequestMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ExecutionRequestMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ExecutionRequest, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ExecutionRequestMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ExecutionRequestMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ExecutionRequest).
+func (m *ExecutionRequestMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ExecutionRequestMutation) Fields() []string {
+	fields := make([]string, 0, 18)
+	if m.created_at != nil {
+		fields = append(fields, executionrequest.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, executionrequest.FieldUpdatedAt)
+	}
+	if m.organization_id != nil {
+		fields = append(fields, executionrequest.FieldOrganizationID)
+	}
+	if m.workspace_id != nil {
+		fields = append(fields, executionrequest.FieldWorkspaceID)
+	}
+	if m.project_id != nil {
+		fields = append(fields, executionrequest.FieldProjectID)
+	}
+	if m.task_id != nil {
+		fields = append(fields, executionrequest.FieldTaskID)
+	}
+	if m.actor_user_id != nil {
+		fields = append(fields, executionrequest.FieldActorUserID)
+	}
+	if m.approval_id != nil {
+		fields = append(fields, executionrequest.FieldApprovalID)
+	}
+	if m.approval_status != nil {
+		fields = append(fields, executionrequest.FieldApprovalStatus)
+	}
+	if m.approved_by != nil {
+		fields = append(fields, executionrequest.FieldApprovedBy)
+	}
+	if m.approved_at != nil {
+		fields = append(fields, executionrequest.FieldApprovedAt)
+	}
+	if m.status != nil {
+		fields = append(fields, executionrequest.FieldStatus)
+	}
+	if m.environment_ref != nil {
+		fields = append(fields, executionrequest.FieldEnvironmentRef)
+	}
+	if m.job_id != nil {
+		fields = append(fields, executionrequest.FieldJobID)
+	}
+	if m.receipt_id != nil {
+		fields = append(fields, executionrequest.FieldReceiptID)
+	}
+	if m.continuation_id != nil {
+		fields = append(fields, executionrequest.FieldContinuationID)
+	}
+	if m.idempotency_key != nil {
+		fields = append(fields, executionrequest.FieldIdempotencyKey)
+	}
+	if m.version != nil {
+		fields = append(fields, executionrequest.FieldVersion)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ExecutionRequestMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case executionrequest.FieldCreatedAt:
+		return m.CreatedAt()
+	case executionrequest.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case executionrequest.FieldOrganizationID:
+		return m.OrganizationID()
+	case executionrequest.FieldWorkspaceID:
+		return m.WorkspaceID()
+	case executionrequest.FieldProjectID:
+		return m.ProjectID()
+	case executionrequest.FieldTaskID:
+		return m.TaskID()
+	case executionrequest.FieldActorUserID:
+		return m.ActorUserID()
+	case executionrequest.FieldApprovalID:
+		return m.ApprovalID()
+	case executionrequest.FieldApprovalStatus:
+		return m.ApprovalStatus()
+	case executionrequest.FieldApprovedBy:
+		return m.ApprovedBy()
+	case executionrequest.FieldApprovedAt:
+		return m.ApprovedAt()
+	case executionrequest.FieldStatus:
+		return m.Status()
+	case executionrequest.FieldEnvironmentRef:
+		return m.EnvironmentRef()
+	case executionrequest.FieldJobID:
+		return m.JobID()
+	case executionrequest.FieldReceiptID:
+		return m.ReceiptID()
+	case executionrequest.FieldContinuationID:
+		return m.ContinuationID()
+	case executionrequest.FieldIdempotencyKey:
+		return m.IdempotencyKey()
+	case executionrequest.FieldVersion:
+		return m.Version()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ExecutionRequestMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case executionrequest.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case executionrequest.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case executionrequest.FieldOrganizationID:
+		return m.OldOrganizationID(ctx)
+	case executionrequest.FieldWorkspaceID:
+		return m.OldWorkspaceID(ctx)
+	case executionrequest.FieldProjectID:
+		return m.OldProjectID(ctx)
+	case executionrequest.FieldTaskID:
+		return m.OldTaskID(ctx)
+	case executionrequest.FieldActorUserID:
+		return m.OldActorUserID(ctx)
+	case executionrequest.FieldApprovalID:
+		return m.OldApprovalID(ctx)
+	case executionrequest.FieldApprovalStatus:
+		return m.OldApprovalStatus(ctx)
+	case executionrequest.FieldApprovedBy:
+		return m.OldApprovedBy(ctx)
+	case executionrequest.FieldApprovedAt:
+		return m.OldApprovedAt(ctx)
+	case executionrequest.FieldStatus:
+		return m.OldStatus(ctx)
+	case executionrequest.FieldEnvironmentRef:
+		return m.OldEnvironmentRef(ctx)
+	case executionrequest.FieldJobID:
+		return m.OldJobID(ctx)
+	case executionrequest.FieldReceiptID:
+		return m.OldReceiptID(ctx)
+	case executionrequest.FieldContinuationID:
+		return m.OldContinuationID(ctx)
+	case executionrequest.FieldIdempotencyKey:
+		return m.OldIdempotencyKey(ctx)
+	case executionrequest.FieldVersion:
+		return m.OldVersion(ctx)
+	}
+	return nil, fmt.Errorf("unknown ExecutionRequest field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ExecutionRequestMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case executionrequest.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case executionrequest.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case executionrequest.FieldOrganizationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOrganizationID(v)
+		return nil
+	case executionrequest.FieldWorkspaceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWorkspaceID(v)
+		return nil
+	case executionrequest.FieldProjectID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProjectID(v)
+		return nil
+	case executionrequest.FieldTaskID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTaskID(v)
+		return nil
+	case executionrequest.FieldActorUserID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActorUserID(v)
+		return nil
+	case executionrequest.FieldApprovalID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetApprovalID(v)
+		return nil
+	case executionrequest.FieldApprovalStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetApprovalStatus(v)
+		return nil
+	case executionrequest.FieldApprovedBy:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetApprovedBy(v)
+		return nil
+	case executionrequest.FieldApprovedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetApprovedAt(v)
+		return nil
+	case executionrequest.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case executionrequest.FieldEnvironmentRef:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnvironmentRef(v)
+		return nil
+	case executionrequest.FieldJobID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetJobID(v)
+		return nil
+	case executionrequest.FieldReceiptID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReceiptID(v)
+		return nil
+	case executionrequest.FieldContinuationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContinuationID(v)
+		return nil
+	case executionrequest.FieldIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdempotencyKey(v)
+		return nil
+	case executionrequest.FieldVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersion(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ExecutionRequest field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ExecutionRequestMutation) AddedFields() []string {
+	var fields []string
+	if m.addversion != nil {
+		fields = append(fields, executionrequest.FieldVersion)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ExecutionRequestMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case executionrequest.FieldVersion:
+		return m.AddedVersion()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ExecutionRequestMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case executionrequest.FieldVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddVersion(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ExecutionRequest numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ExecutionRequestMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ExecutionRequestMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ExecutionRequestMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown ExecutionRequest nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ExecutionRequestMutation) ResetField(name string) error {
+	switch name {
+	case executionrequest.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case executionrequest.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case executionrequest.FieldOrganizationID:
+		m.ResetOrganizationID()
+		return nil
+	case executionrequest.FieldWorkspaceID:
+		m.ResetWorkspaceID()
+		return nil
+	case executionrequest.FieldProjectID:
+		m.ResetProjectID()
+		return nil
+	case executionrequest.FieldTaskID:
+		m.ResetTaskID()
+		return nil
+	case executionrequest.FieldActorUserID:
+		m.ResetActorUserID()
+		return nil
+	case executionrequest.FieldApprovalID:
+		m.ResetApprovalID()
+		return nil
+	case executionrequest.FieldApprovalStatus:
+		m.ResetApprovalStatus()
+		return nil
+	case executionrequest.FieldApprovedBy:
+		m.ResetApprovedBy()
+		return nil
+	case executionrequest.FieldApprovedAt:
+		m.ResetApprovedAt()
+		return nil
+	case executionrequest.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case executionrequest.FieldEnvironmentRef:
+		m.ResetEnvironmentRef()
+		return nil
+	case executionrequest.FieldJobID:
+		m.ResetJobID()
+		return nil
+	case executionrequest.FieldReceiptID:
+		m.ResetReceiptID()
+		return nil
+	case executionrequest.FieldContinuationID:
+		m.ResetContinuationID()
+		return nil
+	case executionrequest.FieldIdempotencyKey:
+		m.ResetIdempotencyKey()
+		return nil
+	case executionrequest.FieldVersion:
+		m.ResetVersion()
+		return nil
+	}
+	return fmt.Errorf("unknown ExecutionRequest field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ExecutionRequestMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ExecutionRequestMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ExecutionRequestMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ExecutionRequestMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ExecutionRequestMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ExecutionRequestMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ExecutionRequestMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ExecutionRequest unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ExecutionRequestMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ExecutionRequest edge %s", name)
+}
+
 // LedgerProjectionMutation represents an operation that mutates the LedgerProjection nodes in the graph.
 type LedgerProjectionMutation struct {
 	config
@@ -17310,6 +18600,806 @@ func (m *ProductionE2ERecordMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *ProductionE2ERecordMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown ProductionE2ERecord edge %s", name)
+}
+
+// ProjectTaskSyncHeadMutation represents an operation that mutates the ProjectTaskSyncHead nodes in the graph.
+type ProjectTaskSyncHeadMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *string
+	created_at      *time.Time
+	updated_at      *time.Time
+	kind            *string
+	organization_id *string
+	workspace_id    *string
+	project_id      *string
+	local_alias_id  *string
+	version         *int64
+	addversion      *int64
+	status          *string
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*ProjectTaskSyncHead, error)
+	predicates      []predicate.ProjectTaskSyncHead
+}
+
+var _ ent.Mutation = (*ProjectTaskSyncHeadMutation)(nil)
+
+// projecttasksyncheadOption allows management of the mutation configuration using functional options.
+type projecttasksyncheadOption func(*ProjectTaskSyncHeadMutation)
+
+// newProjectTaskSyncHeadMutation creates new mutation for the ProjectTaskSyncHead entity.
+func newProjectTaskSyncHeadMutation(c config, op Op, opts ...projecttasksyncheadOption) *ProjectTaskSyncHeadMutation {
+	m := &ProjectTaskSyncHeadMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeProjectTaskSyncHead,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withProjectTaskSyncHeadID sets the ID field of the mutation.
+func withProjectTaskSyncHeadID(id string) projecttasksyncheadOption {
+	return func(m *ProjectTaskSyncHeadMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ProjectTaskSyncHead
+		)
+		m.oldValue = func(ctx context.Context) (*ProjectTaskSyncHead, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ProjectTaskSyncHead.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withProjectTaskSyncHead sets the old ProjectTaskSyncHead of the mutation.
+func withProjectTaskSyncHead(node *ProjectTaskSyncHead) projecttasksyncheadOption {
+	return func(m *ProjectTaskSyncHeadMutation) {
+		m.oldValue = func(context.Context) (*ProjectTaskSyncHead, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ProjectTaskSyncHeadMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ProjectTaskSyncHeadMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of ProjectTaskSyncHead entities.
+func (m *ProjectTaskSyncHeadMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ProjectTaskSyncHeadMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ProjectTaskSyncHeadMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ProjectTaskSyncHead.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ProjectTaskSyncHeadMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ProjectTaskSyncHeadMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ProjectTaskSyncHeadMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ProjectTaskSyncHeadMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetKind sets the "kind" field.
+func (m *ProjectTaskSyncHeadMutation) SetKind(s string) {
+	m.kind = &s
+}
+
+// Kind returns the value of the "kind" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) Kind() (r string, exists bool) {
+	v := m.kind
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKind returns the old "kind" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldKind(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKind is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKind requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKind: %w", err)
+	}
+	return oldValue.Kind, nil
+}
+
+// ResetKind resets all changes to the "kind" field.
+func (m *ProjectTaskSyncHeadMutation) ResetKind() {
+	m.kind = nil
+}
+
+// SetOrganizationID sets the "organization_id" field.
+func (m *ProjectTaskSyncHeadMutation) SetOrganizationID(s string) {
+	m.organization_id = &s
+}
+
+// OrganizationID returns the value of the "organization_id" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) OrganizationID() (r string, exists bool) {
+	v := m.organization_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOrganizationID returns the old "organization_id" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldOrganizationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOrganizationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOrganizationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOrganizationID: %w", err)
+	}
+	return oldValue.OrganizationID, nil
+}
+
+// ResetOrganizationID resets all changes to the "organization_id" field.
+func (m *ProjectTaskSyncHeadMutation) ResetOrganizationID() {
+	m.organization_id = nil
+}
+
+// SetWorkspaceID sets the "workspace_id" field.
+func (m *ProjectTaskSyncHeadMutation) SetWorkspaceID(s string) {
+	m.workspace_id = &s
+}
+
+// WorkspaceID returns the value of the "workspace_id" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) WorkspaceID() (r string, exists bool) {
+	v := m.workspace_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWorkspaceID returns the old "workspace_id" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
+	}
+	return oldValue.WorkspaceID, nil
+}
+
+// ResetWorkspaceID resets all changes to the "workspace_id" field.
+func (m *ProjectTaskSyncHeadMutation) ResetWorkspaceID() {
+	m.workspace_id = nil
+}
+
+// SetProjectID sets the "project_id" field.
+func (m *ProjectTaskSyncHeadMutation) SetProjectID(s string) {
+	m.project_id = &s
+}
+
+// ProjectID returns the value of the "project_id" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) ProjectID() (r string, exists bool) {
+	v := m.project_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProjectID returns the old "project_id" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldProjectID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProjectID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProjectID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProjectID: %w", err)
+	}
+	return oldValue.ProjectID, nil
+}
+
+// ResetProjectID resets all changes to the "project_id" field.
+func (m *ProjectTaskSyncHeadMutation) ResetProjectID() {
+	m.project_id = nil
+}
+
+// SetLocalAliasID sets the "local_alias_id" field.
+func (m *ProjectTaskSyncHeadMutation) SetLocalAliasID(s string) {
+	m.local_alias_id = &s
+}
+
+// LocalAliasID returns the value of the "local_alias_id" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) LocalAliasID() (r string, exists bool) {
+	v := m.local_alias_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLocalAliasID returns the old "local_alias_id" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldLocalAliasID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLocalAliasID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLocalAliasID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLocalAliasID: %w", err)
+	}
+	return oldValue.LocalAliasID, nil
+}
+
+// ResetLocalAliasID resets all changes to the "local_alias_id" field.
+func (m *ProjectTaskSyncHeadMutation) ResetLocalAliasID() {
+	m.local_alias_id = nil
+}
+
+// SetVersion sets the "version" field.
+func (m *ProjectTaskSyncHeadMutation) SetVersion(i int64) {
+	m.version = &i
+	m.addversion = nil
+}
+
+// Version returns the value of the "version" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) Version() (r int64, exists bool) {
+	v := m.version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersion returns the old "version" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldVersion(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersion: %w", err)
+	}
+	return oldValue.Version, nil
+}
+
+// AddVersion adds i to the "version" field.
+func (m *ProjectTaskSyncHeadMutation) AddVersion(i int64) {
+	if m.addversion != nil {
+		*m.addversion += i
+	} else {
+		m.addversion = &i
+	}
+}
+
+// AddedVersion returns the value that was added to the "version" field in this mutation.
+func (m *ProjectTaskSyncHeadMutation) AddedVersion() (r int64, exists bool) {
+	v := m.addversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetVersion resets all changes to the "version" field.
+func (m *ProjectTaskSyncHeadMutation) ResetVersion() {
+	m.version = nil
+	m.addversion = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ProjectTaskSyncHeadMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ProjectTaskSyncHeadMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the ProjectTaskSyncHead entity.
+// If the ProjectTaskSyncHead object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectTaskSyncHeadMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ProjectTaskSyncHeadMutation) ResetStatus() {
+	m.status = nil
+}
+
+// Where appends a list predicates to the ProjectTaskSyncHeadMutation builder.
+func (m *ProjectTaskSyncHeadMutation) Where(ps ...predicate.ProjectTaskSyncHead) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ProjectTaskSyncHeadMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ProjectTaskSyncHeadMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ProjectTaskSyncHead, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ProjectTaskSyncHeadMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ProjectTaskSyncHeadMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ProjectTaskSyncHead).
+func (m *ProjectTaskSyncHeadMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ProjectTaskSyncHeadMutation) Fields() []string {
+	fields := make([]string, 0, 9)
+	if m.created_at != nil {
+		fields = append(fields, projecttasksynchead.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, projecttasksynchead.FieldUpdatedAt)
+	}
+	if m.kind != nil {
+		fields = append(fields, projecttasksynchead.FieldKind)
+	}
+	if m.organization_id != nil {
+		fields = append(fields, projecttasksynchead.FieldOrganizationID)
+	}
+	if m.workspace_id != nil {
+		fields = append(fields, projecttasksynchead.FieldWorkspaceID)
+	}
+	if m.project_id != nil {
+		fields = append(fields, projecttasksynchead.FieldProjectID)
+	}
+	if m.local_alias_id != nil {
+		fields = append(fields, projecttasksynchead.FieldLocalAliasID)
+	}
+	if m.version != nil {
+		fields = append(fields, projecttasksynchead.FieldVersion)
+	}
+	if m.status != nil {
+		fields = append(fields, projecttasksynchead.FieldStatus)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ProjectTaskSyncHeadMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case projecttasksynchead.FieldCreatedAt:
+		return m.CreatedAt()
+	case projecttasksynchead.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case projecttasksynchead.FieldKind:
+		return m.Kind()
+	case projecttasksynchead.FieldOrganizationID:
+		return m.OrganizationID()
+	case projecttasksynchead.FieldWorkspaceID:
+		return m.WorkspaceID()
+	case projecttasksynchead.FieldProjectID:
+		return m.ProjectID()
+	case projecttasksynchead.FieldLocalAliasID:
+		return m.LocalAliasID()
+	case projecttasksynchead.FieldVersion:
+		return m.Version()
+	case projecttasksynchead.FieldStatus:
+		return m.Status()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ProjectTaskSyncHeadMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case projecttasksynchead.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case projecttasksynchead.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case projecttasksynchead.FieldKind:
+		return m.OldKind(ctx)
+	case projecttasksynchead.FieldOrganizationID:
+		return m.OldOrganizationID(ctx)
+	case projecttasksynchead.FieldWorkspaceID:
+		return m.OldWorkspaceID(ctx)
+	case projecttasksynchead.FieldProjectID:
+		return m.OldProjectID(ctx)
+	case projecttasksynchead.FieldLocalAliasID:
+		return m.OldLocalAliasID(ctx)
+	case projecttasksynchead.FieldVersion:
+		return m.OldVersion(ctx)
+	case projecttasksynchead.FieldStatus:
+		return m.OldStatus(ctx)
+	}
+	return nil, fmt.Errorf("unknown ProjectTaskSyncHead field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ProjectTaskSyncHeadMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case projecttasksynchead.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case projecttasksynchead.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case projecttasksynchead.FieldKind:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKind(v)
+		return nil
+	case projecttasksynchead.FieldOrganizationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOrganizationID(v)
+		return nil
+	case projecttasksynchead.FieldWorkspaceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWorkspaceID(v)
+		return nil
+	case projecttasksynchead.FieldProjectID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProjectID(v)
+		return nil
+	case projecttasksynchead.FieldLocalAliasID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLocalAliasID(v)
+		return nil
+	case projecttasksynchead.FieldVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersion(v)
+		return nil
+	case projecttasksynchead.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ProjectTaskSyncHead field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ProjectTaskSyncHeadMutation) AddedFields() []string {
+	var fields []string
+	if m.addversion != nil {
+		fields = append(fields, projecttasksynchead.FieldVersion)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ProjectTaskSyncHeadMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case projecttasksynchead.FieldVersion:
+		return m.AddedVersion()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ProjectTaskSyncHeadMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case projecttasksynchead.FieldVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddVersion(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ProjectTaskSyncHead numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ProjectTaskSyncHeadMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ProjectTaskSyncHeadMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ProjectTaskSyncHeadMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown ProjectTaskSyncHead nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ProjectTaskSyncHeadMutation) ResetField(name string) error {
+	switch name {
+	case projecttasksynchead.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case projecttasksynchead.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case projecttasksynchead.FieldKind:
+		m.ResetKind()
+		return nil
+	case projecttasksynchead.FieldOrganizationID:
+		m.ResetOrganizationID()
+		return nil
+	case projecttasksynchead.FieldWorkspaceID:
+		m.ResetWorkspaceID()
+		return nil
+	case projecttasksynchead.FieldProjectID:
+		m.ResetProjectID()
+		return nil
+	case projecttasksynchead.FieldLocalAliasID:
+		m.ResetLocalAliasID()
+		return nil
+	case projecttasksynchead.FieldVersion:
+		m.ResetVersion()
+		return nil
+	case projecttasksynchead.FieldStatus:
+		m.ResetStatus()
+		return nil
+	}
+	return fmt.Errorf("unknown ProjectTaskSyncHead field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ProjectTaskSyncHeadMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ProjectTaskSyncHeadMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ProjectTaskSyncHeadMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ProjectTaskSyncHeadMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ProjectTaskSyncHeadMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ProjectTaskSyncHeadMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ProjectTaskSyncHeadMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ProjectTaskSyncHead unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ProjectTaskSyncHeadMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ProjectTaskSyncHead edge %s", name)
 }
 
 // RuntimeOperationMutation represents an operation that mutates the RuntimeOperation nodes in the graph.

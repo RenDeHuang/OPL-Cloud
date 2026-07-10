@@ -200,8 +200,14 @@ type ReceiptInput struct {
 }
 
 type Receipt struct {
-	ReceiptID   string `json:"receiptId"`
-	WorkspaceID string `json:"workspaceId"`
+	ReceiptID      string `json:"receiptId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	TaskID         string `json:"taskId"`
+	RequestID      string `json:"requestId"`
+	ApprovalID     string `json:"approvalId"`
+	JobID          string `json:"jobId"`
+	ContinuationID string `json:"continuationId"`
 }
 
 type ledgerHTTPClient struct {

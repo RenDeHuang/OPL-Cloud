@@ -83,8 +83,63 @@ type DestroyResourceInput struct {
 	HoldAmountCents int64  `json:"holdAmountCents"`
 }
 
+type ExecuteInput struct {
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	TaskID         string `json:"taskId"`
+	RequestID      string `json:"requestId"`
+	ApprovalID     string `json:"approvalId"`
+	EnvironmentRef string `json:"environmentRef,omitempty"`
+}
+
+type ExecutionResult struct {
+	RequestID      string `json:"requestId"`
+	ApprovalID     string `json:"approvalId"`
+	JobID          string `json:"jobId"`
+	ReceiptID      string `json:"receiptId"`
+	ContinuationID string `json:"continuationId"`
+	Status         string `json:"status"`
+}
+
 func NewService(ledger clients.LedgerClient, fabric clients.FabricClient) *Service {
 	return &Service{ledger: ledger, fabric: fabric}
+}
+
+func (s *Service) Execute(ctx context.Context, input ExecuteInput, idempotencyKey string) (ExecutionResult, error) {
+	if input.OrganizationID == "" || input.WorkspaceID == "" || input.ProjectID == "" || input.TaskID == "" || input.RequestID == "" || input.ApprovalID == "" || idempotencyKey == "" {
+		return ExecutionResult{}, fmt.Errorf("execution_identity_required")
+	}
+	job, err := s.fabric.CreateJob(ctx, clients.JobInput{
+		OrganizationID: input.OrganizationID,
+		WorkspaceID:    input.WorkspaceID,
+		ProjectID:      input.ProjectID,
+		TaskID:         input.TaskID,
+		RequestID:      input.RequestID,
+		ApprovalID:     input.ApprovalID,
+		EnvironmentRef: input.EnvironmentRef,
+	}, idempotencyKey+":job")
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{
+		Type:           "execution.receipt.v1",
+		Status:         "running",
+		Surface:        "workspace",
+		OrganizationID: input.OrganizationID,
+		WorkspaceID:    input.WorkspaceID,
+		ProjectID:      input.ProjectID,
+		TaskID:         input.TaskID,
+		RequestID:      input.RequestID,
+		ApprovalID:     input.ApprovalID,
+		JobID:          job.JobID,
+		Execution:      map[string]any{"jobStatus": job.Status},
+		Continuation:   map[string]any{"taskVersion": 1, "environmentRef": input.EnvironmentRef},
+	}, idempotencyKey+":receipt")
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	return ExecutionResult{RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: job.JobID, ReceiptID: receipt.ReceiptID, ContinuationID: receipt.ContinuationID, Status: job.Status}, nil
 }
 
 func (s *Service) ManualTopUp(ctx context.Context, input ManualTopUpInput, idempotencyKey string) (clients.ManualTopUpResult, error) {

@@ -525,7 +525,7 @@ func (fakeLedgerClient) ReleaseHold(_ context.Context, input clients.HoldRelease
 }
 
 func (fakeLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
-	return clients.Receipt{ReceiptID: "receipt-from-ledger", WorkspaceID: input.WorkspaceID}, nil
+	return clients.Receipt{ReceiptID: "receipt-from-ledger", WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: "continuation-from-ledger"}, nil
 }
 
 func (fakeLedgerClient) SettleResource(_ context.Context, input clients.ResourceSettlementInput, _ string) (clients.ResourceSettlementResult, error) {
@@ -759,6 +759,85 @@ func (f *fakeFabricClient) ListOperations(_ context.Context) ([]clients.FabricOp
 		FinishedAt:        "2026-07-07T00:01:00Z",
 		CreatedAt:         "2026-07-07T00:01:00Z",
 	}}, nil
+}
+
+func (f *fakeFabricClient) CreateJob(_ context.Context, input clients.JobInput, _ string) (clients.Job, error) {
+	f.record("fabric.job")
+	return clients.Job{JobID: "job-from-fabric", OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, EnvironmentRef: input.EnvironmentRef, Status: "queued"}, nil
+}
+
+func (f *fakeFabricClient) GetJob(_ context.Context, jobID string) (clients.Job, error) {
+	f.record("fabric.job-get")
+	return clients.Job{JobID: jobID, Status: "queued"}, nil
+}
+
+func (f *fakeFabricClient) CancelJob(_ context.Context, jobID string, _ string) (clients.Job, error) {
+	f.record("fabric.job-cancel")
+	return clients.Job{JobID: jobID, Status: "cancelled"}, nil
+}
+
+func TestExecutionRoutesPersistCanonicalFlow(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	admin := operatorSessionForTest(t, server)
+
+	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-project-alpha"}`)
+	projectID := stringValue(project["projectId"])
+	if !strings.HasPrefix(projectID, "project-") {
+		t.Fatalf("unexpected project identity: %#v", project)
+	}
+	task := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-task-alpha"}`)
+	taskID := stringValue(task["taskId"])
+	if !strings.HasPrefix(taskID, "task-") {
+		t.Fatalf("unexpected task identity: %#v", task)
+	}
+
+	request := createResourceWithSession(t, server, admin, http.MethodPost, "/api/execution-requests", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"`+projectID+`","taskId":"`+taskID+`","environmentRef":"environment-alpha"}`)
+	requestID := stringValue(request["requestId"])
+	approved := createResourceWithSession(t, server, admin, http.MethodPost, "/api/execution-requests/"+requestID+"/approve", `{}`)
+	if approved["approvalStatus"] != "approved" || stringValue(approved["approvalId"]) == "" {
+		t.Fatalf("unexpected approval: %#v", approved)
+	}
+	executed := createResourceWithSession(t, server, admin, http.MethodPost, "/api/execution-requests/"+requestID+"/execute", `{}`)
+	if executed["jobId"] != "job-from-fabric" || executed["receiptId"] != "receipt-from-ledger" || executed["continuationId"] != "continuation-from-ledger" {
+		t.Fatalf("unexpected execution: %#v", executed)
+	}
+
+	loaded := createResourceWithSession(t, server, admin, http.MethodGet, "/api/execution-requests/"+requestID, ``)
+	if loaded["status"] != "queued" || loaded["jobId"] != "job-from-fabric" || loaded["receiptId"] != "receipt-from-ledger" {
+		t.Fatalf("unexpected persisted request: %#v", loaded)
+	}
+}
+
+func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	admin := operatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`))
+	req.Header.Set("Content-Type", "application/json")
+	addAuth(req, admin)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing Idempotency-Key") {
+		t.Fatalf("status = %d body=%s, want missing Idempotency-Key", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	admin := operatorSessionForTest(t, server)
+	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	projectID := stringValue(project["projectId"])
+	task := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	taskID := stringValue(task["taskId"])
+	path := "/api/execution-requests"
+	body := `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"` + projectID + `","taskId":"` + taskID + `","environmentRef":"environment-alpha"}`
+	first := requestWithSession(t, server, admin, http.MethodPost, path, body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first status = %d: %s", first.Code, first.Body.String())
+	}
+	second := requestWithSession(t, server, admin, http.MethodPost, path, strings.Replace(body, "environment-alpha", "environment-beta", 1))
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "idempotency_conflict") {
+		t.Fatalf("second status = %d body=%s, want idempotency conflict", second.Code, second.Body.String())
+	}
 }
 
 type fabricClientWithResourceOperations struct {

@@ -353,6 +353,39 @@ func runtimeOperationFields() []ent.Field {
 	)
 }
 
+func projectTaskSyncHeadFields() []ent.Field {
+	return append(baseFields(),
+		field.String("kind").NotEmpty(),
+		field.String("organization_id").NotEmpty(),
+		field.String("workspace_id").NotEmpty(),
+		field.String("project_id").Default(""),
+		field.String("local_alias_id").Default(""),
+		field.Int64("version").Default(1),
+		field.String("status").Default("active"),
+	)
+}
+
+func executionRequestFields() []ent.Field {
+	return append(baseFields(),
+		field.String("organization_id").NotEmpty(),
+		field.String("workspace_id").NotEmpty(),
+		field.String("project_id").NotEmpty(),
+		field.String("task_id").NotEmpty(),
+		field.String("actor_user_id").NotEmpty(),
+		field.String("approval_id").Default(""),
+		field.String("approval_status").Default("pending"),
+		field.String("approved_by").Default(""),
+		field.String("approved_at").Default(""),
+		field.String("status").Default("awaiting_approval"),
+		field.String("environment_ref").Default(""),
+		field.String("job_id").Default(""),
+		field.String("receipt_id").Default(""),
+		field.String("continuation_id").Default(""),
+		field.String("idempotency_key").NotEmpty().Unique(),
+		field.Int64("version").Default(1),
+	)
+}
+
 func adminAuditEventFields() []ent.Field {
 	return append(baseFields(),
 		field.String("actor_user_id").Default(""),
@@ -457,6 +490,12 @@ func (BillingReconciliation) Annotations() []schema.Annotation {
 }
 func (RuntimeOperation) Annotations() []schema.Annotation {
 	return table("control_plane_runtime_operations")
+}
+func (ProjectTaskSyncHead) Annotations() []schema.Annotation {
+	return table("control_plane_project_task_sync_heads")
+}
+func (ExecutionRequest) Annotations() []schema.Annotation {
+	return table("control_plane_execution_requests")
 }
 func (AdminAuditEvent) Annotations() []schema.Annotation {
 	return table("control_plane_admin_audit_events")

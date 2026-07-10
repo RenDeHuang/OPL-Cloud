@@ -475,6 +475,33 @@ var (
 		textField("NodeName", "SetNodeName", "nodeName"),
 		textField("MachineName", "SetMachineName", "machineName"),
 	}
+	projectTaskSyncHeadEntFields = []entRecordField{
+		textField("Kind", "SetKind", "kind"),
+		textField("OrganizationID", "SetOrganizationID", "organizationId"),
+		textField("WorkspaceID", "SetWorkspaceID", "workspaceId"),
+		textField("ProjectID", "SetProjectID", "projectId"),
+		textField("LocalAliasID", "SetLocalAliasID", "localAliasId"),
+		intField("Version", "SetVersion", "version"),
+		textField("Status", "SetStatus", "status"),
+	}
+	executionRequestEntFields = []entRecordField{
+		textField("OrganizationID", "SetOrganizationID", "organizationId"),
+		textField("WorkspaceID", "SetWorkspaceID", "workspaceId"),
+		textField("ProjectID", "SetProjectID", "projectId"),
+		textField("TaskID", "SetTaskID", "taskId"),
+		textField("ActorUserID", "SetActorUserID", "actorUserId"),
+		textField("ApprovalID", "SetApprovalID", "approvalId"),
+		textField("ApprovalStatus", "SetApprovalStatus", "approvalStatus"),
+		textField("ApprovedBy", "SetApprovedBy", "approvedBy"),
+		textField("ApprovedAt", "SetApprovedAt", "approvedAt"),
+		textField("Status", "SetStatus", "status"),
+		textField("EnvironmentRef", "SetEnvironmentRef", "environmentRef"),
+		textField("JobID", "SetJobID", "jobId"),
+		textField("ReceiptID", "SetReceiptID", "receiptId"),
+		textField("ContinuationID", "SetContinuationID", "continuationId"),
+		textField("IdempotencyKey", "SetIdempotencyKey", "idempotencyKey"),
+		intField("Version", "SetVersion", "version"),
+	}
 	auditEntFields = []entRecordField{
 		textField("ActorUserID", "SetActorUserID", "actorUserId"),
 		textField("ActorRole", "SetActorRole", "actorRole"),
@@ -605,6 +632,30 @@ func (s *postgresEntStateStore) ListMemberships(ctx context.Context) ([]map[stri
 
 func (s *postgresEntStateStore) SaveMembership(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Membership.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Membership.Create() }, membershipEntFields)
+}
+
+func (s *postgresEntStateStore) ListProjectTaskSyncHeads(ctx context.Context) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.ProjectTaskSyncHead.Query().All, projectTaskSyncHeadEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, "")
+}
+
+func (s *postgresEntStateStore) SaveProjectTaskSyncHead(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ProjectTaskSyncHead.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ProjectTaskSyncHead.Create() }, projectTaskSyncHeadEntFields)
+}
+
+func (s *postgresEntStateStore) ListExecutionRequests(ctx context.Context) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.ExecutionRequest.Query().All, executionRequestEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, "")
+}
+
+func (s *postgresEntStateStore) SaveExecutionRequest(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ExecutionRequest.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ExecutionRequest.Create() }, executionRequestEntFields)
 }
 
 func (s *postgresEntStateStore) ListComputes(ctx context.Context, accountID string) ([]map[string]any, error) {

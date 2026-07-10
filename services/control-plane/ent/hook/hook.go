@@ -140,6 +140,18 @@ func (f ComputeAllocationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ComputeAllocationMutation", m)
 }
 
+// The ExecutionRequestFunc type is an adapter to allow the use of ordinary
+// function as ExecutionRequest mutator.
+type ExecutionRequestFunc func(context.Context, *ent.ExecutionRequestMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ExecutionRequestFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ExecutionRequestMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ExecutionRequestMutation", m)
+}
+
 // The LedgerProjectionFunc type is an adapter to allow the use of ordinary
 // function as LedgerProjection mutator.
 type LedgerProjectionFunc func(context.Context, *ent.LedgerProjectionMutation) (ent.Value, error)
@@ -222,6 +234,18 @@ func (f ProductionE2ERecordFunc) Mutate(ctx context.Context, m ent.Mutation) (en
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProductionE2ERecordMutation", m)
+}
+
+// The ProjectTaskSyncHeadFunc type is an adapter to allow the use of ordinary
+// function as ProjectTaskSyncHead mutator.
+type ProjectTaskSyncHeadFunc func(context.Context, *ent.ProjectTaskSyncHeadMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ProjectTaskSyncHeadFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ProjectTaskSyncHeadMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProjectTaskSyncHeadMutation", m)
 }
 
 // The RuntimeOperationFunc type is an adapter to allow the use of ordinary

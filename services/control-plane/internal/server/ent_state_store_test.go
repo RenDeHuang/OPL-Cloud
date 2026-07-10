@@ -95,6 +95,48 @@ func TestEntStateStorePersistsWalletTransactionWalletAfter(t *testing.T) {
 	}
 }
 
+func TestEntStateStorePersistsExecutionIdentityAndApproval(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/execution.sqlite")
+	ctx := context.Background()
+	if err := store.SaveProjectTaskSyncHead(ctx, map[string]any{
+		"id":             "project-alpha",
+		"kind":           "project",
+		"organizationId": "org-alpha",
+		"workspaceId":    "workspace-alpha",
+		"localAliasId":   "local-project-alpha",
+		"version":        int64(1),
+		"status":         "active",
+	}); err != nil {
+		t.Fatalf("save project identity: %v", err)
+	}
+	if err := store.SaveExecutionRequest(ctx, map[string]any{
+		"id":             "request-alpha",
+		"organizationId": "org-alpha",
+		"workspaceId":    "workspace-alpha",
+		"projectId":      "project-alpha",
+		"taskId":         "task-alpha",
+		"actorUserId":    "usr-alpha",
+		"approvalId":     "approval-alpha",
+		"approvalStatus": "approved",
+		"approvedBy":     "usr-reviewer",
+		"status":         "approved",
+		"environmentRef": "environment-alpha",
+		"idempotencyKey": "request-once",
+		"version":        int64(2),
+	}); err != nil {
+		t.Fatalf("save execution request: %v", err)
+	}
+
+	heads, err := store.ListProjectTaskSyncHeads(ctx)
+	if err != nil || len(heads) != 1 || heads[0]["localAliasId"] != "local-project-alpha" {
+		t.Fatalf("unexpected sync heads: %#v, %v", heads, err)
+	}
+	requests, err := store.ListExecutionRequests(ctx)
+	if err != nil || len(requests) != 1 || requests[0]["approvalStatus"] != "approved" || requests[0]["version"] != int64(2) {
+		t.Fatalf("unexpected execution requests: %#v, %v", requests, err)
+	}
+}
+
 func TestControlPlaneAdminFactsSurviveServerRestart(t *testing.T) {
 	store := NewTestEntStateStore(t, t.TempDir()+"/admin-facts.sqlite")
 	first, err := newControlPlaneAppWithStore(store)

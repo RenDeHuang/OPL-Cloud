@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 type FabricClient interface {
@@ -24,6 +25,9 @@ type FabricClient interface {
 	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
 	Readiness(ctx context.Context) (map[string]any, error)
 	ListOperations(ctx context.Context) ([]FabricOperation, error)
+	CreateJob(ctx context.Context, input JobInput, idempotencyKey string) (Job, error)
+	GetJob(ctx context.Context, jobID string) (Job, error)
+	CancelJob(ctx context.Context, jobID string, idempotencyKey string) (Job, error)
 }
 
 type FabricCatalog struct {
@@ -181,6 +185,29 @@ type FabricOperation struct {
 	CreatedAt               string         `json:"createdAt"`
 }
 
+type JobInput struct {
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	TaskID         string `json:"taskId"`
+	RequestID      string `json:"requestId"`
+	ApprovalID     string `json:"approvalId"`
+	EnvironmentRef string `json:"environmentRef,omitempty"`
+}
+
+type Job struct {
+	JobID          string `json:"jobId"`
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	TaskID         string `json:"taskId"`
+	RequestID      string `json:"requestId"`
+	ApprovalID     string `json:"approvalId"`
+	EnvironmentRef string `json:"environmentRef,omitempty"`
+	Status         string `json:"status"`
+	Replayed       bool   `json:"replayed,omitempty"`
+}
+
 type fabricHTTPClient struct {
 	baseURL string
 	client  *http.Client
@@ -274,6 +301,24 @@ func (c *fabricHTTPClient) Readiness(ctx context.Context) (map[string]any, error
 func (c *fabricHTTPClient) ListOperations(ctx context.Context) ([]FabricOperation, error) {
 	var result []FabricOperation
 	err := c.get(ctx, "/fabric/operations", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) CreateJob(ctx context.Context, input JobInput, idempotencyKey string) (Job, error) {
+	var result Job
+	err := c.post(ctx, "/fabric/jobs", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) GetJob(ctx context.Context, jobID string) (Job, error) {
+	var result Job
+	err := c.get(ctx, "/fabric/jobs/"+url.PathEscape(jobID), &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) CancelJob(ctx context.Context, jobID string, idempotencyKey string) (Job, error) {
+	var result Job
+	err := c.post(ctx, "/fabric/jobs/"+url.PathEscape(jobID)+"/cancel", map[string]any{}, idempotencyKey, &result)
 	return result, err
 }
 

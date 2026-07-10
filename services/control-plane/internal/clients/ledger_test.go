@@ -48,3 +48,16 @@ func TestLedgerHTTPClientReadsWalletAndSettlementFacts(t *testing.T) {
 		t.Fatalf("settlements = %#v err=%v", settlements, err)
 	}
 }
+
+func TestLedgerHTTPClientReadsReceiptContinuationIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(Receipt{ReceiptID: "receipt-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha", ContinuationID: "continuation-alpha"})
+	}))
+	defer server.Close()
+
+	client := NewLedgerHTTPClient(server.URL, server.Client())
+	receipt, err := client.RecordReceipt(context.Background(), ReceiptInput{Type: "execution.receipt.v1", Status: "running", Surface: "workspace", WorkspaceID: "workspace-alpha"}, "receipt-once")
+	if err != nil || receipt.ReceiptID != "receipt-alpha" || receipt.ContinuationID != "continuation-alpha" {
+		t.Fatalf("receipt = %#v err=%v", receipt, err)
+	}
+}

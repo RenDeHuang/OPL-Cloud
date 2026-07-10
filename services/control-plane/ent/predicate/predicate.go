@@ -39,6 +39,9 @@ type BillingReconciliation func(*sql.Selector)
 // ComputeAllocation is the predicate function for computeallocation builders.
 type ComputeAllocation func(*sql.Selector)
 
+// ExecutionRequest is the predicate function for executionrequest builders.
+type ExecutionRequest func(*sql.Selector)
+
 // LedgerProjection is the predicate function for ledgerprojection builders.
 type LedgerProjection func(*sql.Selector)
 
@@ -59,6 +62,9 @@ type PricingItem func(*sql.Selector)
 
 // ProductionE2ERecord is the predicate function for productione2erecord builders.
 type ProductionE2ERecord func(*sql.Selector)
+
+// ProjectTaskSyncHead is the predicate function for projecttasksynchead builders.
+type ProjectTaskSyncHead func(*sql.Selector)
 
 // RuntimeOperation is the predicate function for runtimeoperation builders.
 type RuntimeOperation func(*sql.Selector)

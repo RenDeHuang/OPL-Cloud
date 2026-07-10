@@ -253,6 +253,34 @@ var (
 		Columns:    ControlPlaneComputeAllocationsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneComputeAllocationsColumns[0]},
 	}
+	// ControlPlaneExecutionRequestsColumns holds the columns for the "control_plane_execution_requests" table.
+	ControlPlaneExecutionRequestsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "organization_id", Type: field.TypeString},
+		{Name: "workspace_id", Type: field.TypeString},
+		{Name: "project_id", Type: field.TypeString},
+		{Name: "task_id", Type: field.TypeString},
+		{Name: "actor_user_id", Type: field.TypeString},
+		{Name: "approval_id", Type: field.TypeString, Default: ""},
+		{Name: "approval_status", Type: field.TypeString, Default: "pending"},
+		{Name: "approved_by", Type: field.TypeString, Default: ""},
+		{Name: "approved_at", Type: field.TypeString, Default: ""},
+		{Name: "status", Type: field.TypeString, Default: "awaiting_approval"},
+		{Name: "environment_ref", Type: field.TypeString, Default: ""},
+		{Name: "job_id", Type: field.TypeString, Default: ""},
+		{Name: "receipt_id", Type: field.TypeString, Default: ""},
+		{Name: "continuation_id", Type: field.TypeString, Default: ""},
+		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
+		{Name: "version", Type: field.TypeInt64, Default: 1},
+	}
+	// ControlPlaneExecutionRequestsTable holds the schema information for the "control_plane_execution_requests" table.
+	ControlPlaneExecutionRequestsTable = &schema.Table{
+		Name:       "control_plane_execution_requests",
+		Columns:    ControlPlaneExecutionRequestsColumns,
+		PrimaryKey: []*schema.Column{ControlPlaneExecutionRequestsColumns[0]},
+	}
 	// ControlPlaneLedgerProjectionsColumns holds the columns for the "control_plane_ledger_projections" table.
 	ControlPlaneLedgerProjectionsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -399,6 +427,25 @@ var (
 		Name:       "control_plane_production_e2e_records",
 		Columns:    ControlPlaneProductionE2eRecordsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneProductionE2eRecordsColumns[0]},
+	}
+	// ControlPlaneProjectTaskSyncHeadsColumns holds the columns for the "control_plane_project_task_sync_heads" table.
+	ControlPlaneProjectTaskSyncHeadsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "kind", Type: field.TypeString},
+		{Name: "organization_id", Type: field.TypeString},
+		{Name: "workspace_id", Type: field.TypeString},
+		{Name: "project_id", Type: field.TypeString, Default: ""},
+		{Name: "local_alias_id", Type: field.TypeString, Default: ""},
+		{Name: "version", Type: field.TypeInt64, Default: 1},
+		{Name: "status", Type: field.TypeString, Default: "active"},
+	}
+	// ControlPlaneProjectTaskSyncHeadsTable holds the schema information for the "control_plane_project_task_sync_heads" table.
+	ControlPlaneProjectTaskSyncHeadsTable = &schema.Table{
+		Name:       "control_plane_project_task_sync_heads",
+		Columns:    ControlPlaneProjectTaskSyncHeadsColumns,
+		PrimaryKey: []*schema.Column{ControlPlaneProjectTaskSyncHeadsColumns[0]},
 	}
 	// ControlPlaneRuntimeOperationsColumns holds the columns for the "control_plane_runtime_operations" table.
 	ControlPlaneRuntimeOperationsColumns = []*schema.Column{
@@ -666,6 +713,7 @@ var (
 		ControlPlaneAuthAttemptsTable,
 		ControlPlaneBillingReconciliationTable,
 		ControlPlaneComputeAllocationsTable,
+		ControlPlaneExecutionRequestsTable,
 		ControlPlaneLedgerProjectionsTable,
 		ControlPlaneManualTopupProjectionsTable,
 		ControlPlaneMembershipsTable,
@@ -673,6 +721,7 @@ var (
 		ControlPlanePricingCatalogsTable,
 		ControlPlanePricingItemsTable,
 		ControlPlaneProductionE2eRecordsTable,
+		ControlPlaneProjectTaskSyncHeadsTable,
 		ControlPlaneRuntimeOperationsTable,
 		ControlPlaneSessionsTable,
 		ControlPlaneStorageAttachmentsTable,
@@ -719,6 +768,9 @@ func init() {
 	ControlPlaneComputeAllocationsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_compute_allocations",
 	}
+	ControlPlaneExecutionRequestsTable.Annotation = &entsql.Annotation{
+		Table: "control_plane_execution_requests",
+	}
 	ControlPlaneLedgerProjectionsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_ledger_projections",
 	}
@@ -739,6 +791,9 @@ func init() {
 	}
 	ControlPlaneProductionE2eRecordsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_production_e2e_records",
+	}
+	ControlPlaneProjectTaskSyncHeadsTable.Annotation = &entsql.Annotation{
+		Table: "control_plane_project_task_sync_heads",
 	}
 	ControlPlaneRuntimeOperationsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_runtime_operations",

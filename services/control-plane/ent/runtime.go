@@ -14,6 +14,7 @@ import (
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
+	"opl-cloud/services/control-plane/ent/executionrequest"
 	"opl-cloud/services/control-plane/ent/ledgerprojection"
 	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
@@ -21,6 +22,7 @@ import (
 	"opl-cloud/services/control-plane/ent/pricingcatalog"
 	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
+	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/schema"
 	"opl-cloud/services/control-plane/ent/session"
@@ -646,6 +648,86 @@ func init() {
 	computeallocationDescID := computeallocationFields[0].Descriptor()
 	// computeallocation.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	computeallocation.IDValidator = computeallocationDescID.Validators[0].(func(string) error)
+	executionrequestFields := schema.ExecutionRequest{}.Fields()
+	_ = executionrequestFields
+	// executionrequestDescCreatedAt is the schema descriptor for created_at field.
+	executionrequestDescCreatedAt := executionrequestFields[1].Descriptor()
+	// executionrequest.DefaultCreatedAt holds the default value on creation for the created_at field.
+	executionrequest.DefaultCreatedAt = executionrequestDescCreatedAt.Default.(func() time.Time)
+	// executionrequestDescUpdatedAt is the schema descriptor for updated_at field.
+	executionrequestDescUpdatedAt := executionrequestFields[2].Descriptor()
+	// executionrequest.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	executionrequest.DefaultUpdatedAt = executionrequestDescUpdatedAt.Default.(func() time.Time)
+	// executionrequest.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	executionrequest.UpdateDefaultUpdatedAt = executionrequestDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// executionrequestDescOrganizationID is the schema descriptor for organization_id field.
+	executionrequestDescOrganizationID := executionrequestFields[3].Descriptor()
+	// executionrequest.OrganizationIDValidator is a validator for the "organization_id" field. It is called by the builders before save.
+	executionrequest.OrganizationIDValidator = executionrequestDescOrganizationID.Validators[0].(func(string) error)
+	// executionrequestDescWorkspaceID is the schema descriptor for workspace_id field.
+	executionrequestDescWorkspaceID := executionrequestFields[4].Descriptor()
+	// executionrequest.WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
+	executionrequest.WorkspaceIDValidator = executionrequestDescWorkspaceID.Validators[0].(func(string) error)
+	// executionrequestDescProjectID is the schema descriptor for project_id field.
+	executionrequestDescProjectID := executionrequestFields[5].Descriptor()
+	// executionrequest.ProjectIDValidator is a validator for the "project_id" field. It is called by the builders before save.
+	executionrequest.ProjectIDValidator = executionrequestDescProjectID.Validators[0].(func(string) error)
+	// executionrequestDescTaskID is the schema descriptor for task_id field.
+	executionrequestDescTaskID := executionrequestFields[6].Descriptor()
+	// executionrequest.TaskIDValidator is a validator for the "task_id" field. It is called by the builders before save.
+	executionrequest.TaskIDValidator = executionrequestDescTaskID.Validators[0].(func(string) error)
+	// executionrequestDescActorUserID is the schema descriptor for actor_user_id field.
+	executionrequestDescActorUserID := executionrequestFields[7].Descriptor()
+	// executionrequest.ActorUserIDValidator is a validator for the "actor_user_id" field. It is called by the builders before save.
+	executionrequest.ActorUserIDValidator = executionrequestDescActorUserID.Validators[0].(func(string) error)
+	// executionrequestDescApprovalID is the schema descriptor for approval_id field.
+	executionrequestDescApprovalID := executionrequestFields[8].Descriptor()
+	// executionrequest.DefaultApprovalID holds the default value on creation for the approval_id field.
+	executionrequest.DefaultApprovalID = executionrequestDescApprovalID.Default.(string)
+	// executionrequestDescApprovalStatus is the schema descriptor for approval_status field.
+	executionrequestDescApprovalStatus := executionrequestFields[9].Descriptor()
+	// executionrequest.DefaultApprovalStatus holds the default value on creation for the approval_status field.
+	executionrequest.DefaultApprovalStatus = executionrequestDescApprovalStatus.Default.(string)
+	// executionrequestDescApprovedBy is the schema descriptor for approved_by field.
+	executionrequestDescApprovedBy := executionrequestFields[10].Descriptor()
+	// executionrequest.DefaultApprovedBy holds the default value on creation for the approved_by field.
+	executionrequest.DefaultApprovedBy = executionrequestDescApprovedBy.Default.(string)
+	// executionrequestDescApprovedAt is the schema descriptor for approved_at field.
+	executionrequestDescApprovedAt := executionrequestFields[11].Descriptor()
+	// executionrequest.DefaultApprovedAt holds the default value on creation for the approved_at field.
+	executionrequest.DefaultApprovedAt = executionrequestDescApprovedAt.Default.(string)
+	// executionrequestDescStatus is the schema descriptor for status field.
+	executionrequestDescStatus := executionrequestFields[12].Descriptor()
+	// executionrequest.DefaultStatus holds the default value on creation for the status field.
+	executionrequest.DefaultStatus = executionrequestDescStatus.Default.(string)
+	// executionrequestDescEnvironmentRef is the schema descriptor for environment_ref field.
+	executionrequestDescEnvironmentRef := executionrequestFields[13].Descriptor()
+	// executionrequest.DefaultEnvironmentRef holds the default value on creation for the environment_ref field.
+	executionrequest.DefaultEnvironmentRef = executionrequestDescEnvironmentRef.Default.(string)
+	// executionrequestDescJobID is the schema descriptor for job_id field.
+	executionrequestDescJobID := executionrequestFields[14].Descriptor()
+	// executionrequest.DefaultJobID holds the default value on creation for the job_id field.
+	executionrequest.DefaultJobID = executionrequestDescJobID.Default.(string)
+	// executionrequestDescReceiptID is the schema descriptor for receipt_id field.
+	executionrequestDescReceiptID := executionrequestFields[15].Descriptor()
+	// executionrequest.DefaultReceiptID holds the default value on creation for the receipt_id field.
+	executionrequest.DefaultReceiptID = executionrequestDescReceiptID.Default.(string)
+	// executionrequestDescContinuationID is the schema descriptor for continuation_id field.
+	executionrequestDescContinuationID := executionrequestFields[16].Descriptor()
+	// executionrequest.DefaultContinuationID holds the default value on creation for the continuation_id field.
+	executionrequest.DefaultContinuationID = executionrequestDescContinuationID.Default.(string)
+	// executionrequestDescIdempotencyKey is the schema descriptor for idempotency_key field.
+	executionrequestDescIdempotencyKey := executionrequestFields[17].Descriptor()
+	// executionrequest.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
+	executionrequest.IdempotencyKeyValidator = executionrequestDescIdempotencyKey.Validators[0].(func(string) error)
+	// executionrequestDescVersion is the schema descriptor for version field.
+	executionrequestDescVersion := executionrequestFields[18].Descriptor()
+	// executionrequest.DefaultVersion holds the default value on creation for the version field.
+	executionrequest.DefaultVersion = executionrequestDescVersion.Default.(int64)
+	// executionrequestDescID is the schema descriptor for id field.
+	executionrequestDescID := executionrequestFields[0].Descriptor()
+	// executionrequest.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	executionrequest.IDValidator = executionrequestDescID.Validators[0].(func(string) error)
 	ledgerprojectionFields := schema.LedgerProjection{}.Fields()
 	_ = ledgerprojectionFields
 	// ledgerprojectionDescCreatedAt is the schema descriptor for created_at field.
@@ -1010,6 +1092,50 @@ func init() {
 	productione2erecordDescID := productione2erecordFields[0].Descriptor()
 	// productione2erecord.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	productione2erecord.IDValidator = productione2erecordDescID.Validators[0].(func(string) error)
+	projecttasksyncheadFields := schema.ProjectTaskSyncHead{}.Fields()
+	_ = projecttasksyncheadFields
+	// projecttasksyncheadDescCreatedAt is the schema descriptor for created_at field.
+	projecttasksyncheadDescCreatedAt := projecttasksyncheadFields[1].Descriptor()
+	// projecttasksynchead.DefaultCreatedAt holds the default value on creation for the created_at field.
+	projecttasksynchead.DefaultCreatedAt = projecttasksyncheadDescCreatedAt.Default.(func() time.Time)
+	// projecttasksyncheadDescUpdatedAt is the schema descriptor for updated_at field.
+	projecttasksyncheadDescUpdatedAt := projecttasksyncheadFields[2].Descriptor()
+	// projecttasksynchead.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	projecttasksynchead.DefaultUpdatedAt = projecttasksyncheadDescUpdatedAt.Default.(func() time.Time)
+	// projecttasksynchead.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	projecttasksynchead.UpdateDefaultUpdatedAt = projecttasksyncheadDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// projecttasksyncheadDescKind is the schema descriptor for kind field.
+	projecttasksyncheadDescKind := projecttasksyncheadFields[3].Descriptor()
+	// projecttasksynchead.KindValidator is a validator for the "kind" field. It is called by the builders before save.
+	projecttasksynchead.KindValidator = projecttasksyncheadDescKind.Validators[0].(func(string) error)
+	// projecttasksyncheadDescOrganizationID is the schema descriptor for organization_id field.
+	projecttasksyncheadDescOrganizationID := projecttasksyncheadFields[4].Descriptor()
+	// projecttasksynchead.OrganizationIDValidator is a validator for the "organization_id" field. It is called by the builders before save.
+	projecttasksynchead.OrganizationIDValidator = projecttasksyncheadDescOrganizationID.Validators[0].(func(string) error)
+	// projecttasksyncheadDescWorkspaceID is the schema descriptor for workspace_id field.
+	projecttasksyncheadDescWorkspaceID := projecttasksyncheadFields[5].Descriptor()
+	// projecttasksynchead.WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
+	projecttasksynchead.WorkspaceIDValidator = projecttasksyncheadDescWorkspaceID.Validators[0].(func(string) error)
+	// projecttasksyncheadDescProjectID is the schema descriptor for project_id field.
+	projecttasksyncheadDescProjectID := projecttasksyncheadFields[6].Descriptor()
+	// projecttasksynchead.DefaultProjectID holds the default value on creation for the project_id field.
+	projecttasksynchead.DefaultProjectID = projecttasksyncheadDescProjectID.Default.(string)
+	// projecttasksyncheadDescLocalAliasID is the schema descriptor for local_alias_id field.
+	projecttasksyncheadDescLocalAliasID := projecttasksyncheadFields[7].Descriptor()
+	// projecttasksynchead.DefaultLocalAliasID holds the default value on creation for the local_alias_id field.
+	projecttasksynchead.DefaultLocalAliasID = projecttasksyncheadDescLocalAliasID.Default.(string)
+	// projecttasksyncheadDescVersion is the schema descriptor for version field.
+	projecttasksyncheadDescVersion := projecttasksyncheadFields[8].Descriptor()
+	// projecttasksynchead.DefaultVersion holds the default value on creation for the version field.
+	projecttasksynchead.DefaultVersion = projecttasksyncheadDescVersion.Default.(int64)
+	// projecttasksyncheadDescStatus is the schema descriptor for status field.
+	projecttasksyncheadDescStatus := projecttasksyncheadFields[9].Descriptor()
+	// projecttasksynchead.DefaultStatus holds the default value on creation for the status field.
+	projecttasksynchead.DefaultStatus = projecttasksyncheadDescStatus.Default.(string)
+	// projecttasksyncheadDescID is the schema descriptor for id field.
+	projecttasksyncheadDescID := projecttasksyncheadFields[0].Descriptor()
+	// projecttasksynchead.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	projecttasksynchead.IDValidator = projecttasksyncheadDescID.Validators[0].(func(string) error)
 	runtimeoperationFields := schema.RuntimeOperation{}.Fields()
 	_ = runtimeoperationFields
 	// runtimeoperationDescCreatedAt is the schema descriptor for created_at field.

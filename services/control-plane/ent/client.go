@@ -22,6 +22,7 @@ import (
 	"opl-cloud/services/control-plane/ent/authattempt"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
+	"opl-cloud/services/control-plane/ent/executionrequest"
 	"opl-cloud/services/control-plane/ent/ledgerprojection"
 	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
@@ -29,6 +30,7 @@ import (
 	"opl-cloud/services/control-plane/ent/pricingcatalog"
 	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
+	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/session"
 	"opl-cloud/services/control-plane/ent/storageattachment"
@@ -71,6 +73,8 @@ type Client struct {
 	BillingReconciliation *BillingReconciliationClient
 	// ComputeAllocation is the client for interacting with the ComputeAllocation builders.
 	ComputeAllocation *ComputeAllocationClient
+	// ExecutionRequest is the client for interacting with the ExecutionRequest builders.
+	ExecutionRequest *ExecutionRequestClient
 	// LedgerProjection is the client for interacting with the LedgerProjection builders.
 	LedgerProjection *LedgerProjectionClient
 	// ManualTopupProjection is the client for interacting with the ManualTopupProjection builders.
@@ -85,6 +89,8 @@ type Client struct {
 	PricingItem *PricingItemClient
 	// ProductionE2ERecord is the client for interacting with the ProductionE2ERecord builders.
 	ProductionE2ERecord *ProductionE2ERecordClient
+	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
+	ProjectTaskSyncHead *ProjectTaskSyncHeadClient
 	// RuntimeOperation is the client for interacting with the RuntimeOperation builders.
 	RuntimeOperation *RuntimeOperationClient
 	// Session is the client for interacting with the Session builders.
@@ -125,6 +131,7 @@ func (c *Client) init() {
 	c.AuthAttempt = NewAuthAttemptClient(c.config)
 	c.BillingReconciliation = NewBillingReconciliationClient(c.config)
 	c.ComputeAllocation = NewComputeAllocationClient(c.config)
+	c.ExecutionRequest = NewExecutionRequestClient(c.config)
 	c.LedgerProjection = NewLedgerProjectionClient(c.config)
 	c.ManualTopupProjection = NewManualTopupProjectionClient(c.config)
 	c.Membership = NewMembershipClient(c.config)
@@ -132,6 +139,7 @@ func (c *Client) init() {
 	c.PricingCatalog = NewPricingCatalogClient(c.config)
 	c.PricingItem = NewPricingItemClient(c.config)
 	c.ProductionE2ERecord = NewProductionE2ERecordClient(c.config)
+	c.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(c.config)
 	c.RuntimeOperation = NewRuntimeOperationClient(c.config)
 	c.Session = NewSessionClient(c.config)
 	c.StorageAttachment = NewStorageAttachmentClient(c.config)
@@ -244,6 +252,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		AuthAttempt:                 NewAuthAttemptClient(cfg),
 		BillingReconciliation:       NewBillingReconciliationClient(cfg),
 		ComputeAllocation:           NewComputeAllocationClient(cfg),
+		ExecutionRequest:            NewExecutionRequestClient(cfg),
 		LedgerProjection:            NewLedgerProjectionClient(cfg),
 		ManualTopupProjection:       NewManualTopupProjectionClient(cfg),
 		Membership:                  NewMembershipClient(cfg),
@@ -251,6 +260,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		PricingCatalog:              NewPricingCatalogClient(cfg),
 		PricingItem:                 NewPricingItemClient(cfg),
 		ProductionE2ERecord:         NewProductionE2ERecordClient(cfg),
+		ProjectTaskSyncHead:         NewProjectTaskSyncHeadClient(cfg),
 		RuntimeOperation:            NewRuntimeOperationClient(cfg),
 		Session:                     NewSessionClient(cfg),
 		StorageAttachment:           NewStorageAttachmentClient(cfg),
@@ -290,6 +300,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		AuthAttempt:                 NewAuthAttemptClient(cfg),
 		BillingReconciliation:       NewBillingReconciliationClient(cfg),
 		ComputeAllocation:           NewComputeAllocationClient(cfg),
+		ExecutionRequest:            NewExecutionRequestClient(cfg),
 		LedgerProjection:            NewLedgerProjectionClient(cfg),
 		ManualTopupProjection:       NewManualTopupProjectionClient(cfg),
 		Membership:                  NewMembershipClient(cfg),
@@ -297,6 +308,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		PricingCatalog:              NewPricingCatalogClient(cfg),
 		PricingItem:                 NewPricingItemClient(cfg),
 		ProductionE2ERecord:         NewProductionE2ERecordClient(cfg),
+		ProjectTaskSyncHead:         NewProjectTaskSyncHeadClient(cfg),
 		RuntimeOperation:            NewRuntimeOperationClient(cfg),
 		Session:                     NewSessionClient(cfg),
 		StorageAttachment:           NewStorageAttachmentClient(cfg),
@@ -338,11 +350,12 @@ func (c *Client) Use(hooks ...Hook) {
 		c.Account, c.AdminAuditEvent, c.ArchiveJob, c.ArchivedAdminAuditEvent,
 		c.ArchivedComputeAllocation, c.ArchivedStorageAttachment,
 		c.ArchivedStorageVolume, c.ArchivedWorkspace, c.AuthAttempt,
-		c.BillingReconciliation, c.ComputeAllocation, c.LedgerProjection,
-		c.ManualTopupProjection, c.Membership, c.Organization, c.PricingCatalog,
-		c.PricingItem, c.ProductionE2ERecord, c.RuntimeOperation, c.Session,
-		c.StorageAttachment, c.StorageVolume, c.SupportTicketMapping, c.User,
-		c.WalletProjection, c.WalletTransactionProjection, c.Workspace,
+		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest,
+		c.LedgerProjection, c.ManualTopupProjection, c.Membership, c.Organization,
+		c.PricingCatalog, c.PricingItem, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
+		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
+		c.SupportTicketMapping, c.User, c.WalletProjection,
+		c.WalletTransactionProjection, c.Workspace,
 	} {
 		n.Use(hooks...)
 	}
@@ -355,11 +368,12 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.Account, c.AdminAuditEvent, c.ArchiveJob, c.ArchivedAdminAuditEvent,
 		c.ArchivedComputeAllocation, c.ArchivedStorageAttachment,
 		c.ArchivedStorageVolume, c.ArchivedWorkspace, c.AuthAttempt,
-		c.BillingReconciliation, c.ComputeAllocation, c.LedgerProjection,
-		c.ManualTopupProjection, c.Membership, c.Organization, c.PricingCatalog,
-		c.PricingItem, c.ProductionE2ERecord, c.RuntimeOperation, c.Session,
-		c.StorageAttachment, c.StorageVolume, c.SupportTicketMapping, c.User,
-		c.WalletProjection, c.WalletTransactionProjection, c.Workspace,
+		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest,
+		c.LedgerProjection, c.ManualTopupProjection, c.Membership, c.Organization,
+		c.PricingCatalog, c.PricingItem, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
+		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
+		c.SupportTicketMapping, c.User, c.WalletProjection,
+		c.WalletTransactionProjection, c.Workspace,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -390,6 +404,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.BillingReconciliation.mutate(ctx, m)
 	case *ComputeAllocationMutation:
 		return c.ComputeAllocation.mutate(ctx, m)
+	case *ExecutionRequestMutation:
+		return c.ExecutionRequest.mutate(ctx, m)
 	case *LedgerProjectionMutation:
 		return c.LedgerProjection.mutate(ctx, m)
 	case *ManualTopupProjectionMutation:
@@ -404,6 +420,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.PricingItem.mutate(ctx, m)
 	case *ProductionE2ERecordMutation:
 		return c.ProductionE2ERecord.mutate(ctx, m)
+	case *ProjectTaskSyncHeadMutation:
+		return c.ProjectTaskSyncHead.mutate(ctx, m)
 	case *RuntimeOperationMutation:
 		return c.RuntimeOperation.mutate(ctx, m)
 	case *SessionMutation:
@@ -1890,6 +1908,139 @@ func (c *ComputeAllocationClient) mutate(ctx context.Context, m *ComputeAllocati
 	}
 }
 
+// ExecutionRequestClient is a client for the ExecutionRequest schema.
+type ExecutionRequestClient struct {
+	config
+}
+
+// NewExecutionRequestClient returns a client for the ExecutionRequest from the given config.
+func NewExecutionRequestClient(c config) *ExecutionRequestClient {
+	return &ExecutionRequestClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `executionrequest.Hooks(f(g(h())))`.
+func (c *ExecutionRequestClient) Use(hooks ...Hook) {
+	c.hooks.ExecutionRequest = append(c.hooks.ExecutionRequest, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `executionrequest.Intercept(f(g(h())))`.
+func (c *ExecutionRequestClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ExecutionRequest = append(c.inters.ExecutionRequest, interceptors...)
+}
+
+// Create returns a builder for creating a ExecutionRequest entity.
+func (c *ExecutionRequestClient) Create() *ExecutionRequestCreate {
+	mutation := newExecutionRequestMutation(c.config, OpCreate)
+	return &ExecutionRequestCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ExecutionRequest entities.
+func (c *ExecutionRequestClient) CreateBulk(builders ...*ExecutionRequestCreate) *ExecutionRequestCreateBulk {
+	return &ExecutionRequestCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ExecutionRequestClient) MapCreateBulk(slice any, setFunc func(*ExecutionRequestCreate, int)) *ExecutionRequestCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ExecutionRequestCreateBulk{err: fmt.Errorf("calling to ExecutionRequestClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ExecutionRequestCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ExecutionRequestCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ExecutionRequest.
+func (c *ExecutionRequestClient) Update() *ExecutionRequestUpdate {
+	mutation := newExecutionRequestMutation(c.config, OpUpdate)
+	return &ExecutionRequestUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ExecutionRequestClient) UpdateOne(er *ExecutionRequest) *ExecutionRequestUpdateOne {
+	mutation := newExecutionRequestMutation(c.config, OpUpdateOne, withExecutionRequest(er))
+	return &ExecutionRequestUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ExecutionRequestClient) UpdateOneID(id string) *ExecutionRequestUpdateOne {
+	mutation := newExecutionRequestMutation(c.config, OpUpdateOne, withExecutionRequestID(id))
+	return &ExecutionRequestUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ExecutionRequest.
+func (c *ExecutionRequestClient) Delete() *ExecutionRequestDelete {
+	mutation := newExecutionRequestMutation(c.config, OpDelete)
+	return &ExecutionRequestDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ExecutionRequestClient) DeleteOne(er *ExecutionRequest) *ExecutionRequestDeleteOne {
+	return c.DeleteOneID(er.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ExecutionRequestClient) DeleteOneID(id string) *ExecutionRequestDeleteOne {
+	builder := c.Delete().Where(executionrequest.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ExecutionRequestDeleteOne{builder}
+}
+
+// Query returns a query builder for ExecutionRequest.
+func (c *ExecutionRequestClient) Query() *ExecutionRequestQuery {
+	return &ExecutionRequestQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeExecutionRequest},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ExecutionRequest entity by its id.
+func (c *ExecutionRequestClient) Get(ctx context.Context, id string) (*ExecutionRequest, error) {
+	return c.Query().Where(executionrequest.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ExecutionRequestClient) GetX(ctx context.Context, id string) *ExecutionRequest {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ExecutionRequestClient) Hooks() []Hook {
+	return c.hooks.ExecutionRequest
+}
+
+// Interceptors returns the client interceptors.
+func (c *ExecutionRequestClient) Interceptors() []Interceptor {
+	return c.inters.ExecutionRequest
+}
+
+func (c *ExecutionRequestClient) mutate(ctx context.Context, m *ExecutionRequestMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ExecutionRequestCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ExecutionRequestUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ExecutionRequestUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ExecutionRequestDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ExecutionRequest mutation op: %q", m.Op())
+	}
+}
+
 // LedgerProjectionClient is a client for the LedgerProjection schema.
 type LedgerProjectionClient struct {
 	config
@@ -2818,6 +2969,139 @@ func (c *ProductionE2ERecordClient) mutate(ctx context.Context, m *ProductionE2E
 		return (&ProductionE2ERecordDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown ProductionE2ERecord mutation op: %q", m.Op())
+	}
+}
+
+// ProjectTaskSyncHeadClient is a client for the ProjectTaskSyncHead schema.
+type ProjectTaskSyncHeadClient struct {
+	config
+}
+
+// NewProjectTaskSyncHeadClient returns a client for the ProjectTaskSyncHead from the given config.
+func NewProjectTaskSyncHeadClient(c config) *ProjectTaskSyncHeadClient {
+	return &ProjectTaskSyncHeadClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `projecttasksynchead.Hooks(f(g(h())))`.
+func (c *ProjectTaskSyncHeadClient) Use(hooks ...Hook) {
+	c.hooks.ProjectTaskSyncHead = append(c.hooks.ProjectTaskSyncHead, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `projecttasksynchead.Intercept(f(g(h())))`.
+func (c *ProjectTaskSyncHeadClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ProjectTaskSyncHead = append(c.inters.ProjectTaskSyncHead, interceptors...)
+}
+
+// Create returns a builder for creating a ProjectTaskSyncHead entity.
+func (c *ProjectTaskSyncHeadClient) Create() *ProjectTaskSyncHeadCreate {
+	mutation := newProjectTaskSyncHeadMutation(c.config, OpCreate)
+	return &ProjectTaskSyncHeadCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ProjectTaskSyncHead entities.
+func (c *ProjectTaskSyncHeadClient) CreateBulk(builders ...*ProjectTaskSyncHeadCreate) *ProjectTaskSyncHeadCreateBulk {
+	return &ProjectTaskSyncHeadCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ProjectTaskSyncHeadClient) MapCreateBulk(slice any, setFunc func(*ProjectTaskSyncHeadCreate, int)) *ProjectTaskSyncHeadCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ProjectTaskSyncHeadCreateBulk{err: fmt.Errorf("calling to ProjectTaskSyncHeadClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ProjectTaskSyncHeadCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ProjectTaskSyncHeadCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ProjectTaskSyncHead.
+func (c *ProjectTaskSyncHeadClient) Update() *ProjectTaskSyncHeadUpdate {
+	mutation := newProjectTaskSyncHeadMutation(c.config, OpUpdate)
+	return &ProjectTaskSyncHeadUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ProjectTaskSyncHeadClient) UpdateOne(ptsh *ProjectTaskSyncHead) *ProjectTaskSyncHeadUpdateOne {
+	mutation := newProjectTaskSyncHeadMutation(c.config, OpUpdateOne, withProjectTaskSyncHead(ptsh))
+	return &ProjectTaskSyncHeadUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ProjectTaskSyncHeadClient) UpdateOneID(id string) *ProjectTaskSyncHeadUpdateOne {
+	mutation := newProjectTaskSyncHeadMutation(c.config, OpUpdateOne, withProjectTaskSyncHeadID(id))
+	return &ProjectTaskSyncHeadUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ProjectTaskSyncHead.
+func (c *ProjectTaskSyncHeadClient) Delete() *ProjectTaskSyncHeadDelete {
+	mutation := newProjectTaskSyncHeadMutation(c.config, OpDelete)
+	return &ProjectTaskSyncHeadDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ProjectTaskSyncHeadClient) DeleteOne(ptsh *ProjectTaskSyncHead) *ProjectTaskSyncHeadDeleteOne {
+	return c.DeleteOneID(ptsh.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ProjectTaskSyncHeadClient) DeleteOneID(id string) *ProjectTaskSyncHeadDeleteOne {
+	builder := c.Delete().Where(projecttasksynchead.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ProjectTaskSyncHeadDeleteOne{builder}
+}
+
+// Query returns a query builder for ProjectTaskSyncHead.
+func (c *ProjectTaskSyncHeadClient) Query() *ProjectTaskSyncHeadQuery {
+	return &ProjectTaskSyncHeadQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeProjectTaskSyncHead},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ProjectTaskSyncHead entity by its id.
+func (c *ProjectTaskSyncHeadClient) Get(ctx context.Context, id string) (*ProjectTaskSyncHead, error) {
+	return c.Query().Where(projecttasksynchead.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ProjectTaskSyncHeadClient) GetX(ctx context.Context, id string) *ProjectTaskSyncHead {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ProjectTaskSyncHeadClient) Hooks() []Hook {
+	return c.hooks.ProjectTaskSyncHead
+}
+
+// Interceptors returns the client interceptors.
+func (c *ProjectTaskSyncHeadClient) Interceptors() []Interceptor {
+	return c.inters.ProjectTaskSyncHead
+}
+
+func (c *ProjectTaskSyncHeadClient) mutate(ctx context.Context, m *ProjectTaskSyncHeadMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ProjectTaskSyncHeadCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ProjectTaskSyncHeadUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ProjectTaskSyncHeadUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ProjectTaskSyncHeadDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ProjectTaskSyncHead mutation op: %q", m.Op())
 	}
 }
 
@@ -4024,18 +4308,20 @@ type (
 		Account, AdminAuditEvent, ArchiveJob, ArchivedAdminAuditEvent,
 		ArchivedComputeAllocation, ArchivedStorageAttachment, ArchivedStorageVolume,
 		ArchivedWorkspace, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		LedgerProjection, ManualTopupProjection, Membership, Organization,
-		PricingCatalog, PricingItem, ProductionE2ERecord, RuntimeOperation, Session,
-		StorageAttachment, StorageVolume, SupportTicketMapping, User, WalletProjection,
+		ExecutionRequest, LedgerProjection, ManualTopupProjection, Membership,
+		Organization, PricingCatalog, PricingItem, ProductionE2ERecord,
+		ProjectTaskSyncHead, RuntimeOperation, Session, StorageAttachment,
+		StorageVolume, SupportTicketMapping, User, WalletProjection,
 		WalletTransactionProjection, Workspace []ent.Hook
 	}
 	inters struct {
 		Account, AdminAuditEvent, ArchiveJob, ArchivedAdminAuditEvent,
 		ArchivedComputeAllocation, ArchivedStorageAttachment, ArchivedStorageVolume,
 		ArchivedWorkspace, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		LedgerProjection, ManualTopupProjection, Membership, Organization,
-		PricingCatalog, PricingItem, ProductionE2ERecord, RuntimeOperation, Session,
-		StorageAttachment, StorageVolume, SupportTicketMapping, User, WalletProjection,
+		ExecutionRequest, LedgerProjection, ManualTopupProjection, Membership,
+		Organization, PricingCatalog, PricingItem, ProductionE2ERecord,
+		ProjectTaskSyncHead, RuntimeOperation, Session, StorageAttachment,
+		StorageVolume, SupportTicketMapping, User, WalletProjection,
 		WalletTransactionProjection, Workspace []ent.Interceptor
 	}
 )

@@ -45,6 +45,31 @@ func TestCreateWorkspaceOrchestratesLedgerAndFabric(t *testing.T) {
 	}
 }
 
+func TestExecuteApprovedRequestCreatesJobAndReceipt(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
+
+	result, err := service.Execute(context.Background(), ExecuteInput{
+		OrganizationID: "org-alpha",
+		WorkspaceID:    "workspace-alpha",
+		ProjectID:      "project-alpha",
+		TaskID:         "task-alpha",
+		RequestID:      "request-alpha",
+		ApprovalID:     "approval-alpha",
+		EnvironmentRef: "environment-alpha",
+	}, "execute-once")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.RequestID != "request-alpha" || result.ApprovalID != "approval-alpha" || result.JobID != "job-alpha" || result.ReceiptID != "receipt-alpha" || result.ContinuationID != "continuation-alpha" {
+		t.Fatalf("unexpected execution result: %#v", result)
+	}
+	wantCalls := []string{"fabric.job", "ledger.receipt"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
 func TestCreateComputeAllocationHoldsBeforeFabric(t *testing.T) {
 	calls := []string{}
 	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
@@ -170,7 +195,7 @@ func (f *fakeLedgerClient) ReleaseHold(ctx context.Context, input clients.HoldRe
 
 func (f *fakeLedgerClient) RecordReceipt(ctx context.Context, input clients.ReceiptInput, idempotencyKey string) (clients.Receipt, error) {
 	*f.calls = append(*f.calls, "ledger.receipt")
-	return clients.Receipt{ReceiptID: "receipt-alpha", WorkspaceID: input.WorkspaceID}, nil
+	return clients.Receipt{ReceiptID: "receipt-alpha", WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: "continuation-alpha"}, nil
 }
 
 func (f *fakeLedgerClient) SettleResource(ctx context.Context, input clients.ResourceSettlementInput, idempotencyKey string) (clients.ResourceSettlementResult, error) {
@@ -280,4 +305,19 @@ func (f *fakeFabricClient) Readiness(ctx context.Context) (map[string]any, error
 func (f *fakeFabricClient) ListOperations(ctx context.Context) ([]clients.FabricOperation, error) {
 	*f.calls = append(*f.calls, "fabric.operations")
 	return []clients.FabricOperation{{ID: "fop-alpha", OperationID: "op-alpha", Action: "create_compute_allocation", ResourceKind: "compute_allocation", ResourceID: "compute-alpha", ProviderRequestID: "compute-request-alpha", RequestHash: "hash-alpha", Status: "succeeded"}}, nil
+}
+
+func (f *fakeFabricClient) CreateJob(ctx context.Context, input clients.JobInput, idempotencyKey string) (clients.Job, error) {
+	*f.calls = append(*f.calls, "fabric.job")
+	return clients.Job{JobID: "job-alpha", OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, EnvironmentRef: input.EnvironmentRef, Status: "queued"}, nil
+}
+
+func (f *fakeFabricClient) GetJob(ctx context.Context, jobID string) (clients.Job, error) {
+	*f.calls = append(*f.calls, "fabric.job-get")
+	return clients.Job{JobID: jobID, Status: "queued"}, nil
+}
+
+func (f *fakeFabricClient) CancelJob(ctx context.Context, jobID string, idempotencyKey string) (clients.Job, error) {
+	*f.calls = append(*f.calls, "fabric.job-cancel")
+	return clients.Job{JobID: jobID, Status: "cancelled"}, nil
 }

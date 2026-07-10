@@ -34,6 +34,8 @@ type Tx struct {
 	BillingReconciliation *BillingReconciliationClient
 	// ComputeAllocation is the client for interacting with the ComputeAllocation builders.
 	ComputeAllocation *ComputeAllocationClient
+	// ExecutionRequest is the client for interacting with the ExecutionRequest builders.
+	ExecutionRequest *ExecutionRequestClient
 	// LedgerProjection is the client for interacting with the LedgerProjection builders.
 	LedgerProjection *LedgerProjectionClient
 	// ManualTopupProjection is the client for interacting with the ManualTopupProjection builders.
@@ -48,6 +50,8 @@ type Tx struct {
 	PricingItem *PricingItemClient
 	// ProductionE2ERecord is the client for interacting with the ProductionE2ERecord builders.
 	ProductionE2ERecord *ProductionE2ERecordClient
+	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
+	ProjectTaskSyncHead *ProjectTaskSyncHeadClient
 	// RuntimeOperation is the client for interacting with the RuntimeOperation builders.
 	RuntimeOperation *RuntimeOperationClient
 	// Session is the client for interacting with the Session builders.
@@ -208,6 +212,7 @@ func (tx *Tx) init() {
 	tx.AuthAttempt = NewAuthAttemptClient(tx.config)
 	tx.BillingReconciliation = NewBillingReconciliationClient(tx.config)
 	tx.ComputeAllocation = NewComputeAllocationClient(tx.config)
+	tx.ExecutionRequest = NewExecutionRequestClient(tx.config)
 	tx.LedgerProjection = NewLedgerProjectionClient(tx.config)
 	tx.ManualTopupProjection = NewManualTopupProjectionClient(tx.config)
 	tx.Membership = NewMembershipClient(tx.config)
@@ -215,6 +220,7 @@ func (tx *Tx) init() {
 	tx.PricingCatalog = NewPricingCatalogClient(tx.config)
 	tx.PricingItem = NewPricingItemClient(tx.config)
 	tx.ProductionE2ERecord = NewProductionE2ERecordClient(tx.config)
+	tx.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(tx.config)
 	tx.RuntimeOperation = NewRuntimeOperationClient(tx.config)
 	tx.Session = NewSessionClient(tx.config)
 	tx.StorageAttachment = NewStorageAttachmentClient(tx.config)
