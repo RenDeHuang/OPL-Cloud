@@ -154,7 +154,7 @@ func (s *memoryTableStore) SaveWorkspaceSyncEvent(_ context.Context, row map[str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, existing := range s.syncEvents {
-		if stringValue(existing["id"]) == stringValue(row["id"]) || stringValue(existing["idempotencyKey"]) == stringValue(row["idempotencyKey"]) {
+		if stringValue(existing["id"]) == stringValue(row["id"]) || stringValue(existing["idempotencyKey"]) == stringValue(row["idempotencyKey"]) || (stringValue(existing["workspaceId"]) == stringValue(row["workspaceId"]) && stringValue(existing["operationId"]) == stringValue(row["operationId"])) {
 			if stringValue(existing["requestHash"]) == stringValue(row["requestHash"]) {
 				return nil
 			}

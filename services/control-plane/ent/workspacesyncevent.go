@@ -21,6 +21,8 @@ type WorkspaceSyncEvent struct {
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	// OperationID holds the value of the "operation_id" field.
+	OperationID string `json:"operation_id,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	// Cursor holds the value of the "cursor" field.
@@ -33,6 +35,8 @@ type WorkspaceSyncEvent struct {
 	TaskID string `json:"task_id,omitempty"`
 	// ClientID holds the value of the "client_id" field.
 	ClientID string `json:"client_id,omitempty"`
+	// ActorUserID holds the value of the "actor_user_id" field.
+	ActorUserID string `json:"actor_user_id,omitempty"`
 	// BaseVersion holds the value of the "base_version" field.
 	BaseVersion int64 `json:"base_version,omitempty"`
 	// ServerVersion holds the value of the "server_version" field.
@@ -50,7 +54,9 @@ type WorkspaceSyncEvent struct {
 	// RequestHash holds the value of the "request_hash" field.
 	RequestHash string `json:"request_hash,omitempty"`
 	// ConflictID holds the value of the "conflict_id" field.
-	ConflictID   string `json:"conflict_id,omitempty"`
+	ConflictID string `json:"conflict_id,omitempty"`
+	// OccurredAt holds the value of the "occurred_at" field.
+	OccurredAt   time.Time `json:"occurred_at,omitempty"`
 	selectValues sql.SelectValues
 }
 
@@ -61,9 +67,9 @@ func (*WorkspaceSyncEvent) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case workspacesyncevent.FieldCursor, workspacesyncevent.FieldBaseVersion, workspacesyncevent.FieldServerVersion:
 			values[i] = new(sql.NullInt64)
-		case workspacesyncevent.FieldID, workspacesyncevent.FieldWorkspaceID, workspacesyncevent.FieldEntityKind, workspacesyncevent.FieldProjectID, workspacesyncevent.FieldTaskID, workspacesyncevent.FieldClientID, workspacesyncevent.FieldOperation, workspacesyncevent.FieldStatus, workspacesyncevent.FieldPayloadJSON, workspacesyncevent.FieldContentDigest, workspacesyncevent.FieldIdempotencyKey, workspacesyncevent.FieldRequestHash, workspacesyncevent.FieldConflictID:
+		case workspacesyncevent.FieldID, workspacesyncevent.FieldOperationID, workspacesyncevent.FieldWorkspaceID, workspacesyncevent.FieldEntityKind, workspacesyncevent.FieldProjectID, workspacesyncevent.FieldTaskID, workspacesyncevent.FieldClientID, workspacesyncevent.FieldActorUserID, workspacesyncevent.FieldOperation, workspacesyncevent.FieldStatus, workspacesyncevent.FieldPayloadJSON, workspacesyncevent.FieldContentDigest, workspacesyncevent.FieldIdempotencyKey, workspacesyncevent.FieldRequestHash, workspacesyncevent.FieldConflictID:
 			values[i] = new(sql.NullString)
-		case workspacesyncevent.FieldCreatedAt, workspacesyncevent.FieldUpdatedAt:
+		case workspacesyncevent.FieldCreatedAt, workspacesyncevent.FieldUpdatedAt, workspacesyncevent.FieldOccurredAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -97,6 +103,12 @@ func (wse *WorkspaceSyncEvent) assignValues(columns []string, values []any) erro
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
 			} else if value.Valid {
 				wse.UpdatedAt = value.Time
+			}
+		case workspacesyncevent.FieldOperationID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field operation_id", values[i])
+			} else if value.Valid {
+				wse.OperationID = value.String
 			}
 		case workspacesyncevent.FieldWorkspaceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -133,6 +145,12 @@ func (wse *WorkspaceSyncEvent) assignValues(columns []string, values []any) erro
 				return fmt.Errorf("unexpected type %T for field client_id", values[i])
 			} else if value.Valid {
 				wse.ClientID = value.String
+			}
+		case workspacesyncevent.FieldActorUserID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field actor_user_id", values[i])
+			} else if value.Valid {
+				wse.ActorUserID = value.String
 			}
 		case workspacesyncevent.FieldBaseVersion:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -188,6 +206,12 @@ func (wse *WorkspaceSyncEvent) assignValues(columns []string, values []any) erro
 			} else if value.Valid {
 				wse.ConflictID = value.String
 			}
+		case workspacesyncevent.FieldOccurredAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field occurred_at", values[i])
+			} else if value.Valid {
+				wse.OccurredAt = value.Time
+			}
 		default:
 			wse.selectValues.Set(columns[i], values[i])
 		}
@@ -230,6 +254,9 @@ func (wse *WorkspaceSyncEvent) String() string {
 	builder.WriteString("updated_at=")
 	builder.WriteString(wse.UpdatedAt.Format(time.ANSIC))
 	builder.WriteString(", ")
+	builder.WriteString("operation_id=")
+	builder.WriteString(wse.OperationID)
+	builder.WriteString(", ")
 	builder.WriteString("workspace_id=")
 	builder.WriteString(wse.WorkspaceID)
 	builder.WriteString(", ")
@@ -247,6 +274,9 @@ func (wse *WorkspaceSyncEvent) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("client_id=")
 	builder.WriteString(wse.ClientID)
+	builder.WriteString(", ")
+	builder.WriteString("actor_user_id=")
+	builder.WriteString(wse.ActorUserID)
 	builder.WriteString(", ")
 	builder.WriteString("base_version=")
 	builder.WriteString(fmt.Sprintf("%v", wse.BaseVersion))
@@ -274,6 +304,9 @@ func (wse *WorkspaceSyncEvent) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("conflict_id=")
 	builder.WriteString(wse.ConflictID)
+	builder.WriteString(", ")
+	builder.WriteString("occurred_at=")
+	builder.WriteString(wse.OccurredAt.Format(time.ANSIC))
 	builder.WriteByte(')')
 	return builder.String()
 }

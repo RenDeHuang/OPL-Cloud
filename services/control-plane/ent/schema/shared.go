@@ -367,12 +367,14 @@ func projectTaskSyncHeadFields() []ent.Field {
 
 func workspaceSyncEventFields() []ent.Field {
 	return append(baseFields(),
+		field.String("operation_id").NotEmpty(),
 		field.String("workspace_id").NotEmpty(),
 		field.Int64("cursor"),
 		field.String("entity_kind").NotEmpty(),
 		field.String("project_id").NotEmpty(),
 		field.String("task_id").Default(""),
 		field.String("client_id").NotEmpty(),
+		field.String("actor_user_id").NotEmpty(),
 		field.Int64("base_version"),
 		field.Int64("server_version"),
 		field.String("operation").NotEmpty(),
@@ -382,6 +384,7 @@ func workspaceSyncEventFields() []ent.Field {
 		field.String("idempotency_key").NotEmpty().Unique(),
 		field.String("request_hash").NotEmpty(),
 		field.String("conflict_id").Default(""),
+		field.Time("occurred_at"),
 	)
 }
 

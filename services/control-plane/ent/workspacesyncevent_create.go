@@ -48,6 +48,12 @@ func (wsec *WorkspaceSyncEventCreate) SetNillableUpdatedAt(t *time.Time) *Worksp
 	return wsec
 }
 
+// SetOperationID sets the "operation_id" field.
+func (wsec *WorkspaceSyncEventCreate) SetOperationID(s string) *WorkspaceSyncEventCreate {
+	wsec.mutation.SetOperationID(s)
+	return wsec
+}
+
 // SetWorkspaceID sets the "workspace_id" field.
 func (wsec *WorkspaceSyncEventCreate) SetWorkspaceID(s string) *WorkspaceSyncEventCreate {
 	wsec.mutation.SetWorkspaceID(s)
@@ -89,6 +95,12 @@ func (wsec *WorkspaceSyncEventCreate) SetNillableTaskID(s *string) *WorkspaceSyn
 // SetClientID sets the "client_id" field.
 func (wsec *WorkspaceSyncEventCreate) SetClientID(s string) *WorkspaceSyncEventCreate {
 	wsec.mutation.SetClientID(s)
+	return wsec
+}
+
+// SetActorUserID sets the "actor_user_id" field.
+func (wsec *WorkspaceSyncEventCreate) SetActorUserID(s string) *WorkspaceSyncEventCreate {
+	wsec.mutation.SetActorUserID(s)
 	return wsec
 }
 
@@ -170,6 +182,12 @@ func (wsec *WorkspaceSyncEventCreate) SetNillableConflictID(s *string) *Workspac
 	return wsec
 }
 
+// SetOccurredAt sets the "occurred_at" field.
+func (wsec *WorkspaceSyncEventCreate) SetOccurredAt(t time.Time) *WorkspaceSyncEventCreate {
+	wsec.mutation.SetOccurredAt(t)
+	return wsec
+}
+
 // SetID sets the "id" field.
 func (wsec *WorkspaceSyncEventCreate) SetID(s string) *WorkspaceSyncEventCreate {
 	wsec.mutation.SetID(s)
@@ -245,6 +263,14 @@ func (wsec *WorkspaceSyncEventCreate) check() error {
 	if _, ok := wsec.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "WorkspaceSyncEvent.updated_at"`)}
 	}
+	if _, ok := wsec.mutation.OperationID(); !ok {
+		return &ValidationError{Name: "operation_id", err: errors.New(`ent: missing required field "WorkspaceSyncEvent.operation_id"`)}
+	}
+	if v, ok := wsec.mutation.OperationID(); ok {
+		if err := workspacesyncevent.OperationIDValidator(v); err != nil {
+			return &ValidationError{Name: "operation_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.operation_id": %w`, err)}
+		}
+	}
 	if _, ok := wsec.mutation.WorkspaceID(); !ok {
 		return &ValidationError{Name: "workspace_id", err: errors.New(`ent: missing required field "WorkspaceSyncEvent.workspace_id"`)}
 	}
@@ -281,6 +307,14 @@ func (wsec *WorkspaceSyncEventCreate) check() error {
 	if v, ok := wsec.mutation.ClientID(); ok {
 		if err := workspacesyncevent.ClientIDValidator(v); err != nil {
 			return &ValidationError{Name: "client_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.client_id": %w`, err)}
+		}
+	}
+	if _, ok := wsec.mutation.ActorUserID(); !ok {
+		return &ValidationError{Name: "actor_user_id", err: errors.New(`ent: missing required field "WorkspaceSyncEvent.actor_user_id"`)}
+	}
+	if v, ok := wsec.mutation.ActorUserID(); ok {
+		if err := workspacesyncevent.ActorUserIDValidator(v); err != nil {
+			return &ValidationError{Name: "actor_user_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.actor_user_id": %w`, err)}
 		}
 	}
 	if _, ok := wsec.mutation.BaseVersion(); !ok {
@@ -330,6 +364,9 @@ func (wsec *WorkspaceSyncEventCreate) check() error {
 	if _, ok := wsec.mutation.ConflictID(); !ok {
 		return &ValidationError{Name: "conflict_id", err: errors.New(`ent: missing required field "WorkspaceSyncEvent.conflict_id"`)}
 	}
+	if _, ok := wsec.mutation.OccurredAt(); !ok {
+		return &ValidationError{Name: "occurred_at", err: errors.New(`ent: missing required field "WorkspaceSyncEvent.occurred_at"`)}
+	}
 	if v, ok := wsec.mutation.ID(); ok {
 		if err := workspacesyncevent.IDValidator(v); err != nil {
 			return &ValidationError{Name: "id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.id": %w`, err)}
@@ -378,6 +415,10 @@ func (wsec *WorkspaceSyncEventCreate) createSpec() (*WorkspaceSyncEvent, *sqlgra
 		_spec.SetField(workspacesyncevent.FieldUpdatedAt, field.TypeTime, value)
 		_node.UpdatedAt = value
 	}
+	if value, ok := wsec.mutation.OperationID(); ok {
+		_spec.SetField(workspacesyncevent.FieldOperationID, field.TypeString, value)
+		_node.OperationID = value
+	}
 	if value, ok := wsec.mutation.WorkspaceID(); ok {
 		_spec.SetField(workspacesyncevent.FieldWorkspaceID, field.TypeString, value)
 		_node.WorkspaceID = value
@@ -401,6 +442,10 @@ func (wsec *WorkspaceSyncEventCreate) createSpec() (*WorkspaceSyncEvent, *sqlgra
 	if value, ok := wsec.mutation.ClientID(); ok {
 		_spec.SetField(workspacesyncevent.FieldClientID, field.TypeString, value)
 		_node.ClientID = value
+	}
+	if value, ok := wsec.mutation.ActorUserID(); ok {
+		_spec.SetField(workspacesyncevent.FieldActorUserID, field.TypeString, value)
+		_node.ActorUserID = value
 	}
 	if value, ok := wsec.mutation.BaseVersion(); ok {
 		_spec.SetField(workspacesyncevent.FieldBaseVersion, field.TypeInt64, value)
@@ -437,6 +482,10 @@ func (wsec *WorkspaceSyncEventCreate) createSpec() (*WorkspaceSyncEvent, *sqlgra
 	if value, ok := wsec.mutation.ConflictID(); ok {
 		_spec.SetField(workspacesyncevent.FieldConflictID, field.TypeString, value)
 		_node.ConflictID = value
+	}
+	if value, ok := wsec.mutation.OccurredAt(); ok {
+		_spec.SetField(workspacesyncevent.FieldOccurredAt, field.TypeTime, value)
+		_node.OccurredAt = value
 	}
 	return _node, _spec
 }

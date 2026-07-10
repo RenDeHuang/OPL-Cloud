@@ -17,6 +17,8 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
+	// FieldOperationID holds the string denoting the operation_id field in the database.
+	FieldOperationID = "operation_id"
 	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
 	FieldWorkspaceID = "workspace_id"
 	// FieldCursor holds the string denoting the cursor field in the database.
@@ -29,6 +31,8 @@ const (
 	FieldTaskID = "task_id"
 	// FieldClientID holds the string denoting the client_id field in the database.
 	FieldClientID = "client_id"
+	// FieldActorUserID holds the string denoting the actor_user_id field in the database.
+	FieldActorUserID = "actor_user_id"
 	// FieldBaseVersion holds the string denoting the base_version field in the database.
 	FieldBaseVersion = "base_version"
 	// FieldServerVersion holds the string denoting the server_version field in the database.
@@ -47,6 +51,8 @@ const (
 	FieldRequestHash = "request_hash"
 	// FieldConflictID holds the string denoting the conflict_id field in the database.
 	FieldConflictID = "conflict_id"
+	// FieldOccurredAt holds the string denoting the occurred_at field in the database.
+	FieldOccurredAt = "occurred_at"
 	// Table holds the table name of the workspacesyncevent in the database.
 	Table = "control_plane_workspace_sync_events"
 )
@@ -56,12 +62,14 @@ var Columns = []string{
 	FieldID,
 	FieldCreatedAt,
 	FieldUpdatedAt,
+	FieldOperationID,
 	FieldWorkspaceID,
 	FieldCursor,
 	FieldEntityKind,
 	FieldProjectID,
 	FieldTaskID,
 	FieldClientID,
+	FieldActorUserID,
 	FieldBaseVersion,
 	FieldServerVersion,
 	FieldOperation,
@@ -71,6 +79,7 @@ var Columns = []string{
 	FieldIdempotencyKey,
 	FieldRequestHash,
 	FieldConflictID,
+	FieldOccurredAt,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -90,6 +99,8 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
 	UpdateDefaultUpdatedAt func() time.Time
+	// OperationIDValidator is a validator for the "operation_id" field. It is called by the builders before save.
+	OperationIDValidator func(string) error
 	// WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
 	WorkspaceIDValidator func(string) error
 	// EntityKindValidator is a validator for the "entity_kind" field. It is called by the builders before save.
@@ -100,6 +111,8 @@ var (
 	DefaultTaskID string
 	// ClientIDValidator is a validator for the "client_id" field. It is called by the builders before save.
 	ClientIDValidator func(string) error
+	// ActorUserIDValidator is a validator for the "actor_user_id" field. It is called by the builders before save.
+	ActorUserIDValidator func(string) error
 	// OperationValidator is a validator for the "operation" field. It is called by the builders before save.
 	OperationValidator func(string) error
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -136,6 +149,11 @@ func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
 }
 
+// ByOperationID orders the results by the operation_id field.
+func ByOperationID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOperationID, opts...).ToFunc()
+}
+
 // ByWorkspaceID orders the results by the workspace_id field.
 func ByWorkspaceID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWorkspaceID, opts...).ToFunc()
@@ -164,6 +182,11 @@ func ByTaskID(opts ...sql.OrderTermOption) OrderOption {
 // ByClientID orders the results by the client_id field.
 func ByClientID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldClientID, opts...).ToFunc()
+}
+
+// ByActorUserID orders the results by the actor_user_id field.
+func ByActorUserID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldActorUserID, opts...).ToFunc()
 }
 
 // ByBaseVersion orders the results by the base_version field.
@@ -209,4 +232,9 @@ func ByRequestHash(opts ...sql.OrderTermOption) OrderOption {
 // ByConflictID orders the results by the conflict_id field.
 func ByConflictID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldConflictID, opts...).ToFunc()
+}
+
+// ByOccurredAt orders the results by the occurred_at field.
+func ByOccurredAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOccurredAt, opts...).ToFunc()
 }

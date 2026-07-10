@@ -161,11 +161,13 @@ func TestEntStateStorePersistsWorkspaceSyncEvents(t *testing.T) {
 	events := []map[string]any{
 		{
 			"id":             "mutation-alpha",
+			"operationId":    "operation-alpha",
 			"workspaceId":    "workspace-alpha",
 			"cursor":         int64(1001),
 			"entityKind":     "project",
 			"projectId":      "project-alpha",
 			"clientId":       "client-alpha",
+			"actorUserId":    "user-alpha",
 			"baseVersion":    int64(1),
 			"serverVersion":  int64(2),
 			"operation":      "replace",
@@ -174,14 +176,17 @@ func TestEntStateStorePersistsWorkspaceSyncEvents(t *testing.T) {
 			"contentDigest":  "sha256:alpha",
 			"idempotencyKey": "mutation-once",
 			"requestHash":    "hash-alpha",
+			"occurredAt":     "2026-07-11T00:00:00Z",
 		},
 		{
 			"id":             "mutation-conflict",
+			"operationId":    "operation-conflict",
 			"workspaceId":    "workspace-alpha",
 			"cursor":         int64(1002),
 			"entityKind":     "project",
 			"projectId":      "project-alpha",
 			"clientId":       "client-beta",
+			"actorUserId":    "user-beta",
 			"baseVersion":    int64(1),
 			"serverVersion":  int64(2),
 			"operation":      "replace",
@@ -190,6 +195,7 @@ func TestEntStateStorePersistsWorkspaceSyncEvents(t *testing.T) {
 			"idempotencyKey": "mutation-conflict-once",
 			"requestHash":    "hash-conflict",
 			"conflictId":     "conflict-alpha",
+			"occurredAt":     "2026-07-11T00:01:00Z",
 		},
 	}
 	for _, event := range events {
@@ -210,7 +216,7 @@ func TestEntStateStorePersistsWorkspaceSyncEvents(t *testing.T) {
 		t.Fatalf("unexpected sync events: %#v", stored)
 	}
 	payload, ok := stored[1]["payload"].(map[string]any)
-	if !ok || payload["current"] == nil || payload["incoming"] == nil || stored[0]["cursor"] != int64(1001) || stored[0]["requestHash"] != "hash-alpha" {
+	if !ok || payload["current"] == nil || payload["incoming"] == nil || stored[0]["cursor"] != int64(1001) || stored[0]["requestHash"] != "hash-alpha" || stored[0]["operationId"] != "operation-alpha" || stored[0]["actorUserId"] != "user-alpha" || stored[0]["occurredAt"] != "2026-07-11T00:00:00Z" {
 		t.Fatalf("sync event fields were not preserved: %#v", stored)
 	}
 }

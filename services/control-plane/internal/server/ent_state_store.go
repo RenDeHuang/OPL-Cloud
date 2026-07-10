@@ -683,12 +683,14 @@ func (s *postgresEntStateStore) ListWorkspaceSyncEvents(ctx context.Context, wor
 		}
 		result = append(result, map[string]any{
 			"id":             row.ID,
+			"operationId":    row.OperationID,
 			"workspaceId":    row.WorkspaceID,
 			"cursor":         row.Cursor,
 			"entityKind":     row.EntityKind,
 			"projectId":      row.ProjectID,
 			"taskId":         row.TaskID,
 			"clientId":       row.ClientID,
+			"actorUserId":    row.ActorUserID,
 			"baseVersion":    row.BaseVersion,
 			"serverVersion":  row.ServerVersion,
 			"operation":      row.Operation,
@@ -699,6 +701,7 @@ func (s *postgresEntStateStore) ListWorkspaceSyncEvents(ctx context.Context, wor
 			"requestHash":    row.RequestHash,
 			"conflictId":     row.ConflictID,
 			"createdAt":      row.CreatedAt.UTC().Format(time.RFC3339Nano),
+			"occurredAt":     row.OccurredAt.UTC().Format(time.RFC3339),
 		})
 	}
 	return result, nil
@@ -709,7 +712,11 @@ func (s *postgresEntStateStore) SaveWorkspaceSyncEvent(ctx context.Context, row 
 	idempotencyKey := stringValue(row["idempotencyKey"])
 	requestHash := stringValue(row["requestHash"])
 	existing, err := s.client.WorkspaceSyncEvent.Query().
-		Where(workspacesyncevent.Or(workspacesyncevent.ID(id), workspacesyncevent.IdempotencyKey(idempotencyKey))).
+		Where(workspacesyncevent.Or(
+			workspacesyncevent.ID(id),
+			workspacesyncevent.IdempotencyKey(idempotencyKey),
+			workspacesyncevent.And(workspacesyncevent.WorkspaceID(stringValue(row["workspaceId"])), workspacesyncevent.OperationID(stringValue(row["operationId"]))),
+		)).
 		Only(ctx)
 	if err == nil {
 		if existing.ID == id && existing.IdempotencyKey == idempotencyKey && existing.RequestHash == requestHash {
@@ -724,14 +731,20 @@ func (s *postgresEntStateStore) SaveWorkspaceSyncEvent(ctx context.Context, row 
 	if err != nil {
 		return err
 	}
+	occurredAt, err := time.Parse(time.RFC3339, stringValue(row["occurredAt"]))
+	if err != nil {
+		return err
+	}
 	_, err = s.client.WorkspaceSyncEvent.Create().
 		SetID(id).
+		SetOperationID(stringValue(row["operationId"])).
 		SetWorkspaceID(stringValue(row["workspaceId"])).
 		SetCursor(int64(numberField(row, "cursor", 0))).
 		SetEntityKind(stringValue(row["entityKind"])).
 		SetProjectID(stringValue(row["projectId"])).
 		SetTaskID(stringValue(row["taskId"])).
 		SetClientID(stringValue(row["clientId"])).
+		SetActorUserID(stringValue(row["actorUserId"])).
 		SetBaseVersion(int64(numberField(row, "baseVersion", 0))).
 		SetServerVersion(int64(numberField(row, "serverVersion", 0))).
 		SetOperation(stringValue(row["operation"])).
@@ -741,6 +754,7 @@ func (s *postgresEntStateStore) SaveWorkspaceSyncEvent(ctx context.Context, row 
 		SetIdempotencyKey(idempotencyKey).
 		SetRequestHash(requestHash).
 		SetConflictID(stringValue(row["conflictId"])).
+		SetOccurredAt(occurredAt).
 		Save(ctx)
 	return err
 }

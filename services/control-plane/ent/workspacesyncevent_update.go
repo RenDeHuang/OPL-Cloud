@@ -48,6 +48,20 @@ func (wseu *WorkspaceSyncEventUpdate) SetUpdatedAt(t time.Time) *WorkspaceSyncEv
 	return wseu
 }
 
+// SetOperationID sets the "operation_id" field.
+func (wseu *WorkspaceSyncEventUpdate) SetOperationID(s string) *WorkspaceSyncEventUpdate {
+	wseu.mutation.SetOperationID(s)
+	return wseu
+}
+
+// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
+func (wseu *WorkspaceSyncEventUpdate) SetNillableOperationID(s *string) *WorkspaceSyncEventUpdate {
+	if s != nil {
+		wseu.SetOperationID(*s)
+	}
+	return wseu
+}
+
 // SetWorkspaceID sets the "workspace_id" field.
 func (wseu *WorkspaceSyncEventUpdate) SetWorkspaceID(s string) *WorkspaceSyncEventUpdate {
 	wseu.mutation.SetWorkspaceID(s)
@@ -135,6 +149,20 @@ func (wseu *WorkspaceSyncEventUpdate) SetClientID(s string) *WorkspaceSyncEventU
 func (wseu *WorkspaceSyncEventUpdate) SetNillableClientID(s *string) *WorkspaceSyncEventUpdate {
 	if s != nil {
 		wseu.SetClientID(*s)
+	}
+	return wseu
+}
+
+// SetActorUserID sets the "actor_user_id" field.
+func (wseu *WorkspaceSyncEventUpdate) SetActorUserID(s string) *WorkspaceSyncEventUpdate {
+	wseu.mutation.SetActorUserID(s)
+	return wseu
+}
+
+// SetNillableActorUserID sets the "actor_user_id" field if the given value is not nil.
+func (wseu *WorkspaceSyncEventUpdate) SetNillableActorUserID(s *string) *WorkspaceSyncEventUpdate {
+	if s != nil {
+		wseu.SetActorUserID(*s)
 	}
 	return wseu
 }
@@ -279,6 +307,20 @@ func (wseu *WorkspaceSyncEventUpdate) SetNillableConflictID(s *string) *Workspac
 	return wseu
 }
 
+// SetOccurredAt sets the "occurred_at" field.
+func (wseu *WorkspaceSyncEventUpdate) SetOccurredAt(t time.Time) *WorkspaceSyncEventUpdate {
+	wseu.mutation.SetOccurredAt(t)
+	return wseu
+}
+
+// SetNillableOccurredAt sets the "occurred_at" field if the given value is not nil.
+func (wseu *WorkspaceSyncEventUpdate) SetNillableOccurredAt(t *time.Time) *WorkspaceSyncEventUpdate {
+	if t != nil {
+		wseu.SetOccurredAt(*t)
+	}
+	return wseu
+}
+
 // Mutation returns the WorkspaceSyncEventMutation object of the builder.
 func (wseu *WorkspaceSyncEventUpdate) Mutation() *WorkspaceSyncEventMutation {
 	return wseu.mutation
@@ -322,6 +364,11 @@ func (wseu *WorkspaceSyncEventUpdate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (wseu *WorkspaceSyncEventUpdate) check() error {
+	if v, ok := wseu.mutation.OperationID(); ok {
+		if err := workspacesyncevent.OperationIDValidator(v); err != nil {
+			return &ValidationError{Name: "operation_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.operation_id": %w`, err)}
+		}
+	}
 	if v, ok := wseu.mutation.WorkspaceID(); ok {
 		if err := workspacesyncevent.WorkspaceIDValidator(v); err != nil {
 			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.workspace_id": %w`, err)}
@@ -340,6 +387,11 @@ func (wseu *WorkspaceSyncEventUpdate) check() error {
 	if v, ok := wseu.mutation.ClientID(); ok {
 		if err := workspacesyncevent.ClientIDValidator(v); err != nil {
 			return &ValidationError{Name: "client_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.client_id": %w`, err)}
+		}
+	}
+	if v, ok := wseu.mutation.ActorUserID(); ok {
+		if err := workspacesyncevent.ActorUserIDValidator(v); err != nil {
+			return &ValidationError{Name: "actor_user_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.actor_user_id": %w`, err)}
 		}
 	}
 	if v, ok := wseu.mutation.Operation(); ok {
@@ -383,6 +435,9 @@ func (wseu *WorkspaceSyncEventUpdate) sqlSave(ctx context.Context) (n int, err e
 	if value, ok := wseu.mutation.UpdatedAt(); ok {
 		_spec.SetField(workspacesyncevent.FieldUpdatedAt, field.TypeTime, value)
 	}
+	if value, ok := wseu.mutation.OperationID(); ok {
+		_spec.SetField(workspacesyncevent.FieldOperationID, field.TypeString, value)
+	}
 	if value, ok := wseu.mutation.WorkspaceID(); ok {
 		_spec.SetField(workspacesyncevent.FieldWorkspaceID, field.TypeString, value)
 	}
@@ -403,6 +458,9 @@ func (wseu *WorkspaceSyncEventUpdate) sqlSave(ctx context.Context) (n int, err e
 	}
 	if value, ok := wseu.mutation.ClientID(); ok {
 		_spec.SetField(workspacesyncevent.FieldClientID, field.TypeString, value)
+	}
+	if value, ok := wseu.mutation.ActorUserID(); ok {
+		_spec.SetField(workspacesyncevent.FieldActorUserID, field.TypeString, value)
 	}
 	if value, ok := wseu.mutation.BaseVersion(); ok {
 		_spec.SetField(workspacesyncevent.FieldBaseVersion, field.TypeInt64, value)
@@ -436,6 +494,9 @@ func (wseu *WorkspaceSyncEventUpdate) sqlSave(ctx context.Context) (n int, err e
 	}
 	if value, ok := wseu.mutation.ConflictID(); ok {
 		_spec.SetField(workspacesyncevent.FieldConflictID, field.TypeString, value)
+	}
+	if value, ok := wseu.mutation.OccurredAt(); ok {
+		_spec.SetField(workspacesyncevent.FieldOccurredAt, field.TypeTime, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, wseu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -474,6 +535,20 @@ func (wseuo *WorkspaceSyncEventUpdateOne) SetNillableCreatedAt(t *time.Time) *Wo
 // SetUpdatedAt sets the "updated_at" field.
 func (wseuo *WorkspaceSyncEventUpdateOne) SetUpdatedAt(t time.Time) *WorkspaceSyncEventUpdateOne {
 	wseuo.mutation.SetUpdatedAt(t)
+	return wseuo
+}
+
+// SetOperationID sets the "operation_id" field.
+func (wseuo *WorkspaceSyncEventUpdateOne) SetOperationID(s string) *WorkspaceSyncEventUpdateOne {
+	wseuo.mutation.SetOperationID(s)
+	return wseuo
+}
+
+// SetNillableOperationID sets the "operation_id" field if the given value is not nil.
+func (wseuo *WorkspaceSyncEventUpdateOne) SetNillableOperationID(s *string) *WorkspaceSyncEventUpdateOne {
+	if s != nil {
+		wseuo.SetOperationID(*s)
+	}
 	return wseuo
 }
 
@@ -564,6 +639,20 @@ func (wseuo *WorkspaceSyncEventUpdateOne) SetClientID(s string) *WorkspaceSyncEv
 func (wseuo *WorkspaceSyncEventUpdateOne) SetNillableClientID(s *string) *WorkspaceSyncEventUpdateOne {
 	if s != nil {
 		wseuo.SetClientID(*s)
+	}
+	return wseuo
+}
+
+// SetActorUserID sets the "actor_user_id" field.
+func (wseuo *WorkspaceSyncEventUpdateOne) SetActorUserID(s string) *WorkspaceSyncEventUpdateOne {
+	wseuo.mutation.SetActorUserID(s)
+	return wseuo
+}
+
+// SetNillableActorUserID sets the "actor_user_id" field if the given value is not nil.
+func (wseuo *WorkspaceSyncEventUpdateOne) SetNillableActorUserID(s *string) *WorkspaceSyncEventUpdateOne {
+	if s != nil {
+		wseuo.SetActorUserID(*s)
 	}
 	return wseuo
 }
@@ -708,6 +797,20 @@ func (wseuo *WorkspaceSyncEventUpdateOne) SetNillableConflictID(s *string) *Work
 	return wseuo
 }
 
+// SetOccurredAt sets the "occurred_at" field.
+func (wseuo *WorkspaceSyncEventUpdateOne) SetOccurredAt(t time.Time) *WorkspaceSyncEventUpdateOne {
+	wseuo.mutation.SetOccurredAt(t)
+	return wseuo
+}
+
+// SetNillableOccurredAt sets the "occurred_at" field if the given value is not nil.
+func (wseuo *WorkspaceSyncEventUpdateOne) SetNillableOccurredAt(t *time.Time) *WorkspaceSyncEventUpdateOne {
+	if t != nil {
+		wseuo.SetOccurredAt(*t)
+	}
+	return wseuo
+}
+
 // Mutation returns the WorkspaceSyncEventMutation object of the builder.
 func (wseuo *WorkspaceSyncEventUpdateOne) Mutation() *WorkspaceSyncEventMutation {
 	return wseuo.mutation
@@ -764,6 +867,11 @@ func (wseuo *WorkspaceSyncEventUpdateOne) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (wseuo *WorkspaceSyncEventUpdateOne) check() error {
+	if v, ok := wseuo.mutation.OperationID(); ok {
+		if err := workspacesyncevent.OperationIDValidator(v); err != nil {
+			return &ValidationError{Name: "operation_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.operation_id": %w`, err)}
+		}
+	}
 	if v, ok := wseuo.mutation.WorkspaceID(); ok {
 		if err := workspacesyncevent.WorkspaceIDValidator(v); err != nil {
 			return &ValidationError{Name: "workspace_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.workspace_id": %w`, err)}
@@ -782,6 +890,11 @@ func (wseuo *WorkspaceSyncEventUpdateOne) check() error {
 	if v, ok := wseuo.mutation.ClientID(); ok {
 		if err := workspacesyncevent.ClientIDValidator(v); err != nil {
 			return &ValidationError{Name: "client_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.client_id": %w`, err)}
+		}
+	}
+	if v, ok := wseuo.mutation.ActorUserID(); ok {
+		if err := workspacesyncevent.ActorUserIDValidator(v); err != nil {
+			return &ValidationError{Name: "actor_user_id", err: fmt.Errorf(`ent: validator failed for field "WorkspaceSyncEvent.actor_user_id": %w`, err)}
 		}
 	}
 	if v, ok := wseuo.mutation.Operation(); ok {
@@ -842,6 +955,9 @@ func (wseuo *WorkspaceSyncEventUpdateOne) sqlSave(ctx context.Context) (_node *W
 	if value, ok := wseuo.mutation.UpdatedAt(); ok {
 		_spec.SetField(workspacesyncevent.FieldUpdatedAt, field.TypeTime, value)
 	}
+	if value, ok := wseuo.mutation.OperationID(); ok {
+		_spec.SetField(workspacesyncevent.FieldOperationID, field.TypeString, value)
+	}
 	if value, ok := wseuo.mutation.WorkspaceID(); ok {
 		_spec.SetField(workspacesyncevent.FieldWorkspaceID, field.TypeString, value)
 	}
@@ -862,6 +978,9 @@ func (wseuo *WorkspaceSyncEventUpdateOne) sqlSave(ctx context.Context) (_node *W
 	}
 	if value, ok := wseuo.mutation.ClientID(); ok {
 		_spec.SetField(workspacesyncevent.FieldClientID, field.TypeString, value)
+	}
+	if value, ok := wseuo.mutation.ActorUserID(); ok {
+		_spec.SetField(workspacesyncevent.FieldActorUserID, field.TypeString, value)
 	}
 	if value, ok := wseuo.mutation.BaseVersion(); ok {
 		_spec.SetField(workspacesyncevent.FieldBaseVersion, field.TypeInt64, value)
@@ -895,6 +1014,9 @@ func (wseuo *WorkspaceSyncEventUpdateOne) sqlSave(ctx context.Context) (_node *W
 	}
 	if value, ok := wseuo.mutation.ConflictID(); ok {
 		_spec.SetField(workspacesyncevent.FieldConflictID, field.TypeString, value)
+	}
+	if value, ok := wseuo.mutation.OccurredAt(); ok {
+		_spec.SetField(workspacesyncevent.FieldOccurredAt, field.TypeTime, value)
 	}
 	_node = &WorkspaceSyncEvent{config: wseuo.config}
 	_spec.Assign = _node.assignValues

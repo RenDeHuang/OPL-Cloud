@@ -31385,6 +31385,7 @@ type WorkspaceSyncEventMutation struct {
 	id                *string
 	created_at        *time.Time
 	updated_at        *time.Time
+	operation_id      *string
 	workspace_id      *string
 	cursor            *int64
 	addcursor         *int64
@@ -31392,6 +31393,7 @@ type WorkspaceSyncEventMutation struct {
 	project_id        *string
 	task_id           *string
 	client_id         *string
+	actor_user_id     *string
 	base_version      *int64
 	addbase_version   *int64
 	server_version    *int64
@@ -31403,6 +31405,7 @@ type WorkspaceSyncEventMutation struct {
 	idempotency_key   *string
 	request_hash      *string
 	conflict_id       *string
+	occurred_at       *time.Time
 	clearedFields     map[string]struct{}
 	done              bool
 	oldValue          func(context.Context) (*WorkspaceSyncEvent, error)
@@ -31583,6 +31586,42 @@ func (m *WorkspaceSyncEventMutation) OldUpdatedAt(ctx context.Context) (v time.T
 // ResetUpdatedAt resets all changes to the "updated_at" field.
 func (m *WorkspaceSyncEventMutation) ResetUpdatedAt() {
 	m.updated_at = nil
+}
+
+// SetOperationID sets the "operation_id" field.
+func (m *WorkspaceSyncEventMutation) SetOperationID(s string) {
+	m.operation_id = &s
+}
+
+// OperationID returns the value of the "operation_id" field in the mutation.
+func (m *WorkspaceSyncEventMutation) OperationID() (r string, exists bool) {
+	v := m.operation_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOperationID returns the old "operation_id" field's value of the WorkspaceSyncEvent entity.
+// If the WorkspaceSyncEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WorkspaceSyncEventMutation) OldOperationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOperationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOperationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOperationID: %w", err)
+	}
+	return oldValue.OperationID, nil
+}
+
+// ResetOperationID resets all changes to the "operation_id" field.
+func (m *WorkspaceSyncEventMutation) ResetOperationID() {
+	m.operation_id = nil
 }
 
 // SetWorkspaceID sets the "workspace_id" field.
@@ -31819,6 +31858,42 @@ func (m *WorkspaceSyncEventMutation) OldClientID(ctx context.Context) (v string,
 // ResetClientID resets all changes to the "client_id" field.
 func (m *WorkspaceSyncEventMutation) ResetClientID() {
 	m.client_id = nil
+}
+
+// SetActorUserID sets the "actor_user_id" field.
+func (m *WorkspaceSyncEventMutation) SetActorUserID(s string) {
+	m.actor_user_id = &s
+}
+
+// ActorUserID returns the value of the "actor_user_id" field in the mutation.
+func (m *WorkspaceSyncEventMutation) ActorUserID() (r string, exists bool) {
+	v := m.actor_user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActorUserID returns the old "actor_user_id" field's value of the WorkspaceSyncEvent entity.
+// If the WorkspaceSyncEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WorkspaceSyncEventMutation) OldActorUserID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActorUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActorUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActorUserID: %w", err)
+	}
+	return oldValue.ActorUserID, nil
+}
+
+// ResetActorUserID resets all changes to the "actor_user_id" field.
+func (m *WorkspaceSyncEventMutation) ResetActorUserID() {
+	m.actor_user_id = nil
 }
 
 // SetBaseVersion sets the "base_version" field.
@@ -32185,6 +32260,42 @@ func (m *WorkspaceSyncEventMutation) ResetConflictID() {
 	m.conflict_id = nil
 }
 
+// SetOccurredAt sets the "occurred_at" field.
+func (m *WorkspaceSyncEventMutation) SetOccurredAt(t time.Time) {
+	m.occurred_at = &t
+}
+
+// OccurredAt returns the value of the "occurred_at" field in the mutation.
+func (m *WorkspaceSyncEventMutation) OccurredAt() (r time.Time, exists bool) {
+	v := m.occurred_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOccurredAt returns the old "occurred_at" field's value of the WorkspaceSyncEvent entity.
+// If the WorkspaceSyncEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WorkspaceSyncEventMutation) OldOccurredAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOccurredAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOccurredAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOccurredAt: %w", err)
+	}
+	return oldValue.OccurredAt, nil
+}
+
+// ResetOccurredAt resets all changes to the "occurred_at" field.
+func (m *WorkspaceSyncEventMutation) ResetOccurredAt() {
+	m.occurred_at = nil
+}
+
 // Where appends a list predicates to the WorkspaceSyncEventMutation builder.
 func (m *WorkspaceSyncEventMutation) Where(ps ...predicate.WorkspaceSyncEvent) {
 	m.predicates = append(m.predicates, ps...)
@@ -32219,12 +32330,15 @@ func (m *WorkspaceSyncEventMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *WorkspaceSyncEventMutation) Fields() []string {
-	fields := make([]string, 0, 17)
+	fields := make([]string, 0, 20)
 	if m.created_at != nil {
 		fields = append(fields, workspacesyncevent.FieldCreatedAt)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, workspacesyncevent.FieldUpdatedAt)
+	}
+	if m.operation_id != nil {
+		fields = append(fields, workspacesyncevent.FieldOperationID)
 	}
 	if m.workspace_id != nil {
 		fields = append(fields, workspacesyncevent.FieldWorkspaceID)
@@ -32243,6 +32357,9 @@ func (m *WorkspaceSyncEventMutation) Fields() []string {
 	}
 	if m.client_id != nil {
 		fields = append(fields, workspacesyncevent.FieldClientID)
+	}
+	if m.actor_user_id != nil {
+		fields = append(fields, workspacesyncevent.FieldActorUserID)
 	}
 	if m.base_version != nil {
 		fields = append(fields, workspacesyncevent.FieldBaseVersion)
@@ -32271,6 +32388,9 @@ func (m *WorkspaceSyncEventMutation) Fields() []string {
 	if m.conflict_id != nil {
 		fields = append(fields, workspacesyncevent.FieldConflictID)
 	}
+	if m.occurred_at != nil {
+		fields = append(fields, workspacesyncevent.FieldOccurredAt)
+	}
 	return fields
 }
 
@@ -32283,6 +32403,8 @@ func (m *WorkspaceSyncEventMutation) Field(name string) (ent.Value, bool) {
 		return m.CreatedAt()
 	case workspacesyncevent.FieldUpdatedAt:
 		return m.UpdatedAt()
+	case workspacesyncevent.FieldOperationID:
+		return m.OperationID()
 	case workspacesyncevent.FieldWorkspaceID:
 		return m.WorkspaceID()
 	case workspacesyncevent.FieldCursor:
@@ -32295,6 +32417,8 @@ func (m *WorkspaceSyncEventMutation) Field(name string) (ent.Value, bool) {
 		return m.TaskID()
 	case workspacesyncevent.FieldClientID:
 		return m.ClientID()
+	case workspacesyncevent.FieldActorUserID:
+		return m.ActorUserID()
 	case workspacesyncevent.FieldBaseVersion:
 		return m.BaseVersion()
 	case workspacesyncevent.FieldServerVersion:
@@ -32313,6 +32437,8 @@ func (m *WorkspaceSyncEventMutation) Field(name string) (ent.Value, bool) {
 		return m.RequestHash()
 	case workspacesyncevent.FieldConflictID:
 		return m.ConflictID()
+	case workspacesyncevent.FieldOccurredAt:
+		return m.OccurredAt()
 	}
 	return nil, false
 }
@@ -32326,6 +32452,8 @@ func (m *WorkspaceSyncEventMutation) OldField(ctx context.Context, name string) 
 		return m.OldCreatedAt(ctx)
 	case workspacesyncevent.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
+	case workspacesyncevent.FieldOperationID:
+		return m.OldOperationID(ctx)
 	case workspacesyncevent.FieldWorkspaceID:
 		return m.OldWorkspaceID(ctx)
 	case workspacesyncevent.FieldCursor:
@@ -32338,6 +32466,8 @@ func (m *WorkspaceSyncEventMutation) OldField(ctx context.Context, name string) 
 		return m.OldTaskID(ctx)
 	case workspacesyncevent.FieldClientID:
 		return m.OldClientID(ctx)
+	case workspacesyncevent.FieldActorUserID:
+		return m.OldActorUserID(ctx)
 	case workspacesyncevent.FieldBaseVersion:
 		return m.OldBaseVersion(ctx)
 	case workspacesyncevent.FieldServerVersion:
@@ -32356,6 +32486,8 @@ func (m *WorkspaceSyncEventMutation) OldField(ctx context.Context, name string) 
 		return m.OldRequestHash(ctx)
 	case workspacesyncevent.FieldConflictID:
 		return m.OldConflictID(ctx)
+	case workspacesyncevent.FieldOccurredAt:
+		return m.OldOccurredAt(ctx)
 	}
 	return nil, fmt.Errorf("unknown WorkspaceSyncEvent field %s", name)
 }
@@ -32378,6 +32510,13 @@ func (m *WorkspaceSyncEventMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpdatedAt(v)
+		return nil
+	case workspacesyncevent.FieldOperationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOperationID(v)
 		return nil
 	case workspacesyncevent.FieldWorkspaceID:
 		v, ok := value.(string)
@@ -32420,6 +32559,13 @@ func (m *WorkspaceSyncEventMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetClientID(v)
+		return nil
+	case workspacesyncevent.FieldActorUserID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActorUserID(v)
 		return nil
 	case workspacesyncevent.FieldBaseVersion:
 		v, ok := value.(int64)
@@ -32483,6 +32629,13 @@ func (m *WorkspaceSyncEventMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetConflictID(v)
+		return nil
+	case workspacesyncevent.FieldOccurredAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOccurredAt(v)
 		return nil
 	}
 	return fmt.Errorf("unknown WorkspaceSyncEvent field %s", name)
@@ -32578,6 +32731,9 @@ func (m *WorkspaceSyncEventMutation) ResetField(name string) error {
 	case workspacesyncevent.FieldUpdatedAt:
 		m.ResetUpdatedAt()
 		return nil
+	case workspacesyncevent.FieldOperationID:
+		m.ResetOperationID()
+		return nil
 	case workspacesyncevent.FieldWorkspaceID:
 		m.ResetWorkspaceID()
 		return nil
@@ -32595,6 +32751,9 @@ func (m *WorkspaceSyncEventMutation) ResetField(name string) error {
 		return nil
 	case workspacesyncevent.FieldClientID:
 		m.ResetClientID()
+		return nil
+	case workspacesyncevent.FieldActorUserID:
+		m.ResetActorUserID()
 		return nil
 	case workspacesyncevent.FieldBaseVersion:
 		m.ResetBaseVersion()
@@ -32622,6 +32781,9 @@ func (m *WorkspaceSyncEventMutation) ResetField(name string) error {
 		return nil
 	case workspacesyncevent.FieldConflictID:
 		m.ResetConflictID()
+		return nil
+	case workspacesyncevent.FieldOccurredAt:
+		m.ResetOccurredAt()
 		return nil
 	}
 	return fmt.Errorf("unknown WorkspaceSyncEvent field %s", name)

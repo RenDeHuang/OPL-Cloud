@@ -74,6 +74,11 @@ func UpdatedAt(v time.Time) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldUpdatedAt, v))
 }
 
+// OperationID applies equality check predicate on the "operation_id" field. It's identical to OperationIDEQ.
+func OperationID(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldOperationID, v))
+}
+
 // WorkspaceID applies equality check predicate on the "workspace_id" field. It's identical to WorkspaceIDEQ.
 func WorkspaceID(v string) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldWorkspaceID, v))
@@ -102,6 +107,11 @@ func TaskID(v string) predicate.WorkspaceSyncEvent {
 // ClientID applies equality check predicate on the "client_id" field. It's identical to ClientIDEQ.
 func ClientID(v string) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldClientID, v))
+}
+
+// ActorUserID applies equality check predicate on the "actor_user_id" field. It's identical to ActorUserIDEQ.
+func ActorUserID(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldActorUserID, v))
 }
 
 // BaseVersion applies equality check predicate on the "base_version" field. It's identical to BaseVersionEQ.
@@ -147,6 +157,11 @@ func RequestHash(v string) predicate.WorkspaceSyncEvent {
 // ConflictID applies equality check predicate on the "conflict_id" field. It's identical to ConflictIDEQ.
 func ConflictID(v string) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldConflictID, v))
+}
+
+// OccurredAt applies equality check predicate on the "occurred_at" field. It's identical to OccurredAtEQ.
+func OccurredAt(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldOccurredAt, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
@@ -227,6 +242,71 @@ func UpdatedAtLT(v time.Time) predicate.WorkspaceSyncEvent {
 // UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
 func UpdatedAtLTE(v time.Time) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldLTE(FieldUpdatedAt, v))
+}
+
+// OperationIDEQ applies the EQ predicate on the "operation_id" field.
+func OperationIDEQ(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldOperationID, v))
+}
+
+// OperationIDNEQ applies the NEQ predicate on the "operation_id" field.
+func OperationIDNEQ(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldNEQ(FieldOperationID, v))
+}
+
+// OperationIDIn applies the In predicate on the "operation_id" field.
+func OperationIDIn(vs ...string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldIn(FieldOperationID, vs...))
+}
+
+// OperationIDNotIn applies the NotIn predicate on the "operation_id" field.
+func OperationIDNotIn(vs ...string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldNotIn(FieldOperationID, vs...))
+}
+
+// OperationIDGT applies the GT predicate on the "operation_id" field.
+func OperationIDGT(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldGT(FieldOperationID, v))
+}
+
+// OperationIDGTE applies the GTE predicate on the "operation_id" field.
+func OperationIDGTE(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldGTE(FieldOperationID, v))
+}
+
+// OperationIDLT applies the LT predicate on the "operation_id" field.
+func OperationIDLT(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldLT(FieldOperationID, v))
+}
+
+// OperationIDLTE applies the LTE predicate on the "operation_id" field.
+func OperationIDLTE(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldLTE(FieldOperationID, v))
+}
+
+// OperationIDContains applies the Contains predicate on the "operation_id" field.
+func OperationIDContains(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldContains(FieldOperationID, v))
+}
+
+// OperationIDHasPrefix applies the HasPrefix predicate on the "operation_id" field.
+func OperationIDHasPrefix(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldHasPrefix(FieldOperationID, v))
+}
+
+// OperationIDHasSuffix applies the HasSuffix predicate on the "operation_id" field.
+func OperationIDHasSuffix(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldHasSuffix(FieldOperationID, v))
+}
+
+// OperationIDEqualFold applies the EqualFold predicate on the "operation_id" field.
+func OperationIDEqualFold(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEqualFold(FieldOperationID, v))
+}
+
+// OperationIDContainsFold applies the ContainsFold predicate on the "operation_id" field.
+func OperationIDContainsFold(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldContainsFold(FieldOperationID, v))
 }
 
 // WorkspaceIDEQ applies the EQ predicate on the "workspace_id" field.
@@ -592,6 +672,71 @@ func ClientIDEqualFold(v string) predicate.WorkspaceSyncEvent {
 // ClientIDContainsFold applies the ContainsFold predicate on the "client_id" field.
 func ClientIDContainsFold(v string) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldContainsFold(FieldClientID, v))
+}
+
+// ActorUserIDEQ applies the EQ predicate on the "actor_user_id" field.
+func ActorUserIDEQ(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldActorUserID, v))
+}
+
+// ActorUserIDNEQ applies the NEQ predicate on the "actor_user_id" field.
+func ActorUserIDNEQ(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldNEQ(FieldActorUserID, v))
+}
+
+// ActorUserIDIn applies the In predicate on the "actor_user_id" field.
+func ActorUserIDIn(vs ...string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldIn(FieldActorUserID, vs...))
+}
+
+// ActorUserIDNotIn applies the NotIn predicate on the "actor_user_id" field.
+func ActorUserIDNotIn(vs ...string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldNotIn(FieldActorUserID, vs...))
+}
+
+// ActorUserIDGT applies the GT predicate on the "actor_user_id" field.
+func ActorUserIDGT(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldGT(FieldActorUserID, v))
+}
+
+// ActorUserIDGTE applies the GTE predicate on the "actor_user_id" field.
+func ActorUserIDGTE(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldGTE(FieldActorUserID, v))
+}
+
+// ActorUserIDLT applies the LT predicate on the "actor_user_id" field.
+func ActorUserIDLT(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldLT(FieldActorUserID, v))
+}
+
+// ActorUserIDLTE applies the LTE predicate on the "actor_user_id" field.
+func ActorUserIDLTE(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldLTE(FieldActorUserID, v))
+}
+
+// ActorUserIDContains applies the Contains predicate on the "actor_user_id" field.
+func ActorUserIDContains(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldContains(FieldActorUserID, v))
+}
+
+// ActorUserIDHasPrefix applies the HasPrefix predicate on the "actor_user_id" field.
+func ActorUserIDHasPrefix(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldHasPrefix(FieldActorUserID, v))
+}
+
+// ActorUserIDHasSuffix applies the HasSuffix predicate on the "actor_user_id" field.
+func ActorUserIDHasSuffix(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldHasSuffix(FieldActorUserID, v))
+}
+
+// ActorUserIDEqualFold applies the EqualFold predicate on the "actor_user_id" field.
+func ActorUserIDEqualFold(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEqualFold(FieldActorUserID, v))
+}
+
+// ActorUserIDContainsFold applies the ContainsFold predicate on the "actor_user_id" field.
+func ActorUserIDContainsFold(v string) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldContainsFold(FieldActorUserID, v))
 }
 
 // BaseVersionEQ applies the EQ predicate on the "base_version" field.
@@ -1127,6 +1272,46 @@ func ConflictIDEqualFold(v string) predicate.WorkspaceSyncEvent {
 // ConflictIDContainsFold applies the ContainsFold predicate on the "conflict_id" field.
 func ConflictIDContainsFold(v string) predicate.WorkspaceSyncEvent {
 	return predicate.WorkspaceSyncEvent(sql.FieldContainsFold(FieldConflictID, v))
+}
+
+// OccurredAtEQ applies the EQ predicate on the "occurred_at" field.
+func OccurredAtEQ(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldEQ(FieldOccurredAt, v))
+}
+
+// OccurredAtNEQ applies the NEQ predicate on the "occurred_at" field.
+func OccurredAtNEQ(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldNEQ(FieldOccurredAt, v))
+}
+
+// OccurredAtIn applies the In predicate on the "occurred_at" field.
+func OccurredAtIn(vs ...time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldIn(FieldOccurredAt, vs...))
+}
+
+// OccurredAtNotIn applies the NotIn predicate on the "occurred_at" field.
+func OccurredAtNotIn(vs ...time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldNotIn(FieldOccurredAt, vs...))
+}
+
+// OccurredAtGT applies the GT predicate on the "occurred_at" field.
+func OccurredAtGT(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldGT(FieldOccurredAt, v))
+}
+
+// OccurredAtGTE applies the GTE predicate on the "occurred_at" field.
+func OccurredAtGTE(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldGTE(FieldOccurredAt, v))
+}
+
+// OccurredAtLT applies the LT predicate on the "occurred_at" field.
+func OccurredAtLT(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldLT(FieldOccurredAt, v))
+}
+
+// OccurredAtLTE applies the LTE predicate on the "occurred_at" field.
+func OccurredAtLTE(v time.Time) predicate.WorkspaceSyncEvent {
+	return predicate.WorkspaceSyncEvent(sql.FieldLTE(FieldOccurredAt, v))
 }
 
 // And groups predicates with the AND operator between them.

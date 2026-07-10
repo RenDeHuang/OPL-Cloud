@@ -705,12 +705,14 @@ var (
 		{Name: "id", Type: field.TypeString, Unique: true},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "operation_id", Type: field.TypeString},
 		{Name: "workspace_id", Type: field.TypeString},
 		{Name: "cursor", Type: field.TypeInt64},
 		{Name: "entity_kind", Type: field.TypeString},
 		{Name: "project_id", Type: field.TypeString},
 		{Name: "task_id", Type: field.TypeString, Default: ""},
 		{Name: "client_id", Type: field.TypeString},
+		{Name: "actor_user_id", Type: field.TypeString},
 		{Name: "base_version", Type: field.TypeInt64},
 		{Name: "server_version", Type: field.TypeInt64},
 		{Name: "operation", Type: field.TypeString},
@@ -720,6 +722,7 @@ var (
 		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
 		{Name: "request_hash", Type: field.TypeString},
 		{Name: "conflict_id", Type: field.TypeString, Default: ""},
+		{Name: "occurred_at", Type: field.TypeTime},
 	}
 	// ControlPlaneWorkspaceSyncEventsTable holds the schema information for the "control_plane_workspace_sync_events" table.
 	ControlPlaneWorkspaceSyncEventsTable = &schema.Table{
@@ -730,17 +733,22 @@ var (
 			{
 				Name:    "workspacesyncevent_workspace_id_cursor",
 				Unique:  true,
-				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[3], ControlPlaneWorkspaceSyncEventsColumns[4]},
+				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[4], ControlPlaneWorkspaceSyncEventsColumns[5]},
+			},
+			{
+				Name:    "workspacesyncevent_workspace_id_operation_id",
+				Unique:  true,
+				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[4], ControlPlaneWorkspaceSyncEventsColumns[3]},
 			},
 			{
 				Name:    "workspacesyncevent_workspace_id_entity_kind_project_id_task_id_cursor",
 				Unique:  false,
-				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[3], ControlPlaneWorkspaceSyncEventsColumns[5], ControlPlaneWorkspaceSyncEventsColumns[6], ControlPlaneWorkspaceSyncEventsColumns[7], ControlPlaneWorkspaceSyncEventsColumns[4]},
+				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[4], ControlPlaneWorkspaceSyncEventsColumns[6], ControlPlaneWorkspaceSyncEventsColumns[7], ControlPlaneWorkspaceSyncEventsColumns[8], ControlPlaneWorkspaceSyncEventsColumns[5]},
 			},
 			{
 				Name:    "workspacesyncevent_workspace_id_conflict_id",
 				Unique:  false,
-				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[3], ControlPlaneWorkspaceSyncEventsColumns[17]},
+				Columns: []*schema.Column{ControlPlaneWorkspaceSyncEventsColumns[4], ControlPlaneWorkspaceSyncEventsColumns[19]},
 			},
 		},
 	}

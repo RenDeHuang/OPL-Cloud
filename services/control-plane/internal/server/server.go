@@ -53,6 +53,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	controlplaneroutes.RegisterSupport(mux, handler.SupportHandler{Register: func(mux *http.ServeMux) { registerSupportRoutes(mux, app) }})
 	controlplaneroutes.RegisterAdmin(mux, handler.AdminHandler{Register: func(mux *http.ServeMux) { registerAdminRoutes(mux, app) }})
 	registerExecutionRoutes(mux, app, service)
+	registerSyncRoutes(mux, app)
 	return mux, nil
 }
 
