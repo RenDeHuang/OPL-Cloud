@@ -107,6 +107,7 @@ test("target service boundaries assign persistence, cloud SDKs, and UI responsib
   assert.equal(boundary.state, "current");
   assert.equal(boundary.services.consoleUi.persistence, "none");
   assert.equal(boundary.services.ledger.persistence, "postgresql");
+  assert.equal(boundary.services.fabric.persistence, "postgresql");
   assert.equal(boundary.services.fabric.cloudSdkOwner, true);
   assert.equal(boundary.services.controlPlane.calls.ledger, "http");
   assert.equal(boundary.services.controlPlane.calls.fabric, "http");
