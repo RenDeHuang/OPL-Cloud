@@ -1,97 +1,97 @@
-# OPL Gateway Sub2API Console Integration Design
+# OPL Gateway 与 Sub2API Console 集成设计
 
-## Status
+## 状态
 
-Approved direction on 2026-07-11. This document defines the phased delivery design for using the existing Sub2API deployment at `https://gflabtoken.cn` as the private OPL Gateway backend while keeping its server-side update lifecycle independent from OPL Console.
+方案方向已于 2026-07-11 确认。本文定义分阶段交付设计：使用现有 `https://gflabtoken.cn` Sub2API 部署作为 OPL Gateway 后台，同时保持其服务器更新生命周期独立于 OPL Console。
 
-## Goal
+## 目标
 
-Deliver one OPL Cloud customer experience in which a user:
+交付统一的 OPL Cloud 客户体验，使用户能够：
 
-1. Signs in through the OPL identity entry.
-2. Opens Gateway from OPL Console without creating or remembering a separate Sub2API password.
-3. Uses the existing Sub2API user portal at `https://gflabtoken.cn` to create and manage API keys.
-4. Uses a selected key in local Codex and OPL Workspace.
-5. Sees Gateway usage and OPL wallet charges in Console.
+1. 通过 OPL 统一身份入口登录。
+2. 从 OPL Console 打开 Gateway，无需创建或记忆单独的 Sub2API 密码。
+3. 使用 `https://gflabtoken.cn` 现有的 Sub2API 用户门户创建和管理 API Key。
+4. 在本地 Codex 和 OPL Workspace 中使用选定的 Key。
+5. 在 Console 中查看 Gateway 用量和 OPL 钱包扣款。
 
-Sub2API remains independently deployed and updated on its current server. Console integrates through HTTP APIs only.
+Sub2API 继续在当前服务器上独立部署和更新。Console 只通过 HTTP API 与其集成。
 
-## Product Boundary
+## 产品边界
 
-### OPL Console And Control Plane Own
+### OPL Console 与 Control Plane 负责
 
-- OPL account and organization identity.
-- The customer entry to Gateway.
-- Mapping an OPL account to a Sub2API user.
-- Gateway summaries and key projections shown in Console.
-- Selecting a key for an OPL Workspace.
-- OPL wallet holds, CNY charges, receipts, and reconciliation.
-- Compatibility checks against the currently deployed Sub2API version.
+- OPL 账户和组织身份。
+- 客户进入 Gateway 的入口。
+- OPL 账户与 Sub2API 用户之间的映射。
+- Console 中展示的 Gateway 摘要和 Key 投影。
+- 为 OPL Workspace 选择 Key。
+- OPL 钱包冻结、人民币扣款、收据和对账。
+- 针对当前已部署 Sub2API 版本的兼容性检查。
 
-### Sub2API Owns
+### Sub2API 负责
 
-- API key creation, update, deletion, quota, expiry, and rate limits.
-- Model routing and upstream account selection.
-- Request authentication and execution.
-- Raw request usage, token counts, and `actual_cost` facts.
-- Its independently managed PostgreSQL and Redis data.
-- Its server update and database migration lifecycle.
+- API Key 的创建、修改、删除、配额、过期时间和速率限制。
+- 模型路由和上游账户选择。
+- 请求鉴权和执行。
+- 原始请求用量、Token 数量和 `actual_cost` 事实。
+- 独立管理其 PostgreSQL 和 Redis 数据。
+- 服务器更新和数据库迁移生命周期。
 
-### Fabric Owns
+### Fabric 负责
 
-- Writing the selected Gateway key into the Workspace Kubernetes Secret.
-- Mounting the key at `/run/secrets/gateway_api_key`.
-- Setting `OPL_GATEWAY_API_KEY_FILE=/run/secrets/gateway_api_key`.
-- Updating the Workspace Secret and runtime when the selected key changes.
+- 将选定的 Gateway Key 写入 Workspace Kubernetes Secret。
+- 将 Key 挂载到 `/run/secrets/gateway_api_key`。
+- 设置 `OPL_GATEWAY_API_KEY_FILE=/run/secrets/gateway_api_key`。
+- 在选定 Key 发生变化时更新 Workspace Secret 和运行时。
 
-## Non-Goals
+## 非目标
 
-- Do not copy or reimplement the Sub2API key editor in Console.
-- Do not embed the Sub2API UI in an iframe.
-- Do not read or write the Sub2API database directly.
-- Do not proxy model traffic through OPL Control Plane.
-- Do not synchronize or reuse OPL Console passwords in Sub2API.
-- Do not let Console control which Sub2API version is installed on the Gateway server.
-- Do not expose Sub2API upstream accounts, channels, credentials, or routing internals to customers.
+- 不在 Console 中复制或重新实现 Sub2API Key 编辑器。
+- 不使用 iframe 嵌入 Sub2API UI。
+- 不直接读写 Sub2API 数据库。
+- 不通过 OPL Control Plane 代理模型流量。
+- 不在 Sub2API 中同步或复用 OPL Console 密码。
+- 不让 Console 控制 Gateway 服务器安装哪个 Sub2API 版本。
+- 不向客户暴露 Sub2API 上游账户、渠道、凭据或路由内部信息。
 
-## Domain And Access Model
+## 域名与访问模型
 
-`https://gflabtoken.cn` remains the canonical Gateway origin.
+`https://gflabtoken.cn` 保持为 Gateway 的规范入口。
 
-Public customer paths:
+面向客户公开的路径：
 
-- Sub2API user portal at the root origin.
-- OIDC authentication endpoints under `/api/v1/auth/*`.
-- Authenticated user key and usage APIs used by the Sub2API portal.
-- Model data-plane endpoints such as `/v1/models`, `/v1/responses`, and compatible provider routes.
+- 根域名下的 Sub2API 用户门户。
+- `/api/v1/auth/*` 下的 OIDC 鉴权端点。
+- Sub2API 门户使用的已认证用户 Key 和用量 API。
+- `/v1/models`、`/v1/responses` 及兼容供应商路由等模型数据面端点。
 
-Restricted management paths:
+受限的管理路径：
 
-- `/api/v1/admin/*` is reachable only from OPL Control Plane and approved operator networks.
-- The dedicated Control Plane admin credential is stored as a deployment secret and is not a human administrator credential.
+- `/api/v1/admin/*` 只允许 OPL Control Plane 和已批准的运维网络访问。
+- Control Plane 专用管理员凭据作为部署 Secret 保存，不复用任何人工管理员凭据。
 
-The Caddy boundary must preserve streaming behavior for model routes and enforce the management-path restriction without modifying Sub2API.
+Caddy 边界必须保持模型路由的流式响应能力，并且在不修改 Sub2API 的情况下执行管理路径访问限制。
 
-## Identity Design
+## 身份设计
 
-A standards-compliant shared OIDC issuer is the credential authority for OPL Console and Sub2API. The stable identity key is `(issuer, subject)`, not email.
+一个符合标准的共享 OIDC 签发方作为 OPL Console 和 Sub2API 的凭据权威。稳定身份键为 `(issuer, subject)`，而不是邮箱。
 
-For an existing pilot account, verified email may be used once to link the OIDC subject after an authenticated Console session or administrator approval. After linking, email changes do not change the identity mapping.
+对于现有试点账户，可在已认证的 Console 会话中，或经过管理员批准后，使用已验证邮箱进行一次性 OIDC subject 绑定。完成绑定后，邮箱变化不会改变身份映射。
 
-The Control Plane provisions the Sub2API user through the admin API with:
+Control Plane 通过管理员 API 创建 Sub2API 用户，并设置：
 
-- the same verified email and display name;
-- role `user`;
-- a generated random internal password that is discarded after creation;
-- the OIDC identity bound through `POST /api/v1/admin/users/:id/auth-identities`.
+- 与 OPL 一致的已验证邮箱和显示名称；
+- 角色为 `user`；
+- 创建后立即丢弃的随机内部密码；
+- 通过 `POST /api/v1/admin/users/:id/auth-identities` 绑定 OIDC 身份。
 
-The user never receives or uses the generated Sub2API password. Clicking Gateway in Console starts or resumes the OIDC flow and lands the user in the Sub2API portal without a second product account.
+用户永远不会获得或使用这个随机 Sub2API 密码。用户在 Console 点击 Gateway 后启动或恢复 OIDC 流程，无需第二个产品账户即可进入 Sub2API 门户。
 
-## Control Plane Integration
+## Control Plane 集成
 
-The Control Plane uses a concrete Sub2API HTTP client. It does not expose Sub2API responses directly to the browser.
+Control Plane 使用具体的 Sub2API HTTP 客户端，不把 Sub2API 响应直接暴露给浏览器。
 
-Required service and identity calls:
+所需服务和身份 API：
 
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/refresh`
@@ -104,239 +104,239 @@ Required service and identity calls:
 - `POST /api/v1/admin/users/:id/auth-identities`
 - `POST /api/v1/admin/users/:id/balance`
 
-Required key and usage calls:
+所需 Key 和用量 API：
 
 - `GET /api/v1/admin/users/:id/api-keys`
 - `GET /api/v1/admin/users/:id/usage`
 - `GET /api/v1/admin/usage`
 - `GET /api/v1/admin/usage/stats`
-- `POST /api/v1/admin/dashboard/api-keys-usage` when batch summaries are needed
+- 需要批量摘要时使用 `POST /api/v1/admin/dashboard/api-keys-usage`
 
-The current Sub2API admin API can list a user's keys but cannot create or delete one on behalf of that user. Key mutations therefore remain in the Sub2API user portal in this design. No Sub2API source patch or private fork is required.
+当前 Sub2API 管理员 API 可以列出用户的 Key，但不能代用户创建或删除 Key。因此，本设计仍由用户在 Sub2API 用户门户中完成 Key 变更，不需要修改 Sub2API 源码或维护私有 fork。
 
-## Console User Surface
+## Console 用户界面
 
-The Gateway page replaces the current external placeholder with live projections.
+Gateway 页面使用实时投影替换当前的外部占位页面。
 
-Gateway overview:
+Gateway 概览：
 
-- online or unavailable status;
-- canonical base URL `https://gflabtoken.cn`;
-- OPL wallet available balance;
-- allocated Gateway budget;
-- today's and current month's requests, tokens, and charges;
-- last successful usage synchronization.
+- 在线或不可用状态；
+- 规范 Base URL `https://gflabtoken.cn`；
+- OPL 钱包可用余额；
+- 已分配的 Gateway 预算；
+- 今日和本月的请求数、Token 数和费用；
+- 最近一次成功用量同步时间。
 
-Key summary:
+Key 摘要：
 
-- name and masked key;
-- Sub2API key ID;
-- active, disabled, expired, or quota-exhausted status;
-- created, last-used, and expiry timestamps;
-- quota, quota used, and rate-limit windows;
-- linked Workspace when the key is assigned to one;
-- action to open the Sub2API key portal through SSO;
-- action to select an existing active key for a Workspace.
+- 名称和掩码后的 Key；
+- Sub2API Key ID；
+- 正常、禁用、过期或配额耗尽状态；
+- 创建时间、最后使用时间和过期时间；
+- 配额、已用配额和速率限制窗口；
+- Key 被分配到 Workspace 时显示对应 Workspace；
+- 通过 SSO 打开 Sub2API Key 门户的操作；
+- 为 Workspace 选择现有正常 Key 的操作。
 
-The full key is masked by default. A reveal action requires a recent Console authentication check, fetches the current value from Sub2API, returns it with `Cache-Control: no-store`, and does not persist it in the Control Plane database or logs.
+完整 Key 默认隐藏。显示完整 Key 前必须进行近期 Console 身份验证检查；Control Plane 从 Sub2API 获取当前值，以 `Cache-Control: no-store` 返回，并且不将其持久化到 Control Plane 数据库或日志中。
 
-Usage and cost:
+用量与费用：
 
-- request time and request ID;
-- key name and ID;
-- linked Workspace when attribution is defined by the selected key;
-- requested model and request type;
-- input, output, cache-read, and cache-write tokens;
-- Sub2API `actual_cost` in USD;
-- the pricing snapshot and final OPL charge in CNY;
-- daily, model, key, and Workspace summaries.
+- 请求时间和请求 ID；
+- Key 名称和 ID；
+- 通过所选 Key 建立归因时显示关联 Workspace；
+- 请求模型和请求类型；
+- 输入、输出、缓存读取和缓存写入 Token；
+- Sub2API 以美元计价的 `actual_cost`；
+- 计价快照和最终 OPL 人民币扣款；
+- 按天、模型、Key 和 Workspace 汇总。
 
-## Workspace Key Flow
+## Workspace Key 流程
 
-1. The user creates a key in the Sub2API portal through the SSO entry.
-2. Console refreshes the key projection through the admin API.
-3. The user selects an active key while creating or updating a Workspace.
-4. Control Plane fetches the full key only for the internal provisioning request.
-5. Control Plane passes the sensitive value to Fabric over the internal service connection.
-6. Fabric writes the value to the Workspace Kubernetes Secret and never includes it in operation facts, logs, receipts, or error payloads.
-7. `one-person-lab-app` reads the mounted file through `OPL_GATEWAY_API_KEY_FILE`; the WebUI does not ask the user to enter the key again.
+1. 用户通过 SSO 入口在 Sub2API 门户创建 Key。
+2. Console 通过管理员 API 刷新 Key 投影。
+3. 用户在创建或更新 Workspace 时选择一个正常 Key。
+4. Control Plane 仅在内部资源开通请求中获取完整 Key。
+5. Control Plane 通过内部服务连接将敏感值传递给 Fabric。
+6. Fabric 将该值写入 Workspace Kubernetes Secret，并且绝不把它写入操作事实、日志、收据或错误载荷。
+7. `one-person-lab-app` 通过 `OPL_GATEWAY_API_KEY_FILE` 读取挂载文件，WebUI 不再要求用户输入 Key。
 
-A key may be used by local Codex and a Workspace. Usage attribution is key-based: if one key is linked to a Workspace and also used locally, all usage for that key is attributed to that Workspace. Users who require separate attribution use separate keys.
+同一个 Key 可以同时用于本地 Codex 和 Workspace。用量归因以 Key 为准：如果某个 Key 已关联 Workspace，同时又在本地使用，则该 Key 的全部用量都会归因到这个 Workspace。需要分开归因时，用户应使用不同的 Key。
 
-If the selected key becomes disabled, deleted, expired, or quota exhausted, Console shows the Workspace Gateway binding as unhealthy. Rebinding updates the Secret and rolls the Workspace runtime. Workspace creation that requires model access fails closed when no active key is selected.
+如果选定 Key 被禁用、删除、过期或配额耗尽，Console 会将 Workspace Gateway 绑定显示为异常。重新绑定会更新 Secret 并滚动更新 Workspace 运行时。需要模型能力的 Workspace 在没有选择正常 Key 时必须拒绝创建。
 
-## Billing Design
+## 计费设计
 
-OPL Ledger is the only customer money authority. Sub2API balance is a bounded technical execution credit and is not shown as a second wallet.
+OPL Ledger 是唯一的客户资金权威。Sub2API 余额只是有上限的技术执行额度，不作为第二个钱包展示。
 
-The user allocates a CNY Gateway budget from the OPL wallet. Ledger creates a hold before technical credit is added to Sub2API.
+用户从 OPL 钱包中分配人民币 Gateway 预算。Ledger 必须先创建冻结，再向 Sub2API 增加技术额度。
 
-For a pricing snapshot:
+针对一份计价快照：
 
 ```text
 technical_credit_usd = held_cny / (usd_cny_rate * (1 + gateway_markup))
 customer_charge_cny = actual_cost_usd * usd_cny_rate * (1 + gateway_markup)
 ```
 
-Each pricing snapshot records:
+每份计价快照记录：
 
-- currency pair and rate;
-- Gateway markup;
-- effective timestamp and pricing version;
-- rounding rule;
-- hold and account references.
+- 货币对和汇率；
+- Gateway 加价率；
+- 生效时间和计价版本；
+- 舍入规则；
+- 冻结记录和账户引用。
 
-Control Plane adds technical credit through the idempotent Sub2API balance API. Sub2API decrements that credit as requests run. The usage synchronizer reads usage records with an overlapping time window and deduplicates by Sub2API usage ID.
+Control Plane 通过具备幂等性的 Sub2API 余额 API 增加技术额度。Sub2API 在请求执行时扣减该额度。用量同步器使用重叠时间窗口读取用量记录，并根据 Sub2API usage ID 去重。
 
-Each settled Ledger record stores:
+每条已结算 Ledger 记录保存：
 
-- Sub2API usage ID and request ID;
-- OPL account, user, key, and Workspace references;
-- model and token counts;
-- raw `actual_cost` and USD amount;
-- pricing snapshot;
-- final CNY charge;
-- idempotency key and synchronization timestamp.
+- Sub2API usage ID 和 request ID；
+- OPL 账户、用户、Key 和 Workspace 引用；
+- 模型和 Token 数量；
+- 原始 `actual_cost` 和美元金额；
+- 计价快照；
+- 最终人民币扣款；
+- 幂等键和同步时间。
 
-The synchronizer settles the OPL hold but does not repeatedly overwrite the live Sub2API balance. Reconciliation compares expected remaining technical credit with the Sub2API balance. A material mismatch stops automatic refill, raises an operator alert, and preserves the bounded existing credit.
+同步器结算 OPL 冻结，但不会反复覆盖 Sub2API 实时余额。对账流程比较预期剩余技术额度和 Sub2API 余额。出现实质性差异时，停止自动补充额度、触发运维告警，并保留已有的受限额度。
 
-## Phased Delivery
+## 分阶段交付
 
-### Phase 0: Read-Only Contract And Security Boundary
+### Phase 0：只读契约与安全边界
 
-Purpose: prove that Console can safely observe the existing Gateway without changing customer behavior or Sub2API source.
+目的：证明 Console 可以安全观察现有 Gateway，同时不改变客户行为或 Sub2API 源码。
 
-Deliver:
+交付内容：
 
-- dedicated Control Plane administrator in Sub2API;
-- deployment secrets for the admin session;
-- management API network restriction in Caddy;
-- Sub2API client for login, refresh, health, version, users, keys, and usage;
-- live read-only Gateway status in Console;
-- compatibility checks against the deployed Sub2API version;
-- removal of plaintext server credentials from repository-adjacent operational files and migration to SSH keys.
+- 在 Sub2API 中创建 Control Plane 专用管理员；
+- 配置管理员会话所需的部署 Secret；
+- 在 Caddy 中限制管理 API 网络访问；
+- 实现 Sub2API 登录、刷新、健康、版本、用户、Key 和用量客户端；
+- 在 Console 中展示实时只读 Gateway 状态；
+- 针对已部署 Sub2API 版本执行兼容性检查；
+- 从仓库相邻运维文件中移除明文服务器凭据，并迁移到 SSH Key。
 
-Exit gate:
+退出条件：
 
-- Console reads health, version, a test user, keys, and usage from `https://gflabtoken.cn`;
-- no secret appears in browser state, logs, receipts, or repository files;
-- existing Gateway traffic and server update workflow remain unchanged.
+- Console 可以从 `https://gflabtoken.cn` 读取健康、版本、测试用户、Key 和用量；
+- 浏览器状态、日志、收据和仓库文件中不出现任何 Secret；
+- 现有 Gateway 流量和服务器更新流程保持不变。
 
-### Phase 1: Unified Identity And Gateway Entry
+### Phase 1：统一身份与 Gateway 入口
 
-Purpose: remove the second account and password experience while reusing the Sub2API portal.
+目的：在复用 Sub2API 门户的同时，消除第二套账户和密码体验。
 
-Deliver:
+交付内容：
 
-- shared OIDC issuer configuration for Console and Sub2API;
-- `(issuer, subject)` identity storage in Control Plane;
-- existing pilot-account linking by verified email with explicit audit evidence;
-- lazy Sub2API user provisioning and OIDC identity binding;
-- Console Gateway action that opens `https://gflabtoken.cn` through SSO;
-- OPL branding and payment-entry suppression in the Sub2API customer portal where supported by configuration.
+- 为 Console 和 Sub2API 配置共享 OIDC 签发方；
+- 在 Control Plane 中保存 `(issuer, subject)` 身份；
+- 使用已验证邮箱绑定现有试点账户，并记录明确的审计证据；
+- 延迟创建 Sub2API 用户并绑定 OIDC 身份；
+- Console Gateway 操作通过 SSO 打开 `https://gflabtoken.cn`；
+- 在 Sub2API 配置能力允许的范围内应用 OPL 品牌并隐藏支付入口。
 
-Exit gate:
+退出条件：
 
-- an authenticated Console user enters the Sub2API user portal without a Sub2API password;
-- the same OIDC subject maps to exactly one OPL user and one Sub2API user;
-- disabled OPL users cannot obtain a new Gateway session.
+- 已登录 Console 的用户无需 Sub2API 密码即可进入 Sub2API 用户门户；
+- 同一个 OIDC subject 只能映射一个 OPL 用户和一个 Sub2API 用户；
+- 已禁用 OPL 用户无法获得新的 Gateway 会话。
 
-### Phase 2: Key Projection And Workspace Injection
+### Phase 2：Key 投影与 Workspace 注入
 
-Purpose: let users manage keys in the existing portal and use them in local Codex and OPL Workspace without WebUI key entry.
+目的：让用户在现有门户管理 Key，并在本地 Codex 和 OPL Workspace 中使用，无需在 WebUI 输入 Key。
 
-Deliver:
+交付内容：
 
-- live masked key list in Console;
-- guarded key reveal without persistence;
-- Codex base URL and model configuration view;
-- Workspace key selection and binding record;
-- per-Workspace Kubernetes Secret injection through Fabric;
-- rotation, revocation, expiry, and unhealthy-binding handling;
-- redaction tests covering Control Plane, Fabric operations, Kubernetes manifests, logs, and API errors.
+- 在 Console 中展示实时掩码 Key 列表；
+- 提供不持久化的受保护 Key 显示操作；
+- 展示 Codex Base URL 和模型配置；
+- 保存 Workspace Key 选择和绑定记录；
+- 由 Fabric 向各 Workspace Kubernetes Secret 注入 Key；
+- 处理轮换、撤销、过期和异常绑定；
+- 添加覆盖 Control Plane、Fabric 操作、Kubernetes 清单、日志和 API 错误的脱敏测试。
 
-Exit gate:
+退出条件：
 
-- a user creates a key through SSO, uses it in local Codex, selects it for a Workspace, and runs a model request from the Workspace without entering the key in WebUI;
-- revoking the key blocks further requests and is visible in Console;
-- no Control Plane database row contains the full key.
+- 用户通过 SSO 创建 Key，在本地 Codex 使用，并为 Workspace 选择该 Key；Workspace 可以在 WebUI 不输入 Key 的情况下执行模型请求；
+- 撤销 Key 后会阻止后续请求，并在 Console 中可见；
+- Control Plane 数据库中不存在完整 Key。
 
-### Phase 3: Unified Gateway Budget And Ledger Settlement
+### Phase 3：统一 Gateway 预算与 Ledger 结算
 
-Purpose: make OPL wallet the only customer balance while retaining Sub2API's real-time spending guard.
+目的：让 OPL 钱包成为唯一客户余额，同时保留 Sub2API 的实时消费保护。
 
-Deliver:
+交付内容：
 
-- Gateway budget allocation and Ledger hold;
-- versioned USD/CNY pricing snapshot and Gateway markup;
-- idempotent Sub2API technical-credit updates;
-- incremental usage synchronization with overlap and deduplication;
-- request-level Ledger entries and human-readable receipts;
-- Console totals and breakdowns by day, model, key, and linked Workspace;
-- reconciliation between Sub2API usage, technical balance, Ledger charges, and wallet holds.
+- Gateway 预算分配和 Ledger 冻结；
+- 版本化的美元/人民币计价快照和 Gateway 加价率；
+- 具备幂等性的 Sub2API 技术额度更新；
+- 使用重叠窗口和去重的增量用量同步；
+- 请求级 Ledger 记录和人类可读收据；
+- Console 按天、模型、Key 和关联 Workspace 展示汇总与明细；
+- 对账 Sub2API 用量、技术余额、Ledger 扣款和钱包冻结。
 
-Exit gate:
+退出条件：
 
-- duplicate synchronization cannot double-charge;
-- insufficient OPL balance cannot create new Gateway credit;
-- every CNY Gateway charge traces to one Sub2API usage ID and pricing snapshot;
-- reconciliation reports zero unexplained usage or balance drift in the pilot window.
+- 重复同步不能造成重复扣款；
+- OPL 余额不足时不能创建新的 Gateway 技术额度；
+- 每笔 Gateway 人民币扣款都能追溯到唯一 Sub2API usage ID 和计价快照；
+- 试点窗口内对账结果不存在无法解释的用量或余额差异。
 
-### Phase 4: Independent Upgrade Compatibility And Production Rollout
+### Phase 4：独立更新兼容与生产发布
 
-Purpose: preserve the existing server-first Sub2API update workflow without silently breaking Console integration or billing.
+目的：保留现有的服务器优先 Sub2API 更新流程，同时避免静默破坏 Console 集成或计费。
 
-Deliver:
+交付内容：
 
-- post-update compatibility command run from the Gateway server;
-- continuous Console health and version observation;
-- contract checks for admin auth, user lookup, key listing, usage listing, usage stats, and a minimal model request;
-- compatibility status and last check in the Console admin surface;
-- bounded failure behavior: stop new bindings and automatic credit refill when the management contract is incompatible, while existing data-plane credit remains capped;
-- operator alerts, usage-sync lag alerts, backup evidence, and reconciliation runbook;
-- controlled pilot followed by wider rollout.
+- 从 Gateway 服务器运行的更新后兼容性检查命令；
+- Console 持续观察健康状态和版本；
+- 对管理员鉴权、用户查询、Key 列表、用量列表、用量统计和最小模型请求执行契约检查；
+- 在 Console 管理页面显示兼容状态和最近检查时间；
+- 有界失败行为：管理契约不兼容时停止新绑定和自动补充额度，同时保持现有数据面额度有上限；
+- 运维告警、用量同步延迟告警、备份证据和对账运行手册；
+- 先受控试点，再扩大发布范围。
 
-Exit gate:
+退出条件：
 
-- updating Sub2API on its server either passes the contract checks with no Console release or produces an explicit incompatibility result;
-- an incompatible update cannot create unlimited unbilled exposure;
-- rollback and database-backup procedures are exercised with recorded evidence.
+- 在服务器更新 Sub2API 后，要么契约检查通过且无需发布 Console，要么明确报告不兼容；
+- 不兼容更新不能造成无限、未计费的资金风险；
+- 已实际演练回滚和数据库备份流程，并保存证据。
 
-## Failure Handling
+## 失败处理
 
-- Gateway unavailable: Console shows stale data with the last successful synchronization time and disables mutations.
-- Admin session expired: Control Plane refreshes once, then fails closed and alerts.
-- OIDC mapping conflict: no automatic merge; administrator review is required.
-- Key fetch or Secret update fails: Workspace binding remains unchanged and the operation records a redacted failure.
-- Usage synchronization timeout: retry the overlapping window with the same usage-ID deduplication rule.
-- Currency or pricing configuration missing: do not allocate technical credit or settle usage.
-- Balance drift: stop refill, preserve the bounded current credit, and require reconciliation.
-- Unsupported Sub2API contract: keep read-only cached projections, disable new bindings and credit changes, and alert operators.
+- Gateway 不可用：Console 展示带最近成功同步时间的旧数据，并禁用变更操作。
+- 管理员会话过期：Control Plane 尝试刷新一次，失败后关闭操作并告警。
+- OIDC 映射冲突：禁止自动合并，必须由管理员审核。
+- Key 获取或 Secret 更新失败：Workspace 绑定保持不变，操作记录脱敏后的失败信息。
+- 用量同步超时：使用相同的 usage ID 去重规则重试重叠窗口。
+- 缺少货币或计价配置：禁止分配技术额度或结算用量。
+- 余额差异：停止补充额度，保留已有受限额度，并要求对账。
+- Sub2API 契约不受支持：保留只读缓存投影，禁用新绑定和额度变更，并通知运维人员。
 
-## Verification Strategy
+## 验证策略
 
-Focused checks by phase:
+各阶段的重点检查：
 
-- API contract fixtures for the current deployed Sub2API responses.
-- OIDC subject uniqueness, account-linking, disabled-user, and session tests.
-- Key masking, reveal no-store, log redaction, and Workspace Secret tests.
-- Real local Codex and Workspace model requests through `https://gflabtoken.cn`.
-- Usage overlap, duplicate delivery, out-of-order records, and money-rounding tests.
-- Wallet hold, insufficient balance, refill, drift, and reconciliation tests.
-- A server-side Sub2API update rehearsal followed by the compatibility command and Console verification.
+- 针对当前已部署 Sub2API 响应的 API 契约夹具。
+- OIDC subject 唯一性、账户绑定、禁用用户和会话测试。
+- Key 掩码、`no-store` 显示、日志脱敏和 Workspace Secret 测试。
+- 通过 `https://gflabtoken.cn` 执行真实本地 Codex 和 Workspace 模型请求。
+- 用量重叠、重复投递、乱序记录和金额舍入测试。
+- 钱包冻结、余额不足、补充额度、余额差异和对账测试。
+- 演练服务器端 Sub2API 更新，然后执行兼容性命令和 Console 验证。
 
-The production acceptance chain is:
+生产验收链路：
 
 ```text
-Console OIDC login
--> SSO to gflabtoken.cn
--> create API key
--> use key in local Codex
--> select key for Workspace
--> Workspace model request
--> Sub2API usage record
--> Ledger CNY settlement
--> Console usage and receipt
--> Sub2API server update
--> compatibility verification
+Console OIDC 登录
+-> SSO 进入 gflabtoken.cn
+-> 创建 API Key
+-> 在本地 Codex 使用 Key
+-> 为 Workspace 选择 Key
+-> Workspace 模型请求
+-> Sub2API 用量记录
+-> Ledger 人民币结算
+-> Console 用量和收据
+-> Sub2API 服务器更新
+-> 兼容性验证
 ```
