@@ -138,6 +138,67 @@
       "OPL_GPU_COMPUTE_HOURLY_CNY"
     ]
   },
+  "productionExecutionWorkflow": {
+    "file": ".github/workflows/verify-production-chain.yml",
+    "job": "verify-execution",
+    "runner": [
+      "self-hosted",
+      "tencent-cloud",
+      "opl-cloud",
+      "tke-vpc"
+    ],
+    "inputs": [
+      "run_id"
+    ],
+    "requiredEnv": [
+      "OPL_K8S_NAMESPACE",
+      "TENCENT_DEPLOY_KUBECONFIG_PATH",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG",
+      "OPL_EXECUTION_CONTROL_PLANE_ORIGIN",
+      "OPL_EXECUTION_LEDGER_ORIGIN",
+      "OPL_EXECUTION_FABRIC_ORIGIN",
+      "OPL_EXECUTION_OPERATOR_TOKEN",
+      "OPL_EXECUTION_RUN_ID"
+    ],
+    "secretEnv": [
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG",
+      "OPL_EXECUTION_OPERATOR_TOKEN"
+    ],
+    "steps": [
+      "Checkout",
+      "Set up Node",
+      "Prepare kubeconfig",
+      "Verify production execution evidence chain"
+    ],
+    "orderedSteps": [
+      [
+        "Prepare kubeconfig",
+        "Verify production execution evidence chain"
+      ]
+    ],
+    "requiredCommandsByStep": {
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
+      "Prepare kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Verify production execution evidence chain": [
+        "port-forward service/opl-cloud-control-plane 18787:8787",
+        "port-forward service/opl-cloud-ledger 18081:8081",
+        "port-forward service/opl-cloud-fabric 18082:8082",
+        "node tools/production-execution-verifier.ts"
+      ]
+    },
+    "forbiddenRunTokens": [
+      "x-opl-operator-token"
+    ]
+  },
   "diagnosticsWorkflow": {
     "file": ".github/workflows/diagnose-tke-production.yml",
     "job": "diagnose",

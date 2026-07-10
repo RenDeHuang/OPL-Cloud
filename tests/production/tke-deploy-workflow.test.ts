@@ -105,12 +105,27 @@ test("production verifier workflow defaults run id to GitHub run id", async () =
   );
 });
 
-test("production verifier workflow can leave failed resources for diagnosis", async () => {
+test("production verifier workflow always cleans failed paid resources", async () => {
   const workflow = await readWorkflow(new URL("../../.github/workflows/verify-production-chain.yml", import.meta.url));
   const currentJob = job(workflow, "verify");
 
-  assert.ok(workflow.on.workflow_dispatch.inputs.cleanup_on_failure);
-  assert.equal(currentJob.env.OPL_VERIFY_CLEANUP_ON_FAILURE, "${{ inputs.cleanup_on_failure }}");
+  assert.equal(workflow.on.workflow_dispatch.inputs.cleanup_on_failure, undefined);
+  assert.equal(currentJob.env.OPL_VERIFY_CLEANUP_ON_FAILURE, "true");
+});
+
+test("production execution verifier runs inside TKE and matches the deployment contract", async () => {
+  const contract = await readJson(deploymentContractPath);
+  assert.ok(contract.productionExecutionWorkflow, "deployment contract must define the production execution verifier");
+  const workflow = await readWorkflow(contract.productionExecutionWorkflow.file);
+  assertWorkflowContract(workflow, contract.productionExecutionWorkflow, contract);
+  const currentJob = job(workflow, contract.productionExecutionWorkflow.job);
+  const runs = serializedRuns(currentJob);
+
+  assert.match(runs, /port-forward service\/opl-cloud-control-plane 18787:8787/);
+  assert.match(runs, /port-forward service\/opl-cloud-ledger 18081:8081/);
+  assert.match(runs, /port-forward service\/opl-cloud-fabric 18082:8082/);
+  assert.match(runs, /node tools\/production-execution-verifier\.ts/);
+  assert.doesNotMatch(runs, /x-opl-operator-token/);
 });
 
 test("TKE deploy can roll forward with an existing auth seed secret", async () => {
