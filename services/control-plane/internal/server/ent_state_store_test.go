@@ -133,7 +133,7 @@ func TestEntStateStorePersistsExecutionIdentityAndApproval(t *testing.T) {
 		t.Fatalf("unexpected sync heads: %#v, %v", heads, err)
 	}
 	requests, err := store.ListExecutionRequests(ctx)
-	if err != nil || len(requests) != 1 || requests[0]["approvalStatus"] != "approved" || requests[0]["version"] != int64(2) {
+	if err != nil || len(requests) != 1 || requests[0]["requestId"] != "request-alpha" || requests[0]["approvalStatus"] != "approved" || requests[0]["version"] != int64(2) {
 		t.Fatalf("unexpected execution requests: %#v, %v", requests, err)
 	}
 }

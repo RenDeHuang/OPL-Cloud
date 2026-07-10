@@ -659,6 +659,9 @@ func (s *postgresEntStateStore) ListExecutionRequests(ctx context.Context) ([]ma
 	if err != nil {
 		return nil, err
 	}
+	for _, row := range rows {
+		row["requestId"] = row["id"]
+	}
 	return filteredRecords(rows, "")
 }
 
