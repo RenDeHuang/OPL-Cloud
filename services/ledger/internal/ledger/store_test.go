@@ -126,6 +126,81 @@ func TestReceiptGeneratesContinuationIdentity(t *testing.T) {
 	}
 }
 
+func TestArtifactManifestRecordsAndQueriesEvidence(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	input := ArtifactInput{
+		OrganizationID: "org-alpha",
+		WorkspaceID:    "workspace-alpha",
+		ProjectID:      "project-alpha",
+		TaskID:         "task-alpha",
+		JobID:          "job-alpha",
+		Digest:         "sha256:abc123",
+		MediaType:      "application/json",
+		SizeBytes:      42,
+		StorageRef:     "storage-artifact-alpha",
+		IdempotencyKey: "artifact-once",
+	}
+	created, err := store.RecordArtifact(ctx, input)
+	if err != nil {
+		t.Fatalf("record artifact: %v", err)
+	}
+	if created.ArtifactID == "" || created.ReceiptID == "" || created.Digest != input.Digest {
+		t.Fatalf("unexpected artifact: %#v", created)
+	}
+	replayed, err := store.RecordArtifact(ctx, input)
+	if err != nil || !replayed.Replayed || replayed.ArtifactID != created.ArtifactID {
+		t.Fatalf("unexpected replay: %#v, %v", replayed, err)
+	}
+	loaded, err := store.Artifact(ctx, created.ArtifactID)
+	if err != nil || loaded.StorageRef != "storage-artifact-alpha" || loaded.JobID != "job-alpha" {
+		t.Fatalf("unexpected loaded artifact: %#v, %v", loaded, err)
+	}
+}
+
+func TestArtifactManifestRejectsUnsafeStorageReference(t *testing.T) {
+	store := NewMemoryStore()
+	_, err := store.RecordArtifact(context.Background(), ArtifactInput{WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", JobID: "job-alpha", Digest: "sha256:abc123", MediaType: "application/json", SizeBytes: 42, StorageRef: "https://storage.example/result?signature=secret", IdempotencyKey: "unsafe-artifact"})
+	if !errors.Is(err, ErrInvalidArtifactInput) {
+		t.Fatalf("error = %v, want ErrInvalidArtifactInput", err)
+	}
+}
+
+func TestReviewResultRecordsAndQueriesDecision(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	input := ReviewInput{
+		OrganizationID:       "org-alpha",
+		WorkspaceID:          "workspace-alpha",
+		ProjectID:            "project-alpha",
+		TaskID:               "task-alpha",
+		JobID:                "job-alpha",
+		ReviewerRef:          "reviewer-rca",
+		ReviewerVersion:      "1.0.0",
+		InputArtifactDigests: []string{"sha256:abc123"},
+		Checks:               map[string]any{"schema": "passed"},
+		Decision:             "accepted",
+		IdempotencyKey:       "review-once",
+	}
+	created, err := store.RecordReview(ctx, input)
+	if err != nil {
+		t.Fatalf("record review: %v", err)
+	}
+	if created.ReviewID == "" || created.Decision != "accepted" {
+		t.Fatalf("unexpected review: %#v", created)
+	}
+	loaded, err := store.Review(ctx, created.ReviewID)
+	if err != nil || loaded.ReviewerRef != "reviewer-rca" || len(loaded.InputArtifactDigests) != 1 {
+		t.Fatalf("unexpected loaded review: %#v, %v", loaded, err)
+	}
+	input.Decision = "rejected"
+	input.IdempotencyKey = "review-rejected"
+	rejected, err := store.RecordReview(ctx, input)
+	if err != nil || rejected.Decision != "rejected" {
+		t.Fatalf("unexpected rejected review: %#v, %v", rejected, err)
+	}
+}
+
 func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()

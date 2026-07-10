@@ -335,6 +335,74 @@ func (s *PostgresStore) Continuation(ctx context.Context, receiptID string) (map
 	return continuationFromReceipt(receipt)
 }
 
+func (s *PostgresStore) RecordArtifact(ctx context.Context, input ArtifactInput) (Artifact, error) {
+	if err := validateArtifactInput(input); err != nil {
+		return Artifact{}, err
+	}
+	receipt, err := s.RecordReceipt(ctx, ReceiptInput{
+		Type: artifactReceiptType, Status: "completed", Surface: "ledger",
+		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, JobID: input.JobID,
+		ArtifactID:     evidenceID("artifact", input.IdempotencyKey),
+		OutputRefs:     map[string]any{"digest": input.Digest, "mediaType": input.MediaType, "sizeBytes": input.SizeBytes, "storageRef": input.StorageRef},
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		return Artifact{}, err
+	}
+	return artifactFromReceipt(receipt), nil
+}
+
+func (s *PostgresStore) Artifact(ctx context.Context, artifactID string) (Artifact, error) {
+	rows, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(artifactReceiptType)).All(ctx)
+	if err != nil {
+		return Artifact{}, err
+	}
+	// ponytail: linear scan is enough for initial evidence volume; add indexed promoted columns when measured query load requires it.
+	for _, row := range rows {
+		receipt := receiptFromEnt(row)
+		if receipt.ArtifactID == artifactID {
+			return artifactFromReceipt(receipt), nil
+		}
+	}
+	return Artifact{}, ErrArtifactNotFound
+}
+
+func (s *PostgresStore) RecordReview(ctx context.Context, input ReviewInput) (Review, error) {
+	if err := validateReviewInput(input); err != nil {
+		return Review{}, err
+	}
+	status := "completed"
+	if input.Decision == "rejected" {
+		status = "review_blocked"
+	}
+	receipt, err := s.RecordReceipt(ctx, ReceiptInput{
+		Type: reviewReceiptType, Status: status, Surface: "ledger",
+		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, JobID: input.JobID,
+		ReviewID:       evidenceID("review", input.IdempotencyKey),
+		ReviewerChecks: map[string]any{"reviewerRef": input.ReviewerRef, "reviewerVersion": input.ReviewerVersion, "inputArtifactDigests": input.InputArtifactDigests, "checks": input.Checks, "decision": input.Decision},
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		return Review{}, err
+	}
+	return reviewFromReceipt(receipt), nil
+}
+
+func (s *PostgresStore) Review(ctx context.Context, reviewID string) (Review, error) {
+	rows, err := s.client.EvidenceReceipt.Query().Where(evidencereceipt.ReceiptType(reviewReceiptType)).All(ctx)
+	if err != nil {
+		return Review{}, err
+	}
+	// ponytail: linear scan is enough for initial evidence volume; add indexed promoted columns when measured query load requires it.
+	for _, row := range rows {
+		receipt := receiptFromEnt(row)
+		if receipt.ReviewID == reviewID {
+			return reviewFromReceipt(receipt), nil
+		}
+	}
+	return Review{}, ErrReviewNotFound
+}
+
 func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
 	requestHash, err := hashJSON(struct {
 		AccountID               string         `json:"accountId"`

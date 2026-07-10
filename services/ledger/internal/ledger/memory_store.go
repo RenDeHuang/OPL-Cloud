@@ -311,6 +311,66 @@ func (s *MemoryStore) Continuation(ctx context.Context, receiptID string) (map[s
 	return continuationFromReceipt(receipt)
 }
 
+func (s *MemoryStore) RecordArtifact(ctx context.Context, input ArtifactInput) (Artifact, error) {
+	if err := validateArtifactInput(input); err != nil {
+		return Artifact{}, err
+	}
+	receipt, err := s.RecordReceipt(ctx, ReceiptInput{
+		Type: artifactReceiptType, Status: "completed", Surface: "ledger",
+		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, JobID: input.JobID,
+		ArtifactID:     evidenceID("artifact", input.IdempotencyKey),
+		OutputRefs:     map[string]any{"digest": input.Digest, "mediaType": input.MediaType, "sizeBytes": input.SizeBytes, "storageRef": input.StorageRef},
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		return Artifact{}, err
+	}
+	return artifactFromReceipt(receipt), nil
+}
+
+func (s *MemoryStore) Artifact(_ context.Context, artifactID string) (Artifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, receipt := range s.receipts {
+		if receipt.Type == artifactReceiptType && receipt.ArtifactID == artifactID {
+			return artifactFromReceipt(receipt), nil
+		}
+	}
+	return Artifact{}, ErrArtifactNotFound
+}
+
+func (s *MemoryStore) RecordReview(ctx context.Context, input ReviewInput) (Review, error) {
+	if err := validateReviewInput(input); err != nil {
+		return Review{}, err
+	}
+	status := "completed"
+	if input.Decision == "rejected" {
+		status = "review_blocked"
+	}
+	receipt, err := s.RecordReceipt(ctx, ReceiptInput{
+		Type: reviewReceiptType, Status: status, Surface: "ledger",
+		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, JobID: input.JobID,
+		ReviewID:       evidenceID("review", input.IdempotencyKey),
+		ReviewerChecks: map[string]any{"reviewerRef": input.ReviewerRef, "reviewerVersion": input.ReviewerVersion, "inputArtifactDigests": input.InputArtifactDigests, "checks": input.Checks, "decision": input.Decision},
+		IdempotencyKey: input.IdempotencyKey,
+	})
+	if err != nil {
+		return Review{}, err
+	}
+	return reviewFromReceipt(receipt), nil
+}
+
+func (s *MemoryStore) Review(_ context.Context, reviewID string) (Review, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, receipt := range s.receipts {
+		if receipt.Type == reviewReceiptType && receipt.ReviewID == reviewID {
+			return reviewFromReceipt(receipt), nil
+		}
+	}
+	return Review{}, ErrReviewNotFound
+}
+
 func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

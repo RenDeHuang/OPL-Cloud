@@ -1,6 +1,8 @@
 package ledger
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -13,6 +15,13 @@ var ErrInvalidHoldInput = errors.New("hold resource identity required")
 var ErrReceiptNotFound = errors.New("receipt not found")
 var ErrContinuationNotFound = errors.New("continuation not found")
 var ErrInvalidReceiptInput = errors.New("invalid receipt input")
+var ErrArtifactNotFound = errors.New("artifact not found")
+var ErrInvalidArtifactInput = errors.New("invalid artifact input")
+var ErrReviewNotFound = errors.New("review not found")
+var ErrInvalidReviewInput = errors.New("invalid review input")
+
+const artifactReceiptType = "artifact.manifest.v1"
+const reviewReceiptType = "review.result.v1"
 
 type ManualTopUpInput struct {
 	AccountID      string `json:"accountId"`
@@ -165,6 +174,155 @@ type Receipt struct {
 	ReceiptID string    `json:"receiptId"`
 	CreatedAt time.Time `json:"createdAt"`
 	Replayed  bool      `json:"replayed"`
+}
+
+type ArtifactInput struct {
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	TaskID         string `json:"taskId"`
+	JobID          string `json:"jobId"`
+	Digest         string `json:"digest"`
+	MediaType      string `json:"mediaType"`
+	SizeBytes      int64  `json:"sizeBytes"`
+	StorageRef     string `json:"storageRef"`
+	IdempotencyKey string `json:"-"`
+}
+
+type Artifact struct {
+	ArtifactInput
+	ArtifactID string    `json:"artifactId"`
+	ReceiptID  string    `json:"receiptId"`
+	CreatedAt  time.Time `json:"createdAt"`
+	Replayed   bool      `json:"replayed"`
+}
+
+type ReviewInput struct {
+	OrganizationID       string         `json:"organizationId"`
+	WorkspaceID          string         `json:"workspaceId"`
+	ProjectID            string         `json:"projectId"`
+	TaskID               string         `json:"taskId"`
+	JobID                string         `json:"jobId"`
+	ReviewerRef          string         `json:"reviewerRef"`
+	ReviewerVersion      string         `json:"reviewerVersion"`
+	InputArtifactDigests []string       `json:"inputArtifactDigests"`
+	Checks               map[string]any `json:"checks"`
+	Decision             string         `json:"decision"`
+	IdempotencyKey       string         `json:"-"`
+}
+
+type Review struct {
+	ReviewInput
+	ReviewID  string    `json:"reviewId"`
+	ReceiptID string    `json:"receiptId"`
+	CreatedAt time.Time `json:"createdAt"`
+	Replayed  bool      `json:"replayed"`
+}
+
+func validateArtifactInput(input ArtifactInput) error {
+	if input.WorkspaceID == "" || input.ProjectID == "" || input.TaskID == "" || input.JobID == "" || input.Digest == "" || input.MediaType == "" || input.SizeBytes < 0 || input.IdempotencyKey == "" || !isOpaqueReference(input.StorageRef) {
+		return ErrInvalidArtifactInput
+	}
+	return nil
+}
+
+func validateReviewInput(input ReviewInput) error {
+	if input.WorkspaceID == "" || input.ProjectID == "" || input.TaskID == "" || input.JobID == "" || input.ReviewerRef == "" || input.ReviewerVersion == "" || len(input.InputArtifactDigests) == 0 || len(input.Checks) == 0 || input.IdempotencyKey == "" || (input.Decision != "accepted" && input.Decision != "rejected") || containsForbiddenReceiptKey(input.Checks) {
+		return ErrInvalidReviewInput
+	}
+	return nil
+}
+
+func isOpaqueReference(value string) bool {
+	if value == "" || len(value) > 255 {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._:-", r)) {
+			return false
+		}
+	}
+	return true
+}
+
+func evidenceID(prefix, idempotencyKey string) string {
+	digest := sha256.Sum256([]byte(idempotencyKey))
+	return prefix + "-" + hex.EncodeToString(digest[:8])
+}
+
+func artifactFromReceipt(receipt Receipt) Artifact {
+	return Artifact{
+		ArtifactInput: ArtifactInput{
+			OrganizationID: receipt.OrganizationID,
+			WorkspaceID:    receipt.WorkspaceID,
+			ProjectID:      receipt.ProjectID,
+			TaskID:         receipt.TaskID,
+			JobID:          receipt.JobID,
+			Digest:         stringValue(receipt.OutputRefs["digest"]),
+			MediaType:      stringValue(receipt.OutputRefs["mediaType"]),
+			SizeBytes:      int64Value(receipt.OutputRefs["sizeBytes"]),
+			StorageRef:     stringValue(receipt.OutputRefs["storageRef"]),
+		},
+		ArtifactID: receipt.ArtifactID,
+		ReceiptID:  receipt.ReceiptID,
+		CreatedAt:  receipt.CreatedAt,
+		Replayed:   receipt.Replayed,
+	}
+}
+
+func reviewFromReceipt(receipt Receipt) Review {
+	checks, _ := receipt.ReviewerChecks["checks"].(map[string]any)
+	return Review{
+		ReviewInput: ReviewInput{
+			OrganizationID:       receipt.OrganizationID,
+			WorkspaceID:          receipt.WorkspaceID,
+			ProjectID:            receipt.ProjectID,
+			TaskID:               receipt.TaskID,
+			JobID:                receipt.JobID,
+			ReviewerRef:          stringValue(receipt.ReviewerChecks["reviewerRef"]),
+			ReviewerVersion:      stringValue(receipt.ReviewerChecks["reviewerVersion"]),
+			InputArtifactDigests: stringSlice(receipt.ReviewerChecks["inputArtifactDigests"]),
+			Checks:               checks,
+			Decision:             stringValue(receipt.ReviewerChecks["decision"]),
+		},
+		ReviewID:  receipt.ReviewID,
+		ReceiptID: receipt.ReceiptID,
+		CreatedAt: receipt.CreatedAt,
+		Replayed:  receipt.Replayed,
+	}
+}
+
+func stringValue(value any) string {
+	result, _ := value.(string)
+	return result
+}
+
+func int64Value(value any) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func finalizeReceiptContinuation(receipt *Receipt) {
