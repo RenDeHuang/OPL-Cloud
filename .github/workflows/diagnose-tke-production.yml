@@ -382,8 +382,7 @@ jobs:
 
           const login = await fetchWithRetry("/api/auth/operator-login", {
             method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ operatorToken })
+            headers: { "x-opl-operator-token": operatorToken }
           });
           const sessionHeader = cookieHeaderFromSetCookie(login.response.headers.get("set-cookie") || "");
           const state = await fetchWithRetry(`/api/state?accountId=${encodeURIComponent(accountId)}`, {

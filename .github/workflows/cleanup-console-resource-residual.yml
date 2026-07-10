@@ -149,13 +149,14 @@ jobs:
               .join("; ");
           }
 
-          async function request(path, { method = "GET", body = null, session = null } = {}) {
+          async function request(path, { method = "GET", body = null, headers = null, session = null } = {}) {
             let lastError = null;
             for (let attempt = 1; attempt <= 10; attempt += 1) {
               try {
                 const response = await fetch(`${origin}${path}`, {
                   method,
                   headers: {
+                    ...(headers || {}),
                     ...(body ? { "content-type": "application/json" } : {}),
                     ...(session?.header ? { cookie: session.header } : {}),
                     ...(session?.csrf ? { "x-opl-csrf-token": session.csrf } : {})
@@ -183,7 +184,7 @@ jobs:
 
           const login = await request("/api/auth/operator-login", {
             method: "POST",
-            body: { operatorToken }
+            headers: { "x-opl-operator-token": operatorToken }
           });
           const session = {
             header: cookieHeaderFromSetCookie(login.response.headers.get("set-cookie") || ""),

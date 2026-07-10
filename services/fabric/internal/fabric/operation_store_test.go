@@ -3,6 +3,8 @@ package fabric
 import (
 	"strings"
 	"testing"
+
+	"opl-cloud/services/fabric/ent/workspaceruntimeaccess"
 )
 
 func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) {
@@ -23,5 +25,13 @@ func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) 
 	}
 	if strings.Contains(schema, "JSONB") {
 		t.Fatalf("fabric schema must not keep JSONB fact columns")
+	}
+}
+
+func TestPostgresOperationSchemaUsesEntWorkspaceRuntimeAccessTable(t *testing.T) {
+	schema := PostgresOperationSchemaSQL()
+	marker := "CREATE TABLE IF NOT EXISTS " + workspaceruntimeaccess.Table
+	if !strings.Contains(schema, marker) {
+		t.Fatalf("schema missing Ent runtime access table %q", workspaceruntimeaccess.Table)
 	}
 }
