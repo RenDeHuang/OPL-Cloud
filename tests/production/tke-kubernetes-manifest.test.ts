@@ -41,6 +41,7 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
   assert.equal(config.data.TENCENT_CVM_SUBNET_ID, "subnet-xxxxxxxx");
   assert.equal(config.data.TENCENT_CVM_SECURITY_GROUP_IDS, "sg-xxxxxxxx");
   assert.equal(config.data.RUN_TENCENT_CREATE_RELEASE_EXECUTION, "0");
+  assert.equal(config.data.OPL_PROVIDER_RECONCILE_WORKER_ENABLED, "1");
   assert.equal(config.data.TENCENT_TCR_REGISTRY, "registry.example.com");
   assert.equal(config.data.TENCENT_TCR_NAMESPACE, "opl");
   assert.equal(config.data.TENCENT_TCR_REGION, "ap-guangzhou");
@@ -110,6 +111,7 @@ test("OPL Cloud TKE manifest declares the control plane, routing, and secret ref
 	assert.equal(fabric.spec.template.spec.containers[0].command[0], "/usr/local/bin/opl-fabric");
 	assert.equal(fabric.spec.template.spec.containers[0].ports[0].containerPort, 8082);
 	assert.deepEqual(fabric.spec.template.spec.containers[0].env.map((item) => `${item.name}->${item.valueFrom.secretKeyRef.name}/${item.valueFrom.secretKeyRef.key}`), [
+		"DATABASE_URL->opl-cloud-database/DATABASE_URL",
 		"TENCENTCLOUD_SECRET_ID->opl-cloud-tencent-mutation/TENCENTCLOUD_SECRET_ID",
 		"TENCENTCLOUD_SECRET_KEY->opl-cloud-tencent-mutation/TENCENTCLOUD_SECRET_KEY",
 		"OPL_AIONUI_ADMIN_PASSWORD_SEED->opl-cloud-aionui/OPL_AIONUI_ADMIN_PASSWORD_SEED"

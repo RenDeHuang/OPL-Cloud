@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -15,8 +16,12 @@ func main() {
 		addr = ":8082"
 	}
 
+	databaseURL, err := operationStoreDatabaseURL(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
 	operationStore := fabric.OperationStore(fabric.NewMemoryOperationStore())
-	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
+	if databaseURL != "" {
 		store, err := fabric.NewPostgresOperationStore(databaseURL)
 		if err != nil {
 			log.Fatal(err)
@@ -28,4 +33,12 @@ func main() {
 	if err := http.ListenAndServe(addr, server); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func operationStoreDatabaseURL(getenv func(string) string) (string, error) {
+	databaseURL := getenv("DATABASE_URL")
+	if getenv("NODE_ENV") == "production" && databaseURL == "" {
+		return "", errors.New("DATABASE_URL is required for production Fabric persistence")
+	}
+	return databaseURL, nil
 }

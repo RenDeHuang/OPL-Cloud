@@ -61,7 +61,7 @@
     "fabric": {
       "path": "services/fabric",
       "language": "go",
-      "persistence": "optional_postgresql_for_async_operations",
+      "persistence": "postgresql",
       "owns": [
         "resourceCatalog",
         "computeAllocations",
