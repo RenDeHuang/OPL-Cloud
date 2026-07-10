@@ -256,6 +256,45 @@ jobs:
           });
           NODE
 
+      - name: Show PostgreSQL size summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" exec -i deploy/opl-cloud-ledger -c ledger -- node <<'NODE'
+          const { Client } = require("pg");
+          (async () => {
+            const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: false });
+            await client.connect();
+            try {
+              const database = await client.query(
+                `SELECT current_database() AS database_name,
+                        pg_database_size(current_database())::bigint AS bytes,
+                        pg_size_pretty(pg_database_size(current_database())) AS pretty`
+              );
+              const relations = await client.query(
+                `SELECT COALESCE(sum(pg_total_relation_size(format('%I.%I', schemaname, tablename)::regclass)), 0)::bigint AS bytes,
+                        pg_size_pretty(COALESCE(sum(pg_total_relation_size(format('%I.%I', schemaname, tablename)::regclass)), 0)) AS pretty
+                 FROM pg_tables
+                 WHERE schemaname = 'public'`
+              );
+              const rows = await client.query(
+                `SELECT COALESCE(sum(n_live_tup), 0)::bigint AS approximate_live_rows
+                 FROM pg_stat_user_tables`
+              );
+              console.log(`POSTGRES_SIZE_SUMMARY=${JSON.stringify({
+                database: database.rows[0],
+                publicRelations: relations.rows[0],
+                approximateLiveRows: Number(rows.rows[0].approximate_live_rows)
+              })}`);
+            } finally {
+              await client.end();
+            }
+          })().catch((error) => {
+            console.error(error.message);
+            process.exit(1);
+          });
+          NODE
+
       - name: Show previous control plane crash logs
         shell: bash
         run: |
