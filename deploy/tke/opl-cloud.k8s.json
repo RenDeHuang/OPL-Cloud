@@ -570,6 +570,10 @@
                 ],
                 "env": [
                   {
+                    "name": "PGSSLMODE",
+                    "value": "disable"
+                  },
+                  {
                     "name": "DATABASE_URL",
                     "valueFrom": {
                       "secretKeyRef": {
