@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "OPL Platform Architecture",
   "purpose": "Canonical cross-surface execution identity, state, write, ownership, and error contract.",
   "state": "current",
@@ -9,6 +9,7 @@
     "removalCondition": "Replace only with a newer current shared execution contract after App, Gateway, Control Plane, Fabric, and Ledger callers move together."
   },
   "repositoryBoundaries": [
+    "one-person-lab",
     "one-person-lab-app",
     "opl-console",
     "opl-fabric",
@@ -163,6 +164,11 @@
       "cancelled",
       "review_required",
       "review_blocked"
+    ],
+    "syncEvent": [
+      "accepted",
+      "conflict",
+      "resolved"
     ]
   },
   "writeEnvelope": {
@@ -172,6 +178,7 @@
       "actor",
       "organizationId",
       "workspaceId",
+      "clientId",
       "caller",
       "occurredAt"
     ],
@@ -189,7 +196,9 @@
     "concurrency": {
       "field": "baseVersion",
       "conflictError": "conflict",
-      "serverVersion": "monotonic_per_mutable_object"
+      "serverVersion": "derived_from_append_only_sync_events",
+      "staleAppend": "accepted_with_next_server_version",
+      "staleReplace": "append_durable_conflict_without_overwrite"
     },
     "idempotency": {
       "sameKeySameFingerprint": "replay_original_result",
@@ -241,6 +250,8 @@
       "create_project_identity",
       "create_task_identity",
       "sync_mutation",
+      "pull_sync_changes",
+      "resolve_sync_conflict",
       "request_execution",
       "record_approval",
       "sync_execution",
@@ -279,7 +290,10 @@
       "executeRequest": "POST /api/execution-requests/<requestId>/execute",
       "syncExecution": "POST /api/execution-requests/<requestId>/sync",
       "resolveExecutionContinuation": "GET /api/execution-requests/<requestId>/continuation",
-      "queryExecution": "GET /api/execution-requests/<requestId>"
+      "queryExecution": "GET /api/execution-requests/<requestId>",
+      "pushSyncMutation": "POST /api/workspaces/<workspaceId>/sync/mutations",
+      "pullSyncChanges": "GET /api/workspaces/<workspaceId>/sync/changes?after=<cursor>&limit=<n>",
+      "resolveSyncConflict": "POST /api/workspaces/<workspaceId>/sync/conflicts/<conflictId>/resolve"
     },
     "fabric": {
       "createJob": "POST /fabric/jobs",

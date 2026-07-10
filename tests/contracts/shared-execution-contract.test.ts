@@ -12,12 +12,14 @@ test("shared execution contract fixes canonical identities, states, writes, and 
   const contract = await readContract("opl-cloud-shared-execution-contract.json");
   const objects = Object.fromEntries(contract.canonicalObjects.map((object) => [object.kind, object]));
 
+  assert.equal(contract.schemaVersion, 3);
   assert.deepEqual(Object.keys(objects), ["Project", "Task", "ExecutionRequest", "Approval", "Job", "Artifact", "Review", "Receipt", "Continuation"]);
   assert.deepEqual(contract.identity.canonicalIdFields, ["projectId", "taskId", "requestId", "approvalId", "jobId", "artifactId", "reviewId", "receiptId", "continuationId"]);
   assert.deepEqual(contract.stateMachines.task, ["draft", "planned", "awaiting_approval", "queued", "running", "review_required", "review_blocked", "completed", "failed", "cancelled", "archived"]);
   assert.deepEqual(contract.stateMachines.job, ["queued", "provisioning", "running", "collecting", "succeeded", "failed", "cancelled", "timed_out"]);
   assert.deepEqual(contract.stateMachines.receipt, ["planned", "approved", "running", "completed", "failed", "timed_out", "cancelled", "review_required", "review_blocked"]);
-  assert.deepEqual(contract.writeEnvelope.requiredFields, ["operationId", "idempotencyKey", "actor", "organizationId", "workspaceId", "caller", "occurredAt"]);
+  assert.deepEqual(contract.writeEnvelope.requiredFields, ["operationId", "idempotencyKey", "actor", "organizationId", "workspaceId", "clientId", "caller", "occurredAt"]);
+  assert.deepEqual(contract.stateMachines.syncEvent, ["accepted", "conflict", "resolved"]);
   assert.deepEqual(Object.fromEntries(Object.entries(contract.errorSemantics).map(([code, value]) => [code, value.httpStatus])), {
     invalid_request: 400,
     unauthenticated: 401,
@@ -57,7 +59,7 @@ test("service owners match the shared execution contract", async () => {
   assert.equal(boundary.externalServices.gateway.evidenceSink, "ledger");
 });
 
-test("Train 3 HTTP APIs preserve service ownership without compatibility routes", async () => {
+test("published HTTP APIs preserve service ownership without compatibility routes", async () => {
   const shared = await readContract("opl-cloud-shared-execution-contract.json");
   const ledger = await readContract("opl-cloud-evidence-ledger-contract.json");
 
@@ -69,7 +71,10 @@ test("Train 3 HTTP APIs preserve service ownership without compatibility routes"
     executeRequest: "POST /api/execution-requests/<requestId>/execute",
     syncExecution: "POST /api/execution-requests/<requestId>/sync",
     resolveExecutionContinuation: "GET /api/execution-requests/<requestId>/continuation",
-    queryExecution: "GET /api/execution-requests/<requestId>"
+    queryExecution: "GET /api/execution-requests/<requestId>",
+    pushSyncMutation: "POST /api/workspaces/<workspaceId>/sync/mutations",
+    pullSyncChanges: "GET /api/workspaces/<workspaceId>/sync/changes?after=<cursor>&limit=<n>",
+    resolveSyncConflict: "POST /api/workspaces/<workspaceId>/sync/conflicts/<conflictId>/resolve"
   });
   assert.deepEqual(shared.httpApis.fabric, {
     createJob: "POST /fabric/jobs",
