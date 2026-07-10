@@ -21,6 +21,7 @@ import (
 const (
 	defaultNamespace = "opl-cloud"
 	gatewayService   = "opl-cloud-control-plane"
+	webuiUsername    = "opl"
 )
 
 type TencentProvider struct {
@@ -316,7 +317,7 @@ func (p *TencentProvider) CreateWorkspaceRuntime(ctx context.Context, input Work
 		return WorkspaceRuntime{}, err
 	}
 	password := deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), input.WorkspaceID, token)
-	return WorkspaceRuntime{ID: fabricID("rt", input.WorkspaceID, now), WorkspaceID: input.WorkspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID), Status: "running", ServiceName: serviceName, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Access: RuntimeAccess{Username: "admin", Password: password, CredentialStatus: firstNonEmpty(passwordStatus(password), "pending"), CredentialVersion: "v1", SecretRef: serviceName + "-env", UpdatedAt: now}, Ready: true, CostTags: tags, CreatedAt: now}, nil
+	return WorkspaceRuntime{ID: fabricID("rt", input.WorkspaceID, now), WorkspaceID: input.WorkspaceID, URL: fmt.Sprintf("https://%s/w/%s/", workspaceDomain(), input.WorkspaceID), Status: "running", ServiceName: serviceName, ProviderRequestID: providerRequestID("runtime", input.IdempotencyKey), Access: RuntimeAccess{Username: webuiUsername, Password: password, CredentialStatus: firstNonEmpty(passwordStatus(password), "pending"), CredentialVersion: "v1", SecretRef: serviceName + "-env", UpdatedAt: now}, Ready: true, CostTags: tags, CreatedAt: now}, nil
 }
 
 func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error) {
@@ -437,7 +438,7 @@ func workspaceManifest(workspaceID string, workspaceName string, token string, s
 	plan := packagePlan(compute.PackageID)
 	password := deriveAionUIAdminPassword(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), workspaceID, token)
 	secretData := map[string]any{"webui_password": b64(password), "webui_session_secret": b64(deriveWebUISessionSecret(os.Getenv("OPL_AIONUI_ADMIN_PASSWORD_SEED"), workspaceID, token))}
-	secretItems := []any{map[string]any{"key": "webui_password", "path": "webui_password"}, map[string]any{"key": "webui_session_secret", "path": "webui_session_secret"}}
+	secretItems := []any{map[string]any{"key": "webui_password", "path": "opl_webui_password"}, map[string]any{"key": "webui_session_secret", "path": "webui_session_secret"}}
 	if gatewayAPIKey := os.Getenv("OPL_CODEX_API_KEY"); gatewayAPIKey != "" {
 		secretData["gateway_api_key"] = b64(gatewayAPIKey)
 		secretItems = append(secretItems, map[string]any{"key": "gateway_api_key", "path": "gateway_api_key"})
@@ -445,8 +446,8 @@ func workspaceManifest(workspaceID string, workspaceName string, token string, s
 	workspaceEnv := []any{
 		map[string]any{"name": "OPL_WEBUI_DEPLOYMENT_MODE", "value": "cloud"},
 		map[string]any{"name": "OPL_WEBUI_AUTH_MODE", "value": "password"},
-		map[string]any{"name": "OPL_WEBUI_USERNAME", "value": "admin"},
-		map[string]any{"name": "OPL_WEBUI_PASSWORD_FILE", "value": "/run/secrets/webui_password"},
+		map[string]any{"name": "OPL_WEBUI_USERNAME", "value": webuiUsername},
+		map[string]any{"name": "OPL_WEBUI_PASSWORD_FILE", "value": "/run/secrets/opl_webui_password"},
 		map[string]any{"name": "OPL_WEBUI_SESSION_SECRET_FILE", "value": "/run/secrets/webui_session_secret"},
 		map[string]any{"name": "OPL_CODEX_MODEL", "value": os.Getenv("OPL_CODEX_MODEL")},
 		map[string]any{"name": "OPL_CODEX_REASONING_EFFORT", "value": os.Getenv("OPL_CODEX_REASONING_EFFORT")},

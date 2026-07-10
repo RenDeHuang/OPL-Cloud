@@ -114,8 +114,8 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	if env["OPL_WEBUI_DEPLOYMENT_MODE"] != "cloud" || env["OPL_WEBUI_AUTH_MODE"] != "password" {
 		t.Fatalf("workspace must start one-person-lab-app in explicit cloud password mode: %#v", env)
 	}
-	if env["OPL_WEBUI_USERNAME"] != "admin" ||
-		env["OPL_WEBUI_PASSWORD_FILE"] != "/run/secrets/webui_password" ||
+	if env["OPL_WEBUI_USERNAME"] != "opl" ||
+		env["OPL_WEBUI_PASSWORD_FILE"] != "/run/secrets/opl_webui_password" ||
 		env["OPL_WEBUI_SESSION_SECRET_FILE"] != "/run/secrets/webui_session_secret" ||
 		env["OPL_GATEWAY_API_KEY_FILE"] != "/run/secrets/gateway_api_key" {
 		t.Fatalf("workspace must point one-person-lab-app at mounted secret files: %#v", env)
@@ -133,6 +133,9 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	secretVolume := findVolume(podSpec["volumes"].([]any), "workspace-secrets")
 	if secretVolume == nil || nested(secretVolume, "secret", "secretName") != "opl-compute-alpha-env" {
 		t.Fatalf("workspace must source cloud secret files from the workspace Secret: %#v", podSpec["volumes"])
+	}
+	if nested(secretVolume, "secret", "items").([]any)[0].(map[string]any)["path"] != "opl_webui_password" {
+		t.Fatalf("workspace password secret path must match one-person-lab-app cloud compose: %#v", secretVolume)
 	}
 }
 
