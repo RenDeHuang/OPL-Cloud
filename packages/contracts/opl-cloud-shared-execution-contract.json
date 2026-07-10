@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Platform Architecture",
   "purpose": "Canonical cross-surface execution identity, state, write, ownership, and error contract.",
   "state": "current",
@@ -96,7 +96,7 @@
       "Canonical ids are opaque globally unique strings created by the owning service.",
       "Canonical projectId and taskId do not change when execution moves between local App and cloud Workspace.",
       "Provider ids, Kubernetes names, object keys, database row ids, and local paths are references, not business identity.",
-      "A retry reuses the original operationId and idempotencyKey."
+      "A job retry keeps jobId, increments attempt, and records a new operation with a new idempotencyKey."
     ],
     "temporaryLocalIds": {
       "allowedKinds": [
@@ -159,6 +159,7 @@
       "running",
       "completed",
       "failed",
+      "timed_out",
       "cancelled",
       "review_required",
       "review_blocked"
@@ -241,17 +242,25 @@
       "create_task_identity",
       "sync_mutation",
       "request_execution",
-      "record_approval"
+      "record_approval",
+      "sync_execution",
+      "resolve_execution_continuation"
     ],
     "fabric": [
       "create_job",
       "query_job",
       "cancel_job",
-      "collect_outputs"
+      "claim_job",
+      "heartbeat_job",
+      "complete_job",
+      "fail_job",
+      "retry_job"
     ],
     "ledger": [
       "record_artifact_manifest",
+      "query_artifact_manifest",
       "record_review",
+      "query_review",
       "record_receipt",
       "query_receipt",
       "resolve_continuation"
@@ -268,17 +277,28 @@
       "requestExecution": "POST /api/execution-requests",
       "approveExecution": "POST /api/execution-requests/<requestId>/approve",
       "executeRequest": "POST /api/execution-requests/<requestId>/execute",
+      "syncExecution": "POST /api/execution-requests/<requestId>/sync",
+      "resolveExecutionContinuation": "GET /api/execution-requests/<requestId>/continuation",
       "queryExecution": "GET /api/execution-requests/<requestId>"
     },
     "fabric": {
       "createJob": "POST /fabric/jobs",
       "queryJob": "GET /fabric/jobs/<jobId>",
-      "cancelJob": "POST /fabric/jobs/<jobId>/cancel"
+      "cancelJob": "POST /fabric/jobs/<jobId>/cancel",
+      "claimJob": "POST /fabric/jobs/<jobId>/claim",
+      "heartbeatJob": "POST /fabric/jobs/<jobId>/heartbeat",
+      "completeJob": "POST /fabric/jobs/<jobId>/complete",
+      "failJob": "POST /fabric/jobs/<jobId>/fail",
+      "retryJob": "POST /fabric/jobs/<jobId>/retry"
     },
     "ledger": {
       "recordReceipt": "POST /ledger/receipts",
       "queryReceipt": "GET /ledger/receipts/<receiptId>",
-      "resolveContinuation": "GET /ledger/receipts/<receiptId>/continuation"
+      "resolveContinuation": "GET /ledger/receipts/<receiptId>/continuation",
+      "recordArtifact": "POST /ledger/artifacts",
+      "queryArtifact": "GET /ledger/artifacts/<artifactId>",
+      "recordReview": "POST /ledger/reviews",
+      "queryReview": "GET /ledger/reviews/<reviewId>"
     }
   },
   "canonicalExample": {

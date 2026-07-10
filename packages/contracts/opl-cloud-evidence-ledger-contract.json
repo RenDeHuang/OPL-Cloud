@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "OPL Ledger",
   "purpose": "General execution evidence receipts and current control-plane lifecycle receipts.",
   "state": "current",
@@ -8,7 +8,7 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "currentScope": "general execution receipt v1 plus current Workspace lifecycle and task evidence receipts",
+  "currentScope": "general execution receipt v1, Artifact Manifests, Review Results, continuation, and current Workspace lifecycle receipts",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
@@ -20,30 +20,26 @@
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
     "workspace.access_token_deleted",
+    "artifact.manifest.v1",
+    "review.result.v1",
     "execution.receipt.v1"
   ],
   "requiredFields": [
-    "id",
     "type",
-    "accountId",
+    "status",
+    "surface",
     "workspaceId",
-    "actor",
-    "plan",
-    "approval",
-    "environment",
-    "resourceRefs",
-    "billingRefs",
-    "inputRefs",
-    "executionRefs",
-    "outputRefs",
-    "reviewResults",
-    "createdAt"
+    "Idempotency-Key header"
   ],
   "generalReceiptV1": {
     "api": {
       "record": "POST /ledger/receipts",
       "query": "GET /ledger/receipts/<receiptId>",
-      "resolveContinuation": "GET /ledger/receipts/<receiptId>/continuation"
+      "resolveContinuation": "GET /ledger/receipts/<receiptId>/continuation",
+      "recordArtifact": "POST /ledger/artifacts",
+      "queryArtifact": "GET /ledger/artifacts/<artifactId>",
+      "recordReview": "POST /ledger/reviews",
+      "queryReview": "GET /ledger/reviews/<reviewId>"
     },
     "statuses": [
       "planned",
@@ -51,6 +47,7 @@
       "running",
       "completed",
       "failed",
+      "timed_out",
       "cancelled",
       "review_required",
       "review_blocked"
@@ -87,6 +84,11 @@
       "mediaType",
       "sizeBytes",
       "storageRef",
+      "organizationId",
+      "workspaceId",
+      "projectId",
+      "taskId",
+      "jobId",
       "createdAt"
     ],
     "reviewResultFields": [
@@ -96,6 +98,11 @@
       "inputArtifactDigests",
       "checks",
       "decision",
+      "organizationId",
+      "workspaceId",
+      "projectId",
+      "taskId",
+      "jobId",
       "createdAt"
     ],
     "continuationFields": [
@@ -105,6 +112,8 @@
       "taskId",
       "taskVersion",
       "requiredArtifactDigests",
+      "artifactIds",
+      "reviewIds",
       "environmentRef"
     ],
     "writeProtocol": "append_first_with_idempotency",

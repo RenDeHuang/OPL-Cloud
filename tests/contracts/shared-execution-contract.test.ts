@@ -16,7 +16,7 @@ test("shared execution contract fixes canonical identities, states, writes, and 
   assert.deepEqual(contract.identity.canonicalIdFields, ["projectId", "taskId", "requestId", "approvalId", "jobId", "artifactId", "reviewId", "receiptId", "continuationId"]);
   assert.deepEqual(contract.stateMachines.task, ["draft", "planned", "awaiting_approval", "queued", "running", "review_required", "review_blocked", "completed", "failed", "cancelled", "archived"]);
   assert.deepEqual(contract.stateMachines.job, ["queued", "provisioning", "running", "collecting", "succeeded", "failed", "cancelled", "timed_out"]);
-  assert.deepEqual(contract.stateMachines.receipt, ["planned", "approved", "running", "completed", "failed", "cancelled", "review_required", "review_blocked"]);
+  assert.deepEqual(contract.stateMachines.receipt, ["planned", "approved", "running", "completed", "failed", "timed_out", "cancelled", "review_required", "review_blocked"]);
   assert.deepEqual(contract.writeEnvelope.requiredFields, ["operationId", "idempotencyKey", "actor", "organizationId", "workspaceId", "caller", "occurredAt"]);
   assert.deepEqual(Object.fromEntries(Object.entries(contract.errorSemantics).map(([code, value]) => [code, value.httpStatus])), {
     invalid_request: 400,
@@ -57,7 +57,7 @@ test("service owners match the shared execution contract", async () => {
   assert.equal(boundary.externalServices.gateway.evidenceSink, "ledger");
 });
 
-test("Train 2 HTTP APIs preserve service ownership without compatibility routes", async () => {
+test("Train 3 HTTP APIs preserve service ownership without compatibility routes", async () => {
   const shared = await readContract("opl-cloud-shared-execution-contract.json");
   const ledger = await readContract("opl-cloud-evidence-ledger-contract.json");
 
@@ -67,17 +67,30 @@ test("Train 2 HTTP APIs preserve service ownership without compatibility routes"
     requestExecution: "POST /api/execution-requests",
     approveExecution: "POST /api/execution-requests/<requestId>/approve",
     executeRequest: "POST /api/execution-requests/<requestId>/execute",
+    syncExecution: "POST /api/execution-requests/<requestId>/sync",
+    resolveExecutionContinuation: "GET /api/execution-requests/<requestId>/continuation",
     queryExecution: "GET /api/execution-requests/<requestId>"
   });
   assert.deepEqual(shared.httpApis.fabric, {
     createJob: "POST /fabric/jobs",
     queryJob: "GET /fabric/jobs/<jobId>",
-    cancelJob: "POST /fabric/jobs/<jobId>/cancel"
+    cancelJob: "POST /fabric/jobs/<jobId>/cancel",
+    claimJob: "POST /fabric/jobs/<jobId>/claim",
+    heartbeatJob: "POST /fabric/jobs/<jobId>/heartbeat",
+    completeJob: "POST /fabric/jobs/<jobId>/complete",
+    failJob: "POST /fabric/jobs/<jobId>/fail",
+    retryJob: "POST /fabric/jobs/<jobId>/retry"
   });
   assert.deepEqual(shared.httpApis.ledger, {
     recordReceipt: "POST /ledger/receipts",
     queryReceipt: "GET /ledger/receipts/<receiptId>",
-    resolveContinuation: "GET /ledger/receipts/<receiptId>/continuation"
+    resolveContinuation: "GET /ledger/receipts/<receiptId>/continuation",
+    recordArtifact: "POST /ledger/artifacts",
+    queryArtifact: "GET /ledger/artifacts/<artifactId>",
+    recordReview: "POST /ledger/reviews",
+    queryReview: "GET /ledger/reviews/<reviewId>"
   });
+  assert.ok(ledger.receiptTypes.includes("artifact.manifest.v1"));
+  assert.ok(ledger.receiptTypes.includes("review.result.v1"));
   assert.equal(ledger.generalReceiptV1.api.resolveContinuation, shared.httpApis.ledger.resolveContinuation);
 });
