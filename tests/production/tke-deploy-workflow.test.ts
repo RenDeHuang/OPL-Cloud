@@ -507,6 +507,8 @@ test("TKE diagnostics can print a redacted single-resource console state summary
   assert.ok(workflow.on.workflow_dispatch.inputs.compute_allocation_id, "diagnostics must accept compute_allocation_id input");
   assert.match(text, /node --input-type=module <<'NODE'/, "diagnostics stdin script must allow top-level await");
   assert.match(text, /\/api\/auth\/operator-login/, "diagnostics must use operator auth instead of public state");
+  assert.match(text, /"x-opl-operator-token": operatorToken/, "diagnostics must send the operator token in the required header");
+  assert.doesNotMatch(text, /JSON\.stringify\(\{ operatorToken \}\)/, "diagnostics must not send the operator token in the body");
   assert.match(text, /\/api\/state\?accountId=/, "diagnostics must scope state to one account");
   assert.match(text, /computeAllocationId/, "summary must identify the selected compute allocation");
   assert.match(text, /runtimeOperations/, "summary must include matching runtime operations");
@@ -533,6 +535,9 @@ test("Console residual cleanup workflow is API-scoped and gated by exact resourc
   assert.ok(workflow.on.workflow_dispatch.inputs.confirm_resource_id);
   assert.match(runs, /confirm_resource_id must equal the target resource id/);
   assert.match(runs, /\/api\/auth\/operator-login/);
+  assert.match(runs, /"x-opl-operator-token": operatorToken/, "cleanup must send the operator token in the required header");
+  assert.match(runs, /\.\.\.\(headers \|\| \{\}\)/, "cleanup request helper must forward explicit headers");
+  assert.doesNotMatch(runs, /body:\s*\{ operatorToken \}/, "cleanup must not send the operator token in the body");
   assert.match(runs, /\/api\/compute-allocations\/.*\/destroy/);
   assert.match(runs, /\/api\/storage-volumes\/destroy/);
   assert.match(runs, /\/api\/storage-attachments\/detach/);

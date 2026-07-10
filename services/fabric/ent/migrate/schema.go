@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql/schema"
 	"entgo.io/ent/schema/field"
 )
@@ -36,8 +37,8 @@ var (
 		Columns:    FabricOperationsColumns,
 		PrimaryKey: []*schema.Column{FabricOperationsColumns[0]},
 	}
-	// WorkspaceRuntimeAccessesColumns holds the columns for the "workspace_runtime_accesses" table.
-	WorkspaceRuntimeAccessesColumns = []*schema.Column{
+	// FabricWorkspaceRuntimeAccessColumns holds the columns for the "fabric_workspace_runtime_access" table.
+	FabricWorkspaceRuntimeAccessColumns = []*schema.Column{
 		{Name: "workspace_id", Type: field.TypeString, Unique: true},
 		{Name: "runtime_id", Type: field.TypeString},
 		{Name: "url", Type: field.TypeString},
@@ -49,18 +50,21 @@ var (
 		{Name: "secret_ref", Type: field.TypeString, Default: ""},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
-	// WorkspaceRuntimeAccessesTable holds the schema information for the "workspace_runtime_accesses" table.
-	WorkspaceRuntimeAccessesTable = &schema.Table{
-		Name:       "workspace_runtime_accesses",
-		Columns:    WorkspaceRuntimeAccessesColumns,
-		PrimaryKey: []*schema.Column{WorkspaceRuntimeAccessesColumns[0]},
+	// FabricWorkspaceRuntimeAccessTable holds the schema information for the "fabric_workspace_runtime_access" table.
+	FabricWorkspaceRuntimeAccessTable = &schema.Table{
+		Name:       "fabric_workspace_runtime_access",
+		Columns:    FabricWorkspaceRuntimeAccessColumns,
+		PrimaryKey: []*schema.Column{FabricWorkspaceRuntimeAccessColumns[0]},
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		FabricOperationsTable,
-		WorkspaceRuntimeAccessesTable,
+		FabricWorkspaceRuntimeAccessTable,
 	}
 )
 
 func init() {
+	FabricWorkspaceRuntimeAccessTable.Annotation = &entsql.Annotation{
+		Table: "fabric_workspace_runtime_access",
+	}
 }

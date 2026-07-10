@@ -32,7 +32,7 @@ const (
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// Table holds the table name of the workspaceruntimeaccess in the database.
-	Table = "workspace_runtime_accesses"
+	Table = "fabric_workspace_runtime_access"
 )
 
 // Columns holds all SQL columns for workspaceruntimeaccess fields.

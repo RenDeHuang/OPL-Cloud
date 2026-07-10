@@ -2,10 +2,16 @@ package schema
 
 import (
 	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
+	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/field"
 )
 
 type WorkspaceRuntimeAccess struct{ ent.Schema }
+
+func (WorkspaceRuntimeAccess) Annotations() []schema.Annotation {
+	return []schema.Annotation{entsql.Annotation{Table: "fabric_workspace_runtime_access"}}
+}
 
 func (WorkspaceRuntimeAccess) Fields() []ent.Field {
 	return []ent.Field{
