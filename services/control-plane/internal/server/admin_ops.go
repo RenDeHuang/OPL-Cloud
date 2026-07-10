@@ -108,6 +108,9 @@ func (app *controlPlaneServer) appendAuditEvent(r *http.Request, action string, 
 }
 
 func (app *controlPlaneServer) rememberRuntimeOperations(operations []clients.FabricOperation) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
 	rows := make([]map[string]any, 0, len(operations))
 	for _, operation := range operations {
 		row := structToMap(operation)
@@ -116,8 +119,6 @@ func (app *controlPlaneServer) rememberRuntimeOperations(operations []clients.Fa
 			return err
 		}
 	}
-	app.mu.Lock()
-	defer app.mu.Unlock()
 	app.runtimeOps = rows
 	return nil
 }

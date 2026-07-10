@@ -131,6 +131,9 @@ func (app *controlPlaneServer) saveResourceSettlementProjection(result clients.R
 }
 
 func (app *controlPlaneServer) applyLedgerFacts(accountID string, wallet clients.Wallet, entries []clients.LedgerEntry, transactions []clients.WalletTransaction, topups []clients.ManualTopUp, settlements []clients.ResourceSettlementResult) error {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
 	if accountID != "" && wallet.AccountID != "" && walletHasMoneyFacts(wallet) {
 		if err := app.tables.SaveWallet(context.Background(), walletProjection(wallet)); err != nil {
 			return err

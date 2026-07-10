@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -1632,6 +1635,51 @@ func TestStateRefreshesLedgerFactsFromLedgerReads(t *testing.T) {
 	if len(management["billingLedger"].([]any)) == 0 || len(management["walletTransactions"].([]any)) == 0 {
 		t.Fatalf("management state did not expose Ledger read facts: %#v", management)
 	}
+}
+
+func TestApplyLedgerFactsSerializesProjectionWrites(t *testing.T) {
+	store := &concurrencyDetectingTableStore{memoryTableStore: newMemoryTableStore()}
+	app := newControlPlaneAppEmpty()
+	app.tables = store
+	ledger := readBackedLedgerClient{}
+	wallet, _ := ledger.Wallet(context.Background(), "acct-alpha")
+	entries, _ := ledger.ListLedgerEntries(context.Background(), "acct-alpha")
+	transactions, _ := ledger.ListWalletTransactions(context.Background(), "acct-alpha")
+	settlements, _ := ledger.ListResourceSettlements(context.Background(), "acct-alpha")
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := app.applyLedgerFacts("acct-alpha", wallet, entries, transactions, nil, settlements); err != nil {
+				t.Errorf("apply ledger facts: %v", err)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := atomic.LoadInt32(&store.concurrentLedgerWrites); got != 0 {
+		t.Fatalf("ledger projection writes were concurrent: %d", got)
+	}
+}
+
+type concurrencyDetectingTableStore struct {
+	*memoryTableStore
+	activeLedgerWrites     int32
+	concurrentLedgerWrites int32
+}
+
+func (s *concurrencyDetectingTableStore) SaveLedgerEntry(ctx context.Context, row map[string]any) error {
+	if active := atomic.AddInt32(&s.activeLedgerWrites, 1); active > 1 {
+		atomic.AddInt32(&s.concurrentLedgerWrites, 1)
+	}
+	time.Sleep(time.Millisecond)
+	err := s.memoryTableStore.SaveLedgerEntry(ctx, row)
+	atomic.AddInt32(&s.activeLedgerWrites, -1)
+	return err
 }
 
 func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
