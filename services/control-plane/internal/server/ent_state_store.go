@@ -641,6 +641,14 @@ func (s *postgresEntStateStore) ListProjectTaskSyncHeads(ctx context.Context) ([
 	if err != nil {
 		return nil, err
 	}
+	for _, row := range rows {
+		switch stringValue(row["kind"]) {
+		case "project":
+			row["projectId"] = row["id"]
+		case "task":
+			row["taskId"] = row["id"]
+		}
+	}
 	return filteredRecords(rows, "")
 }
 

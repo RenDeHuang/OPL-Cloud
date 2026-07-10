@@ -110,6 +110,18 @@ func TestEntStateStorePersistsExecutionIdentityAndApproval(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save project identity: %v", err)
 	}
+	if err := store.SaveProjectTaskSyncHead(ctx, map[string]any{
+		"id":             "task-alpha",
+		"kind":           "task",
+		"organizationId": "org-alpha",
+		"workspaceId":    "workspace-alpha",
+		"projectId":      "project-alpha",
+		"localAliasId":   "local-task-alpha",
+		"version":        int64(1),
+		"status":         "draft",
+	}); err != nil {
+		t.Fatalf("save task identity: %v", err)
+	}
 	if err := store.SaveExecutionRequest(ctx, map[string]any{
 		"id":             "request-alpha",
 		"organizationId": "org-alpha",
@@ -129,7 +141,11 @@ func TestEntStateStorePersistsExecutionIdentityAndApproval(t *testing.T) {
 	}
 
 	heads, err := store.ListProjectTaskSyncHeads(ctx)
-	if err != nil || len(heads) != 1 || heads[0]["localAliasId"] != "local-project-alpha" {
+	headsByID := map[string]map[string]any{}
+	for _, head := range heads {
+		headsByID[stringValue(head["id"])] = head
+	}
+	if err != nil || len(heads) != 2 || headsByID["project-alpha"]["projectId"] != "project-alpha" || headsByID["task-alpha"]["taskId"] != "task-alpha" {
 		t.Fatalf("unexpected sync heads: %#v, %v", heads, err)
 	}
 	requests, err := store.ListExecutionRequests(ctx)
