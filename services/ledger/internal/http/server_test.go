@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"opl-cloud/services/ledger/internal/ledger"
@@ -152,6 +153,72 @@ func TestContinuationHTTPReturnsNotFoundWhenReceiptHasNone(t *testing.T) {
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("continuation status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestArtifactAndReviewHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	artifactReq := httptest.NewRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","digest":"sha256:abc123","mediaType":"application/json","sizeBytes":42,"storageRef":"storage-artifact-alpha"}`))
+	artifactReq.Header.Set("Idempotency-Key", "http-artifact-once")
+	artifactRec := httptest.NewRecorder()
+	server.ServeHTTP(artifactRec, artifactReq)
+	if artifactRec.Code != http.StatusCreated {
+		t.Fatalf("artifact status = %d, want %d: %s", artifactRec.Code, http.StatusCreated, artifactRec.Body.String())
+	}
+	var artifact ledger.Artifact
+	if err := json.NewDecoder(artifactRec.Body).Decode(&artifact); err != nil {
+		t.Fatalf("decode artifact: %v", err)
+	}
+	getArtifactRec := httptest.NewRecorder()
+	server.ServeHTTP(getArtifactRec, httptest.NewRequest(http.MethodGet, "/ledger/artifacts/"+artifact.ArtifactID, nil))
+	if getArtifactRec.Code != http.StatusOK {
+		t.Fatalf("get artifact status = %d: %s", getArtifactRec.Code, getArtifactRec.Body.String())
+	}
+
+	reviewReq := httptest.NewRequest(http.MethodPost, "/ledger/reviews", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","reviewerRef":"reviewer-rca","reviewerVersion":"1.0.0","inputArtifactDigests":["sha256:abc123"],"checks":{"schema":"passed"},"decision":"accepted"}`))
+	reviewReq.Header.Set("Idempotency-Key", "http-review-once")
+	reviewRec := httptest.NewRecorder()
+	server.ServeHTTP(reviewRec, reviewReq)
+	if reviewRec.Code != http.StatusCreated {
+		t.Fatalf("review status = %d, want %d: %s", reviewRec.Code, http.StatusCreated, reviewRec.Body.String())
+	}
+	var review ledger.Review
+	if err := json.NewDecoder(reviewRec.Body).Decode(&review); err != nil {
+		t.Fatalf("decode review: %v", err)
+	}
+	getReviewRec := httptest.NewRecorder()
+	server.ServeHTTP(getReviewRec, httptest.NewRequest(http.MethodGet, "/ledger/reviews/"+review.ReviewID, nil))
+	if getReviewRec.Code != http.StatusOK {
+		t.Fatalf("get review status = %d: %s", getReviewRec.Code, getReviewRec.Body.String())
+	}
+}
+
+func TestEvidenceHTTPMapsInputNotFoundAndConflict(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore())
+	invalidReq := httptest.NewRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(`{"workspaceId":"workspace-alpha","storageRef":"https://example.test/result?token=secret"}`))
+	invalidReq.Header.Set("Idempotency-Key", "invalid-artifact")
+	invalidRec := httptest.NewRecorder()
+	server.ServeHTTP(invalidRec, invalidReq)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid artifact status = %d, want %d", invalidRec.Code, http.StatusBadRequest)
+	}
+
+	notFoundRec := httptest.NewRecorder()
+	server.ServeHTTP(notFoundRec, httptest.NewRequest(http.MethodGet, "/ledger/reviews/missing", nil))
+	if notFoundRec.Code != http.StatusNotFound {
+		t.Fatalf("missing review status = %d, want %d", notFoundRec.Code, http.StatusNotFound)
+	}
+
+	body := `{"workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","digest":"sha256:abc123","mediaType":"application/json","sizeBytes":42,"storageRef":"storage-artifact-alpha"}`
+	first := httptest.NewRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(body))
+	first.Header.Set("Idempotency-Key", "conflicting-artifact")
+	server.ServeHTTP(httptest.NewRecorder(), first)
+	second := httptest.NewRequest(http.MethodPost, "/ledger/artifacts", bytes.NewBufferString(strings.Replace(body, "abc123", "different", 1)))
+	second.Header.Set("Idempotency-Key", "conflicting-artifact")
+	conflictRec := httptest.NewRecorder()
+	server.ServeHTTP(conflictRec, second)
+	if conflictRec.Code != http.StatusConflict {
+		t.Fatalf("conflicting artifact status = %d, want %d: %s", conflictRec.Code, http.StatusConflict, conflictRec.Body.String())
 	}
 }
 
