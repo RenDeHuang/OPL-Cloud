@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 type LedgerClient interface {
@@ -14,6 +15,10 @@ type LedgerClient interface {
 	CreateHold(ctx context.Context, input HoldInput, idempotencyKey string) (HoldResult, error)
 	ReleaseHold(ctx context.Context, input HoldReleaseInput, idempotencyKey string) (HoldReleaseResult, error)
 	RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error)
+	Receipt(ctx context.Context, receiptID string) (Receipt, error)
+	Artifact(ctx context.Context, artifactID string) (Artifact, error)
+	Review(ctx context.Context, reviewID string) (Review, error)
+	Continuation(ctx context.Context, receiptID string) (map[string]any, error)
 	SettleResource(ctx context.Context, input ResourceSettlementInput, idempotencyKey string) (ResourceSettlementResult, error)
 	RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error)
 	Wallet(ctx context.Context, accountID string) (Wallet, error)
@@ -184,30 +189,66 @@ type HoldReleaseResult struct {
 }
 
 type ReceiptInput struct {
-	Type           string         `json:"type"`
-	Status         string         `json:"status"`
-	Surface        string         `json:"surface"`
-	OrganizationID string         `json:"organizationId,omitempty"`
-	WorkspaceID    string         `json:"workspaceId"`
-	ProjectID      string         `json:"projectId,omitempty"`
-	TaskID         string         `json:"taskId,omitempty"`
-	RequestID      string         `json:"requestId,omitempty"`
-	ApprovalID     string         `json:"approvalId,omitempty"`
-	JobID          string         `json:"jobId,omitempty"`
-	Execution      map[string]any `json:"execution,omitempty"`
-	OutputRefs     map[string]any `json:"outputRefs,omitempty"`
-	Continuation   map[string]any `json:"continuation,omitempty"`
+	Type                string         `json:"type"`
+	Status              string         `json:"status"`
+	Surface             string         `json:"surface"`
+	OrganizationID      string         `json:"organizationId,omitempty"`
+	WorkspaceID         string         `json:"workspaceId"`
+	ProjectID           string         `json:"projectId,omitempty"`
+	TaskID              string         `json:"taskId,omitempty"`
+	RequestID           string         `json:"requestId,omitempty"`
+	ApprovalID          string         `json:"approvalId,omitempty"`
+	JobID               string         `json:"jobId,omitempty"`
+	ArtifactID          string         `json:"artifactId,omitempty"`
+	ReviewID            string         `json:"reviewId,omitempty"`
+	Execution           map[string]any `json:"execution,omitempty"`
+	OutputRefs          map[string]any `json:"outputRefs,omitempty"`
+	ReviewerChecks      map[string]any `json:"reviewerChecks,omitempty"`
+	Continuation        map[string]any `json:"continuation,omitempty"`
+	SupersedesReceiptID string         `json:"supersedesReceiptId,omitempty"`
 }
 
 type Receipt struct {
+	ReceiptID           string         `json:"receiptId"`
+	Status              string         `json:"status"`
+	WorkspaceID         string         `json:"workspaceId"`
+	ProjectID           string         `json:"projectId"`
+	TaskID              string         `json:"taskId"`
+	RequestID           string         `json:"requestId"`
+	ApprovalID          string         `json:"approvalId"`
+	JobID               string         `json:"jobId"`
+	Execution           map[string]any `json:"execution"`
+	ContinuationID      string         `json:"continuationId"`
+	SupersedesReceiptID string         `json:"supersedesReceiptId"`
+}
+
+type Review struct {
+	ReviewID             string         `json:"reviewId"`
+	ReceiptID            string         `json:"receiptId"`
+	OrganizationID       string         `json:"organizationId"`
+	WorkspaceID          string         `json:"workspaceId"`
+	ProjectID            string         `json:"projectId"`
+	TaskID               string         `json:"taskId"`
+	JobID                string         `json:"jobId"`
+	ReviewerRef          string         `json:"reviewerRef"`
+	ReviewerVersion      string         `json:"reviewerVersion"`
+	InputArtifactDigests []string       `json:"inputArtifactDigests"`
+	Checks               map[string]any `json:"checks"`
+	Decision             string         `json:"decision"`
+}
+
+type Artifact struct {
+	ArtifactID     string `json:"artifactId"`
 	ReceiptID      string `json:"receiptId"`
+	OrganizationID string `json:"organizationId"`
 	WorkspaceID    string `json:"workspaceId"`
 	ProjectID      string `json:"projectId"`
 	TaskID         string `json:"taskId"`
-	RequestID      string `json:"requestId"`
-	ApprovalID     string `json:"approvalId"`
 	JobID          string `json:"jobId"`
-	ContinuationID string `json:"continuationId"`
+	Digest         string `json:"digest"`
+	MediaType      string `json:"mediaType"`
+	SizeBytes      int64  `json:"sizeBytes"`
+	StorageRef     string `json:"storageRef"`
 }
 
 type ledgerHTTPClient struct {
@@ -243,6 +284,30 @@ func (c *ledgerHTTPClient) ReleaseHold(ctx context.Context, input HoldReleaseInp
 func (c *ledgerHTTPClient) RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error) {
 	var result Receipt
 	err := c.post(ctx, "/ledger/receipts", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *ledgerHTTPClient) Receipt(ctx context.Context, receiptID string) (Receipt, error) {
+	var result Receipt
+	err := c.get(ctx, "/ledger/receipts/"+url.PathEscape(receiptID), &result)
+	return result, err
+}
+
+func (c *ledgerHTTPClient) Artifact(ctx context.Context, artifactID string) (Artifact, error) {
+	var result Artifact
+	err := c.get(ctx, "/ledger/artifacts/"+url.PathEscape(artifactID), &result)
+	return result, err
+}
+
+func (c *ledgerHTTPClient) Review(ctx context.Context, reviewID string) (Review, error) {
+	var result Review
+	err := c.get(ctx, "/ledger/reviews/"+url.PathEscape(reviewID), &result)
+	return result, err
+}
+
+func (c *ledgerHTTPClient) Continuation(ctx context.Context, receiptID string) (map[string]any, error) {
+	result := map[string]any{}
+	err := c.get(ctx, "/ledger/receipts/"+url.PathEscape(receiptID)+"/continuation", &result)
 	return result, err
 }
 

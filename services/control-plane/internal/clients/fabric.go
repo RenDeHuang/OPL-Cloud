@@ -196,16 +196,21 @@ type JobInput struct {
 }
 
 type Job struct {
-	JobID          string `json:"jobId"`
-	OrganizationID string `json:"organizationId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ProjectID      string `json:"projectId"`
-	TaskID         string `json:"taskId"`
-	RequestID      string `json:"requestId"`
-	ApprovalID     string `json:"approvalId"`
-	EnvironmentRef string `json:"environmentRef,omitempty"`
-	Status         string `json:"status"`
-	Replayed       bool   `json:"replayed,omitempty"`
+	JobID          string   `json:"jobId"`
+	OrganizationID string   `json:"organizationId"`
+	WorkspaceID    string   `json:"workspaceId"`
+	ProjectID      string   `json:"projectId"`
+	TaskID         string   `json:"taskId"`
+	RequestID      string   `json:"requestId"`
+	ApprovalID     string   `json:"approvalId"`
+	EnvironmentRef string   `json:"environmentRef,omitempty"`
+	Status         string   `json:"status"`
+	Attempt        int      `json:"attempt"`
+	LeaseOwner     string   `json:"leaseOwner,omitempty"`
+	ArtifactIDs    []string `json:"artifactIds,omitempty"`
+	ReviewIDs      []string `json:"reviewIds,omitempty"`
+	ErrorCode      string   `json:"errorCode,omitempty"`
+	Replayed       bool     `json:"replayed,omitempty"`
 }
 
 type fabricHTTPClient struct {

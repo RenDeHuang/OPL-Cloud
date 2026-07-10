@@ -36,3 +36,19 @@ func TestFabricClientReturnsErrorOnUpstreamFailure(t *testing.T) {
 		t.Fatalf("expected upstream status error, got %v", err)
 	}
 }
+
+func TestFabricClientReadsCompletedJobEvidence(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fabric/jobs/job-alpha" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"jobId":"job-alpha","status":"succeeded","attempt":2,"artifactIds":["artifact-alpha"],"reviewIds":["review-alpha"]}`))
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, upstream.Client())
+	job, err := client.GetJob(context.Background(), "job-alpha")
+	if err != nil || job.Status != "succeeded" || job.Attempt != 2 || len(job.ArtifactIDs) != 1 || len(job.ReviewIDs) != 1 {
+		t.Fatalf("job = %#v err=%v", job, err)
+	}
+}

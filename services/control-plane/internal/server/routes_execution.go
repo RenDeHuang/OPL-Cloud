@@ -13,13 +13,15 @@ import (
 var errExecutionNotFound = errors.New("execution_request_not_found")
 
 func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	// ponytail: admin-only until organization membership authorization is enforced for this execution boundary.
-	mux.HandleFunc("POST /api/projects", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/projects", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		organizationID := stringField(input, "organizationId", "")
 		workspaceID := stringField(input, "workspaceId", "")
 		if organizationID == "" || workspaceID == "" {
 			writeError(w, http.StatusBadRequest, "project_identity_required")
+			return
+		}
+		if !app.authorizeOrganization(w, r, organizationID) {
 			return
 		}
 		key, ok := executionMutationKey(w, r)
@@ -55,12 +57,15 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusCreated, row)
 	}))
 
-	mux.HandleFunc("POST /api/projects/{projectId}/tasks", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/projects/{projectId}/tasks", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		projectID := strings.TrimSpace(r.PathValue("projectId"))
 		project, ok := app.projectTaskSyncHead(r.Context(), projectID)
 		if !ok || stringValue(project["kind"]) != "project" {
 			writeError(w, http.StatusNotFound, "project_not_found")
+			return
+		}
+		if !app.authorizeOrganization(w, r, stringValue(project["organizationId"])) {
 			return
 		}
 		organizationID := stringField(input, "organizationId", "")
@@ -104,7 +109,7 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusCreated, row)
 	}))
 
-	mux.HandleFunc("POST /api/execution-requests", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/execution-requests", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		projectID := stringField(input, "projectId", "")
 		taskID := stringField(input, "taskId", "")
@@ -112,6 +117,9 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		task, taskOK := app.projectTaskSyncHead(r.Context(), taskID)
 		if !projectOK || !taskOK || stringValue(task["projectId"]) != projectID {
 			writeError(w, http.StatusBadRequest, "project_task_identity_invalid")
+			return
+		}
+		if !app.authorizeOrganization(w, r, stringValue(project["organizationId"])) {
 			return
 		}
 		organizationID := stringField(input, "organizationId", "")
@@ -159,7 +167,7 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusCreated, row)
 	}))
 
-	mux.HandleFunc("POST /api/execution-requests/{requestId}/approve", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/execution-requests/{requestId}/approve", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := executionMutationKey(w, r); !ok {
 			return
 		}
@@ -167,6 +175,9 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		row, ok := app.executionRequest(r.Context(), requestID)
 		if !ok {
 			writeError(w, http.StatusNotFound, errExecutionNotFound.Error())
+			return
+		}
+		if !app.authorizeOrganization(w, r, stringValue(row["organizationId"])) {
 			return
 		}
 		if stringValue(row["approvalStatus"]) == "approved" {
@@ -186,7 +197,7 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusOK, row)
 	}))
 
-	mux.HandleFunc("POST /api/execution-requests/{requestId}/execute", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/execution-requests/{requestId}/execute", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		key, ok := executionMutationKey(w, r)
 		if !ok {
 			return
@@ -195,6 +206,9 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		row, ok := app.executionRequest(r.Context(), requestID)
 		if !ok {
 			writeError(w, http.StatusNotFound, errExecutionNotFound.Error())
+			return
+		}
+		if !app.authorizeOrganization(w, r, stringValue(row["organizationId"])) {
 			return
 		}
 		if stringValue(row["approvalStatus"]) != "approved" {
@@ -230,14 +244,111 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		writeJSON(w, http.StatusAccepted, row)
 	}))
 
-	mux.HandleFunc("GET /api/execution-requests/{requestId}", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/execution-requests/{requestId}/sync", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := executionMutationKey(w, r); !ok {
+			return
+		}
+		requestID := strings.TrimSpace(r.PathValue("requestId"))
+		row, ok := app.executionRequest(r.Context(), requestID)
+		if !ok {
+			writeError(w, http.StatusNotFound, errExecutionNotFound.Error())
+			return
+		}
+		if !app.authorizeOrganization(w, r, stringValue(row["organizationId"])) {
+			return
+		}
+		if stringValue(row["jobId"]) == "" || stringValue(row["receiptId"]) == "" {
+			writeError(w, http.StatusConflict, "execution_not_started")
+			return
+		}
+		result, err := service.SyncExecution(r.Context(), controlplane.ExecutionSyncInput{
+			OrganizationID: stringValue(row["organizationId"]),
+			WorkspaceID:    stringValue(row["workspaceId"]),
+			ProjectID:      stringValue(row["projectId"]),
+			TaskID:         stringValue(row["taskId"]),
+			RequestID:      requestID,
+			ApprovalID:     stringValue(row["approvalId"]),
+			JobID:          stringValue(row["jobId"]),
+			ReceiptID:      stringValue(row["receiptId"]),
+			ContinuationID: stringValue(row["continuationId"]),
+			Status:         stringValue(row["status"]),
+			EnvironmentRef: stringValue(row["environmentRef"]),
+		})
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
+		}
+		if stringValue(row["status"]) == result.Status && stringValue(row["receiptId"]) == result.ReceiptID && stringValue(row["continuationId"]) == result.ContinuationID {
+			writeJSON(w, http.StatusOK, row)
+			return
+		}
+		row["status"] = result.Status
+		row["receiptId"] = result.ReceiptID
+		row["continuationId"] = result.ContinuationID
+		row["version"] = int64(numberField(row, "version", 1)) + 1
+		if err := app.tables.SaveExecutionRequest(r.Context(), row); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, row)
+	}))
+
+	mux.HandleFunc("GET /api/execution-requests/{requestId}/continuation", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.PathValue("requestId"))
+		row, ok := app.executionRequest(r.Context(), requestID)
+		if !ok {
+			writeError(w, http.StatusNotFound, errExecutionNotFound.Error())
+			return
+		}
+		if !app.authorizeOrganization(w, r, stringValue(row["organizationId"])) {
+			return
+		}
+		if stringValue(row["status"]) != "completed" || stringValue(row["continuationId"]) == "" || stringValue(row["receiptId"]) == "" {
+			writeError(w, http.StatusConflict, "continuation_not_available")
+			return
+		}
+		continuation, err := service.Continuation(r.Context(), stringValue(row["receiptId"]))
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, continuation)
+	}))
+
+	mux.HandleFunc("GET /api/execution-requests/{requestId}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		row, ok := app.executionRequest(r.Context(), strings.TrimSpace(r.PathValue("requestId")))
 		if !ok {
 			writeError(w, http.StatusNotFound, errExecutionNotFound.Error())
 			return
 		}
+		if !app.authorizeOrganization(w, r, stringValue(row["organizationId"])) {
+			return
+		}
 		writeJSON(w, http.StatusOK, row)
 	}))
+}
+
+func (app *controlPlaneServer) authorizeOrganization(w http.ResponseWriter, r *http.Request, organizationID string) bool {
+	user, ok := app.sessionUserContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not_authenticated")
+		return false
+	}
+	if stringValue(user["role"]) == "admin" {
+		return true
+	}
+	memberships, err := app.tables.ListMemberships(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "state_read_failed")
+		return false
+	}
+	for _, membership := range memberships {
+		if stringValue(membership["organizationId"]) == organizationID && stringValue(membership["userId"]) == stringValue(user["id"]) && stringValue(membership["status"]) == "active" {
+			return true
+		}
+	}
+	writeError(w, http.StatusForbidden, "organization_membership_required")
+	return false
 }
 
 func (app *controlPlaneServer) projectTaskSyncHead(ctx context.Context, id string) (map[string]any, bool) {

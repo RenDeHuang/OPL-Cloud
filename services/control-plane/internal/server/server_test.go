@@ -528,6 +528,22 @@ func (fakeLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptIn
 	return clients.Receipt{ReceiptID: "receipt-from-ledger", WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: "continuation-from-ledger"}, nil
 }
 
+func (fakeLedgerClient) Receipt(_ context.Context, receiptID string) (clients.Receipt, error) {
+	return clients.Receipt{ReceiptID: receiptID, Status: "completed", Execution: map[string]any{"jobStatus": "succeeded", "attempt": float64(1)}, ContinuationID: "continuation-from-ledger"}, nil
+}
+
+func (fakeLedgerClient) Artifact(_ context.Context, artifactID string) (clients.Artifact, error) {
+	return clients.Artifact{ArtifactID: artifactID, JobID: "job-from-fabric", Digest: "sha256:artifact-alpha"}, nil
+}
+
+func (fakeLedgerClient) Review(_ context.Context, reviewID string) (clients.Review, error) {
+	return clients.Review{ReviewID: reviewID, JobID: "job-from-fabric", Decision: "accepted", InputArtifactDigests: []string{"sha256:artifact-alpha"}}, nil
+}
+
+func (fakeLedgerClient) Continuation(_ context.Context, receiptID string) (map[string]any, error) {
+	return map[string]any{"receiptId": receiptID, "continuationId": "continuation-from-ledger"}, nil
+}
+
 func (fakeLedgerClient) SettleResource(_ context.Context, input clients.ResourceSettlementInput, _ string) (clients.ResourceSettlementResult, error) {
 	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger", PricingVersion: input.PricingVersion, PriceSnapshot: input.PriceSnapshot, UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, AvailableCents: 8800, Currency: "CNY"}}, nil
 }
@@ -808,6 +824,67 @@ func TestExecutionRoutesPersistCanonicalFlow(t *testing.T) {
 	}
 }
 
+type executionCompletionLedgerClient struct {
+	fakeLedgerClient
+}
+
+func (*executionCompletionLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
+	receiptID := "receipt-running"
+	continuationID := ""
+	if input.Status != "running" {
+		receiptID = "receipt-final"
+	}
+	if input.Status == "completed" {
+		continuationID = "continuation-final"
+	}
+	return clients.Receipt{ReceiptID: receiptID, Status: input.Status, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: continuationID}, nil
+}
+
+func (*executionCompletionLedgerClient) Continuation(_ context.Context, receiptID string) (map[string]any, error) {
+	return map[string]any{"receiptId": receiptID, "continuationId": "continuation-final", "artifactIds": []any{"artifact-alpha"}}, nil
+}
+
+type completedExecutionFabricClient struct {
+	fakeFabricClient
+}
+
+func (f *completedExecutionFabricClient) GetJob(_ context.Context, jobID string) (clients.Job, error) {
+	f.record("fabric.job-get")
+	return clients.Job{JobID: jobID, Status: "succeeded", Attempt: 1, ArtifactIDs: []string{"artifact-alpha"}, ReviewIDs: []string{"review-alpha"}}, nil
+}
+
+func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
+	server := NewServer(controlplane.NewService(&executionCompletionLedgerClient{}, &completedExecutionFabricClient{}))
+	admin := operatorSessionForTest(t, server)
+	memberUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"member@execution.example","accountId":"acct-alpha","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(memberUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
+	member := loginForTest(t, server, "member@execution.example", "CorrectHorseBatteryStaple!")
+
+	project := createResourceWithSession(t, server, member, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	projectID := stringValue(project["projectId"])
+	task := createResourceWithSession(t, server, member, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	request := createResourceWithSession(t, server, member, http.MethodPost, "/api/execution-requests", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"`+projectID+`","taskId":"`+stringValue(task["taskId"])+`"}`)
+	requestID := stringValue(request["requestId"])
+	createResourceWithSession(t, server, member, http.MethodPost, "/api/execution-requests/"+requestID+"/approve", `{}`)
+	createResourceWithSession(t, server, member, http.MethodPost, "/api/execution-requests/"+requestID+"/execute", `{}`)
+	synced := createResourceWithSession(t, server, member, http.MethodPost, "/api/execution-requests/"+requestID+"/sync", `{}`)
+	if synced["status"] != "completed" || synced["receiptId"] != "receipt-final" || synced["continuationId"] != "continuation-final" {
+		t.Fatalf("unexpected synced execution: %#v", synced)
+	}
+
+	continuationRec := requestWithSession(t, server, member, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
+	if continuationRec.Code != http.StatusOK || !strings.Contains(continuationRec.Body.String(), "continuation-final") {
+		t.Fatalf("continuation status = %d: %s", continuationRec.Code, continuationRec.Body.String())
+	}
+
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	outsider := loginForTest(t, server, "outside-continuation@example.com", "CorrectHorseBatteryStaple!")
+	forbidden := requestWithSession(t, server, outsider, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("outsider continuation status = %d, want %d: %s", forbidden.Code, http.StatusForbidden, forbidden.Body.String())
+	}
+}
+
 func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
@@ -840,14 +917,22 @@ func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
 	}
 }
 
-func TestExecutionRoutesRequireAdminUntilMembershipAuthorization(t *testing.T) {
+func TestExecutionRoutesAuthorizeActiveOrganizationMembers(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@execution.example","accountId":"acct-alpha","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	piUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@execution.example","accountId":"acct-alpha","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(piUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
 	pi := loginForTest(t, server, "pi@execution.example", "CorrectHorseBatteryStaple!")
 	rec := requestWithSession(t, server, pi, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "admin_required") {
-		t.Fatalf("status = %d body=%s, want admin_required", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("member status = %d body=%s, want created", rec.Code, rec.Body.String())
+	}
+
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"pi","password":"CorrectHorseBatteryStaple!"}`)
+	outsider := loginForTest(t, server, "outsider@execution.example", "CorrectHorseBatteryStaple!")
+	forbidden := requestWithSession(t, server, outsider, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	if forbidden.Code != http.StatusForbidden || !strings.Contains(forbidden.Body.String(), "organization_membership_required") {
+		t.Fatalf("outsider status = %d body=%s, want organization_membership_required", forbidden.Code, forbidden.Body.String())
 	}
 }
 

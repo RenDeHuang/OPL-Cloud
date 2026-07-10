@@ -94,12 +94,30 @@ type ExecuteInput struct {
 }
 
 type ExecutionResult struct {
-	RequestID      string `json:"requestId"`
-	ApprovalID     string `json:"approvalId"`
-	JobID          string `json:"jobId"`
-	ReceiptID      string `json:"receiptId"`
-	ContinuationID string `json:"continuationId"`
-	Status         string `json:"status"`
+	RequestID      string   `json:"requestId"`
+	ApprovalID     string   `json:"approvalId"`
+	JobID          string   `json:"jobId"`
+	ReceiptID      string   `json:"receiptId"`
+	ContinuationID string   `json:"continuationId"`
+	Status         string   `json:"status"`
+	Attempt        int      `json:"attempt"`
+	ArtifactIDs    []string `json:"artifactIds,omitempty"`
+	ReviewIDs      []string `json:"reviewIds,omitempty"`
+	ErrorCode      string   `json:"errorCode,omitempty"`
+}
+
+type ExecutionSyncInput struct {
+	OrganizationID string
+	WorkspaceID    string
+	ProjectID      string
+	TaskID         string
+	RequestID      string
+	ApprovalID     string
+	JobID          string
+	ReceiptID      string
+	ContinuationID string
+	Status         string
+	EnvironmentRef string
 }
 
 func NewService(ledger clients.LedgerClient, fabric clients.FabricClient) *Service {
@@ -140,6 +158,141 @@ func (s *Service) Execute(ctx context.Context, input ExecuteInput, idempotencyKe
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: job.JobID, ReceiptID: receipt.ReceiptID, ContinuationID: receipt.ContinuationID, Status: job.Status}, nil
+}
+
+func (s *Service) SyncExecution(ctx context.Context, input ExecutionSyncInput) (ExecutionResult, error) {
+	if input.RequestID == "" || input.JobID == "" || input.ReceiptID == "" {
+		return ExecutionResult{}, fmt.Errorf("execution_identity_required")
+	}
+	job, err := s.fabric.GetJob(ctx, input.JobID)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	result := ExecutionResult{RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ReceiptID: input.ReceiptID, ContinuationID: input.ContinuationID, Status: job.Status, Attempt: job.Attempt, ArtifactIDs: job.ArtifactIDs, ReviewIDs: job.ReviewIDs, ErrorCode: job.ErrorCode}
+	if job.Status == "queued" || job.Status == "running" {
+		return result, nil
+	}
+	if input.OrganizationID == "" || input.WorkspaceID == "" || input.ProjectID == "" || input.TaskID == "" {
+		return ExecutionResult{}, fmt.Errorf("execution_identity_required")
+	}
+	status := job.Status
+	reviewerChecks := map[string]any{}
+	if job.Status == "succeeded" {
+		status, reviewerChecks, err = s.verifyExecutionEvidence(ctx, input, job)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+	} else if job.Status != "failed" && job.Status != "timed_out" && job.Status != "cancelled" {
+		return ExecutionResult{}, fmt.Errorf("job_status_invalid")
+	}
+	if input.Status == status {
+		current, err := s.ledger.Receipt(ctx, input.ReceiptID)
+		if err != nil {
+			return ExecutionResult{}, err
+		}
+		if current.Status == status && stringFromAny(current.Execution["jobStatus"]) == job.Status && intFromAny(current.Execution["attempt"]) == job.Attempt {
+			result.Status = status
+			return result, nil
+		}
+	}
+	continuation := map[string]any(nil)
+	if status == "completed" {
+		continuation = map[string]any{"taskVersion": 1, "environmentRef": input.EnvironmentRef, "artifactIds": job.ArtifactIDs, "reviewIds": job.ReviewIDs}
+	}
+	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{
+		Type: "execution.receipt.v1", Status: status, Surface: "workspace",
+		OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID,
+		RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID,
+		ArtifactID: firstString(job.ArtifactIDs), ReviewID: firstString(job.ReviewIDs),
+		Execution:  map[string]any{"jobStatus": job.Status, "attempt": job.Attempt, "errorCode": job.ErrorCode},
+		OutputRefs: map[string]any{"artifactIds": job.ArtifactIDs, "reviewIds": job.ReviewIDs}, ReviewerChecks: reviewerChecks,
+		Continuation: continuation, SupersedesReceiptID: input.ReceiptID,
+	}, fmt.Sprintf("execution-final:%s:%s:%d", input.RequestID, job.Status, job.Attempt))
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	result.Status = status
+	result.ReceiptID = receipt.ReceiptID
+	if status == "completed" {
+		result.ContinuationID = receipt.ContinuationID
+	}
+	return result, nil
+}
+
+func (s *Service) verifyExecutionEvidence(ctx context.Context, input ExecutionSyncInput, job clients.Job) (string, map[string]any, error) {
+	if len(job.ArtifactIDs) == 0 || len(job.ReviewIDs) == 0 {
+		return "", nil, fmt.Errorf("execution_evidence_required")
+	}
+	digests := make([]string, 0, len(job.ArtifactIDs))
+	for _, artifactID := range job.ArtifactIDs {
+		artifact, err := s.ledger.Artifact(ctx, artifactID)
+		if err != nil {
+			return "", nil, err
+		}
+		if artifact.ArtifactID != artifactID || artifact.JobID != job.JobID || artifact.Digest == "" || evidenceIdentityMismatch(input, artifact.OrganizationID, artifact.WorkspaceID, artifact.ProjectID, artifact.TaskID) {
+			return "", nil, fmt.Errorf("artifact_evidence_mismatch")
+		}
+		digests = append(digests, artifact.Digest)
+	}
+	decisions := map[string]any{}
+	reviewedDigests := map[string]bool{}
+	blocked := false
+	for _, reviewID := range job.ReviewIDs {
+		review, err := s.ledger.Review(ctx, reviewID)
+		if err != nil {
+			return "", nil, err
+		}
+		if review.ReviewID != reviewID || review.JobID != job.JobID || evidenceIdentityMismatch(input, review.OrganizationID, review.WorkspaceID, review.ProjectID, review.TaskID) || (review.Decision != "accepted" && review.Decision != "rejected") {
+			return "", nil, fmt.Errorf("review_evidence_mismatch")
+		}
+		decisions[reviewID] = review.Decision
+		blocked = blocked || review.Decision == "rejected"
+		for _, digest := range review.InputArtifactDigests {
+			reviewedDigests[digest] = true
+		}
+	}
+	for _, digest := range digests {
+		if !reviewedDigests[digest] {
+			return "", nil, fmt.Errorf("review_artifact_mismatch")
+		}
+	}
+	if blocked {
+		return "review_blocked", map[string]any{"decisions": decisions}, nil
+	}
+	return "completed", map[string]any{"decisions": decisions}, nil
+}
+
+func evidenceIdentityMismatch(input ExecutionSyncInput, organizationID, workspaceID, projectID, taskID string) bool {
+	return (organizationID != "" && organizationID != input.OrganizationID) || (workspaceID != "" && workspaceID != input.WorkspaceID) || (projectID != "" && projectID != input.ProjectID) || (taskID != "" && taskID != input.TaskID)
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func stringFromAny(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func intFromAny(value any) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case float64:
+		return int(number)
+	default:
+		return 0
+	}
+}
+
+func (s *Service) Continuation(ctx context.Context, receiptID string) (map[string]any, error) {
+	return s.ledger.Continuation(ctx, receiptID)
 }
 
 func (s *Service) ManualTopUp(ctx context.Context, input ManualTopUpInput, idempotencyKey string) (clients.ManualTopUpResult, error) {

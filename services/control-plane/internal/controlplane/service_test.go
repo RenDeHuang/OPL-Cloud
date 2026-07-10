@@ -70,6 +70,68 @@ func TestExecuteApprovedRequestCreatesJobAndReceipt(t *testing.T) {
 	}
 }
 
+func TestSyncExecutionFinalizesAcceptedEvidence(t *testing.T) {
+	calls := []string{}
+	ledger := &fakeLedgerClient{calls: &calls, artifacts: map[string]clients.Artifact{"artifact-alpha": {ArtifactID: "artifact-alpha", JobID: "job-alpha", Digest: "sha256:alpha"}}, reviews: map[string]clients.Review{"review-alpha": {ReviewID: "review-alpha", JobID: "job-alpha", Decision: "accepted", InputArtifactDigests: []string{"sha256:alpha"}}}}
+	fabric := &fakeFabricClient{calls: &calls, job: clients.Job{JobID: "job-alpha", Status: "succeeded", Attempt: 1, ArtifactIDs: []string{"artifact-alpha"}, ReviewIDs: []string{"review-alpha"}}}
+	result, err := NewService(ledger, fabric).SyncExecution(context.Background(), ExecutionSyncInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", JobID: "job-alpha", ReceiptID: "receipt-running", EnvironmentRef: "environment-alpha"})
+	if err != nil {
+		t.Fatalf("sync execution: %v", err)
+	}
+	if result.Status != "completed" || result.ReceiptID != "receipt-alpha" || result.ContinuationID != "continuation-alpha" || len(result.ArtifactIDs) != 1 || len(result.ReviewIDs) != 1 {
+		t.Fatalf("unexpected sync result: %#v", result)
+	}
+	final := ledger.receipts[len(ledger.receipts)-1]
+	if final.Status != "completed" || final.SupersedesReceiptID != "receipt-running" || len(final.Continuation) == 0 {
+		t.Fatalf("unexpected final receipt: %#v", final)
+	}
+	receiptCount := len(ledger.receipts)
+	replayed, err := NewService(ledger, fabric).SyncExecution(context.Background(), ExecutionSyncInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", JobID: "job-alpha", ReceiptID: result.ReceiptID, ContinuationID: result.ContinuationID, Status: result.Status, EnvironmentRef: "environment-alpha"})
+	if err != nil || replayed.ReceiptID != result.ReceiptID || replayed.ContinuationID != result.ContinuationID || len(ledger.receipts) != receiptCount {
+		t.Fatalf("idempotent sync = %#v receipts=%d err=%v", replayed, len(ledger.receipts), err)
+	}
+	fabric.job.Attempt = 2
+	if _, err := NewService(ledger, fabric).SyncExecution(context.Background(), ExecutionSyncInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", JobID: "job-alpha", ReceiptID: result.ReceiptID, ContinuationID: result.ContinuationID, Status: result.Status, EnvironmentRef: "environment-alpha"}); err != nil || len(ledger.receipts) != receiptCount+1 {
+		t.Fatalf("new attempt receipts=%d err=%v", len(ledger.receipts), err)
+	}
+}
+
+func TestSyncExecutionBlocksRejectedReview(t *testing.T) {
+	calls := []string{}
+	ledger := &fakeLedgerClient{calls: &calls, artifacts: map[string]clients.Artifact{"artifact-alpha": {ArtifactID: "artifact-alpha", JobID: "job-alpha", Digest: "sha256:alpha"}}, reviews: map[string]clients.Review{"review-alpha": {ReviewID: "review-alpha", JobID: "job-alpha", Decision: "rejected", InputArtifactDigests: []string{"sha256:alpha"}}}}
+	fabric := &fakeFabricClient{calls: &calls, job: clients.Job{JobID: "job-alpha", Status: "succeeded", ArtifactIDs: []string{"artifact-alpha"}, ReviewIDs: []string{"review-alpha"}}}
+	result, err := NewService(ledger, fabric).SyncExecution(context.Background(), ExecutionSyncInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", JobID: "job-alpha", ReceiptID: "receipt-running"})
+	if err != nil || result.Status != "review_blocked" || result.ContinuationID != "" {
+		t.Fatalf("unexpected blocked result: %#v, %v", result, err)
+	}
+	final := ledger.receipts[len(ledger.receipts)-1]
+	if final.Status != "review_blocked" || len(final.Continuation) != 0 {
+		t.Fatalf("unexpected blocked receipt: %#v", final)
+	}
+}
+
+func TestSyncExecutionProjectsTerminalAndRunningJobs(t *testing.T) {
+	for _, status := range []string{"failed", "timed_out", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			calls := []string{}
+			ledger := &fakeLedgerClient{calls: &calls}
+			fabric := &fakeFabricClient{calls: &calls, job: clients.Job{JobID: "job-alpha", Status: status, Attempt: 2, ErrorCode: "runner_failed"}}
+			result, err := NewService(ledger, fabric).SyncExecution(context.Background(), ExecutionSyncInput{OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha", TaskID: "task-alpha", RequestID: "request-alpha", ApprovalID: "approval-alpha", JobID: "job-alpha", ReceiptID: "receipt-running"})
+			if err != nil || result.Status != status || len(ledger.receipts) != 1 || ledger.receipts[0].Status != status {
+				t.Fatalf("result = %#v receipts=%#v err=%v", result, ledger.receipts, err)
+			}
+		})
+	}
+
+	calls := []string{}
+	ledger := &fakeLedgerClient{calls: &calls}
+	fabric := &fakeFabricClient{calls: &calls, job: clients.Job{JobID: "job-alpha", Status: "running", Attempt: 1}}
+	result, err := NewService(ledger, fabric).SyncExecution(context.Background(), ExecutionSyncInput{RequestID: "request-alpha", JobID: "job-alpha", ReceiptID: "receipt-running"})
+	if err != nil || result.Status != "running" || len(ledger.receipts) != 0 {
+		t.Fatalf("running result = %#v receipts=%#v err=%v", result, ledger.receipts, err)
+	}
+}
+
 func TestCreateComputeAllocationHoldsBeforeFabric(t *testing.T) {
 	calls := []string{}
 	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
@@ -175,7 +237,10 @@ func TestSyncStorageVolumeReleasesHoldWhenProviderDeleted(t *testing.T) {
 }
 
 type fakeLedgerClient struct {
-	calls *[]string
+	calls     *[]string
+	artifacts map[string]clients.Artifact
+	reviews   map[string]clients.Review
+	receipts  []clients.ReceiptInput
 }
 
 func (f *fakeLedgerClient) ManualTopUp(ctx context.Context, input clients.ManualTopUpInput, idempotencyKey string) (clients.ManualTopUpResult, error) {
@@ -195,7 +260,32 @@ func (f *fakeLedgerClient) ReleaseHold(ctx context.Context, input clients.HoldRe
 
 func (f *fakeLedgerClient) RecordReceipt(ctx context.Context, input clients.ReceiptInput, idempotencyKey string) (clients.Receipt, error) {
 	*f.calls = append(*f.calls, "ledger.receipt")
+	f.receipts = append(f.receipts, input)
 	return clients.Receipt{ReceiptID: "receipt-alpha", WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: "continuation-alpha"}, nil
+}
+
+func (f *fakeLedgerClient) Receipt(_ context.Context, receiptID string) (clients.Receipt, error) {
+	*f.calls = append(*f.calls, "ledger.receipt-get")
+	if len(f.receipts) == 0 {
+		return clients.Receipt{ReceiptID: receiptID}, nil
+	}
+	input := f.receipts[len(f.receipts)-1]
+	return clients.Receipt{ReceiptID: receiptID, Status: input.Status, Execution: input.Execution, ContinuationID: "continuation-alpha"}, nil
+}
+
+func (f *fakeLedgerClient) Review(_ context.Context, reviewID string) (clients.Review, error) {
+	*f.calls = append(*f.calls, "ledger.review")
+	return f.reviews[reviewID], nil
+}
+
+func (f *fakeLedgerClient) Artifact(_ context.Context, artifactID string) (clients.Artifact, error) {
+	*f.calls = append(*f.calls, "ledger.artifact")
+	return f.artifacts[artifactID], nil
+}
+
+func (f *fakeLedgerClient) Continuation(_ context.Context, receiptID string) (map[string]any, error) {
+	*f.calls = append(*f.calls, "ledger.continuation")
+	return map[string]any{"receiptId": receiptID, "continuationId": "continuation-alpha"}, nil
 }
 
 func (f *fakeLedgerClient) SettleResource(ctx context.Context, input clients.ResourceSettlementInput, idempotencyKey string) (clients.ResourceSettlementResult, error) {
@@ -235,6 +325,7 @@ func (f *fakeLedgerClient) ListResourceSettlements(ctx context.Context, accountI
 
 type fakeFabricClient struct {
 	calls *[]string
+	job   clients.Job
 }
 
 func (f *fakeFabricClient) Catalog(ctx context.Context) (clients.FabricCatalog, error) {
@@ -314,6 +405,9 @@ func (f *fakeFabricClient) CreateJob(ctx context.Context, input clients.JobInput
 
 func (f *fakeFabricClient) GetJob(ctx context.Context, jobID string) (clients.Job, error) {
 	*f.calls = append(*f.calls, "fabric.job-get")
+	if f.job.JobID != "" {
+		return f.job, nil
+	}
 	return clients.Job{JobID: jobID, Status: "queued"}, nil
 }
 
