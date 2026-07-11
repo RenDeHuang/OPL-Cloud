@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,108 @@ import (
 
 func TestMemoryReceiptRetentionContract(t *testing.T) {
 	testReceiptRetentionContract(t, NewMemoryStore())
+}
+
+func TestMemoryReceiptCreateReplayUsesCurrentCanonicalReceipt(t *testing.T) {
+	store := NewMemoryStore()
+	input := ReceiptInput{
+		Type: "execution.receipt.v1", Status: "completed", Surface: "workspace", OrganizationID: "org-create-replay", WorkspaceID: "workspace-create-replay", ProjectID: "project-create-replay", TaskID: "task-create-replay", JobID: "job-create-replay",
+		Actor: map[string]any{"email": "person@example.test"}, Owner: map[string]any{"name": "Person"}, Continuation: map[string]any{"freeForm": "personal note"},
+		IdempotencyKey: "receipt-create-replay",
+	}
+	created, err := store.RecordReceipt(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: created.ReceiptID, Reason: "verified deletion", IdempotencyKey: "create-replay-redact"}); err != nil {
+		t.Fatal(err)
+	}
+	retainUntil := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
+	if _, err := store.UpdateReceiptRetention(context.Background(), ReceiptRetentionInput{ReceiptID: created.ReceiptID, RetainUntil: retainUntil, IdempotencyKey: "create-replay-retention"}); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := store.RecordReceipt(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.Replayed || replayed.Actor != nil || replayed.Owner != nil || replayed.Continuation != nil || !replayed.Retention.RetainUntil.Equal(retainUntil) || replayed.Retention.PrivacyRedaction == nil {
+		t.Fatalf("create replay = %#v", replayed)
+	}
+}
+
+func TestMemoryReceiptResultsAreMutationIsolated(t *testing.T) {
+	store := NewMemoryStore()
+	created, err := store.RecordReceipt(context.Background(), ReceiptInput{
+		Type: "execution.receipt.v1", Status: "completed", Surface: "workspace", WorkspaceID: "workspace-isolation",
+		Actor: map[string]any{"email": "original@example.test"}, Environment: map[string]any{"nested": map[string]any{"digest": "sha256:original"}}, IdempotencyKey: "receipt-isolation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created.Actor["email"] = "mutated@example.test"
+	created.Environment["nested"].(map[string]any)["digest"] = "sha256:mutated"
+	stored, err := store.Receipt(context.Background(), created.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Actor["email"] != "original@example.test" || stored.Environment["nested"].(map[string]any)["digest"] != "sha256:original" {
+		t.Fatalf("caller mutated canonical receipt = %#v", stored)
+	}
+	stored.Actor["email"] = "read-mutated@example.test"
+	again, err := store.Receipt(context.Background(), created.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Actor["email"] != "original@example.test" {
+		t.Fatalf("read result mutated canonical receipt = %#v", again.Actor)
+	}
+
+	redacted, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: created.ReceiptID, Reason: "verified deletion", IdempotencyKey: "isolation-redact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-start
+		for i := 0; i < 1000; i++ {
+			redacted.Retention.PrivacyRedaction.Reason = "caller mutation"
+		}
+	}()
+	close(start)
+	for i := 0; i < 1000; i++ {
+		replayed, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: created.ReceiptID, Reason: "verified deletion", IdempotencyKey: "isolation-redact"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replayed.Retention.PrivacyRedaction.Reason != "verified deletion" {
+			t.Fatalf("idempotency result aliased caller mutation = %#v", replayed.Retention.PrivacyRedaction)
+		}
+	}
+	<-done
+	canonical := canonicalReceipt(t, store, created.ReceiptID)
+	if canonical.Retention.PrivacyRedaction.Reason != "verified deletion" {
+		t.Fatalf("privacy evidence aliased caller mutation = %#v", canonical.Retention.PrivacyRedaction)
+	}
+}
+
+func TestReceiptRetentionJSONOmitsUnsetDeadline(t *testing.T) {
+	empty, err := json.Marshal(ReceiptRetention{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(empty), "retainUntil") {
+		t.Fatalf("unset retention JSON = %s", empty)
+	}
+	deadline := time.Date(2099, time.January, 2, 3, 4, 5, 0, time.UTC)
+	present, err := json.Marshal(ReceiptRetention{RetainUntil: deadline})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(present), `"retainUntil":"2099-01-02T03:04:05Z"`) {
+		t.Fatalf("set retention JSON = %s", present)
+	}
 }
 
 func TestPostgresReceiptRetentionContract(t *testing.T) {

@@ -186,6 +186,20 @@ type ReceiptRetention struct {
 	PrivacyRedaction *PrivacyRedactionEvidence `json:"privacyRedaction,omitempty"`
 }
 
+func (retention ReceiptRetention) MarshalJSON() ([]byte, error) {
+	type retentionJSON struct {
+		RetainUntil      *time.Time                `json:"retainUntil,omitempty"`
+		LegalHold        bool                      `json:"legalHold"`
+		PrivacyRedaction *PrivacyRedactionEvidence `json:"privacyRedaction,omitempty"`
+	}
+	var retainUntil *time.Time
+	if !retention.RetainUntil.IsZero() {
+		value := retention.RetainUntil
+		retainUntil = &value
+	}
+	return json.Marshal(retentionJSON{RetainUntil: retainUntil, LegalHold: retention.LegalHold, PrivacyRedaction: retention.PrivacyRedaction})
+}
+
 type PrivacyRedactionEvidence struct {
 	AppliedAt time.Time `json:"appliedAt"`
 	Reason    string    `json:"reason"`
