@@ -289,6 +289,7 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
       csrf: options.headers?.["x-opl-csrf"] || "",
       operatorToken: options.headers?.["x-opl-operator-token"] || "",
       idempotencyKey: options.headers?.["Idempotency-Key"] || "",
+      contentType: options.headers?.["content-type"] || options.headers?.["Content-Type"] || "",
       body: capturedBody(options.body)
     });
     let responseKey = key;
@@ -1098,6 +1099,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     path: "/projects/production-verifier/opl-transfer-prod-run.txt",
     workspace: "/projects"
   });
+  assert.ok(requests.filter((request) => request.key.includes("/chunks/")).every((request) => request.contentType === "application/octet-stream"));
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments#2").body.storageId, chain.storage.id);
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces#2").body, {
     accountId: "pi-prod",

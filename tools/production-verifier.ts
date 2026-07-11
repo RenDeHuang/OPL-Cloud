@@ -361,7 +361,7 @@ async function verifyWorkspaceContentTransfer({ fetchImpl, checks, origin, works
     const chunk = chunks[index];
     const response = await fetchImpl(endpoint(origin, `/api/workspaces/${encodeURIComponent(workspace.id)}/transfers/${encodeURIComponent(transfer.transferId)}/chunks/${index}`), {
       method: "PUT",
-      headers: { ...authHeaderValues(auth), "x-chunk-sha256": createHash("sha256").update(chunk).digest("hex") },
+      headers: { ...authHeaderValues(auth), "content-type": "application/octet-stream", "x-chunk-sha256": createHash("sha256").update(chunk).digest("hex") },
       body: chunk
     });
     const payload = await readResponse(response);
