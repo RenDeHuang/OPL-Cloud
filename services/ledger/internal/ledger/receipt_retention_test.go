@@ -38,6 +38,24 @@ func testReceiptRetentionContract(t *testing.T, store Store) {
 	if !first.Retention.RetainUntil.Equal(firstUntil) || first.Retention.LegalHold {
 		t.Fatalf("first retention = %#v", first.Retention)
 	}
+	replayedRetention, err := store.UpdateReceiptRetention(ctx, ReceiptRetentionInput{
+		ReceiptID: receipt.ReceiptID, RetainUntil: firstUntil, IdempotencyKey: "retention-first",
+	})
+	if err != nil {
+		t.Fatalf("replay receipt retention: %v", err)
+	}
+	wantRetentionReplay := first
+	wantRetentionReplay.Replayed = true
+	replayedRetentionJSON, _ := json.Marshal(replayedRetention)
+	wantRetentionReplayJSON, _ := json.Marshal(wantRetentionReplay)
+	if string(replayedRetentionJSON) != string(wantRetentionReplayJSON) {
+		t.Fatalf("retention replay = %#v, want %#v", replayedRetention, wantRetentionReplay)
+	}
+	if _, err := store.UpdateReceiptRetention(ctx, ReceiptRetentionInput{
+		ReceiptID: receipt.ReceiptID, RetainUntil: firstUntil.Add(time.Hour), IdempotencyKey: "retention-first",
+	}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("changed retention replay error = %v, want %v", err, ErrIdempotencyConflict)
+	}
 	if _, err := store.UpdateReceiptRetention(ctx, ReceiptRetentionInput{
 		ReceiptID: receipt.ReceiptID, RetainUntil: firstUntil.Add(-time.Hour), IdempotencyKey: "retention-shorter",
 	}); !errors.Is(err, ErrReceiptRetentionShortening) {
@@ -121,35 +139,39 @@ func TestMemoryReceiptRetentionConcurrentOperationsSerialize(t *testing.T) {
 	if _, err := store.UpdateReceiptRetention(context.Background(), ReceiptRetentionInput{ReceiptID: receipt.ReceiptID, RetainUntil: past, IdempotencyKey: "memory-race-past"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: receipt.ReceiptID, Reason: "verified deletion", IdempotencyKey: "memory-race-redact"}); err != nil {
+	redacted, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: receipt.ReceiptID, Reason: "verified deletion", IdempotencyKey: "memory-race-redact"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	longest := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Microsecond)
-	operations := []func() error{
-		func() error {
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "shorter extension", run: func() error {
 			_, err := store.UpdateReceiptRetention(context.Background(), ReceiptRetentionInput{ReceiptID: receipt.ReceiptID, RetainUntil: longest.Add(-time.Hour), IdempotencyKey: "memory-race-short"})
 			return err
-		},
-		func() error {
+		}},
+		{name: "maximum extension and hold", run: func() error {
 			_, err := store.UpdateReceiptRetention(context.Background(), ReceiptRetentionInput{ReceiptID: receipt.ReceiptID, RetainUntil: longest, LegalHold: true, IdempotencyKey: "memory-race-hold"})
 			return err
-		},
-		func() error {
-			_, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: receipt.ReceiptID, Reason: "verified deletion", IdempotencyKey: "memory-race-redact-again"})
-			return err
-		},
+		}},
 	}
 	store.mu.Lock()
 	started := make(chan struct{}, len(operations))
-	errs := make(chan error, len(operations))
+	type outcome struct {
+		name string
+		err  error
+	}
+	outcomes := make(chan outcome, len(operations))
 	var workers sync.WaitGroup
 	for _, operation := range operations {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			started <- struct{}{}
-			errs <- operation()
+			outcomes <- outcome{name: operation.name, err: operation.run()}
 		}()
 	}
 	for range operations {
@@ -157,17 +179,27 @@ func TestMemoryReceiptRetentionConcurrentOperationsSerialize(t *testing.T) {
 	}
 	store.mu.Unlock()
 	workers.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil && !errors.Is(err, ErrReceiptRetentionShortening) {
-			t.Fatalf("concurrent operation: %v", err)
+	close(outcomes)
+	for outcome := range outcomes {
+		switch outcome.name {
+		case "shorter extension":
+			if outcome.err != nil && !errors.Is(outcome.err, ErrReceiptRetentionShortening) {
+				t.Fatalf("shorter extension error = %v", outcome.err)
+			}
+		case "maximum extension and hold":
+			if outcome.err != nil {
+				t.Fatalf("maximum extension and hold error = %v", outcome.err)
+			}
 		}
+	}
+	if _, err := store.PrivacyDeleteReceipt(context.Background(), ReceiptPrivacyDeleteInput{ReceiptID: receipt.ReceiptID, Reason: "verified deletion", IdempotencyKey: "memory-race-redact-again"}); !errors.Is(err, ErrReceiptLegalHold) {
+		t.Fatalf("privacy delete after concurrent hold error = %v, want %v", err, ErrReceiptLegalHold)
 	}
 	got, err := store.Receipt(context.Background(), receipt.ReceiptID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Retention.LegalHold || !got.Retention.RetainUntil.Equal(longest) || got.Retention.PrivacyRedaction == nil || got.Actor != nil || got.Owner != nil || got.Continuation != nil {
+	if !got.Retention.LegalHold || !got.Retention.RetainUntil.Equal(longest) || !reflect.DeepEqual(got.Retention.PrivacyRedaction, redacted.Retention.PrivacyRedaction) || got.Actor != nil || got.Owner != nil || got.Continuation != nil {
 		t.Fatalf("concurrent receipt = %#v", got)
 	}
 }
