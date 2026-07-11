@@ -398,9 +398,13 @@ func TestTencentProviderSnapshotsAndRestoresStorageWithoutMutatingSource(t *test
 	t.Setenv("OPL_WORKSPACE_STORAGE_CLASS", "cbs")
 	provider := NewTencentProvider()
 	var manifests [][]byte
+	var waits [][]string
 	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
 		if len(args) >= 2 && args[0] == "apply" {
 			manifests = append(manifests, append([]byte(nil), stdin...))
+		}
+		if len(args) >= 2 && args[0] == "wait" {
+			waits = append(waits, append([]string(nil), args...))
 		}
 		return nil, nil
 	}
@@ -421,6 +425,9 @@ func TestTencentProviderSnapshotsAndRestoresStorageWithoutMutatingSource(t *test
 	}
 	if bytes.Contains(manifests[1], []byte("opl-storage-source-data")) {
 		t.Fatalf("restore manifest must reference snapshot, not source pvc: %s", manifests[1])
+	}
+	if snapshot.Status != "ready" || restored.Status != "ready" || len(waits) != 2 {
+		t.Fatalf("snapshot=%#v restored=%#v waits=%#v", snapshot, restored, waits)
 	}
 }
 
