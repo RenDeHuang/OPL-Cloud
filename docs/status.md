@@ -18,8 +18,10 @@ Supported:
 - Explicit storage destruction.
 - Seven-day compute and storage holds.
 - Holds, hold releases, resource settlements, wallet transactions, manual top-up audit, billing ledger, evidence receipts, and reconciliation records.
+- PostgreSQL-backed Organizations and Memberships with fixed `owner`, `admin`, and `member` roles and server-side tenant isolation for customer APIs.
 - Standalone Go Fabric and Ledger services with PostgreSQL persistence and typed Control Plane clients.
 - General execution receipts, Artifact Manifests, Review Results, and receipt continuation references.
+- Monotonic receipt retention, legal holds, privacy redaction evidence, and idempotent memory/PostgreSQL retention operations.
 - Canonical project/task identities, cursor-based Workspace metadata sync, persisted conflict records, and explicit conflict resolution.
 - Resumable, chunked Workspace content upload and download with per-chunk and final digest verification.
 - Workspace backup, export, restore, clone, and backup destruction APIs backed by Fabric snapshot operations.
@@ -45,7 +47,7 @@ The Workspace recovery contract and APIs are implemented, but production snapsho
 - GPU Workspace package.
 - Production Workspace snapshot support and a real backup/restore disaster drill.
 - OPL Gateway identity, key projection, quota, usage, and Ledger settlement integration.
-- Ledger reviewer policy, human-readable receipt detail/export, retention, and privacy deletion.
+- Human-readable receipt pages and export.
 - Connector, environment, and agent marketplaces beyond approved catalog shells.
 
 ## Repository Hygiene Rules
