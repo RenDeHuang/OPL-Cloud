@@ -2,11 +2,14 @@ package fabric
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -313,6 +316,47 @@ func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
 	}
 	if string(uploaded) != "verified" || len(calls) != 5 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || calls[2][0] != "exec" || calls[2][4] != "dd" || !slices.Equal(calls[3][:4], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv"}) || !slices.Equal(calls[4], []string{"exec", "deployment/opl-workspace-alpha", "--", "cat", "/projects/inputs/paper.txt"}) {
 		t.Fatalf("calls=%#v uploaded=%q", calls, uploaded)
+	}
+}
+
+func TestTencentProviderReportsWorkspaceContentMismatchWithoutBody(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] == "get" {
+			return mustJSON(map[string]any{"items": []any{map[string]any{
+				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
+			}}}), nil
+		}
+		if len(args) > 3 && args[3] == "cat" {
+			return []byte("different-secret-body"), nil
+		}
+		return nil, nil
+	}
+	body := []byte("expected-secret-body")
+	err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", body)
+	expectedDigest := fmt.Sprintf("%x", sha256.Sum256(body))
+	actualDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("different-secret-body")))
+	if err == nil || !strings.Contains(err.Error(), expectedDigest) || !strings.Contains(err.Error(), actualDigest) || strings.Contains(err.Error(), string(body)) {
+		t.Fatalf("safe mismatch diagnostics = %v", err)
+	}
+}
+
+func TestTencentProviderReportsWorkspaceContentReadbackCommandFailure(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] == "get" {
+			return mustJSON(map[string]any{"items": []any{map[string]any{
+				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
+			}}}), nil
+		}
+		if len(args) > 3 && args[3] == "cat" {
+			return nil, fmt.Errorf("exit status 1: forbidden")
+		}
+		return nil, nil
+	}
+	err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", []byte("expected"))
+	if err == nil || !strings.Contains(err.Error(), "workspace_content_readback_command_failed") || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("readback diagnostics = %v", err)
 	}
 }
 

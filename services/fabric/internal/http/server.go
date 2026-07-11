@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -266,6 +267,9 @@ func writeTransferResult(w http.ResponseWriter, status int, body fabric.Transfer
 	case errors.Is(err, fabric.ErrTransferChunkConflict), errors.Is(err, fabric.ErrTransferIncomplete), errors.Is(err, fabric.ErrTransferDigestMismatch):
 		writeError(w, http.StatusConflict, err.Error())
 	case err != nil:
+		if strings.HasPrefix(err.Error(), "workspace_content_") {
+			log.Printf("workspace transfer failed: %v", err)
+		}
 		writeError(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		writeJSON(w, status, body)

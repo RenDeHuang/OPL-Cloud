@@ -461,10 +461,12 @@ test("TKE production diagnostics workflow is read-only and matches the deploymen
   const contract = await readJson(deploymentContractPath);
   const workflow = await readWorkflow(contract.diagnosticsWorkflow.file);
   assertWorkflowContract(workflow, contract.diagnosticsWorkflow, contract);
+  const serviceLogs = serializedStep(stepsByName(job(workflow, contract.diagnosticsWorkflow.job)).get("Show previous control plane crash logs"));
   const text = JSON.stringify(workflow);
   assert.match(text, /app\.kubernetes\.io\/name=opl-compute-allocation/, "diagnostics must inspect current compute allocation pods");
   assert.match(text, /for component in control-plane ledger fabric/, "diagnostics must inspect all service component logs");
   assert.match(text, /app\.kubernetes\.io\/component=\$component/, "diagnostics must use component-scoped service log selectors");
+  assert.match(serviceLogs, /--all-containers=true --tail=300/, "diagnostics must print current service logs");
   assert.match(text, /information_schema\.columns/, "diagnostics must expose ledger schema shape without row data");
   assert.match(text, /LEDGER_SCHEMA_COLUMNS/, "diagnostics must label redacted ledger schema output");
   assert.match(text, /--all-containers=true --previous --tail=300/, "diagnostics must print previous Workspace crash logs");

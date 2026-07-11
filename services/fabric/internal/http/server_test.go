@@ -5,14 +5,36 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"opl-cloud/services/fabric/internal/fabric"
 )
+
+func TestTransferServiceFailureIsLogged(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	recorder := httptest.NewRecorder()
+	writeTransferResult(recorder, http.StatusOK, fabric.Transfer{}, errors.New("workspace_content_digest_mismatch expected_sha256=abc actual_sha256=def"))
+
+	if !strings.Contains(output.String(), "workspace_content_digest_mismatch expected_sha256=abc actual_sha256=def") {
+		t.Fatalf("transfer failure log = %q", output.String())
+	}
+	output.Reset()
+	writeTransferResult(httptest.NewRecorder(), http.StatusOK, fabric.Transfer{}, errors.New("database failed with private value"))
+	if output.Len() != 0 {
+		t.Fatalf("non-content failure log = %q", output.String())
+	}
+}
 
 func TestContentTransferHTTPResumesAndDownloads(t *testing.T) {
 	server := NewServer(fabric.NewService(testProvider{}))

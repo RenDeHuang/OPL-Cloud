@@ -435,10 +435,10 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 	}
 	published, err := p.kubectl(ctx, []string{"exec", deployment, "--", "cat", target}, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("workspace_content_readback_command_failed: %w", err)
 	}
 	if !bytes.Equal(published, body) {
-		return fmt.Errorf("workspace_content_verification_failed")
+		return fmt.Errorf("workspace_content_digest_mismatch expected_sha256=%s actual_sha256=%x expected_size=%d actual_size=%d", digest, sha256.Sum256(published), len(body), len(published))
 	}
 	return nil
 }
