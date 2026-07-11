@@ -158,6 +158,35 @@ func TestUnknownCustomerResourceMutationsNeverReachFabric(t *testing.T) {
 	}
 }
 
+func TestReconciliationBlockedCustomerMutationsDoNotLeakGlobalProjection(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{
+		"id": "global", "status": "mismatch",
+		"guard":   map[string]any{"status": "blocked", "reason": "private-operator-reason", "blockNewWorkspaces": true},
+		"message": map[string]any{"author": "operator-secret", "text": "cross-tenant-private-report"},
+	}))
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	for _, tc := range []struct{ path, body string }{
+		{"/api/compute-allocations", `{"packageId":"basic"}`},
+		{"/api/storage-volumes", `{"sizeGb":10}`},
+	} {
+		rec := requestWithSession(t, server, member, http.MethodPost, tc.path, tc.body)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"error":"billing_reconciliation_blocked"`) {
+			t.Fatalf("blocked %s status=%d body=%s", tc.path, rec.Code, rec.Body.String())
+		}
+		for _, secret := range []string{"billingReconciliation", "private-operator-reason", "operator-secret", "cross-tenant-private-report", "messageText", "messageAuthor"} {
+			if strings.Contains(rec.Body.String(), secret) {
+				t.Fatalf("blocked %s leaked %q: %s", tc.path, secret, rec.Body.String())
+			}
+		}
+	}
+}
+
 func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")

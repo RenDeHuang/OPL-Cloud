@@ -29,8 +29,8 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		if !ok {
 			return
 		}
-		if guard, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "billing_reconciliation_blocked", "billingReconciliation": guard})
+		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
+			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
 		key := mutationKey(r, input)
@@ -196,8 +196,8 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		if !ok {
 			return
 		}
-		if guard, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "billing_reconciliation_blocked", "billingReconciliation": guard})
+		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
+			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
 		key := mutationKey(r, input)
