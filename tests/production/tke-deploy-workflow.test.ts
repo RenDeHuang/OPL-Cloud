@@ -473,6 +473,7 @@ test("TKE production diagnostics workflow is read-only and matches the deploymen
   assert.match(workloadStatus, /api-resources --api-group=snapshot\.storage\.k8s\.io/, "diagnostics must inventory the snapshot API");
   assert.match(workloadStatus, /get volumesnapshotclass/, "diagnostics must inventory snapshot classes");
   assert.match(workloadStatus, /-n kube-system get pods/, "diagnostics must inventory cluster storage controllers");
+  assert.match(workloadStatus, /get deployment csi-cbs-controller/, "diagnostics must inventory CBS controller sidecars");
   assert.match(text, /--all-containers=true --previous --tail=300/, "diagnostics must print previous Workspace crash logs");
   assert.doesNotMatch(text, /app\.kubernetes\.io\/name=opl-workspace/, "diagnostics must not use retired workspace pod labels");
 });

@@ -59,6 +59,8 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" get volumesnapshotclass -o wide || true
           kubectl --kubeconfig "$KUBECONFIG" -n kube-system get pods -o wide \
             | awk 'NR == 1 || tolower($0) ~ /(snapshot|cbs|csi)/'
+          kubectl --kubeconfig "$KUBECONFIG" -n kube-system get deployment csi-cbs-controller \
+            -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{" "}{.image}{"\n"}{end}'
 
       - name: Show cluster node capacity
         shell: bash
