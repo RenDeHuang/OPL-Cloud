@@ -44,7 +44,7 @@ PostgreSQL is the production persistence target for Control Plane, Fabric, and L
 
 Commercial identity, wallet, Workspace, billing, support, audit, and receipt data must persist across rollouts when `DATABASE_URL` is configured.
 
-Fabric rejects a production start without `DATABASE_URL`. Ledger does not yet fail closed: its executable falls back to an in-memory store whenever `DATABASE_URL` is absent, including in production. Production deployment and readiness checks must therefore supply and verify Ledger's database configuration; making the Ledger executable reject that configuration error remains a security hardening gap.
+Fabric and Ledger reject a production start without `DATABASE_URL`. Production deployment and readiness checks must supply and verify each service's database configuration.
 
 ## Current Production Constraint
 
