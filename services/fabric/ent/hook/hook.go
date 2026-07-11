@@ -8,6 +8,30 @@ import (
 	"opl-cloud/services/fabric/ent"
 )
 
+// The ContentTransferFunc type is an adapter to allow the use of ordinary
+// function as ContentTransfer mutator.
+type ContentTransferFunc func(context.Context, *ent.ContentTransferMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ContentTransferFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ContentTransferMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ContentTransferMutation", m)
+}
+
+// The ContentTransferChunkFunc type is an adapter to allow the use of ordinary
+// function as ContentTransferChunk mutator.
+type ContentTransferChunkFunc func(context.Context, *ent.ContentTransferChunkMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ContentTransferChunkFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ContentTransferChunkMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ContentTransferChunkMutation", m)
+}
+
 // The FabricOperationFunc type is an adapter to allow the use of ordinary
 // function as FabricOperation mutator.
 type FabricOperationFunc func(context.Context, *ent.FabricOperationMutation) (ent.Value, error)

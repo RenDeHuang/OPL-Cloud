@@ -3,6 +3,8 @@
 package ent
 
 import (
+	"opl-cloud/services/fabric/ent/contenttransfer"
+	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/schema"
 	"opl-cloud/services/fabric/ent/workspaceruntimeaccess"
@@ -13,6 +15,66 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	contenttransferFields := schema.ContentTransfer{}.Fields()
+	_ = contenttransferFields
+	// contenttransferDescOrganizationID is the schema descriptor for organization_id field.
+	contenttransferDescOrganizationID := contenttransferFields[1].Descriptor()
+	// contenttransfer.OrganizationIDValidator is a validator for the "organization_id" field. It is called by the builders before save.
+	contenttransfer.OrganizationIDValidator = contenttransferDescOrganizationID.Validators[0].(func(string) error)
+	// contenttransferDescWorkspaceID is the schema descriptor for workspace_id field.
+	contenttransferDescWorkspaceID := contenttransferFields[2].Descriptor()
+	// contenttransfer.WorkspaceIDValidator is a validator for the "workspace_id" field. It is called by the builders before save.
+	contenttransfer.WorkspaceIDValidator = contenttransferDescWorkspaceID.Validators[0].(func(string) error)
+	// contenttransferDescProjectID is the schema descriptor for project_id field.
+	contenttransferDescProjectID := contenttransferFields[3].Descriptor()
+	// contenttransfer.ProjectIDValidator is a validator for the "project_id" field. It is called by the builders before save.
+	contenttransfer.ProjectIDValidator = contenttransferDescProjectID.Validators[0].(func(string) error)
+	// contenttransferDescPath is the schema descriptor for path field.
+	contenttransferDescPath := contenttransferFields[4].Descriptor()
+	// contenttransfer.PathValidator is a validator for the "path" field. It is called by the builders before save.
+	contenttransfer.PathValidator = contenttransferDescPath.Validators[0].(func(string) error)
+	// contenttransferDescDigest is the schema descriptor for digest field.
+	contenttransferDescDigest := contenttransferFields[5].Descriptor()
+	// contenttransfer.DigestValidator is a validator for the "digest" field. It is called by the builders before save.
+	contenttransfer.DigestValidator = contenttransferDescDigest.Validators[0].(func(string) error)
+	// contenttransferDescStatus is the schema descriptor for status field.
+	contenttransferDescStatus := contenttransferFields[9].Descriptor()
+	// contenttransfer.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	contenttransfer.StatusValidator = contenttransferDescStatus.Validators[0].(func(string) error)
+	// contenttransferDescIdempotencyKey is the schema descriptor for idempotency_key field.
+	contenttransferDescIdempotencyKey := contenttransferFields[10].Descriptor()
+	// contenttransfer.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
+	contenttransfer.IdempotencyKeyValidator = contenttransferDescIdempotencyKey.Validators[0].(func(string) error)
+	// contenttransferDescRequestHash is the schema descriptor for request_hash field.
+	contenttransferDescRequestHash := contenttransferFields[11].Descriptor()
+	// contenttransfer.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
+	contenttransfer.RequestHashValidator = contenttransferDescRequestHash.Validators[0].(func(string) error)
+	// contenttransferDescCreatedAt is the schema descriptor for created_at field.
+	contenttransferDescCreatedAt := contenttransferFields[12].Descriptor()
+	// contenttransfer.DefaultCreatedAt holds the default value on creation for the created_at field.
+	contenttransfer.DefaultCreatedAt = contenttransferDescCreatedAt.Default.(func() time.Time)
+	// contenttransferDescID is the schema descriptor for id field.
+	contenttransferDescID := contenttransferFields[0].Descriptor()
+	// contenttransfer.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	contenttransfer.IDValidator = contenttransferDescID.Validators[0].(func(string) error)
+	contenttransferchunkFields := schema.ContentTransferChunk{}.Fields()
+	_ = contenttransferchunkFields
+	// contenttransferchunkDescTransferID is the schema descriptor for transfer_id field.
+	contenttransferchunkDescTransferID := contenttransferchunkFields[1].Descriptor()
+	// contenttransferchunk.TransferIDValidator is a validator for the "transfer_id" field. It is called by the builders before save.
+	contenttransferchunk.TransferIDValidator = contenttransferchunkDescTransferID.Validators[0].(func(string) error)
+	// contenttransferchunkDescDigest is the schema descriptor for digest field.
+	contenttransferchunkDescDigest := contenttransferchunkFields[3].Descriptor()
+	// contenttransferchunk.DigestValidator is a validator for the "digest" field. It is called by the builders before save.
+	contenttransferchunk.DigestValidator = contenttransferchunkDescDigest.Validators[0].(func(string) error)
+	// contenttransferchunkDescCreatedAt is the schema descriptor for created_at field.
+	contenttransferchunkDescCreatedAt := contenttransferchunkFields[5].Descriptor()
+	// contenttransferchunk.DefaultCreatedAt holds the default value on creation for the created_at field.
+	contenttransferchunk.DefaultCreatedAt = contenttransferchunkDescCreatedAt.Default.(func() time.Time)
+	// contenttransferchunkDescID is the schema descriptor for id field.
+	contenttransferchunkDescID := contenttransferchunkFields[0].Descriptor()
+	// contenttransferchunk.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	contenttransferchunk.IDValidator = contenttransferchunkDescID.Validators[0].(func(string) error)
 	fabricoperationFields := schema.FabricOperation{}.Fields()
 	_ = fabricoperationFields
 	// fabricoperationDescOperationID is the schema descriptor for operation_id field.

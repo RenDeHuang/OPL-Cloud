@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,33 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestFabricTransferClientStreamsChunksAndContent(t *testing.T) {
+	body := []byte("content")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut:
+			if r.URL.Path != "/fabric/transfers/transfer-alpha/chunks/2" || r.Header.Get("X-Chunk-SHA256") != "chunk-digest" {
+				t.Fatalf("unexpected chunk request: %s %s", r.Method, r.URL.Path)
+			}
+			_ = json.NewEncoder(w).Encode(ContentTransfer{TransferID: "transfer-alpha", ReceivedChunks: []int{2}})
+		case r.Method == http.MethodGet:
+			w.Header().Set("X-Content-SHA256", "content-digest")
+			w.Header().Set("X-Workspace-Path", "inputs/a.txt")
+			_, _ = w.Write(body)
+		}
+	}))
+	defer upstream.Close()
+	client := NewFabricHTTPClient(upstream.URL, upstream.Client()).(FabricTransferClient)
+	transfer, err := client.PutTransferChunk(context.Background(), "transfer-alpha", 2, []byte("chunk"), "chunk-digest")
+	if err != nil || len(transfer.ReceivedChunks) != 1 {
+		t.Fatalf("put = %#v err=%v", transfer, err)
+	}
+	content, err := client.Content(context.Background(), "workspace-alpha", "content-digest")
+	if err != nil || !bytes.Equal(content.Body, body) || content.Path != "inputs/a.txt" {
+		t.Fatalf("content=%#v err=%v", content, err)
+	}
+}
 
 func TestFabricClientCreatesJob(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

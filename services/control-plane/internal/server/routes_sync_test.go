@@ -2,15 +2,76 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
+
+type transferFabricClient struct {
+	*fakeFabricClient
+	transfer clients.ContentTransfer
+	body     []byte
+}
+
+func (f *transferFabricClient) CreateTransfer(_ context.Context, input clients.ContentTransferInput, _ string) (clients.ContentTransfer, error) {
+	f.transfer = clients.ContentTransfer{TransferID: "transfer-alpha", OrganizationID: input.OrganizationID, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, Path: input.Path, Digest: input.Digest, Size: input.Size, ChunkSize: 4 << 20, ChunkCount: 1, Status: "uploading"}
+	return f.transfer, nil
+}
+func (f *transferFabricClient) Transfer(_ context.Context, _ string) (clients.ContentTransfer, error) {
+	return f.transfer, nil
+}
+func (f *transferFabricClient) PutTransferChunk(_ context.Context, _ string, index int, body []byte, _ string) (clients.ContentTransfer, error) {
+	f.body = append([]byte(nil), body...)
+	f.transfer.ReceivedChunks = []int{index}
+	return f.transfer, nil
+}
+func (f *transferFabricClient) CompleteTransfer(_ context.Context, _ string) (clients.ContentTransfer, error) {
+	f.transfer.Status = "completed"
+	return f.transfer, nil
+}
+func (f *transferFabricClient) Content(_ context.Context, _ string, digest string) (clients.FabricContent, error) {
+	return clients.FabricContent{Digest: digest, WorkspaceID: f.transfer.WorkspaceID, Path: f.transfer.Path, Body: f.body}, nil
+}
+
+func TestWorkspaceContentTransferIsAuthorizedAndStreamedThroughFabric(t *testing.T) {
+	fabricClient := &transferFabricClient{fakeFabricClient: &fakeFabricClient{}}
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, fabricClient))
+	admin := operatorSessionForTest(t, server)
+	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+	projectID := stringValue(project["projectId"])
+	unknown := syncRequest(t, server, admin, http.MethodPost, "/api/workspaces/workspace-alpha/transfers", "transfer-unknown", `{"organizationId":"org-alpha","projectId":"project-missing","path":"inputs/a.txt","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":7}`)
+	if unknown.Code != http.StatusNotFound { t.Fatalf("unknown project=%d %s", unknown.Code, unknown.Body.String()) }
+	created := syncRequest(t, server, admin, http.MethodPost, "/api/workspaces/workspace-alpha/transfers", "transfer-once", `{"organizationId":"org-alpha","projectId":"`+projectID+`","path":"inputs/a.txt","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":7}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create=%d %s", created.Code, created.Body.String())
+	}
+	chunk := httptest.NewRequest(http.MethodPut, "/api/workspaces/workspace-alpha/transfers/transfer-alpha/chunks/0", bytes.NewBufferString("content"))
+	chunk.Header.Set("Content-Type", "application/octet-stream")
+	chunk.Header.Set("X-Chunk-SHA256", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	addAuth(chunk, admin)
+	chunkRec := httptest.NewRecorder()
+	server.ServeHTTP(chunkRec, chunk)
+	if chunkRec.Code != http.StatusOK {
+		t.Fatalf("chunk=%d %s", chunkRec.Code, chunkRec.Body.String())
+	}
+	completed := syncRequest(t, server, admin, http.MethodPost, "/api/workspaces/workspace-alpha/transfers/transfer-alpha/complete", "", "")
+	if completed.Code != http.StatusOK {
+		t.Fatalf("complete=%d %s", completed.Code, completed.Body.String())
+	}
+	downloaded := syncRequest(t, server, admin, http.MethodGet, "/api/workspaces/workspace-alpha/contents/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", "")
+	body, _ := io.ReadAll(downloaded.Body)
+	if downloaded.Code != http.StatusOK || string(body) != "content" {
+		t.Fatalf("download=%d %q", downloaded.Code, body)
+	}
+}
 
 func syncRequest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, key, body string) *httptest.ResponseRecorder {
 	t.Helper()

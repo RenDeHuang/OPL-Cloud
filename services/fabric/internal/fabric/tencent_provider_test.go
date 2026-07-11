@@ -288,6 +288,31 @@ printf '{"kind":"List","items":[]}\n'
 	}
 }
 
+func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
+	provider := NewTencentProvider()
+	var calls [][]string
+	var uploaded []byte
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if args[0] == "get" {
+			return mustJSON(map[string]any{"items": []any{map[string]any{
+				"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "workspace-alpha"}},
+				"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "pvc-alpha"}}}}}},
+			}}}), nil
+		}
+		if stdin != nil {
+			uploaded = append([]byte(nil), stdin...)
+		}
+		return nil, nil
+	}
+	if err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", []byte("verified")); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if string(uploaded) != "verified" || len(calls) != 4 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || calls[2][0] != "exec" || calls[2][4] != "dd" || !slices.Equal(calls[3][:4], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv"}) {
+		t.Fatalf("calls=%#v uploaded=%q", calls, uploaded)
+	}
+}
+
 func envMap(entries []any) map[string]string {
 	values := map[string]string{}
 	for _, entry := range entries {

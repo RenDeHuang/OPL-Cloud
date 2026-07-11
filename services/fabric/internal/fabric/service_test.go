@@ -1,7 +1,9 @@
 package fabric
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,61 @@ import (
 	"testing"
 	"time"
 )
+
+func TestContentTransferResumesAndPublishesOnlyVerifiedBytes(t *testing.T) {
+	const chunkSize = 4 << 20
+	body := bytes.Repeat([]byte("x"), 2*chunkSize+17)
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	provider := &contentTestProvider{}
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(provider, store)
+	ctx := context.Background()
+
+	transfer, err := service.CreateTransfer(ctx, TransferInput{
+		OrganizationID: "org-alpha", WorkspaceID: "workspace-alpha", ProjectID: "project-alpha",
+		Path: "inputs/paper.txt", Digest: digest, Size: int64(len(body)),
+		IdempotencyKey: "transfer-once",
+	})
+	if err != nil {
+		t.Fatalf("create transfer: %v", err)
+	}
+	if _, err := service.PutTransferChunk(ctx, transfer.TransferID, 1, body[chunkSize:2*chunkSize], fmt.Sprintf("%x", sha256.Sum256(body[chunkSize:2*chunkSize]))); err != nil {
+		t.Fatalf("put middle chunk: %v", err)
+	}
+
+	restarted := NewServiceWithOperationStore(provider, store)
+	resumed, err := restarted.Transfer(ctx, transfer.TransferID)
+	if err != nil || len(resumed.ReceivedChunks) != 1 || resumed.ReceivedChunks[0] != 1 {
+		t.Fatalf("resumed transfer = %#v err=%v", resumed, err)
+	}
+	changed := bytes.Repeat([]byte("y"), chunkSize)
+	if _, err := restarted.PutTransferChunk(ctx, transfer.TransferID, 1, changed, fmt.Sprintf("%x", sha256.Sum256(changed))); !errors.Is(err, ErrTransferChunkConflict) {
+		t.Fatalf("changed replay error = %v, want chunk conflict", err)
+	}
+	if _, err := restarted.CompleteTransfer(ctx, transfer.TransferID); !errors.Is(err, ErrTransferIncomplete) {
+		t.Fatalf("incomplete error = %v", err)
+	}
+	for index, chunk := range [][]byte{body[:chunkSize], body[2*chunkSize:]} {
+		actualIndex := index
+		if index == 1 {
+			actualIndex = 2
+		}
+		if _, err := restarted.PutTransferChunk(ctx, transfer.TransferID, actualIndex, chunk, fmt.Sprintf("%x", sha256.Sum256(chunk))); err != nil {
+			t.Fatalf("put chunk %d: %v", actualIndex, err)
+		}
+	}
+	completed, err := restarted.CompleteTransfer(ctx, transfer.TransferID)
+	if err != nil || completed.Status != "completed" {
+		t.Fatalf("complete transfer = %#v err=%v", completed, err)
+	}
+	if string(provider.published) != string(body) || provider.path != "inputs/paper.txt" {
+		t.Fatalf("published path=%q body=%q", provider.path, provider.published)
+	}
+	downloaded, err := restarted.Content(ctx, "workspace-alpha", digest)
+	if err != nil || string(downloaded.Body) != string(body) {
+		t.Fatalf("downloaded = %#v err=%v", downloaded, err)
+	}
+}
 
 func TestJobLifecycleUsesDurableOperationStore(t *testing.T) {
 	store := NewMemoryOperationStore()
@@ -426,6 +483,18 @@ func (p *blockingProvider) CreateComputeAllocation(ctx context.Context, input Co
 }
 
 type testProvider struct{}
+
+type contentTestProvider struct {
+	testProvider
+	path      string
+	published []byte
+}
+
+func (p *contentTestProvider) PublishWorkspaceContent(_ context.Context, _ string, targetPath string, body []byte) error {
+	p.path = targetPath
+	p.published = append([]byte(nil), body...)
+	return nil
+}
 
 func (testProvider) CreateComputeAllocation(_ context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
 	now := time.Now().UTC()

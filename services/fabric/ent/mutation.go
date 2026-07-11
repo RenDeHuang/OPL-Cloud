@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"opl-cloud/services/fabric/ent/contenttransfer"
+	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/predicate"
 	"opl-cloud/services/fabric/ent/workspaceruntimeaccess"
@@ -25,9 +27,1699 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
+	TypeContentTransfer        = "ContentTransfer"
+	TypeContentTransferChunk   = "ContentTransferChunk"
 	TypeFabricOperation        = "FabricOperation"
 	TypeWorkspaceRuntimeAccess = "WorkspaceRuntimeAccess"
 )
+
+// ContentTransferMutation represents an operation that mutates the ContentTransfer nodes in the graph.
+type ContentTransferMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *string
+	organization_id *string
+	workspace_id    *string
+	project_id      *string
+	_path           *string
+	digest          *string
+	size            *int64
+	addsize         *int64
+	chunk_size      *int
+	addchunk_size   *int
+	chunk_count     *int
+	addchunk_count  *int
+	status          *string
+	idempotency_key *string
+	request_hash    *string
+	created_at      *time.Time
+	completed_at    *time.Time
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*ContentTransfer, error)
+	predicates      []predicate.ContentTransfer
+}
+
+var _ ent.Mutation = (*ContentTransferMutation)(nil)
+
+// contenttransferOption allows management of the mutation configuration using functional options.
+type contenttransferOption func(*ContentTransferMutation)
+
+// newContentTransferMutation creates new mutation for the ContentTransfer entity.
+func newContentTransferMutation(c config, op Op, opts ...contenttransferOption) *ContentTransferMutation {
+	m := &ContentTransferMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeContentTransfer,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withContentTransferID sets the ID field of the mutation.
+func withContentTransferID(id string) contenttransferOption {
+	return func(m *ContentTransferMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ContentTransfer
+		)
+		m.oldValue = func(ctx context.Context) (*ContentTransfer, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ContentTransfer.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withContentTransfer sets the old ContentTransfer of the mutation.
+func withContentTransfer(node *ContentTransfer) contenttransferOption {
+	return func(m *ContentTransferMutation) {
+		m.oldValue = func(context.Context) (*ContentTransfer, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ContentTransferMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ContentTransferMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of ContentTransfer entities.
+func (m *ContentTransferMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ContentTransferMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ContentTransferMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ContentTransfer.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetOrganizationID sets the "organization_id" field.
+func (m *ContentTransferMutation) SetOrganizationID(s string) {
+	m.organization_id = &s
+}
+
+// OrganizationID returns the value of the "organization_id" field in the mutation.
+func (m *ContentTransferMutation) OrganizationID() (r string, exists bool) {
+	v := m.organization_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOrganizationID returns the old "organization_id" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldOrganizationID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOrganizationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOrganizationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOrganizationID: %w", err)
+	}
+	return oldValue.OrganizationID, nil
+}
+
+// ResetOrganizationID resets all changes to the "organization_id" field.
+func (m *ContentTransferMutation) ResetOrganizationID() {
+	m.organization_id = nil
+}
+
+// SetWorkspaceID sets the "workspace_id" field.
+func (m *ContentTransferMutation) SetWorkspaceID(s string) {
+	m.workspace_id = &s
+}
+
+// WorkspaceID returns the value of the "workspace_id" field in the mutation.
+func (m *ContentTransferMutation) WorkspaceID() (r string, exists bool) {
+	v := m.workspace_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWorkspaceID returns the old "workspace_id" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
+	}
+	return oldValue.WorkspaceID, nil
+}
+
+// ResetWorkspaceID resets all changes to the "workspace_id" field.
+func (m *ContentTransferMutation) ResetWorkspaceID() {
+	m.workspace_id = nil
+}
+
+// SetProjectID sets the "project_id" field.
+func (m *ContentTransferMutation) SetProjectID(s string) {
+	m.project_id = &s
+}
+
+// ProjectID returns the value of the "project_id" field in the mutation.
+func (m *ContentTransferMutation) ProjectID() (r string, exists bool) {
+	v := m.project_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProjectID returns the old "project_id" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldProjectID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProjectID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProjectID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProjectID: %w", err)
+	}
+	return oldValue.ProjectID, nil
+}
+
+// ResetProjectID resets all changes to the "project_id" field.
+func (m *ContentTransferMutation) ResetProjectID() {
+	m.project_id = nil
+}
+
+// SetPath sets the "path" field.
+func (m *ContentTransferMutation) SetPath(s string) {
+	m._path = &s
+}
+
+// Path returns the value of the "path" field in the mutation.
+func (m *ContentTransferMutation) Path() (r string, exists bool) {
+	v := m._path
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPath returns the old "path" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldPath(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPath is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPath requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPath: %w", err)
+	}
+	return oldValue.Path, nil
+}
+
+// ResetPath resets all changes to the "path" field.
+func (m *ContentTransferMutation) ResetPath() {
+	m._path = nil
+}
+
+// SetDigest sets the "digest" field.
+func (m *ContentTransferMutation) SetDigest(s string) {
+	m.digest = &s
+}
+
+// Digest returns the value of the "digest" field in the mutation.
+func (m *ContentTransferMutation) Digest() (r string, exists bool) {
+	v := m.digest
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDigest returns the old "digest" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldDigest(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDigest is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDigest requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDigest: %w", err)
+	}
+	return oldValue.Digest, nil
+}
+
+// ResetDigest resets all changes to the "digest" field.
+func (m *ContentTransferMutation) ResetDigest() {
+	m.digest = nil
+}
+
+// SetSize sets the "size" field.
+func (m *ContentTransferMutation) SetSize(i int64) {
+	m.size = &i
+	m.addsize = nil
+}
+
+// Size returns the value of the "size" field in the mutation.
+func (m *ContentTransferMutation) Size() (r int64, exists bool) {
+	v := m.size
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSize returns the old "size" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldSize(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSize is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSize requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSize: %w", err)
+	}
+	return oldValue.Size, nil
+}
+
+// AddSize adds i to the "size" field.
+func (m *ContentTransferMutation) AddSize(i int64) {
+	if m.addsize != nil {
+		*m.addsize += i
+	} else {
+		m.addsize = &i
+	}
+}
+
+// AddedSize returns the value that was added to the "size" field in this mutation.
+func (m *ContentTransferMutation) AddedSize() (r int64, exists bool) {
+	v := m.addsize
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSize resets all changes to the "size" field.
+func (m *ContentTransferMutation) ResetSize() {
+	m.size = nil
+	m.addsize = nil
+}
+
+// SetChunkSize sets the "chunk_size" field.
+func (m *ContentTransferMutation) SetChunkSize(i int) {
+	m.chunk_size = &i
+	m.addchunk_size = nil
+}
+
+// ChunkSize returns the value of the "chunk_size" field in the mutation.
+func (m *ContentTransferMutation) ChunkSize() (r int, exists bool) {
+	v := m.chunk_size
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChunkSize returns the old "chunk_size" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldChunkSize(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChunkSize is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChunkSize requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChunkSize: %w", err)
+	}
+	return oldValue.ChunkSize, nil
+}
+
+// AddChunkSize adds i to the "chunk_size" field.
+func (m *ContentTransferMutation) AddChunkSize(i int) {
+	if m.addchunk_size != nil {
+		*m.addchunk_size += i
+	} else {
+		m.addchunk_size = &i
+	}
+}
+
+// AddedChunkSize returns the value that was added to the "chunk_size" field in this mutation.
+func (m *ContentTransferMutation) AddedChunkSize() (r int, exists bool) {
+	v := m.addchunk_size
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetChunkSize resets all changes to the "chunk_size" field.
+func (m *ContentTransferMutation) ResetChunkSize() {
+	m.chunk_size = nil
+	m.addchunk_size = nil
+}
+
+// SetChunkCount sets the "chunk_count" field.
+func (m *ContentTransferMutation) SetChunkCount(i int) {
+	m.chunk_count = &i
+	m.addchunk_count = nil
+}
+
+// ChunkCount returns the value of the "chunk_count" field in the mutation.
+func (m *ContentTransferMutation) ChunkCount() (r int, exists bool) {
+	v := m.chunk_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChunkCount returns the old "chunk_count" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldChunkCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChunkCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChunkCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChunkCount: %w", err)
+	}
+	return oldValue.ChunkCount, nil
+}
+
+// AddChunkCount adds i to the "chunk_count" field.
+func (m *ContentTransferMutation) AddChunkCount(i int) {
+	if m.addchunk_count != nil {
+		*m.addchunk_count += i
+	} else {
+		m.addchunk_count = &i
+	}
+}
+
+// AddedChunkCount returns the value that was added to the "chunk_count" field in this mutation.
+func (m *ContentTransferMutation) AddedChunkCount() (r int, exists bool) {
+	v := m.addchunk_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetChunkCount resets all changes to the "chunk_count" field.
+func (m *ContentTransferMutation) ResetChunkCount() {
+	m.chunk_count = nil
+	m.addchunk_count = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ContentTransferMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ContentTransferMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ContentTransferMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (m *ContentTransferMutation) SetIdempotencyKey(s string) {
+	m.idempotency_key = &s
+}
+
+// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
+func (m *ContentTransferMutation) IdempotencyKey() (r string, exists bool) {
+	v := m.idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdempotencyKey returns the old "idempotency_key" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
+	}
+	return oldValue.IdempotencyKey, nil
+}
+
+// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
+func (m *ContentTransferMutation) ResetIdempotencyKey() {
+	m.idempotency_key = nil
+}
+
+// SetRequestHash sets the "request_hash" field.
+func (m *ContentTransferMutation) SetRequestHash(s string) {
+	m.request_hash = &s
+}
+
+// RequestHash returns the value of the "request_hash" field in the mutation.
+func (m *ContentTransferMutation) RequestHash() (r string, exists bool) {
+	v := m.request_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestHash returns the old "request_hash" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldRequestHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
+	}
+	return oldValue.RequestHash, nil
+}
+
+// ResetRequestHash resets all changes to the "request_hash" field.
+func (m *ContentTransferMutation) ResetRequestHash() {
+	m.request_hash = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ContentTransferMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ContentTransferMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ContentTransferMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetCompletedAt sets the "completed_at" field.
+func (m *ContentTransferMutation) SetCompletedAt(t time.Time) {
+	m.completed_at = &t
+}
+
+// CompletedAt returns the value of the "completed_at" field in the mutation.
+func (m *ContentTransferMutation) CompletedAt() (r time.Time, exists bool) {
+	v := m.completed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCompletedAt returns the old "completed_at" field's value of the ContentTransfer entity.
+// If the ContentTransfer object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferMutation) OldCompletedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCompletedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCompletedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCompletedAt: %w", err)
+	}
+	return oldValue.CompletedAt, nil
+}
+
+// ClearCompletedAt clears the value of the "completed_at" field.
+func (m *ContentTransferMutation) ClearCompletedAt() {
+	m.completed_at = nil
+	m.clearedFields[contenttransfer.FieldCompletedAt] = struct{}{}
+}
+
+// CompletedAtCleared returns if the "completed_at" field was cleared in this mutation.
+func (m *ContentTransferMutation) CompletedAtCleared() bool {
+	_, ok := m.clearedFields[contenttransfer.FieldCompletedAt]
+	return ok
+}
+
+// ResetCompletedAt resets all changes to the "completed_at" field.
+func (m *ContentTransferMutation) ResetCompletedAt() {
+	m.completed_at = nil
+	delete(m.clearedFields, contenttransfer.FieldCompletedAt)
+}
+
+// Where appends a list predicates to the ContentTransferMutation builder.
+func (m *ContentTransferMutation) Where(ps ...predicate.ContentTransfer) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ContentTransferMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ContentTransferMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ContentTransfer, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ContentTransferMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ContentTransferMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ContentTransfer).
+func (m *ContentTransferMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ContentTransferMutation) Fields() []string {
+	fields := make([]string, 0, 13)
+	if m.organization_id != nil {
+		fields = append(fields, contenttransfer.FieldOrganizationID)
+	}
+	if m.workspace_id != nil {
+		fields = append(fields, contenttransfer.FieldWorkspaceID)
+	}
+	if m.project_id != nil {
+		fields = append(fields, contenttransfer.FieldProjectID)
+	}
+	if m._path != nil {
+		fields = append(fields, contenttransfer.FieldPath)
+	}
+	if m.digest != nil {
+		fields = append(fields, contenttransfer.FieldDigest)
+	}
+	if m.size != nil {
+		fields = append(fields, contenttransfer.FieldSize)
+	}
+	if m.chunk_size != nil {
+		fields = append(fields, contenttransfer.FieldChunkSize)
+	}
+	if m.chunk_count != nil {
+		fields = append(fields, contenttransfer.FieldChunkCount)
+	}
+	if m.status != nil {
+		fields = append(fields, contenttransfer.FieldStatus)
+	}
+	if m.idempotency_key != nil {
+		fields = append(fields, contenttransfer.FieldIdempotencyKey)
+	}
+	if m.request_hash != nil {
+		fields = append(fields, contenttransfer.FieldRequestHash)
+	}
+	if m.created_at != nil {
+		fields = append(fields, contenttransfer.FieldCreatedAt)
+	}
+	if m.completed_at != nil {
+		fields = append(fields, contenttransfer.FieldCompletedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ContentTransferMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case contenttransfer.FieldOrganizationID:
+		return m.OrganizationID()
+	case contenttransfer.FieldWorkspaceID:
+		return m.WorkspaceID()
+	case contenttransfer.FieldProjectID:
+		return m.ProjectID()
+	case contenttransfer.FieldPath:
+		return m.Path()
+	case contenttransfer.FieldDigest:
+		return m.Digest()
+	case contenttransfer.FieldSize:
+		return m.Size()
+	case contenttransfer.FieldChunkSize:
+		return m.ChunkSize()
+	case contenttransfer.FieldChunkCount:
+		return m.ChunkCount()
+	case contenttransfer.FieldStatus:
+		return m.Status()
+	case contenttransfer.FieldIdempotencyKey:
+		return m.IdempotencyKey()
+	case contenttransfer.FieldRequestHash:
+		return m.RequestHash()
+	case contenttransfer.FieldCreatedAt:
+		return m.CreatedAt()
+	case contenttransfer.FieldCompletedAt:
+		return m.CompletedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ContentTransferMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case contenttransfer.FieldOrganizationID:
+		return m.OldOrganizationID(ctx)
+	case contenttransfer.FieldWorkspaceID:
+		return m.OldWorkspaceID(ctx)
+	case contenttransfer.FieldProjectID:
+		return m.OldProjectID(ctx)
+	case contenttransfer.FieldPath:
+		return m.OldPath(ctx)
+	case contenttransfer.FieldDigest:
+		return m.OldDigest(ctx)
+	case contenttransfer.FieldSize:
+		return m.OldSize(ctx)
+	case contenttransfer.FieldChunkSize:
+		return m.OldChunkSize(ctx)
+	case contenttransfer.FieldChunkCount:
+		return m.OldChunkCount(ctx)
+	case contenttransfer.FieldStatus:
+		return m.OldStatus(ctx)
+	case contenttransfer.FieldIdempotencyKey:
+		return m.OldIdempotencyKey(ctx)
+	case contenttransfer.FieldRequestHash:
+		return m.OldRequestHash(ctx)
+	case contenttransfer.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case contenttransfer.FieldCompletedAt:
+		return m.OldCompletedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ContentTransfer field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContentTransferMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case contenttransfer.FieldOrganizationID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOrganizationID(v)
+		return nil
+	case contenttransfer.FieldWorkspaceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWorkspaceID(v)
+		return nil
+	case contenttransfer.FieldProjectID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProjectID(v)
+		return nil
+	case contenttransfer.FieldPath:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPath(v)
+		return nil
+	case contenttransfer.FieldDigest:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDigest(v)
+		return nil
+	case contenttransfer.FieldSize:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSize(v)
+		return nil
+	case contenttransfer.FieldChunkSize:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChunkSize(v)
+		return nil
+	case contenttransfer.FieldChunkCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChunkCount(v)
+		return nil
+	case contenttransfer.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case contenttransfer.FieldIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdempotencyKey(v)
+		return nil
+	case contenttransfer.FieldRequestHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestHash(v)
+		return nil
+	case contenttransfer.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case contenttransfer.FieldCompletedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCompletedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransfer field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ContentTransferMutation) AddedFields() []string {
+	var fields []string
+	if m.addsize != nil {
+		fields = append(fields, contenttransfer.FieldSize)
+	}
+	if m.addchunk_size != nil {
+		fields = append(fields, contenttransfer.FieldChunkSize)
+	}
+	if m.addchunk_count != nil {
+		fields = append(fields, contenttransfer.FieldChunkCount)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ContentTransferMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case contenttransfer.FieldSize:
+		return m.AddedSize()
+	case contenttransfer.FieldChunkSize:
+		return m.AddedChunkSize()
+	case contenttransfer.FieldChunkCount:
+		return m.AddedChunkCount()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContentTransferMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case contenttransfer.FieldSize:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSize(v)
+		return nil
+	case contenttransfer.FieldChunkSize:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddChunkSize(v)
+		return nil
+	case contenttransfer.FieldChunkCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddChunkCount(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransfer numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ContentTransferMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(contenttransfer.FieldCompletedAt) {
+		fields = append(fields, contenttransfer.FieldCompletedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ContentTransferMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ContentTransferMutation) ClearField(name string) error {
+	switch name {
+	case contenttransfer.FieldCompletedAt:
+		m.ClearCompletedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransfer nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ContentTransferMutation) ResetField(name string) error {
+	switch name {
+	case contenttransfer.FieldOrganizationID:
+		m.ResetOrganizationID()
+		return nil
+	case contenttransfer.FieldWorkspaceID:
+		m.ResetWorkspaceID()
+		return nil
+	case contenttransfer.FieldProjectID:
+		m.ResetProjectID()
+		return nil
+	case contenttransfer.FieldPath:
+		m.ResetPath()
+		return nil
+	case contenttransfer.FieldDigest:
+		m.ResetDigest()
+		return nil
+	case contenttransfer.FieldSize:
+		m.ResetSize()
+		return nil
+	case contenttransfer.FieldChunkSize:
+		m.ResetChunkSize()
+		return nil
+	case contenttransfer.FieldChunkCount:
+		m.ResetChunkCount()
+		return nil
+	case contenttransfer.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case contenttransfer.FieldIdempotencyKey:
+		m.ResetIdempotencyKey()
+		return nil
+	case contenttransfer.FieldRequestHash:
+		m.ResetRequestHash()
+		return nil
+	case contenttransfer.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case contenttransfer.FieldCompletedAt:
+		m.ResetCompletedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransfer field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ContentTransferMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ContentTransferMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ContentTransferMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ContentTransferMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ContentTransferMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ContentTransferMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ContentTransferMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ContentTransfer unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ContentTransferMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ContentTransfer edge %s", name)
+}
+
+// ContentTransferChunkMutation represents an operation that mutates the ContentTransferChunk nodes in the graph.
+type ContentTransferChunkMutation struct {
+	config
+	op             Op
+	typ            string
+	id             *string
+	transfer_id    *string
+	chunk_index    *int
+	addchunk_index *int
+	digest         *string
+	body           *[]byte
+	created_at     *time.Time
+	clearedFields  map[string]struct{}
+	done           bool
+	oldValue       func(context.Context) (*ContentTransferChunk, error)
+	predicates     []predicate.ContentTransferChunk
+}
+
+var _ ent.Mutation = (*ContentTransferChunkMutation)(nil)
+
+// contenttransferchunkOption allows management of the mutation configuration using functional options.
+type contenttransferchunkOption func(*ContentTransferChunkMutation)
+
+// newContentTransferChunkMutation creates new mutation for the ContentTransferChunk entity.
+func newContentTransferChunkMutation(c config, op Op, opts ...contenttransferchunkOption) *ContentTransferChunkMutation {
+	m := &ContentTransferChunkMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeContentTransferChunk,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withContentTransferChunkID sets the ID field of the mutation.
+func withContentTransferChunkID(id string) contenttransferchunkOption {
+	return func(m *ContentTransferChunkMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ContentTransferChunk
+		)
+		m.oldValue = func(ctx context.Context) (*ContentTransferChunk, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ContentTransferChunk.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withContentTransferChunk sets the old ContentTransferChunk of the mutation.
+func withContentTransferChunk(node *ContentTransferChunk) contenttransferchunkOption {
+	return func(m *ContentTransferChunkMutation) {
+		m.oldValue = func(context.Context) (*ContentTransferChunk, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ContentTransferChunkMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ContentTransferChunkMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of ContentTransferChunk entities.
+func (m *ContentTransferChunkMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ContentTransferChunkMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ContentTransferChunkMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ContentTransferChunk.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetTransferID sets the "transfer_id" field.
+func (m *ContentTransferChunkMutation) SetTransferID(s string) {
+	m.transfer_id = &s
+}
+
+// TransferID returns the value of the "transfer_id" field in the mutation.
+func (m *ContentTransferChunkMutation) TransferID() (r string, exists bool) {
+	v := m.transfer_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTransferID returns the old "transfer_id" field's value of the ContentTransferChunk entity.
+// If the ContentTransferChunk object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferChunkMutation) OldTransferID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTransferID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTransferID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTransferID: %w", err)
+	}
+	return oldValue.TransferID, nil
+}
+
+// ResetTransferID resets all changes to the "transfer_id" field.
+func (m *ContentTransferChunkMutation) ResetTransferID() {
+	m.transfer_id = nil
+}
+
+// SetChunkIndex sets the "chunk_index" field.
+func (m *ContentTransferChunkMutation) SetChunkIndex(i int) {
+	m.chunk_index = &i
+	m.addchunk_index = nil
+}
+
+// ChunkIndex returns the value of the "chunk_index" field in the mutation.
+func (m *ContentTransferChunkMutation) ChunkIndex() (r int, exists bool) {
+	v := m.chunk_index
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChunkIndex returns the old "chunk_index" field's value of the ContentTransferChunk entity.
+// If the ContentTransferChunk object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferChunkMutation) OldChunkIndex(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChunkIndex is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChunkIndex requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChunkIndex: %w", err)
+	}
+	return oldValue.ChunkIndex, nil
+}
+
+// AddChunkIndex adds i to the "chunk_index" field.
+func (m *ContentTransferChunkMutation) AddChunkIndex(i int) {
+	if m.addchunk_index != nil {
+		*m.addchunk_index += i
+	} else {
+		m.addchunk_index = &i
+	}
+}
+
+// AddedChunkIndex returns the value that was added to the "chunk_index" field in this mutation.
+func (m *ContentTransferChunkMutation) AddedChunkIndex() (r int, exists bool) {
+	v := m.addchunk_index
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetChunkIndex resets all changes to the "chunk_index" field.
+func (m *ContentTransferChunkMutation) ResetChunkIndex() {
+	m.chunk_index = nil
+	m.addchunk_index = nil
+}
+
+// SetDigest sets the "digest" field.
+func (m *ContentTransferChunkMutation) SetDigest(s string) {
+	m.digest = &s
+}
+
+// Digest returns the value of the "digest" field in the mutation.
+func (m *ContentTransferChunkMutation) Digest() (r string, exists bool) {
+	v := m.digest
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDigest returns the old "digest" field's value of the ContentTransferChunk entity.
+// If the ContentTransferChunk object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferChunkMutation) OldDigest(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDigest is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDigest requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDigest: %w", err)
+	}
+	return oldValue.Digest, nil
+}
+
+// ResetDigest resets all changes to the "digest" field.
+func (m *ContentTransferChunkMutation) ResetDigest() {
+	m.digest = nil
+}
+
+// SetBody sets the "body" field.
+func (m *ContentTransferChunkMutation) SetBody(b []byte) {
+	m.body = &b
+}
+
+// Body returns the value of the "body" field in the mutation.
+func (m *ContentTransferChunkMutation) Body() (r []byte, exists bool) {
+	v := m.body
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBody returns the old "body" field's value of the ContentTransferChunk entity.
+// If the ContentTransferChunk object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferChunkMutation) OldBody(ctx context.Context) (v []byte, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBody is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBody requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBody: %w", err)
+	}
+	return oldValue.Body, nil
+}
+
+// ResetBody resets all changes to the "body" field.
+func (m *ContentTransferChunkMutation) ResetBody() {
+	m.body = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ContentTransferChunkMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ContentTransferChunkMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ContentTransferChunk entity.
+// If the ContentTransferChunk object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ContentTransferChunkMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ContentTransferChunkMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the ContentTransferChunkMutation builder.
+func (m *ContentTransferChunkMutation) Where(ps ...predicate.ContentTransferChunk) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ContentTransferChunkMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ContentTransferChunkMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ContentTransferChunk, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ContentTransferChunkMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ContentTransferChunkMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ContentTransferChunk).
+func (m *ContentTransferChunkMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ContentTransferChunkMutation) Fields() []string {
+	fields := make([]string, 0, 5)
+	if m.transfer_id != nil {
+		fields = append(fields, contenttransferchunk.FieldTransferID)
+	}
+	if m.chunk_index != nil {
+		fields = append(fields, contenttransferchunk.FieldChunkIndex)
+	}
+	if m.digest != nil {
+		fields = append(fields, contenttransferchunk.FieldDigest)
+	}
+	if m.body != nil {
+		fields = append(fields, contenttransferchunk.FieldBody)
+	}
+	if m.created_at != nil {
+		fields = append(fields, contenttransferchunk.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ContentTransferChunkMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case contenttransferchunk.FieldTransferID:
+		return m.TransferID()
+	case contenttransferchunk.FieldChunkIndex:
+		return m.ChunkIndex()
+	case contenttransferchunk.FieldDigest:
+		return m.Digest()
+	case contenttransferchunk.FieldBody:
+		return m.Body()
+	case contenttransferchunk.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ContentTransferChunkMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case contenttransferchunk.FieldTransferID:
+		return m.OldTransferID(ctx)
+	case contenttransferchunk.FieldChunkIndex:
+		return m.OldChunkIndex(ctx)
+	case contenttransferchunk.FieldDigest:
+		return m.OldDigest(ctx)
+	case contenttransferchunk.FieldBody:
+		return m.OldBody(ctx)
+	case contenttransferchunk.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ContentTransferChunk field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContentTransferChunkMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case contenttransferchunk.FieldTransferID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTransferID(v)
+		return nil
+	case contenttransferchunk.FieldChunkIndex:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChunkIndex(v)
+		return nil
+	case contenttransferchunk.FieldDigest:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDigest(v)
+		return nil
+	case contenttransferchunk.FieldBody:
+		v, ok := value.([]byte)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBody(v)
+		return nil
+	case contenttransferchunk.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransferChunk field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ContentTransferChunkMutation) AddedFields() []string {
+	var fields []string
+	if m.addchunk_index != nil {
+		fields = append(fields, contenttransferchunk.FieldChunkIndex)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ContentTransferChunkMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case contenttransferchunk.FieldChunkIndex:
+		return m.AddedChunkIndex()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ContentTransferChunkMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case contenttransferchunk.FieldChunkIndex:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddChunkIndex(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransferChunk numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ContentTransferChunkMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ContentTransferChunkMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ContentTransferChunkMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown ContentTransferChunk nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ContentTransferChunkMutation) ResetField(name string) error {
+	switch name {
+	case contenttransferchunk.FieldTransferID:
+		m.ResetTransferID()
+		return nil
+	case contenttransferchunk.FieldChunkIndex:
+		m.ResetChunkIndex()
+		return nil
+	case contenttransferchunk.FieldDigest:
+		m.ResetDigest()
+		return nil
+	case contenttransferchunk.FieldBody:
+		m.ResetBody()
+		return nil
+	case contenttransferchunk.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ContentTransferChunk field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ContentTransferChunkMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ContentTransferChunkMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ContentTransferChunkMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ContentTransferChunkMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ContentTransferChunkMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ContentTransferChunkMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ContentTransferChunkMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ContentTransferChunk unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ContentTransferChunkMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ContentTransferChunk edge %s", name)
+}
 
 // FabricOperationMutation represents an operation that mutates the FabricOperation nodes in the graph.
 type FabricOperationMutation struct {

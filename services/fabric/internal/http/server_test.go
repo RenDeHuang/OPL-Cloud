@@ -3,13 +3,55 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"opl-cloud/services/fabric/internal/fabric"
 )
+
+func TestContentTransferHTTPResumesAndDownloads(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}))
+	body := []byte("workspace bytes")
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	create := httptest.NewRequest(http.MethodPost, "/fabric/transfers", bytes.NewBufferString(fmt.Sprintf(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","path":"inputs/a.txt","digest":"%s","size":%d,"chunkSize":%d}`, digest, len(body), len(body))))
+	create.Header.Set("Idempotency-Key", "transfer-http")
+	createdRec := httptest.NewRecorder()
+	server.ServeHTTP(createdRec, create)
+	if createdRec.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", createdRec.Code, createdRec.Body.String())
+	}
+	var transfer fabric.Transfer
+	if err := json.NewDecoder(createdRec.Body).Decode(&transfer); err != nil {
+		t.Fatal(err)
+	}
+
+	put := httptest.NewRequest(http.MethodPut, "/fabric/transfers/"+transfer.TransferID+"/chunks/0", bytes.NewReader(body))
+	put.Header.Set("X-Chunk-SHA256", digest)
+	putRec := httptest.NewRecorder()
+	server.ServeHTTP(putRec, put)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("put status=%d body=%s", putRec.Code, putRec.Body.String())
+	}
+	complete := httptest.NewRequest(http.MethodPost, "/fabric/transfers/"+transfer.TransferID+"/complete", nil)
+	completeRec := httptest.NewRecorder()
+	server.ServeHTTP(completeRec, complete)
+	if completeRec.Code != http.StatusOK {
+		t.Fatalf("complete status=%d body=%s", completeRec.Code, completeRec.Body.String())
+	}
+	download := httptest.NewRequest(http.MethodGet, "/fabric/contents/"+digest, nil)
+	download.Header.Set("X-Workspace-ID", "workspace-alpha")
+	downloadRec := httptest.NewRecorder()
+	server.ServeHTTP(downloadRec, download)
+	downloaded, _ := io.ReadAll(downloadRec.Body)
+	if downloadRec.Code != http.StatusOK || !bytes.Equal(downloaded, body) {
+		t.Fatalf("download status=%d body=%q", downloadRec.Code, downloaded)
+	}
+}
 
 func TestCatalogHTTP(t *testing.T) {
 	server := NewServer(fabric.NewService(testProvider{}))
@@ -281,6 +323,10 @@ func TestRunnerJobHTTPFailRetryAndConflict(t *testing.T) {
 }
 
 type testProvider struct{}
+
+func (testProvider) PublishWorkspaceContent(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
 
 func (testProvider) CreateComputeAllocation(_ context.Context, input fabric.ComputeAllocationInput) (fabric.ComputeAllocation, error) {
 	return fabric.ComputeAllocation{ID: "ca-test", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "allocated", ProviderRequestID: "compute-test"}, nil

@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -412,6 +413,27 @@ func (p *TencentProvider) workspaceRuntimeResources(ctx context.Context, workspa
 	service := findK8sByLabel(items, "Service", "oplcloud.cn/workspace-id", workspaceID)
 	serviceName := firstNonEmpty(stringValue(nested(deployment, "metadata", "name")), stringValue(nested(service, "metadata", "name")))
 	return serviceName, firstPVCClaimName(deployment)
+}
+
+func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspaceID, targetPath string, body []byte) error {
+	serviceName, _ := p.workspaceRuntimeResources(ctx, workspaceID)
+	if serviceName == "" {
+		return fmt.Errorf("workspace_runtime_not_found")
+	}
+	target := path.Join("/projects", targetPath)
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	temporary := target + ".opl-upload-" + digest[:12]
+	deployment := "deployment/" + serviceName
+	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mkdir", "-p", path.Dir(target)}, nil); err != nil {
+		return err
+	}
+	if _, err := p.kubectl(ctx, []string{"exec", "-i", deployment, "--", "dd", "of=" + temporary, "status=none"}, body); err != nil {
+		return err
+	}
+	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mv", temporary, target}, nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 func packagePlan(packageID string) plan {

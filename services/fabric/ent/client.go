@@ -11,6 +11,8 @@ import (
 
 	"opl-cloud/services/fabric/ent/migrate"
 
+	"opl-cloud/services/fabric/ent/contenttransfer"
+	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/workspaceruntimeaccess"
 
@@ -24,6 +26,10 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
+	// ContentTransfer is the client for interacting with the ContentTransfer builders.
+	ContentTransfer *ContentTransferClient
+	// ContentTransferChunk is the client for interacting with the ContentTransferChunk builders.
+	ContentTransferChunk *ContentTransferChunkClient
 	// FabricOperation is the client for interacting with the FabricOperation builders.
 	FabricOperation *FabricOperationClient
 	// WorkspaceRuntimeAccess is the client for interacting with the WorkspaceRuntimeAccess builders.
@@ -39,6 +45,8 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
+	c.ContentTransfer = NewContentTransferClient(c.config)
+	c.ContentTransferChunk = NewContentTransferChunkClient(c.config)
 	c.FabricOperation = NewFabricOperationClient(c.config)
 	c.WorkspaceRuntimeAccess = NewWorkspaceRuntimeAccessClient(c.config)
 }
@@ -133,6 +141,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	return &Tx{
 		ctx:                    ctx,
 		config:                 cfg,
+		ContentTransfer:        NewContentTransferClient(cfg),
+		ContentTransferChunk:   NewContentTransferChunkClient(cfg),
 		FabricOperation:        NewFabricOperationClient(cfg),
 		WorkspaceRuntimeAccess: NewWorkspaceRuntimeAccessClient(cfg),
 	}, nil
@@ -154,6 +164,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	return &Tx{
 		ctx:                    ctx,
 		config:                 cfg,
+		ContentTransfer:        NewContentTransferClient(cfg),
+		ContentTransferChunk:   NewContentTransferChunkClient(cfg),
 		FabricOperation:        NewFabricOperationClient(cfg),
 		WorkspaceRuntimeAccess: NewWorkspaceRuntimeAccessClient(cfg),
 	}, nil
@@ -162,7 +174,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		FabricOperation.
+//		ContentTransfer.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -184,6 +196,8 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
+	c.ContentTransfer.Use(hooks...)
+	c.ContentTransferChunk.Use(hooks...)
 	c.FabricOperation.Use(hooks...)
 	c.WorkspaceRuntimeAccess.Use(hooks...)
 }
@@ -191,6 +205,8 @@ func (c *Client) Use(hooks ...Hook) {
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
+	c.ContentTransfer.Intercept(interceptors...)
+	c.ContentTransferChunk.Intercept(interceptors...)
 	c.FabricOperation.Intercept(interceptors...)
 	c.WorkspaceRuntimeAccess.Intercept(interceptors...)
 }
@@ -198,12 +214,282 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
+	case *ContentTransferMutation:
+		return c.ContentTransfer.mutate(ctx, m)
+	case *ContentTransferChunkMutation:
+		return c.ContentTransferChunk.mutate(ctx, m)
 	case *FabricOperationMutation:
 		return c.FabricOperation.mutate(ctx, m)
 	case *WorkspaceRuntimeAccessMutation:
 		return c.WorkspaceRuntimeAccess.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
+	}
+}
+
+// ContentTransferClient is a client for the ContentTransfer schema.
+type ContentTransferClient struct {
+	config
+}
+
+// NewContentTransferClient returns a client for the ContentTransfer from the given config.
+func NewContentTransferClient(c config) *ContentTransferClient {
+	return &ContentTransferClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `contenttransfer.Hooks(f(g(h())))`.
+func (c *ContentTransferClient) Use(hooks ...Hook) {
+	c.hooks.ContentTransfer = append(c.hooks.ContentTransfer, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `contenttransfer.Intercept(f(g(h())))`.
+func (c *ContentTransferClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ContentTransfer = append(c.inters.ContentTransfer, interceptors...)
+}
+
+// Create returns a builder for creating a ContentTransfer entity.
+func (c *ContentTransferClient) Create() *ContentTransferCreate {
+	mutation := newContentTransferMutation(c.config, OpCreate)
+	return &ContentTransferCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ContentTransfer entities.
+func (c *ContentTransferClient) CreateBulk(builders ...*ContentTransferCreate) *ContentTransferCreateBulk {
+	return &ContentTransferCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ContentTransferClient) MapCreateBulk(slice any, setFunc func(*ContentTransferCreate, int)) *ContentTransferCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ContentTransferCreateBulk{err: fmt.Errorf("calling to ContentTransferClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ContentTransferCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ContentTransferCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ContentTransfer.
+func (c *ContentTransferClient) Update() *ContentTransferUpdate {
+	mutation := newContentTransferMutation(c.config, OpUpdate)
+	return &ContentTransferUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ContentTransferClient) UpdateOne(ct *ContentTransfer) *ContentTransferUpdateOne {
+	mutation := newContentTransferMutation(c.config, OpUpdateOne, withContentTransfer(ct))
+	return &ContentTransferUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ContentTransferClient) UpdateOneID(id string) *ContentTransferUpdateOne {
+	mutation := newContentTransferMutation(c.config, OpUpdateOne, withContentTransferID(id))
+	return &ContentTransferUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ContentTransfer.
+func (c *ContentTransferClient) Delete() *ContentTransferDelete {
+	mutation := newContentTransferMutation(c.config, OpDelete)
+	return &ContentTransferDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ContentTransferClient) DeleteOne(ct *ContentTransfer) *ContentTransferDeleteOne {
+	return c.DeleteOneID(ct.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ContentTransferClient) DeleteOneID(id string) *ContentTransferDeleteOne {
+	builder := c.Delete().Where(contenttransfer.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ContentTransferDeleteOne{builder}
+}
+
+// Query returns a query builder for ContentTransfer.
+func (c *ContentTransferClient) Query() *ContentTransferQuery {
+	return &ContentTransferQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeContentTransfer},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ContentTransfer entity by its id.
+func (c *ContentTransferClient) Get(ctx context.Context, id string) (*ContentTransfer, error) {
+	return c.Query().Where(contenttransfer.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ContentTransferClient) GetX(ctx context.Context, id string) *ContentTransfer {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ContentTransferClient) Hooks() []Hook {
+	return c.hooks.ContentTransfer
+}
+
+// Interceptors returns the client interceptors.
+func (c *ContentTransferClient) Interceptors() []Interceptor {
+	return c.inters.ContentTransfer
+}
+
+func (c *ContentTransferClient) mutate(ctx context.Context, m *ContentTransferMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ContentTransferCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ContentTransferUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ContentTransferUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ContentTransferDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ContentTransfer mutation op: %q", m.Op())
+	}
+}
+
+// ContentTransferChunkClient is a client for the ContentTransferChunk schema.
+type ContentTransferChunkClient struct {
+	config
+}
+
+// NewContentTransferChunkClient returns a client for the ContentTransferChunk from the given config.
+func NewContentTransferChunkClient(c config) *ContentTransferChunkClient {
+	return &ContentTransferChunkClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `contenttransferchunk.Hooks(f(g(h())))`.
+func (c *ContentTransferChunkClient) Use(hooks ...Hook) {
+	c.hooks.ContentTransferChunk = append(c.hooks.ContentTransferChunk, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `contenttransferchunk.Intercept(f(g(h())))`.
+func (c *ContentTransferChunkClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ContentTransferChunk = append(c.inters.ContentTransferChunk, interceptors...)
+}
+
+// Create returns a builder for creating a ContentTransferChunk entity.
+func (c *ContentTransferChunkClient) Create() *ContentTransferChunkCreate {
+	mutation := newContentTransferChunkMutation(c.config, OpCreate)
+	return &ContentTransferChunkCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ContentTransferChunk entities.
+func (c *ContentTransferChunkClient) CreateBulk(builders ...*ContentTransferChunkCreate) *ContentTransferChunkCreateBulk {
+	return &ContentTransferChunkCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ContentTransferChunkClient) MapCreateBulk(slice any, setFunc func(*ContentTransferChunkCreate, int)) *ContentTransferChunkCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ContentTransferChunkCreateBulk{err: fmt.Errorf("calling to ContentTransferChunkClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ContentTransferChunkCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ContentTransferChunkCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ContentTransferChunk.
+func (c *ContentTransferChunkClient) Update() *ContentTransferChunkUpdate {
+	mutation := newContentTransferChunkMutation(c.config, OpUpdate)
+	return &ContentTransferChunkUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ContentTransferChunkClient) UpdateOne(ctc *ContentTransferChunk) *ContentTransferChunkUpdateOne {
+	mutation := newContentTransferChunkMutation(c.config, OpUpdateOne, withContentTransferChunk(ctc))
+	return &ContentTransferChunkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ContentTransferChunkClient) UpdateOneID(id string) *ContentTransferChunkUpdateOne {
+	mutation := newContentTransferChunkMutation(c.config, OpUpdateOne, withContentTransferChunkID(id))
+	return &ContentTransferChunkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ContentTransferChunk.
+func (c *ContentTransferChunkClient) Delete() *ContentTransferChunkDelete {
+	mutation := newContentTransferChunkMutation(c.config, OpDelete)
+	return &ContentTransferChunkDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ContentTransferChunkClient) DeleteOne(ctc *ContentTransferChunk) *ContentTransferChunkDeleteOne {
+	return c.DeleteOneID(ctc.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ContentTransferChunkClient) DeleteOneID(id string) *ContentTransferChunkDeleteOne {
+	builder := c.Delete().Where(contenttransferchunk.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ContentTransferChunkDeleteOne{builder}
+}
+
+// Query returns a query builder for ContentTransferChunk.
+func (c *ContentTransferChunkClient) Query() *ContentTransferChunkQuery {
+	return &ContentTransferChunkQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeContentTransferChunk},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ContentTransferChunk entity by its id.
+func (c *ContentTransferChunkClient) Get(ctx context.Context, id string) (*ContentTransferChunk, error) {
+	return c.Query().Where(contenttransferchunk.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ContentTransferChunkClient) GetX(ctx context.Context, id string) *ContentTransferChunk {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ContentTransferChunkClient) Hooks() []Hook {
+	return c.hooks.ContentTransferChunk
+}
+
+// Interceptors returns the client interceptors.
+func (c *ContentTransferChunkClient) Interceptors() []Interceptor {
+	return c.inters.ContentTransferChunk
+}
+
+func (c *ContentTransferChunkClient) mutate(ctx context.Context, m *ContentTransferChunkMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ContentTransferChunkCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ContentTransferChunkUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ContentTransferChunkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ContentTransferChunkDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ContentTransferChunk mutation op: %q", m.Op())
 	}
 }
 
@@ -476,9 +762,11 @@ func (c *WorkspaceRuntimeAccessClient) mutate(ctx context.Context, m *WorkspaceR
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		FabricOperation, WorkspaceRuntimeAccess []ent.Hook
+		ContentTransfer, ContentTransferChunk, FabricOperation,
+		WorkspaceRuntimeAccess []ent.Hook
 	}
 	inters struct {
-		FabricOperation, WorkspaceRuntimeAccess []ent.Interceptor
+		ContentTransfer, ContentTransferChunk, FabricOperation,
+		WorkspaceRuntimeAccess []ent.Interceptor
 	}
 )

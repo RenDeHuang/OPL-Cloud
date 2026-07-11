@@ -5,3 +5,8 @@ CREATE INDEX IF NOT EXISTS fabric_operations_operation_id_idx ON fabric_operatio
 CREATE INDEX IF NOT EXISTS fabric_operations_resource_idx ON fabric_operations(resource_kind, resource_id);
 CREATE INDEX IF NOT EXISTS fabric_operations_workspace_idx ON fabric_operations(workspace_id);
 CREATE INDEX IF NOT EXISTS fabric_operations_created_idx ON fabric_operations(created_at);
+CREATE TABLE IF NOT EXISTS fabric_content_transfers (id TEXT NOT NULL PRIMARY KEY, organization_id TEXT NOT NULL, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL, path TEXT NOT NULL, digest TEXT NOT NULL, size BIGINT NOT NULL, chunk_size BIGINT NOT NULL, chunk_count BIGINT NOT NULL, status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ NULL);
+CREATE INDEX IF NOT EXISTS content_transfers_digest ON fabric_content_transfers (digest);
+CREATE INDEX IF NOT EXISTS content_transfers_workspace_path ON fabric_content_transfers (workspace_id, path);
+CREATE TABLE IF NOT EXISTS fabric_content_transfer_chunks (id TEXT NOT NULL PRIMARY KEY, transfer_id TEXT NOT NULL, chunk_index BIGINT NOT NULL, digest TEXT NOT NULL, body BYTEA NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE UNIQUE INDEX IF NOT EXISTS content_transfer_chunks_transfer_index ON fabric_content_transfer_chunks (transfer_id, chunk_index);

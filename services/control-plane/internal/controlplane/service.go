@@ -15,6 +15,54 @@ type Service struct {
 	fabric clients.FabricClient
 }
 
+func (s *Service) fabricTransfers() (clients.FabricTransferClient, error) {
+	client, ok := s.fabric.(clients.FabricTransferClient)
+	if !ok {
+		return nil, errors.New("fabric_transfer_unavailable")
+	}
+	return client, nil
+}
+
+func (s *Service) CreateContentTransfer(ctx context.Context, input clients.ContentTransferInput, key string) (clients.ContentTransfer, error) {
+	client, err := s.fabricTransfers()
+	if err != nil {
+		return clients.ContentTransfer{}, err
+	}
+	return client.CreateTransfer(ctx, input, key)
+}
+
+func (s *Service) ContentTransfer(ctx context.Context, id string) (clients.ContentTransfer, error) {
+	client, err := s.fabricTransfers()
+	if err != nil {
+		return clients.ContentTransfer{}, err
+	}
+	return client.Transfer(ctx, id)
+}
+
+func (s *Service) PutContentTransferChunk(ctx context.Context, id string, index int, body []byte, digest string) (clients.ContentTransfer, error) {
+	client, err := s.fabricTransfers()
+	if err != nil {
+		return clients.ContentTransfer{}, err
+	}
+	return client.PutTransferChunk(ctx, id, index, body, digest)
+}
+
+func (s *Service) CompleteContentTransfer(ctx context.Context, id string) (clients.ContentTransfer, error) {
+	client, err := s.fabricTransfers()
+	if err != nil {
+		return clients.ContentTransfer{}, err
+	}
+	return client.CompleteTransfer(ctx, id)
+}
+
+func (s *Service) Content(ctx context.Context, workspaceID, digest string) (clients.FabricContent, error) {
+	client, err := s.fabricTransfers()
+	if err != nil {
+		return clients.FabricContent{}, err
+	}
+	return client.Content(ctx, workspaceID, digest)
+}
+
 type CreateWorkspaceInput struct {
 	AccountID    string `json:"accountId"`
 	OwnerID      string `json:"ownerId"`

@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"opl-cloud/services/fabric/ent/contenttransfer"
+	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/workspaceruntimeaccess"
 	"reflect"
@@ -74,6 +76,8 @@ var (
 func checkColumn(table, column string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
+			contenttransfer.Table:        contenttransfer.ValidColumn,
+			contenttransferchunk.Table:   contenttransferchunk.ValidColumn,
 			fabricoperation.Table:        fabricoperation.ValidColumn,
 			workspaceruntimeaccess.Table: workspaceruntimeaccess.ValidColumn,
 		})

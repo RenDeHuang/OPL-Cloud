@@ -30,6 +30,53 @@ type FabricClient interface {
 	CancelJob(ctx context.Context, jobID string, idempotencyKey string) (Job, error)
 }
 
+type FabricTransferClient interface {
+	CreateTransfer(context.Context, ContentTransferInput, string) (ContentTransfer, error)
+	Transfer(context.Context, string) (ContentTransfer, error)
+	PutTransferChunk(context.Context, string, int, []byte, string) (ContentTransfer, error)
+	CompleteTransfer(context.Context, string) (ContentTransfer, error)
+	Content(context.Context, string, string) (FabricContent, error)
+}
+
+type FabricHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *FabricHTTPError) Error() string {
+	return fmt.Sprintf("fabric request failed: status %d: %s", e.StatusCode, e.Body)
+}
+
+type ContentTransferInput struct {
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	Path           string `json:"path"`
+	Digest         string `json:"digest"`
+	Size           int64  `json:"size"`
+}
+
+type ContentTransfer struct {
+	TransferID     string `json:"transferId"`
+	OrganizationID string `json:"organizationId"`
+	WorkspaceID    string `json:"workspaceId"`
+	ProjectID      string `json:"projectId"`
+	Path           string `json:"path"`
+	Digest         string `json:"digest"`
+	Size           int64  `json:"size"`
+	ChunkSize      int    `json:"chunkSize"`
+	ChunkCount     int    `json:"chunkCount"`
+	ReceivedChunks []int  `json:"receivedChunks"`
+	Status         string `json:"status"`
+}
+
+type FabricContent struct {
+	Digest      string
+	WorkspaceID string
+	Path        string
+	Body        []byte
+}
+
 type FabricCatalog struct {
 	SchemaVersion     int                      `json:"schemaVersion"`
 	Owner             string                   `json:"owner"`
@@ -327,6 +374,66 @@ func (c *fabricHTTPClient) CancelJob(ctx context.Context, jobID string, idempote
 	return result, err
 }
 
+func (c *fabricHTTPClient) CreateTransfer(ctx context.Context, input ContentTransferInput, idempotencyKey string) (ContentTransfer, error) {
+	var result ContentTransfer
+	err := c.post(ctx, "/fabric/transfers", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) Transfer(ctx context.Context, id string) (ContentTransfer, error) {
+	var result ContentTransfer
+	err := c.get(ctx, "/fabric/transfers/"+url.PathEscape(id), &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) PutTransferChunk(ctx context.Context, id string, index int, body []byte, digest string) (ContentTransfer, error) {
+	var result ContentTransfer
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s/fabric/transfers/%s/chunks/%d", c.baseURL, url.PathEscape(id), index), bytes.NewReader(body))
+	if err != nil {
+		return result, err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Chunk-SHA256", digest)
+	err = c.doJSON(req, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) CompleteTransfer(ctx context.Context, id string) (ContentTransfer, error) {
+	var result ContentTransfer
+	err := c.post(ctx, "/fabric/transfers/"+url.PathEscape(id)+"/complete", map[string]any{}, "", &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) Content(ctx context.Context, workspaceID, digest string) (FabricContent, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/fabric/contents/"+url.PathEscape(digest), nil)
+	if err != nil {
+		return FabricContent{}, err
+	}
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	res, err := c.client.Do(req)
+	if err != nil {
+		return FabricContent{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return FabricContent{}, fabricHTTPResponseError(res)
+	}
+	body, err := io.ReadAll(res.Body)
+	return FabricContent{Digest: res.Header.Get("X-Content-SHA256"), WorkspaceID: res.Header.Get("X-Workspace-ID"), Path: res.Header.Get("X-Workspace-Path"), Body: body}, err
+}
+
+func (c *fabricHTTPClient) doJSON(req *http.Request, output any) error {
+	res, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fabricHTTPResponseError(res)
+	}
+	return json.NewDecoder(res.Body).Decode(output)
+}
+
 func (c *fabricHTTPClient) post(ctx context.Context, path string, input any, idempotencyKey string, output any) error {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -344,8 +451,7 @@ func (c *fabricHTTPClient) post(ctx context.Context, path string, input any, ide
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("fabric request failed: status %d: %s", res.StatusCode, string(body))
+		return fabricHTTPResponseError(res)
 	}
 	return json.NewDecoder(res.Body).Decode(output)
 }
@@ -361,8 +467,12 @@ func (c *fabricHTTPClient) get(ctx context.Context, path string, output any) err
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("fabric request failed: status %d: %s", res.StatusCode, string(body))
+		return fabricHTTPResponseError(res)
 	}
 	return json.NewDecoder(res.Body).Decode(output)
+}
+
+func fabricHTTPResponseError(res *http.Response) error {
+	body, _ := io.ReadAll(res.Body)
+	return &FabricHTTPError{StatusCode: res.StatusCode, Body: string(body)}
 }

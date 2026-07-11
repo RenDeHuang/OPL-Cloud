@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"opl-cloud/services/fabric/ent/contenttransfer"
+	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/workspaceruntimeaccess"
 )
 
@@ -25,6 +27,15 @@ func TestPostgresOperationSchemaDefinesFabricOperationsAuditTable(t *testing.T) 
 	}
 	if strings.Contains(schema, "JSONB") {
 		t.Fatalf("fabric schema must not keep JSONB fact columns")
+	}
+}
+
+func TestPostgresOperationSchemaDefinesContentTransferTables(t *testing.T) {
+	schema := PostgresOperationSchemaSQL()
+	for _, table := range []string{contenttransfer.Table, contenttransferchunk.Table} {
+		if !strings.Contains(schema, "CREATE TABLE IF NOT EXISTS "+table) {
+			t.Fatalf("schema missing content transfer table %q", table)
+		}
 	}
 }
 

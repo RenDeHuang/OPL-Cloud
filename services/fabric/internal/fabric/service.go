@@ -37,6 +37,7 @@ type Service struct {
 	runtimes    map[string]WorkspaceRuntime
 	operations  OperationStore
 	access      RuntimeAccessStore
+	transfers   TransferStore
 	now         func() time.Time
 }
 
@@ -50,7 +51,11 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 	}
 	computes, volumes, attachments, runtimes := replayResourceState(context.Background(), operations)
 	accessStore, _ := operations.(RuntimeAccessStore)
-	return &Service{provider: provider, computes: computes, volumes: volumes, attachments: attachments, runtimes: runtimes, operations: operations, access: accessStore, now: func() time.Time { return time.Now().UTC() }}
+	transferStore, _ := operations.(TransferStore)
+	if transferStore == nil {
+		transferStore = newMemoryTransferStore()
+	}
+	return &Service{provider: provider, computes: computes, volumes: volumes, attachments: attachments, runtimes: runtimes, operations: operations, access: accessStore, transfers: transferStore, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *Service) Catalog(_ context.Context) Catalog {

@@ -54,6 +54,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	controlplaneroutes.RegisterAdmin(mux, handler.AdminHandler{Register: func(mux *http.ServeMux) { registerAdminRoutes(mux, app) }})
 	registerExecutionRoutes(mux, app, service)
 	registerSyncRoutes(mux, app)
+	registerTransferRoutes(mux, app, service)
 	return mux, nil
 }
 
@@ -99,7 +100,7 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if !limitJSONBody(w, r) {
+			if r.Header.Get("Content-Type") != "application/octet-stream" && !limitJSONBody(w, r) {
 				return
 			}
 			if r.Header.Get("x-opl-csrf") != stringValue(payload["csrfToken"]) {

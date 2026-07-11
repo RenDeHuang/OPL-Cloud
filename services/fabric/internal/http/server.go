@@ -3,7 +3,9 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"opl-cloud/services/fabric/internal/fabric"
@@ -32,6 +34,49 @@ func NewServer(service *fabric.Service) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, operations)
+	})
+	mux.HandleFunc("POST /fabric/transfers", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.TransferInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		transfer, err := service.CreateTransfer(r.Context(), input)
+		writeTransferResult(w, http.StatusCreated, transfer, err)
+	})
+	mux.HandleFunc("GET /fabric/transfers/{id}", func(w http.ResponseWriter, r *http.Request) {
+		transfer, err := service.Transfer(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		writeTransferResult(w, http.StatusOK, transfer, err)
+	})
+	mux.HandleFunc("PUT /fabric/transfers/{id}/chunks/{index}", func(w http.ResponseWriter, r *http.Request) {
+		index, err := strconv.Atoi(r.PathValue("index"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fabric.ErrTransferInvalid.Error())
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, (4<<20)+1))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fabric.ErrTransferInvalid.Error())
+			return
+		}
+		transfer, err := service.PutTransferChunk(r.Context(), strings.TrimSpace(r.PathValue("id")), index, body, r.Header.Get("X-Chunk-SHA256"))
+		writeTransferResult(w, http.StatusOK, transfer, err)
+	})
+	mux.HandleFunc("POST /fabric/transfers/{id}/complete", func(w http.ResponseWriter, r *http.Request) {
+		transfer, err := service.CompleteTransfer(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		writeTransferResult(w, http.StatusOK, transfer, err)
+	})
+	mux.HandleFunc("GET /fabric/contents/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		content, err := service.Content(r.Context(), r.Header.Get("X-Workspace-ID"), strings.TrimSpace(r.PathValue("digest")))
+		if err != nil {
+			writeTransferResult(w, http.StatusOK, fabric.Transfer{}, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("X-Content-SHA256", content.Digest)
+		w.Header().Set("X-Workspace-ID", content.WorkspaceID)
+		w.Header().Set("X-Workspace-Path", content.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(content.Body)
 	})
 	mux.HandleFunc("POST /fabric/jobs", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.JobInput
@@ -207,6 +252,21 @@ func writeJobResult(w http.ResponseWriter, status int, body fabric.Job, err erro
 		writeError(w, http.StatusConflict, err.Error())
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, status, body)
+	}
+}
+
+func writeTransferResult(w http.ResponseWriter, status int, body fabric.Transfer, err error) {
+	switch {
+	case errors.Is(err, fabric.ErrTransferInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, fabric.ErrTransferNotFound), errors.Is(err, fabric.ErrContentNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, fabric.ErrTransferChunkConflict), errors.Is(err, fabric.ErrTransferIncomplete), errors.Is(err, fabric.ErrTransferDigestMismatch):
+		writeError(w, http.StatusConflict, err.Error())
+	case err != nil:
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		writeJSON(w, status, body)
 	}

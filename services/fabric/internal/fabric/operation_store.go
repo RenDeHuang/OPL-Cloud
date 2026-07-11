@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -13,6 +14,8 @@ import (
 	_ "github.com/lib/pq"
 
 	fabricent "opl-cloud/services/fabric/ent"
+	"opl-cloud/services/fabric/ent/contenttransfer"
+	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 )
 
@@ -27,13 +30,16 @@ type RuntimeAccessStore interface {
 }
 
 type MemoryOperationStore struct {
-	mu        sync.Mutex
-	operation []FabricOperation
-	access    map[string]RuntimeAccess
+	mu               sync.Mutex
+	operation        []FabricOperation
+	access           map[string]RuntimeAccess
+	transferSessions map[string]Transfer
+	transferKeys     map[string]string
+	transferChunks   map[string]map[int]TransferChunk
 }
 
 func NewMemoryOperationStore() *MemoryOperationStore {
-	return &MemoryOperationStore{access: map[string]RuntimeAccess{}}
+	return &MemoryOperationStore{access: map[string]RuntimeAccess{}, transferSessions: map[string]Transfer{}, transferKeys: map[string]string{}, transferChunks: map[string]map[int]TransferChunk{}}
 }
 
 func (s *MemoryOperationStore) Append(_ context.Context, operation FabricOperation) error {
@@ -118,6 +124,124 @@ func NewPostgresOperationStore(databaseURL string) (*PostgresOperationStore, err
 func (s *PostgresOperationStore) Install(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, PostgresOperationSchemaSQL())
 	return err
+}
+
+func (s *PostgresOperationStore) CreateTransfer(ctx context.Context, transfer Transfer) (Transfer, error) {
+	existing, err := s.client.ContentTransfer.Query().Where(contenttransfer.IdempotencyKey(transfer.IdempotencyKey)).Only(ctx)
+	if err == nil {
+		if existing.RequestHash != transfer.RequestHash {
+			return Transfer{}, ErrTransferChunkConflict
+		}
+		return transferFromEnt(existing), nil
+	}
+	if !fabricent.IsNotFound(err) {
+		return Transfer{}, err
+	}
+	created, err := s.client.ContentTransfer.Create().
+		SetID(transfer.TransferID).SetOrganizationID(transfer.OrganizationID).SetWorkspaceID(transfer.WorkspaceID).
+		SetProjectID(transfer.ProjectID).SetPath(transfer.Path).SetDigest(transfer.Digest).SetSize(transfer.Size).
+		SetChunkSize(transfer.ChunkSize).SetChunkCount(transfer.ChunkCount).SetStatus(transfer.Status).
+		SetIdempotencyKey(transfer.IdempotencyKey).SetRequestHash(transfer.RequestHash).SetCreatedAt(transfer.CreatedAt).Save(ctx)
+	if err != nil {
+		concurrent, queryErr := s.client.ContentTransfer.Query().Where(contenttransfer.IdempotencyKey(transfer.IdempotencyKey)).Only(ctx)
+		if queryErr == nil {
+			if concurrent.RequestHash != transfer.RequestHash {
+				return Transfer{}, ErrTransferChunkConflict
+			}
+			return transferFromEnt(concurrent), nil
+		}
+		return Transfer{}, err
+	}
+	return transferFromEnt(created), nil
+}
+
+func (s *PostgresOperationStore) Transfer(ctx context.Context, id string) (Transfer, error) {
+	row, err := s.client.ContentTransfer.Get(ctx, id)
+	if fabricent.IsNotFound(err) {
+		return Transfer{}, ErrTransferNotFound
+	}
+	if err != nil {
+		return Transfer{}, err
+	}
+	result := transferFromEnt(row)
+	chunks, err := s.TransferChunks(ctx, id)
+	if err != nil {
+		return Transfer{}, err
+	}
+	result.ReceivedChunks = receivedIndexesFromChunks(chunks)
+	return result, nil
+}
+
+func (s *PostgresOperationStore) SaveTransfer(ctx context.Context, transfer Transfer) error {
+	update := s.client.ContentTransfer.UpdateOneID(transfer.TransferID).SetStatus(transfer.Status)
+	if transfer.CompletedAt != nil {
+		update.SetCompletedAt(*transfer.CompletedAt)
+	}
+	_, err := update.Save(ctx)
+	if fabricent.IsNotFound(err) {
+		return ErrTransferNotFound
+	}
+	return err
+}
+
+func (s *PostgresOperationStore) SaveTransferChunk(ctx context.Context, id string, chunk TransferChunk) error {
+	existing, err := s.client.ContentTransferChunk.Query().Where(contenttransferchunk.TransferID(id), contenttransferchunk.ChunkIndex(chunk.Index)).Only(ctx)
+	if err == nil {
+		if existing.Digest != chunk.Digest {
+			return ErrTransferChunkConflict
+		}
+		return nil
+	}
+	if !fabricent.IsNotFound(err) {
+		return err
+	}
+	_, err = s.client.ContentTransferChunk.Create().SetID(id + "-" + fmt.Sprint(chunk.Index)).SetTransferID(id).
+		SetChunkIndex(chunk.Index).SetDigest(chunk.Digest).SetBody(chunk.Body).Save(ctx)
+	if err != nil {
+		concurrent, queryErr := s.client.ContentTransferChunk.Query().Where(contenttransferchunk.TransferID(id), contenttransferchunk.ChunkIndex(chunk.Index)).Only(ctx)
+		if queryErr == nil {
+			if concurrent.Digest != chunk.Digest {
+				return ErrTransferChunkConflict
+			}
+			return nil
+		}
+	}
+	return err
+}
+
+func (s *PostgresOperationStore) TransferChunks(ctx context.Context, id string) ([]TransferChunk, error) {
+	rows, err := s.client.ContentTransferChunk.Query().Where(contenttransferchunk.TransferID(id)).Order(fabricent.Asc(contenttransferchunk.FieldChunkIndex)).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	chunks := make([]TransferChunk, 0, len(rows))
+	for _, row := range rows {
+		chunks = append(chunks, TransferChunk{Index: row.ChunkIndex, Digest: row.Digest, Body: row.Body})
+	}
+	return chunks, nil
+}
+
+func (s *PostgresOperationStore) Content(ctx context.Context, workspaceID, digest string) (Content, error) {
+	row, err := s.client.ContentTransfer.Query().Where(contenttransfer.WorkspaceID(workspaceID), contenttransfer.Digest(digest), contenttransfer.Status("completed")).First(ctx)
+	if fabricent.IsNotFound(err) {
+		return Content{}, ErrContentNotFound
+	}
+	if err != nil {
+		return Content{}, err
+	}
+	chunks, err := s.TransferChunks(ctx, row.ID)
+	if err != nil {
+		return Content{}, err
+	}
+	var body []byte
+	for _, chunk := range chunks {
+		body = append(body, chunk.Body...)
+	}
+	return Content{Digest: digest, WorkspaceID: row.WorkspaceID, Path: row.Path, Body: body}, nil
+}
+
+func transferFromEnt(row *fabricent.ContentTransfer) Transfer {
+	return Transfer{TransferID: row.ID, OrganizationID: row.OrganizationID, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, Path: row.Path, Digest: row.Digest, Size: row.Size, ChunkSize: row.ChunkSize, ChunkCount: row.ChunkCount, Status: row.Status, IdempotencyKey: row.IdempotencyKey, RequestHash: row.RequestHash, CreatedAt: row.CreatedAt, CompletedAt: row.CompletedAt}
 }
 
 func (s *PostgresOperationStore) Append(ctx context.Context, operation FabricOperation) error {
