@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -295,6 +296,7 @@ func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
 	provider := NewTencentProvider()
 	var calls [][]string
 	var uploaded []byte
+	var uploadSizes []int
 	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
 		calls = append(calls, append([]string(nil), args...))
 		if args[0] == "get" {
@@ -304,18 +306,22 @@ func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
 			}}}), nil
 		}
 		if stdin != nil {
-			uploaded = append([]byte(nil), stdin...)
+			uploaded = append(uploaded, stdin...)
+			uploadSizes = append(uploadSizes, len(stdin))
 		}
 		if len(args) > 3 && args[3] == "sha256sum" {
 			return []byte(fmt.Sprintf("%x  %s\n", sha256.Sum256(uploaded), args[4])), nil
 		}
 		return nil, nil
 	}
-	if err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", []byte("verified")); err != nil {
+	body := bytes.Repeat([]byte("v"), (32<<10)+1)
+	if err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", body); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if string(uploaded) != "verified" || len(calls) != 5 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || calls[2][0] != "exec" || calls[2][4] != "dd" || !slices.Equal(calls[3][:4], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv"}) || !slices.Equal(calls[4], []string{"exec", "deployment/opl-workspace-alpha", "--", "sha256sum", "/projects/inputs/paper.txt"}) {
-		t.Fatalf("calls=%#v uploaded=%q", calls, uploaded)
+	digest := fmt.Sprintf("%x", sha256.Sum256(body))
+	temporary := "/projects/inputs/paper.txt.opl-upload-" + digest[:12]
+	if !bytes.Equal(uploaded, body) || !slices.Equal(uploadSizes, []int{32 << 10, 1}) || len(calls) != 7 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || !slices.Equal(calls[2], []string{"exec", "deployment/opl-workspace-alpha", "--", "rm", "-f", temporary}) || !slices.Equal(calls[3], []string{"exec", "-i", "deployment/opl-workspace-alpha", "--", "dd", "of=" + temporary, "bs=32768", "seek=0", "conv=notrunc", "status=none"}) || !slices.Equal(calls[4], []string{"exec", "-i", "deployment/opl-workspace-alpha", "--", "dd", "of=" + temporary, "bs=32768", "seek=1", "conv=notrunc", "status=none"}) || !slices.Equal(calls[5], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv", temporary, "/projects/inputs/paper.txt"}) || !slices.Equal(calls[6], []string{"exec", "deployment/opl-workspace-alpha", "--", "sha256sum", "/projects/inputs/paper.txt"}) {
+		t.Fatalf("calls=%#v uploadSizes=%#v", calls, uploadSizes)
 	}
 }
 

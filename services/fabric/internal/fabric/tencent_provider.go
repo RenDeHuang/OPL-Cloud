@@ -427,8 +427,17 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mkdir", "-p", path.Dir(target)}, nil); err != nil {
 		return err
 	}
-	if _, err := p.kubectl(ctx, []string{"exec", "-i", deployment, "--", "dd", "of=" + temporary, "status=none"}, body); err != nil {
+	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "rm", "-f", temporary}, nil); err != nil {
 		return err
+	}
+	// ponytail: TKE exec stdin truncates at 64 KiB; use 32 KiB writes until object storage is justified by measured throughput.
+	const execChunkSize = 32 << 10
+	for offset := 0; offset < len(body); offset += execChunkSize {
+		end := min(offset+execChunkSize, len(body))
+		args := []string{"exec", "-i", deployment, "--", "dd", "of=" + temporary, "bs=32768", fmt.Sprintf("seek=%d", offset/execChunkSize), "conv=notrunc", "status=none"}
+		if _, err := p.kubectl(ctx, args, body[offset:end]); err != nil {
+			return err
+		}
 	}
 	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mv", temporary, target}, nil); err != nil {
 		return err
