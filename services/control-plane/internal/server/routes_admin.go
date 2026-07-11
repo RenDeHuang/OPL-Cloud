@@ -1,6 +1,9 @@
 package server
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+)
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 	mux.HandleFunc("POST /api/organizations", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +29,22 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
+	}))
+	mux.HandleFunc("POST /api/organizations/members/{id}/revoke", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		body, err := app.revokeMembership(r.Context(), r.PathValue("id"))
+		if err != nil {
+			if errors.Is(err, errMembershipNotFound) {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		if err := app.appendAuditEvent(r, "organization.member_revoke", "organization_membership", stringValue(body["id"]), stringValue(body["accountId"]), nil, body, "succeeded"); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
 	}))
 	mux.HandleFunc("POST /api/users", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)

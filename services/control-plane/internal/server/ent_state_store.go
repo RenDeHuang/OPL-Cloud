@@ -60,6 +60,10 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateAndNormalizeLegacyMemberships(context.Background(), driver); err != nil {
+		_ = driver.Close()
+		return nil, err
+	}
 	if err := backfillControlPlaneMigrationNulls(context.Background(), driver); err != nil {
 		_ = driver.Close()
 		return nil, err
@@ -79,6 +83,55 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func validateAndNormalizeLegacyMemberships(ctx context.Context, driver dialect.Driver) error {
+	const query = `
+DO $$
+BEGIN
+	IF to_regclass('control_plane_memberships') IS NULL THEN
+		RETURN;
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM control_plane_memberships) THEN
+    RETURN;
+  END IF;
+  IF to_regclass('control_plane_accounts') IS NULL
+    OR to_regclass('control_plane_organizations') IS NULL
+    OR to_regclass('control_plane_users') IS NULL
+  THEN
+    RAISE EXCEPTION 'legacy membership truth tables are missing';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM control_plane_memberships memberships
+    LEFT JOIN control_plane_accounts accounts ON accounts.id = memberships.account_id
+    LEFT JOIN control_plane_organizations organizations ON organizations.id = memberships.organization_id
+    LEFT JOIN control_plane_users users ON users.id = memberships.user_id
+	WHERE memberships.role IS NULL
+	  OR btrim(memberships.role) = ''
+	  OR lower(btrim(memberships.role)) NOT IN ('owner', 'admin', 'member')
+      OR accounts.id IS NULL
+      OR organizations.id IS NULL
+      OR users.id IS NULL
+      OR organizations.billing_account_id <> memberships.account_id
+      OR users.account_id <> memberships.account_id
+  ) THEN
+    RAISE EXCEPTION 'legacy membership cannot be mapped without guessing';
+  END IF;
+  UPDATE control_plane_memberships SET role = lower(btrim(role));
+END $$;`
+	tx, err := driver.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin legacy membership migration: %w", err)
+	}
+	if err := tx.Exec(ctx, query, []any{}, nil); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("validate legacy memberships: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit legacy membership migration: %w", err)
+	}
+	return nil
 }
 
 func backfillControlPlaneMigrationNulls(ctx context.Context, driver dialect.Driver) error {
@@ -598,6 +651,9 @@ func (s *postgresEntStateStore) ListUsers(ctx context.Context, includeDeleted bo
 }
 
 func (s *postgresEntStateStore) SaveUser(ctx context.Context, row map[string]any) error {
+	if !validRole(stringValue(row["role"])) {
+		return errInvalidRole
+	}
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.User.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.User.Create() }, userEntFields)
 }
 
@@ -625,6 +681,18 @@ func (s *postgresEntStateStore) DeleteSession(ctx context.Context, id string) er
 	return err
 }
 
+func (s *postgresEntStateStore) ListAccounts(ctx context.Context) ([]map[string]any, error) {
+	rows, err := loadRecordSet(ctx, s.client.Account.Query().All, accountEntFields)
+	if err != nil {
+		return nil, err
+	}
+	return filteredRecords(rows, "")
+}
+
+func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]any) error {
+	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Account.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Account.Create() }, accountEntFields)
+}
+
 func (s *postgresEntStateStore) ListOrganizations(ctx context.Context) ([]map[string]any, error) {
 	rows, err := loadRecordSet(ctx, s.client.Organization.Query().All, organizationEntFields)
 	if err != nil {
@@ -634,7 +702,23 @@ func (s *postgresEntStateStore) ListOrganizations(ctx context.Context) ([]map[st
 }
 
 func (s *postgresEntStateStore) SaveOrganization(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Organization.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Organization.Create() }, organizationEntFields)
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	client := tx.Client()
+	if _, err := client.Account.Get(ctx, stringValue(row["billingAccountId"])); err != nil {
+		_ = tx.Rollback()
+		if controlplaneent.IsNotFound(err) {
+			return errAccountNotFound
+		}
+		return err
+	}
+	if err := s.replaceRecord(ctx, row, func(id string) error { return client.Organization.DeleteOneID(id).Exec(ctx) }, func() any { return client.Organization.Create() }, organizationEntFields); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *postgresEntStateStore) ListMemberships(ctx context.Context) ([]map[string]any, error) {
@@ -646,7 +730,47 @@ func (s *postgresEntStateStore) ListMemberships(ctx context.Context) ([]map[stri
 }
 
 func (s *postgresEntStateStore) SaveMembership(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Membership.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Membership.Create() }, membershipEntFields)
+	if !validRole(stringValue(row["role"])) {
+		return errInvalidRole
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	client := tx.Client()
+	accountID := stringValue(row["accountId"])
+	if _, err := client.Account.Get(ctx, accountID); err != nil {
+		_ = tx.Rollback()
+		if controlplaneent.IsNotFound(err) {
+			return errAccountNotFound
+		}
+		return err
+	}
+	organization, err := client.Organization.Get(ctx, stringValue(row["organizationId"]))
+	if err != nil {
+		_ = tx.Rollback()
+		if controlplaneent.IsNotFound(err) {
+			return errOrganizationNotFound
+		}
+		return err
+	}
+	user, err := client.User.Get(ctx, stringValue(row["userId"]))
+	if err != nil {
+		_ = tx.Rollback()
+		if controlplaneent.IsNotFound(err) {
+			return errMembershipUserNotFound
+		}
+		return err
+	}
+	if organization.BillingAccountID != accountID || user.AccountID != accountID {
+		_ = tx.Rollback()
+		return errMembershipAccountMismatch
+	}
+	if err := s.replaceRecord(ctx, row, func(id string) error { return client.Membership.DeleteOneID(id).Exec(ctx) }, func() any { return client.Membership.Create() }, membershipEntFields); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *postgresEntStateStore) ListProjectTaskSyncHeads(ctx context.Context) ([]map[string]any, error) {

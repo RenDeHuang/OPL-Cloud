@@ -31,10 +31,16 @@ type loginFailure struct {
 }
 
 var (
-	errUserNotFound    = errors.New("user_not_found")
-	errUserExists      = errors.New("user_already_exists")
-	errLastActiveAdmin = errors.New("last_active_admin")
-	errUserDeleted     = errors.New("user_deleted")
+	errUserNotFound              = errors.New("user_not_found")
+	errUserExists                = errors.New("user_already_exists")
+	errLastActiveAdmin           = errors.New("last_active_admin")
+	errUserDeleted               = errors.New("user_deleted")
+	errInvalidRole               = errors.New("invalid_role")
+	errAccountNotFound           = errors.New("account_not_found")
+	errOrganizationNotFound      = errors.New("organization_not_found")
+	errMembershipUserNotFound    = errors.New("membership_user_not_found")
+	errMembershipAccountMismatch = errors.New("membership_account_mismatch")
+	errMembershipNotFound        = errors.New("membership_not_found")
 )
 
 func newControlPlaneApp() *controlPlaneServer {
@@ -67,6 +73,9 @@ func (app *controlPlaneServer) ensureBootstrapAdmin() error {
 	if len(users) > 0 {
 		return nil
 	}
+	if err := app.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-admin", "status": "active"}); err != nil {
+		return err
+	}
 	return app.tables.SaveUser(context.Background(), map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-admin", "role": "admin", "status": "active"})
 }
 
@@ -86,6 +95,12 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	workspaces := app.workspaceStateRowsLocked(accountID)
+	accounts := []any{}
+	for _, account := range app.accountsLocked() {
+		if stringValue(account.(map[string]any)["accountId"]) == accountID {
+			accounts = append(accounts, account)
+		}
+	}
 	return map[string]any{
 		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
 		"billingPolicy":          map[string]any{"holdDays": 7, "priceBasis": "OPL price list"},
@@ -93,33 +108,33 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"computePools":           computePools,
 		"wallet":                 app.wallet(accountID),
 		"account":                app.wallet(accountID),
-		"user":                   app.currentUserLocked(),
+		"user":                   nil,
 		"workspaces":             workspaces,
 		"computeAllocations":     rowsAsAnyFromMaps(app.listComputes(accountID)),
 		"storageVolumes":         rowsAsAnyFromMaps(app.listStorages(accountID)),
 		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments(accountID)),
-		"accounts":               app.accountsLocked(),
+		"accounts":               accounts,
 		"billingSummary":         app.accountBillingSummary(accountID),
 		"billingLedger":          rowsAsAnyFromMaps(app.listLedger(accountID)),
 		"walletTransactions":     rowsAsAnyFromMaps(app.listWalletTransactions(accountID)),
 		"manualTopups":           rowsAsAnyFromMaps(app.listManualTopups(accountID)),
 		"supportTickets":         rowsAsAnyFromMaps(app.listSupportMappings(accountID)),
 		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents(accountID)),
-		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
-		"billingReconciliation":  app.reconciliationProjectionLocked(),
+		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(accountID),
 		"notifications":          []any{},
-		"runtimeOperations":      rowsAsAnyFromMaps(app.listRuntimeOperations()),
+		"runtimeOperations":      rowsAsAnyFromMaps(rowsForAccount(app.listRuntimeOperations(), accountID)),
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
-func (app *controlPlaneServer) currentUserLocked() map[string]any {
-	for _, user := range app.userRecordSet(false) {
-		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
-			return sanitizeUser(user)
+func rowsForAccount(rows []map[string]any, accountID string) []map[string]any {
+	out := make([]map[string]any, 0)
+	for _, row := range rows {
+		if stringValue(row["accountId"]) == accountID {
+			out = append(out, row)
 		}
 	}
-	return nil
+	return out
 }
 
 func (app *controlPlaneServer) userRecordSet(includeDeleted bool) controlPlaneRecordSet {

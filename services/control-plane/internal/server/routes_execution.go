@@ -370,8 +370,15 @@ func (app *controlPlaneServer) authorizeOrganization(w http.ResponseWriter, r *h
 		writeError(w, http.StatusUnauthorized, "not_authenticated")
 		return false
 	}
-	if stringValue(user["role"]) == "admin" {
-		return true
+	organizations, err := app.tables.ListOrganizations(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "state_read_failed")
+		return false
+	}
+	organization := findRecord(organizations, organizationID)
+	if organization == nil || stringValue(organization["status"]) != "active" {
+		writeError(w, http.StatusForbidden, "organization_membership_required")
+		return false
 	}
 	memberships, err := app.tables.ListMemberships(r.Context())
 	if err != nil {
@@ -379,7 +386,7 @@ func (app *controlPlaneServer) authorizeOrganization(w http.ResponseWriter, r *h
 		return false
 	}
 	for _, membership := range memberships {
-		if stringValue(membership["organizationId"]) == organizationID && stringValue(membership["userId"]) == stringValue(user["id"]) && stringValue(membership["status"]) == "active" {
+		if stringValue(membership["organizationId"]) == organizationID && stringValue(membership["userId"]) == stringValue(user["id"]) && stringValue(membership["accountId"]) == stringValue(user["accountId"]) && stringValue(membership["accountId"]) == stringValue(organization["billingAccountId"]) && validRole(stringValue(membership["role"])) && stringValue(membership["status"]) == "active" {
 			return true
 		}
 	}

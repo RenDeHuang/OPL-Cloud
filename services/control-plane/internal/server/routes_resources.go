@@ -29,8 +29,8 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		if !ok {
 			return
 		}
-		if guard, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "billing_reconciliation_blocked", "billingReconciliation": guard})
+		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
+			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
 		key := mutationKey(r, input)
@@ -91,30 +91,27 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 	mux.HandleFunc("GET /api/compute-allocations/{id}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))
 		compute, ok := app.getCompute(id)
-		if ok && stringValue(compute["status"]) != "provisioning" {
-			if !app.canAccessResource(r, compute) {
-				writeError(w, http.StatusForbidden, "account_scope_forbidden")
-				return
-			}
-			writeJSON(w, http.StatusOK, compute)
-			return
-		}
-		fresh, err := service.GetComputeAllocation(r.Context(), id)
-		if err == nil && fresh.ID != "" {
-			body := computeResponse(structToMap(fresh))
-			if err := app.saveComputeFact(body); err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			writeJSON(w, http.StatusOK, body)
-			return
-		}
 		if !ok {
 			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
 			return
 		}
 		if !app.canAccessResource(r, compute) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		if stringValue(compute["status"]) != "provisioning" {
+			writeJSON(w, http.StatusOK, compute)
+			return
+		}
+		fresh, err := service.GetComputeAllocation(r.Context(), id)
+		if err == nil && fresh.ID != "" {
+			body := computeResponse(mergeMaps(compute, structToMap(fresh)))
+			body["accountId"] = firstNonEmpty(stringValue(compute["accountId"]), stringValue(compute["ownerAccountId"]))
+			if err := app.saveComputeFact(body); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, body)
 			return
 		}
 		writeJSON(w, http.StatusOK, compute)
@@ -160,8 +157,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		id := strings.TrimSpace(r.PathValue("id"))
-		existing, _ := app.getCompute(id)
-		if existing["id"] != nil && !app.canAccessResource(r, existing) {
+		existing, ok := app.getCompute(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
+			return
+		}
+		if !app.canAccessResource(r, existing) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
@@ -188,8 +189,8 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		if !ok {
 			return
 		}
-		if guard, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "billing_reconciliation_blocked", "billingReconciliation": guard})
+		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
+			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
 		key := mutationKey(r, input)
@@ -257,8 +258,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		id := stringField(input, "storageId", "")
-		existing, _ := app.getStorage(id)
-		if existing["id"] != nil && !app.canAccessResource(r, existing) {
+		existing, ok := app.getStorage(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "storage_volume_not_found")
+			return
+		}
+		if !app.canAccessResource(r, existing) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
@@ -321,8 +326,17 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		}
 		compute, computeOK := app.getCompute(stringField(input, "computeAllocationId", ""))
 		storage, storageOK := app.getStorage(stringField(input, "storageId", ""))
-		if (computeOK && !app.canAccessResource(r, compute)) || (storageOK && !app.canAccessResource(r, storage)) {
+		if !computeOK || !storageOK {
+			writeError(w, http.StatusBadRequest, "compute_storage_not_found")
+			return
+		}
+		if !app.resourceBelongsToAccount(compute, accountID) || !app.resourceBelongsToAccount(storage, accountID) || !app.canAccessResource(r, compute) || !app.canAccessResource(r, storage) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		workspaceID := stringField(input, "workspaceId", "")
+		if (stringValue(compute["workspaceId"]) != "" && stringValue(compute["workspaceId"]) != workspaceID) || (stringValue(storage["workspaceId"]) != "" && stringValue(storage["workspaceId"]) != workspaceID) {
+			writeError(w, http.StatusForbidden, "workspace_scope_forbidden")
 			return
 		}
 		accountID = firstNonEmpty(stringValue(compute["accountId"]), stringValue(compute["ownerAccountId"]), stringValue(storage["accountId"]), stringValue(storage["ownerAccountId"]), accountID)
@@ -350,8 +364,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 	mux.HandleFunc("POST /api/storage-attachments/detach", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		attachmentID := stringField(input, "attachmentId", "")
-		existing, _ := app.getAttachment(attachmentID)
-		if existing["id"] != nil && !app.canAccessResource(r, existing) {
+		existing, ok := app.getAttachment(attachmentID)
+		if !ok {
+			writeError(w, http.StatusNotFound, "storage_attachment_not_found")
+			return
+		}
+		if !app.canAccessResource(r, existing) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}

@@ -179,9 +179,12 @@ func (app *controlPlaneServer) applyLedgerFacts(accountID string, wallet clients
 	return nil
 }
 
-func (app *controlPlaneServer) resourceLedgerEvidenceLocked() []any {
+func (app *controlPlaneServer) resourceLedgerEvidenceLocked(accountIDs ...string) []any {
 	rows := []any{}
 	for _, workspace := range app.listWorkspaces("") {
+		if len(accountIDs) > 0 && !app.resourceBelongsToAccount(workspace, accountIDs[0]) {
+			continue
+		}
 		workspaceID := stringValue(workspace["id"])
 		computeID := stringValue(workspace["currentComputeAllocationId"])
 		storageID := stringValue(workspace["storageId"])

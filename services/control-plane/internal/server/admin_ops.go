@@ -12,8 +12,16 @@ import (
 
 func (app *controlPlaneServer) createOrganization(input map[string]any) (map[string]any, error) {
 	name := stringField(input, "name", "Organization")
+	accountID := stringField(input, "billingAccountId", "acct-admin")
+	accounts, err := app.tables.ListAccounts(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if !recordExists(accounts, accountID) {
+		return nil, errAccountNotFound
+	}
 	id := "org-" + compactID(name+"-"+time.Now().UTC().Format("20060102150405.000000000"))
-	org := map[string]any{"id": id, "name": name, "billingAccountId": stringField(input, "billingAccountId", "acct-admin"), "status": "active"}
+	org := map[string]any{"id": id, "name": name, "billingAccountId": accountID, "status": "active"}
 	if err := app.tables.SaveOrganization(context.Background(), org); err != nil {
 		return nil, err
 	}
@@ -23,12 +31,69 @@ func (app *controlPlaneServer) createOrganization(input map[string]any) (map[str
 func (app *controlPlaneServer) createMembership(input map[string]any) (map[string]any, error) {
 	orgID := stringField(input, "organizationId", "")
 	userID := stringField(input, "userId", "")
+	role := stringField(input, "role", "member")
+	if !validRole(role) {
+		return nil, errInvalidRole
+	}
+	organizations, err := app.tables.ListOrganizations(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	organization := findRecord(organizations, orgID)
+	if organization == nil {
+		return nil, errOrganizationNotFound
+	}
+	user, err := app.findUserByID(context.Background(), userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errMembershipUserNotFound
+	}
+	accountID := stringField(input, "accountId", stringValue(organization["billingAccountId"]))
+	accounts, err := app.tables.ListAccounts(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if !recordExists(accounts, accountID) {
+		return nil, errAccountNotFound
+	}
+	if accountID != stringValue(organization["billingAccountId"]) || accountID != stringValue(user["accountId"]) {
+		return nil, errMembershipAccountMismatch
+	}
 	id := "mem-" + stableID(orgID, userID, time.Now().UTC().String())[:12]
-	membership := map[string]any{"id": id, "accountId": stringField(input, "accountId", "acct-admin"), "organizationId": orgID, "userId": userID, "role": stringField(input, "role", "member"), "status": "active"}
+	membership := map[string]any{"id": id, "accountId": accountID, "organizationId": orgID, "userId": userID, "role": role, "status": "active"}
 	if err := app.tables.SaveMembership(context.Background(), membership); err != nil {
 		return nil, err
 	}
 	return cloneMap(membership), nil
+}
+
+func findRecord(rows []map[string]any, id string) map[string]any {
+	for _, row := range rows {
+		if stringValue(row["id"]) == id {
+			return row
+		}
+	}
+	return nil
+}
+
+func recordExists(rows []map[string]any, id string) bool { return findRecord(rows, id) != nil }
+
+func (app *controlPlaneServer) revokeMembership(ctx context.Context, id string) (map[string]any, error) {
+	memberships, err := app.tables.ListMemberships(ctx)
+	if err != nil {
+		return nil, err
+	}
+	membership := findRecord(memberships, id)
+	if membership == nil {
+		return nil, errMembershipNotFound
+	}
+	membership["status"] = "revoked"
+	if err := app.tables.SaveMembership(ctx, membership); err != nil {
+		return nil, err
+	}
+	return membership, nil
 }
 
 func (app *controlPlaneServer) managementState(includeDeleted bool, computePools []any) map[string]any {

@@ -110,9 +110,20 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 			}
 		}
 		user, _ := payload["user"].(map[string]any)
-		if requiresAdmin && stringValue(user["role"]) != "admin" {
+		if requiresAdmin && !isOperatorUser(user) {
 			writeError(w, http.StatusForbidden, "admin_required")
 			return
+		}
+		if !requiresAdmin {
+			active, err := app.hasActiveCustomerMembership(r.Context(), user)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			if !active {
+				writeError(w, http.StatusForbidden, "organization_membership_required")
+				return
+			}
 		}
 		next(w, r)
 	}
@@ -271,9 +282,6 @@ func (app *controlPlaneServer) scopedAccountID(w http.ResponseWriter, r *http.Re
 		requested = firstNonEmpty(stringField(input, "accountId", ""), requested)
 	}
 	sessionAccount := stringValue(user["accountId"])
-	if stringValue(user["role"]) == "admin" {
-		return firstNonEmpty(requested, sessionAccount), true
-	}
 	if sessionAccount == "" || (requested != "" && requested != sessionAccount) {
 		writeError(w, http.StatusForbidden, "account_scope_forbidden")
 		return "", false

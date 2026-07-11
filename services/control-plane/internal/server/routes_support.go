@@ -5,11 +5,7 @@ import "net/http"
 func registerSupportRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 	mux.HandleFunc("GET /api/support/tickets", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		user, _ := app.sessionUserContext(r)
-		if r.URL.Query().Get("scope") == "all" && stringValue(user["role"]) != "admin" {
-			writeError(w, http.StatusForbidden, "admin_required")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"tickets": app.supportTickets(r.URL.Query().Get("scope") == "all", stringValue(user["accountId"]))})
+		writeJSON(w, http.StatusOK, map[string]any{"tickets": app.supportTickets(false, stringValue(user["accountId"]))})
 	}))
 	mux.HandleFunc("POST /api/support/tickets", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)

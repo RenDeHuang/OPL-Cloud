@@ -356,11 +356,17 @@ func TestControlPlaneAdminFactsSurviveServerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := first.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-alpha", "status": "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.tables.SaveUser(context.Background(), map[string]any{"id": "usr-alpha", "email": "alpha@example.com", "accountId": "acct-alpha", "role": "owner", "status": "active"}); err != nil {
+		t.Fatal(err)
+	}
 	organization, err := first.createOrganization(map[string]any{"name": "Research Lab", "billingAccountId": "acct-alpha"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.createMembership(map[string]any{"organizationId": organization["id"], "userId": "usr-admin", "accountId": "acct-alpha", "role": "owner"}); err != nil {
+	if _, err := first.createMembership(map[string]any{"organizationId": organization["id"], "userId": "usr-alpha", "accountId": "acct-alpha", "role": "owner"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.rememberRuntimeOperations([]clients.FabricOperation{{ID: "fabric-op-alpha", OperationID: "operation-alpha", WorkspaceID: "ws-alpha", ResourceID: "compute-alpha", ResourceKind: "compute_allocation", Status: "succeeded", RedactedProviderPayload: map[string]any{"costTags": map[string]any{"opl_operation_id": "operation-alpha"}}}}); err != nil {

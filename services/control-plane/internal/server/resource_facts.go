@@ -204,8 +204,5 @@ func (app *controlPlaneServer) canAccessResource(r *http.Request, row map[string
 	if !ok {
 		return false
 	}
-	if stringValue(user["role"]) == "admin" {
-		return true
-	}
 	return app.resourceBelongsToAccount(row, stringValue(user["accountId"]))
 }

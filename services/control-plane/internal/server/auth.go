@@ -140,7 +140,10 @@ func bootstrapUsersFromEnv() ([]map[string]any, error) {
 			user["status"] = "active"
 		}
 		if stringValue(user["role"]) == "" {
-			user["role"] = "pi"
+			user["role"] = "owner"
+		}
+		if !validRole(stringValue(user["role"])) {
+			return nil, errInvalidRole
 		}
 		if stringValue(user["passwordHash"]) == "" {
 			password := stringValue(user["password"])
@@ -156,4 +159,8 @@ func bootstrapUsersFromEnv() ([]map[string]any, error) {
 		delete(user, "password")
 	}
 	return users, nil
+}
+
+func validRole(role string) bool {
+	return role == "owner" || role == "admin" || role == "member"
 }

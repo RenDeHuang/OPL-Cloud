@@ -22,7 +22,11 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, app.state(accountID, computePools))
+		state := app.state(accountID, computePools)
+		if user, ok := app.sessionUserContext(r); ok {
+			state["user"] = sanitizeUser(user)
+		}
+		writeJSON(w, http.StatusOK, state)
 	}))
 	mux.HandleFunc("GET /api/pricing/catalog", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		catalog, err := app.pricingCatalogResponse(r.Context())
