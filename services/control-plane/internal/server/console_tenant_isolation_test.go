@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -91,7 +92,7 @@ func (crossTenantComputeFabric) GetComputeAllocation(_ context.Context, id strin
 func TestFreshComputeReadRejectsCrossTenantProjection(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &crossTenantComputeFabric{}))
 	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-beta", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -108,6 +109,7 @@ func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-beta", "accountId": "acct-beta", "status": "running"}))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-beta", "accountId": "acct-beta", "status": "available"}))
 	mustStore(t, store.SaveRuntimeOperation(context.Background(), map[string]any{"id": "operation-beta", "operationId": "operation-beta", "accountId": "acct-beta", "workspaceId": "workspace-beta", "status": "succeeded"}))
+	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{"id": "global", "status": "mismatch", "guardStatus": "blocked", "guardReason": "global-secret", "guardBlockNewWorkspaces": true}))
 	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +126,9 @@ func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "alpha@example.com") {
 		t.Fatalf("state omitted current user: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "billingReconciliation") || strings.Contains(rec.Body.String(), "global-secret") {
+		t.Fatalf("state leaked global reconciliation: %s", rec.Body.String())
 	}
 }
 
@@ -226,7 +231,7 @@ func TestRevokeMembershipImmediatelyDeniesCustomerEndpoints(t *testing.T) {
 		t.Fatalf("active member workspace status = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	revoked := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/organizations/members/mem-member/revoke", `{}`)
+	revoked := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/organizations/members/mem-member/revoke", `{}`)
 	if revoked.Code != http.StatusOK {
 		t.Fatalf("revoke status = %d: %s", revoked.Code, revoked.Body.String())
 	}
@@ -261,7 +266,7 @@ func TestRevokeMembershipRequiresGlobalAdminAndExistingMembership(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/organizations/members/missing/revoke", `{}`)
+	missing := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/organizations/members/missing/revoke", `{}`)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("missing membership status = %d, want 404: %s", missing.Code, missing.Body.String())
 	}
@@ -273,6 +278,54 @@ func TestRevokeMembershipRequiresGlobalAdminAndExistingMembership(t *testing.T) 
 	forbidden := requestWithSession(t, server, member, http.MethodPost, "/api/organizations/members/mem-admin/revoke", `{}`)
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("member revoke status = %d, want 403: %s", forbidden.Code, forbidden.Body.String())
+	}
+}
+
+func TestTenantAdminRequiresMembershipAndCannotUseOperatorRoutes(t *testing.T) {
+	store := newMemoryTableStore()
+	hash, err := hashPassword("CorrectHorseBatteryStaple!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-tenant-admin", "email": "tenant-admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
+	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-tenant-admin", "organizationId": "org-alpha", "userId": "usr-tenant-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantAdmin := loginForTest(t, server, "tenant-admin@example.com", "CorrectHorseBatteryStaple!")
+	if rec := requestWithSession(t, server, tenantAdmin, http.MethodGet, "/api/workspaces", ""); rec.Code != http.StatusOK {
+		t.Fatalf("active tenant admin customer status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := requestWithSession(t, server, tenantAdmin, http.MethodGet, "/api/management/state", ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("tenant admin management status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	membership := findRecord(mustListMemberships(t, store), "mem-tenant-admin")
+	membership["status"] = "revoked"
+	mustStore(t, store.SaveMembership(context.Background(), membership))
+	if rec := requestWithSession(t, server, tenantAdmin, http.MethodGet, "/api/workspaces", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked tenant admin status = %d, want 401: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOperatorLoginNeverAdoptsTenantAdmin(t *testing.T) {
+	store := newMemoryTableStore()
+	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-tenant-admin", "email": "tenant-admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	var payload map[string]any
+	if err := json.NewDecoder(operator.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	user := payload["user"].(map[string]any)
+	if user["id"] != "usr-operator" || user["accountId"] != "acct-operator" {
+		t.Fatalf("operator login adopted non-reserved admin: %#v", user)
+	}
+	if rec := requestWithSession(t, server, operator, http.MethodGet, "/api/management/state", ""); rec.Code != http.StatusOK {
+		t.Fatalf("explicit operator management status = %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

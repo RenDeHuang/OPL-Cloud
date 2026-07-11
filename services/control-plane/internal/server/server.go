@@ -110,7 +110,7 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 			}
 		}
 		user, _ := payload["user"].(map[string]any)
-		if requiresAdmin && stringValue(user["role"]) != "admin" {
+		if requiresAdmin && !isOperatorUser(user) {
 			writeError(w, http.StatusForbidden, "admin_required")
 			return
 		}

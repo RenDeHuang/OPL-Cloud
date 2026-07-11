@@ -66,7 +66,7 @@ func (app *controlPlaneServer) disableUser(input map[string]any) (map[string]any
 	if stringValue(user["status"]) == "deleted" {
 		return nil, errUserDeleted
 	}
-	if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" && app.activeAdminCount() <= 1 {
+	if isOperatorUser(user) && stringValue(user["status"]) == "active" && app.activeOperatorCount() <= 1 {
 		return nil, errLastActiveAdmin
 	}
 	user["status"] = "disabled"
@@ -91,7 +91,7 @@ func (app *controlPlaneServer) softDeleteUser(input map[string]any) (map[string]
 	if stringValue(user["status"]) == "deleted" {
 		return sanitizeUser(user), nil
 	}
-	if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" && app.activeAdminCount() <= 1 {
+	if isOperatorUser(user) && stringValue(user["status"]) == "active" && app.activeOperatorCount() <= 1 {
 		return nil, errLastActiveAdmin
 	}
 	user["status"] = "deleted"
@@ -104,14 +104,14 @@ func (app *controlPlaneServer) softDeleteUser(input map[string]any) (map[string]
 	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
 }
 
-func (app *controlPlaneServer) activeAdminCount() int {
+func (app *controlPlaneServer) activeOperatorCount() int {
 	users, err := app.tables.ListUsers(context.Background(), false)
 	if err != nil {
 		return 0
 	}
 	count := 0
 	for _, user := range users {
-		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
+		if isOperatorUser(user) && stringValue(user["status"]) == "active" {
 			count++
 		}
 	}
@@ -255,9 +255,12 @@ func (app *controlPlaneServer) operatorLogin() (map[string]any, string, error) {
 		return nil, "", err
 	}
 	for _, user := range users {
-		if stringValue(user["role"]) == "admin" && stringValue(user["status"]) == "active" {
+		if stringValue(user["id"]) == "usr-operator" && stringValue(user["accountId"]) == "acct-operator" && stringValue(user["status"]) == "active" {
 			return app.createSession(user)
 		}
+	}
+	if err := app.ensureAccount(context.Background(), "acct-operator"); err != nil {
+		return nil, "", err
 	}
 	operator := map[string]any{"id": "usr-operator", "email": "operator@opl.local", "accountId": "acct-operator", "role": "admin", "status": "active"}
 	if err := app.tables.SaveUser(context.Background(), operator); err != nil {
@@ -306,13 +309,18 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, bool) {
 	if user == nil || stringValue(user["status"]) != "active" || !validRole(stringValue(user["role"])) {
 		return nil, false
 	}
-	if stringValue(user["role"]) != "admin" {
+	if !isOperatorUser(user) {
 		active, err := app.hasActiveCustomerMembership(r.Context(), user)
 		if err != nil || !active {
 			return nil, false
 		}
 	}
 	return map[string]any{"user": sanitizeUser(user), "csrfToken": stringValue(session["csrf"]), "expiresAt": expiresAt.Format(time.RFC3339)}, true
+}
+
+func isOperatorUser(user map[string]any) bool {
+	id, accountID := stringValue(user["id"]), stringValue(user["accountId"])
+	return stringValue(user["role"]) == "admin" && ((id == "usr-operator" && accountID == "acct-operator") || (id == "usr-admin" && accountID == "acct-admin"))
 }
 
 func (app *controlPlaneServer) hasActiveCustomerMembership(ctx context.Context, user map[string]any) (bool, error) {

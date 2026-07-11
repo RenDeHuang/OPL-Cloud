@@ -121,7 +121,6 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"supportTickets":         rowsAsAnyFromMaps(app.listSupportMappings(accountID)),
 		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents(accountID)),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(accountID),
-		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"notifications":          []any{},
 		"runtimeOperations":      rowsAsAnyFromMaps(rowsForAccount(app.listRuntimeOperations(), accountID)),
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),

@@ -90,7 +90,7 @@ func TestCreateWorkspaceHTTPUsesMutationKeyWhenHeaderIsAbsent(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", body)
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	addSessionCookies(req, session)
 	req.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
 	rec := httptest.NewRecorder()
@@ -143,7 +143,7 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", body)
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	addSessionCookies(req, session)
 	req.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
 	req.Header.Set("Idempotency-Key", "workspace-once")
@@ -299,6 +299,11 @@ func (s *failingResumeCommitStore) SaveAuditEvent(context.Context, map[string]an
 
 func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T) {
 	store := &failingResumeCommitStore{memoryTableStore: newMemoryTableStore()}
+	hash, err := hashPassword("CorrectHorseBatteryStaple!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "access": map[string]any{"tokenStatus": "suspended"}}))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available"}))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running"}))
@@ -307,7 +312,7 @@ func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T
 	if err != nil {
 		t.Fatalf("create audit failure server: %v", err)
 	}
-	response := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
+	response := requestWithSession(t, server, loginForTest(t, server, "admin@medopl.cn", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("audit failure status = %d: %s", response.Code, response.Body.String())
 	}
@@ -332,7 +337,7 @@ func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing
 	if err != nil {
 		t.Fatalf("create provisioning resume server: %v", err)
 	}
-	response := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
+	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("provisioning resume status = %d: %s", response.Code, response.Body.String())
 	}
@@ -361,7 +366,7 @@ func TestConcurrentWorkspaceResumeClaimsBeforeFabricSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create resume server: %v", err)
 	}
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	resume := func(key string) <-chan *httptest.ResponseRecorder {
 		done := make(chan *httptest.ResponseRecorder, 1)
 		req := httptest.NewRequest(http.MethodPost, "/api/workspaces/workspace-alpha/resume", bytes.NewBufferString(`{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`))
@@ -408,7 +413,7 @@ func TestConcurrentWorkspaceResumeClaimsBeforeFabricSideEffects(t *testing.T) {
 func TestPricingPreviewMatchesResourceHoldAmount(t *testing.T) {
 	ledger := &capturingHoldLedgerClient{}
 	server := NewServer(controlplane.NewService(ledger, &fakeFabricClient{}))
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 
 	previewReq := httptest.NewRequest(http.MethodPost, "/api/pricing/preview", bytes.NewBufferString(`{"accountId":"acct-alpha","resourceType":"compute","packageId":"basic"}`))
 	addSessionCookies(previewReq, session)
@@ -470,7 +475,7 @@ func TestPricingCatalogMatchesContractDefaults(t *testing.T) {
 
 func TestBillingSummaryReadsLedgerWallet(t *testing.T) {
 	server := NewServer(controlplane.NewService(walletSummaryLedgerClient{}, &fakeFabricClient{}))
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	req := httptest.NewRequest(http.MethodGet, "/api/billing/summary?accountId=acct-alpha", nil)
 	addAuth(req, session)
 	rec := httptest.NewRecorder()
@@ -512,7 +517,7 @@ func TestComputePoolsReadFabricCatalog(t *testing.T) {
 
 func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &catalogFabricClient{}))
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
 	addAuth(req, session)
 	rec := httptest.NewRecorder()
@@ -536,7 +541,7 @@ func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
 func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	calls := []string{}
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
@@ -589,7 +594,7 @@ func TestWorkspaceRuntimeStatusDoesNotReadSecretForUnknownProjection(t *testing.
 func TestWorkspaceRuntimeStatusForbidsCrossAccountSecretRead(t *testing.T) {
 	calls := []string{}
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
 	outsider := loginForTest(t, server, "outside@lab.example", "CorrectHorseBatteryStaple!")
 
@@ -635,7 +640,7 @@ func TestPersistentFactsSurviveServerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	ensureCustomerMembershipForTest(t, server, session, "acct-alpha", "usr-admin")
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 
@@ -644,7 +649,7 @@ func TestPersistentFactsSurviveServerRestart(t *testing.T) {
 		t.Fatalf("restart persistent server: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, restarted))
+	addSessionCookies(req, tenantAdminSessionForTest(t, restarted))
 	rec := httptest.NewRecorder()
 	restarted.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -675,7 +680,7 @@ func TestSessionFactSurvivesServerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	ensureCustomerMembershipForTest(t, server, session, "acct-admin", "usr-admin")
 
 	restarted, err := NewPersistentServer(service, NewTestEntStateStore(t, path))
@@ -699,7 +704,7 @@ func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	ensureCustomerMembershipForTest(t, server, session, "acct-alpha", "usr-admin")
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
@@ -712,7 +717,7 @@ func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("restart persistent server: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, restarted))
+	addSessionCookies(req, tenantAdminSessionForTest(t, restarted))
 	rec := httptest.NewRecorder()
 	restarted.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1154,7 +1159,7 @@ func (f *fakeFabricClient) CancelJob(_ context.Context, jobID string, _ string) 
 
 func TestExecutionRoutesPersistCanonicalFlow(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-project-alpha"}`)
 	projectID := stringValue(project["projectId"])
@@ -1201,7 +1206,7 @@ func TestProjectCreationRequiresWorkspaceOrganizationOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create server: %v", err)
 	}
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 
 	forbidden := requestWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-beta"}`)
 	if forbidden.Code != http.StatusForbidden {
@@ -1232,17 +1237,28 @@ func TestProjectCreationReportsIdentityStoreFailures(t *testing.T) {
 		{name: "organization read", organizationErr: errors.New("organization store unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := &failingProjectIdentityStore{memoryTableStore: newMemoryTableStore(), workspaceErr: tc.workspaceErr, organizationErr: tc.organizationErr}
+			store := &failingProjectIdentityStore{memoryTableStore: newMemoryTableStore()}
+			hash, err := hashPassword("CorrectHorseBatteryStaple!")
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-project-admin", "email": "project-admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
 			mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}))
-			mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-admin-alpha", "organizationId": "org-alpha", "userId": "usr-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
+			mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-project-admin", "organizationId": "org-alpha", "userId": "usr-project-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
 			mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}))
 			server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 			if err != nil {
 				t.Fatalf("create server: %v", err)
 			}
 
-			rec := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
-			if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "state_read_failed") {
+			session := loginForTest(t, server, "project-admin@example.com", "CorrectHorseBatteryStaple!")
+			store.workspaceErr, store.organizationErr = tc.workspaceErr, tc.organizationErr
+			rec := requestWithSession(t, server, session, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+			wantStatus, wantError := http.StatusInternalServerError, "state_read_failed"
+			if tc.organizationErr != nil {
+				wantStatus, wantError = http.StatusUnauthorized, "not_authenticated"
+			}
+			if rec.Code != wantStatus || !strings.Contains(rec.Body.String(), wantError) {
 				t.Fatalf("status = %d body=%s, want state_read_failed", rec.Code, rec.Body.String())
 			}
 			heads, err := store.ListProjectTaskSyncHeads(context.Background())
@@ -1284,7 +1300,7 @@ func TestProjectCreationReportsMissingIdentity(t *testing.T) {
 				t.Fatalf("create server: %v", err)
 			}
 
-			rec := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+			rec := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 			wantStatus := http.StatusNotFound
 			if tc.organization == nil {
 				wantStatus, tc.errorCode = http.StatusForbidden, "organization_membership_required"
@@ -1366,7 +1382,7 @@ func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
 
 func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	req := httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`))
 	req.Header.Set("Content-Type", "application/json")
 	addAuth(req, admin)
@@ -1379,7 +1395,7 @@ func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
 
 func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
 	task := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects/"+projectID+"/tasks", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
@@ -1524,11 +1540,22 @@ func (f *fabricClientWithUnscopedHistoricOperation) ListOperations(_ context.Con
 
 func createResource(t *testing.T, server http.Handler, method string, path string, body string) map[string]any {
 	t.Helper()
-	return createResourceWithSession(t, server, operatorSessionForTest(t, server), method, path, body)
+	session := operatorSessionForTest(t, server)
+	if !explicitOperatorTestPath(path) {
+		session = tenantAdminSessionForTest(t, server)
+	}
+	return createResourceWithSession(t, server, session, method, path, body)
+}
+
+func explicitOperatorTestPath(path string) bool {
+	return strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/organizations") || strings.HasPrefix(path, "/api/operator") || strings.HasPrefix(path, "/api/management") || strings.HasPrefix(path, "/api/billing/topups") || strings.HasPrefix(path, "/api/billing/resource-settlements") || strings.HasPrefix(path, "/api/billing/reconciliation")
 }
 
 func createResourceWithSession(t *testing.T, server http.Handler, loginRec *httptest.ResponseRecorder, method string, path string, body string) map[string]any {
 	t.Helper()
+	if explicitOperatorTestPath(path) {
+		loginRec = reservedOperatorSessionForTest(t, server)
+	}
 	rec := requestWithSession(t, server, loginRec, method, path, body)
 	if rec.Code < 200 || rec.Code >= 300 {
 		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
@@ -1552,6 +1579,23 @@ func requestWithSession(t *testing.T, server http.Handler, loginRec *httptest.Re
 }
 
 func operatorSessionForTest(t *testing.T, server http.Handler) *httptest.ResponseRecorder {
+	return reservedOperatorSessionForTest(t, server)
+}
+
+func tenantAdminSessionForTest(t *testing.T, server http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	global := reservedOperatorSessionForTest(t, server)
+	email := "tenant-admin-" + newResourceID("test") + "@example.com"
+	user := createResourceWithSession(t, server, global, http.MethodPost, "/api/users", `{"email":"`+email+`","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!"}`)
+	membership := requestWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"admin"}`)
+	if membership.Code < 200 || membership.Code >= 300 {
+		organization := createResourceWithSession(t, server, global, http.MethodPost, "/api/organizations", `{"name":"Test tenant","billingAccountId":"acct-alpha"}`)
+		createResourceWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"`+stringValue(organization["id"])+`","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"admin"}`)
+	}
+	return loginForTest(t, server, email, "CorrectHorseBatteryStaple!")
+}
+
+func reservedOperatorSessionForTest(t *testing.T, server http.Handler) *httptest.ResponseRecorder {
 	t.Helper()
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
@@ -1581,7 +1625,7 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","packageId":"basic","name":"Production Compute"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", "compute-once")
-	addAuth(req, operatorSessionForTest(t, server))
+	addAuth(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -1600,7 +1644,7 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 		t.Fatalf("compute allocation missing route contract fields: %#v", body)
 	}
 	getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(body["id"]), nil)
-	addSessionCookies(getReq, operatorSessionForTest(t, server))
+	addSessionCookies(getReq, tenantAdminSessionForTest(t, server))
 	getRec := httptest.NewRecorder()
 	server.ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {
@@ -1624,7 +1668,7 @@ func TestTerminalResourceStatusStopsBilling(t *testing.T) {
 
 func TestSyncComputeAllocationExternalDeleteStopsBillingAndSuspendsWorkspace(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
 	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
@@ -1658,7 +1702,7 @@ func TestSyncComputeAllocationExternalDeleteStopsBillingAndSuspendsWorkspace(t *
 
 func TestSyncStorageVolumeExternalDeleteStopsBillingAndDeletesWorkspaceData(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
 	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
@@ -1890,7 +1934,7 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 
 func TestDetachStorageAttachmentPreservesOwnershipFacts(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"compute-alpha"}`)
 	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","name":"storage-alpha"}`)
@@ -2104,7 +2148,7 @@ func TestResourceSettlementProjectsLedgerEvidenceIntoConsoleState(t *testing.T) 
 	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123,"confirm":true}`)
 	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"storage","resourceId":"storage-alpha","amountCents":45,"confirm":true}`)
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -2154,7 +2198,7 @@ func TestConsoleStateHydratesResourceListsFromFabricOperations(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fabricClientWithResourceOperations{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -2199,7 +2243,7 @@ func TestConsoleStateSkipsUnscopedHistoricFabricResourceProjection(t *testing.T)
 		t.Fatalf("create persistent server: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	ensureCustomerMembershipForTest(t, server, session, "acct-alpha", "usr-admin")
 	addSessionCookies(req, session)
 	rec := httptest.NewRecorder()
@@ -2225,7 +2269,7 @@ func TestResourceSettlementProjectionKeepsRequestIdentityWhenLedgerOmitsIt(t *te
 
 	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123,"confirm":true}`)
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -2263,7 +2307,7 @@ func TestResourceSettlementPassesPriceAndEvidenceSnapshotToLedger(t *testing.T) 
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -2287,7 +2331,7 @@ func TestStateRefreshesLedgerFactsFromLedgerReads(t *testing.T) {
 	server := NewServer(controlplane.NewService(readBackedLedgerClient{}, &fakeFabricClient{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -2383,12 +2427,12 @@ func (s *concurrencyDetectingTableStore) SaveLedgerEntry(ctx context.Context, ro
 func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 	var calls []string
 	server := NewServer(controlplane.NewService(fakeBlockingReconciliationLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-mismatch","status":"mismatch"}}`)
 
-	stateReq := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addAuth(stateReq, session)
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
+	addAuth(stateReq, operatorSessionForTest(t, server))
 	stateRec := httptest.NewRecorder()
 	server.ServeHTTP(stateRec, stateReq)
 	if stateRec.Code != http.StatusOK {
@@ -2526,7 +2570,7 @@ func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
 func TestOverviewHTTP(t *testing.T) {
 	server := NewServer(controlplane.NewService(nil, nil))
 	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
-	addSessionCookies(req, operatorSessionForTest(t, server))
+	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -2599,7 +2643,7 @@ func TestOperatorLoginRateLimitsInvalidToken(t *testing.T) {
 
 func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	body := `{"accountId":"acct-alpha","packageId":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -2666,7 +2710,7 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 		t.Fatalf("write without session status = %d, want 401: %s", postWithoutSessionRec.Code, postWithoutSessionRec.Body.String())
 	}
 
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	postWithoutCSRF := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","packageId":"basic"}`))
 	postWithoutCSRF.Header.Set("Content-Type", "application/json")
 	postWithoutCSRF.Header.Set("Idempotency-Key", "compute-no-csrf")
@@ -2700,6 +2744,7 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 func TestHighRiskMutationsRequireBackendConfirmation(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
+	tenant := tenantAdminSessionForTest(t, server)
 	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"member@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
 
 	for _, tc := range []struct {
@@ -2716,7 +2761,11 @@ func TestHighRiskMutationsRequireBackendConfirmation(t *testing.T) {
 		{http.MethodPost, "/api/operator/cleanup-workspace-access", `{"reason":"test"}`},
 		{http.MethodPost, "/api/operator/archive-terminal-resources", `{"reason":"test"}`},
 	} {
-		rec := requestWithSession(t, server, admin, tc.method, tc.path, tc.body)
+		session := admin
+		if !explicitOperatorTestPath(tc.path) {
+			session = tenant
+		}
+		rec := requestWithSession(t, server, session, tc.method, tc.path, tc.body)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "confirmation_required") {
 			t.Fatalf("%s %s status=%d body=%s, want confirmation_required", tc.method, tc.path, rec.Code, rec.Body.String())
 		}
@@ -2865,7 +2914,7 @@ func TestUserSoftDeleteRevokesSessionsAndHidesByDefault(t *testing.T) {
 	if err := json.NewDecoder(deleteRec.Body).Decode(&deleted); err != nil {
 		t.Fatalf("decode deleted user: %v", err)
 	}
-	if deleted["status"] != "deleted" || deleted["deletedAt"] == nil || deleted["deletedBy"] != "usr-admin" || deleted["deleteReason"] != "left_lab" {
+	if deleted["status"] != "deleted" || deleted["deletedAt"] == nil || deleted["deletedBy"] != "usr-operator" || deleted["deleteReason"] != "left_lab" {
 		t.Fatalf("delete metadata incomplete: %#v", deleted)
 	}
 
@@ -2950,21 +2999,22 @@ func assertDeletedUserPresent(t *testing.T, server http.Handler, userID string) 
 	}
 }
 
-func TestUserLifecycleProtectsLastActiveAdmin(t *testing.T) {
+func TestUserLifecycleProtectsLastActiveOperator(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	operator := operatorSessionForTest(t, server)
 	for _, tc := range []struct {
 		path string
 	}{
 		{"/api/users/disable"},
 		{"/api/users/delete"},
 	} {
-		body := `{"userId":"usr-admin","reason":"test"}`
+		body := `{"userId":"usr-operator","reason":"test"}`
 		if tc.path == "/api/users/delete" {
-			body = `{"userId":"usr-admin","reason":"test","confirm":true}`
+			body = `{"userId":"usr-operator","reason":"test","confirm":true}`
 		}
 		req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		addAuth(req, operatorSessionForTest(t, server))
+		addAuth(req, operator)
 		rec := httptest.NewRecorder()
 
 		server.ServeHTTP(rec, req)
@@ -2979,7 +3029,7 @@ func TestSupportTicketMappingRequiresExternalTicket(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodPost, "/api/support/tickets", bytes.NewBufferString(`{"accountId":"acct-alpha","title":"Need help"}`))
 	req.Header.Set("Content-Type", "application/json")
-	addAuth(req, operatorSessionForTest(t, server))
+	addAuth(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -2998,7 +3048,7 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 		t.Fatalf("create persistent server: %v", err)
 	}
 	body := `{"accountId":"acct-alpha","userId":"usr-alpha","workspaceId":"ws-alpha","externalSystem":"zammad","externalTicketId":"ZAM-42","externalUrl":"https://support.example/tickets/42","resourceIds":["compute-alpha"],"operationId":"op-alpha","title":"Workspace failed","description":"provider timeout"}`
-	session := operatorSessionForTest(t, server)
+	session := tenantAdminSessionForTest(t, server)
 	ensureCustomerMembershipForTest(t, server, session, "acct-alpha", "usr-admin")
 	created := createResourceWithSession(t, server, session, http.MethodPost, "/api/support/tickets", body)
 	if !strings.HasPrefix(stringValue(created["id"]), "support-") || created["externalTicketId"] != "ZAM-42" || created["accountId"] != "acct-alpha" {
@@ -3010,7 +3060,7 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 		t.Fatalf("restart persistent server: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/support/tickets?scope=all", nil)
-	addSessionCookies(req, operatorSessionForTest(t, restarted))
+	addSessionCookies(req, tenantAdminSessionForTest(t, restarted))
 	rec := httptest.NewRecorder()
 	restarted.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

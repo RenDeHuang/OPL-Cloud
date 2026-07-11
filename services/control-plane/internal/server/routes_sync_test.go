@@ -41,7 +41,7 @@ func (f *recoveryFabricClient) DestroyStorageSnapshot(_ context.Context, id, _ s
 
 func TestWorkspaceBackupRestoreCloneAndExportKeepBackendTruth(t *testing.T) {
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &recoveryFabricClient{fakeFabricClient: &fakeFabricClient{}}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
 	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
@@ -119,7 +119,7 @@ func (f *transferFabricClient) Content(_ context.Context, _ string, digest strin
 func TestWorkspaceContentTransferIsAuthorizedAndStreamedThroughFabric(t *testing.T) {
 	fabricClient := &transferFabricClient{fakeFabricClient: &fakeFabricClient{}}
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, fabricClient))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
 	unknown := syncRequest(t, server, admin, http.MethodPost, "/api/workspaces/workspace-alpha/transfers", "transfer-unknown", `{"organizationId":"org-alpha","projectId":"project-missing","path":"inputs/a.txt","digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":7}`)
@@ -174,7 +174,7 @@ func decodeSyncPayload(t *testing.T, rec *httptest.ResponseRecorder) map[string]
 
 func TestWorkspaceSyncAcceptsMutationAndPullsByCursor(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-project-alpha"}`)
 	projectID := stringValue(project["projectId"])
 
@@ -211,7 +211,7 @@ func TestWorkspaceSyncAcceptsMutationAndPullsByCursor(t *testing.T) {
 
 func TestWorkspaceSyncPersistsStaleReplaceConflictWithoutOverwrite(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
 	first := syncRequest(t, server, admin, http.MethodPost, "/api/workspaces/workspace-alpha/sync/mutations", "sync-first", `{
@@ -246,7 +246,7 @@ func TestWorkspaceSyncPersistsStaleReplaceConflictWithoutOverwrite(t *testing.T)
 
 func TestWorkspaceSyncResolvesConflictByAppendingEvent(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
 	first := syncRequest(t, server, admin, http.MethodPost, "/api/workspaces/workspace-alpha/sync/mutations", "resolve-first", `{
@@ -283,7 +283,7 @@ func TestWorkspaceSyncResolvesConflictByAppendingEvent(t *testing.T) {
 
 func TestWorkspaceSyncReplaysSameMutationAndRejectsChangedFingerprint(t *testing.T) {
 	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := operatorSessionForTest(t, server)
+	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
 	body := `{"operationId":"idempotent-operation","organizationId":"org-alpha","entityKind":"project","projectId":"` + projectID + `","clientId":"client-alpha","baseVersion":1,"operation":"replace","payload":{"title":"Stable"},"occurredAt":"2026-07-11T00:00:00Z"}`
