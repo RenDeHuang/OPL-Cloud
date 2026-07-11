@@ -31,6 +31,13 @@ type idempotencyRecord struct {
 	result      any
 }
 
+func cloneMemoryValue[T any](value T) T {
+	payload, _ := json.Marshal(value)
+	var clone T
+	_ = json.Unmarshal(payload, &clone)
+	return clone
+}
+
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		wallets:                 map[string]Wallet{},
@@ -286,7 +293,12 @@ func (s *MemoryStore) RecordReceipt(_ context.Context, input ReceiptInput) (Rece
 		if existing.payloadHash != payloadHash {
 			return Receipt{}, ErrIdempotencyConflict
 		}
-		result := existing.result.(Receipt)
+		receiptID := existing.result.(string)
+		result, ok := s.receipts[receiptID]
+		if !ok {
+			return Receipt{}, ErrReceiptNotFound
+		}
+		result = cloneMemoryValue(result)
 		result.Replayed = true
 		return result, nil
 	}
@@ -294,9 +306,10 @@ func (s *MemoryStore) RecordReceipt(_ context.Context, input ReceiptInput) (Rece
 	receipt := Receipt{ReceiptInput: input, ReceiptID: s.newID("receipt"), CreatedAt: time.Now().UTC()}
 	receipt.IdempotencyKey = ""
 	finalizeReceiptContinuation(&receipt)
+	receipt = cloneMemoryValue(receipt)
 	s.receipts[receipt.ReceiptID] = receipt
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: receipt}
-	return receipt, nil
+	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: receipt.ReceiptID}
+	return cloneMemoryValue(receipt), nil
 }
 
 func (s *MemoryStore) Receipt(_ context.Context, receiptID string) (Receipt, error) {
@@ -307,7 +320,93 @@ func (s *MemoryStore) Receipt(_ context.Context, receiptID string) (Receipt, err
 		return Receipt{}, ErrReceiptNotFound
 	}
 	gate, err := s.evaluateReviewGateLocked(ReviewGateInput{ExecutionIdentity: executionIdentityFromReceipt(receipt), ReviewIDs: stringSlice(receipt.Continuation["reviewIds"])})
-	return receiptForRead(receipt, gate, err), nil
+	return receiptForRead(cloneMemoryValue(receipt), gate, err), nil
+}
+
+func (s *MemoryStore) UpdateReceiptRetention(_ context.Context, input ReceiptRetentionInput) (ReceiptRetentionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if input.ReceiptID == "" || input.IdempotencyKey == "" || (input.RetainUntil.IsZero() && !input.LegalHold) {
+		return ReceiptRetentionResult{}, ErrInvalidReceiptRetentionInput
+	}
+	payloadHash, err := hashJSON(struct {
+		ReceiptID   string    `json:"receiptId"`
+		RetainUntil time.Time `json:"retainUntil"`
+		LegalHold   bool      `json:"legalHold"`
+	}{input.ReceiptID, input.RetainUntil, input.LegalHold})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	key := "receipt-retention:" + input.IdempotencyKey
+	if existing, ok := s.idempotency[key]; ok {
+		if existing.payloadHash != payloadHash {
+			return ReceiptRetentionResult{}, ErrIdempotencyConflict
+		}
+		result := cloneMemoryValue(existing.result.(ReceiptRetentionResult))
+		result.Replayed = true
+		return result, nil
+	}
+	receipt, ok := s.receipts[input.ReceiptID]
+	if !ok {
+		return ReceiptRetentionResult{}, ErrReceiptNotFound
+	}
+	if !input.RetainUntil.IsZero() && !receipt.Retention.RetainUntil.IsZero() && input.RetainUntil.Before(receipt.Retention.RetainUntil) {
+		return ReceiptRetentionResult{}, ErrReceiptRetentionShortening
+	}
+	if input.RetainUntil.After(receipt.Retention.RetainUntil) {
+		receipt.Retention.RetainUntil = input.RetainUntil
+	}
+	receipt.Retention.LegalHold = receipt.Retention.LegalHold || input.LegalHold
+	receipt = cloneMemoryValue(receipt)
+	s.receipts[input.ReceiptID] = receipt
+	result := ReceiptRetentionResult{ReceiptID: receipt.ReceiptID, Retention: receipt.Retention}
+	s.idempotency[key] = idempotencyRecord{payloadHash: payloadHash, result: cloneMemoryValue(result)}
+	return cloneMemoryValue(result), nil
+}
+
+func (s *MemoryStore) PrivacyDeleteReceipt(_ context.Context, input ReceiptPrivacyDeleteInput) (ReceiptRetentionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if input.ReceiptID == "" || input.Reason == "" || input.IdempotencyKey == "" {
+		return ReceiptRetentionResult{}, ErrInvalidReceiptRetentionInput
+	}
+	payloadHash, err := hashJSON(struct {
+		ReceiptID string `json:"receiptId"`
+		Reason    string `json:"reason"`
+	}{input.ReceiptID, input.Reason})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	key := "receipt-privacy:" + input.IdempotencyKey
+	if existing, ok := s.idempotency[key]; ok {
+		if existing.payloadHash != payloadHash {
+			return ReceiptRetentionResult{}, ErrIdempotencyConflict
+		}
+		result := cloneMemoryValue(existing.result.(ReceiptRetentionResult))
+		result.Replayed = true
+		return result, nil
+	}
+	receipt, ok := s.receipts[input.ReceiptID]
+	if !ok {
+		return ReceiptRetentionResult{}, ErrReceiptNotFound
+	}
+	if receipt.Retention.LegalHold {
+		return ReceiptRetentionResult{}, ErrReceiptLegalHold
+	}
+	if receipt.Retention.RetainUntil.After(time.Now().UTC()) {
+		return ReceiptRetentionResult{}, ErrReceiptRetentionActive
+	}
+	if receipt.Retention.PrivacyRedaction == nil {
+		receipt.Actor = nil
+		receipt.Owner = nil
+		receipt.Continuation = nil
+		receipt.Retention.PrivacyRedaction = &PrivacyRedactionEvidence{AppliedAt: time.Now().UTC(), Reason: input.Reason, Eligible: true}
+	}
+	receipt = cloneMemoryValue(receipt)
+	s.receipts[input.ReceiptID] = receipt
+	result := ReceiptRetentionResult{ReceiptID: receipt.ReceiptID, Retention: receipt.Retention}
+	s.idempotency[key] = idempotencyRecord{payloadHash: payloadHash, result: cloneMemoryValue(result)}
+	return cloneMemoryValue(result), nil
 }
 
 func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (ReceiptPage, error) {
@@ -330,7 +429,7 @@ func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (Recei
 			continue
 		}
 		gate, gateErr := s.evaluateReviewGateLocked(ReviewGateInput{ExecutionIdentity: executionIdentityFromReceipt(receipt), ReviewIDs: stringSlice(receipt.Continuation["reviewIds"])})
-		receipts = append(receipts, receiptForRead(receipt, gate, gateErr))
+		receipts = append(receipts, receiptForRead(cloneMemoryValue(receipt), gate, gateErr))
 	}
 	sort.Slice(receipts, func(i, j int) bool {
 		if receipts[i].CreatedAt.Equal(receipts[j].CreatedAt) {

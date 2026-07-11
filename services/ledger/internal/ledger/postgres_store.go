@@ -298,7 +298,7 @@ func (s *PostgresStore) RecordReceipt(ctx context.Context, input ReceiptInput) (
 	now := s.now()
 	receipt := Receipt{ReceiptInput: hashInput, ReceiptID: postgresID("receipt", now), CreatedAt: now}
 	finalizeReceiptContinuation(&receipt)
-	payload, err := json.Marshal(receipt.ReceiptInput)
+	payload, err := json.Marshal(receiptPayload{ReceiptInput: receipt.ReceiptInput, Retention: receipt.Retention})
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -380,6 +380,118 @@ func (s *PostgresStore) Receipt(ctx context.Context, receiptID string) (Receipt,
 		return Receipt{}, err
 	}
 	return s.receiptForRead(ctx, receipt), nil
+}
+
+func (s *PostgresStore) UpdateReceiptRetention(ctx context.Context, input ReceiptRetentionInput) (ReceiptRetentionResult, error) {
+	if input.ReceiptID == "" || input.IdempotencyKey == "" || (input.RetainUntil.IsZero() && !input.LegalHold) {
+		return ReceiptRetentionResult{}, ErrInvalidReceiptRetentionInput
+	}
+	requestHash, err := hashJSON(struct {
+		ReceiptID   string    `json:"receiptId"`
+		RetainUntil time.Time `json:"retainUntil"`
+		LegalHold   bool      `json:"legalHold"`
+	}{input.ReceiptID, input.RetainUntil, input.LegalHold})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	return s.mutateReceipt(ctx, "receipt-retention", input.IdempotencyKey, requestHash, input.ReceiptID, func(receipt *Receipt) error {
+		if !input.RetainUntil.IsZero() && !receipt.Retention.RetainUntil.IsZero() && input.RetainUntil.Before(receipt.Retention.RetainUntil) {
+			return ErrReceiptRetentionShortening
+		}
+		if input.RetainUntil.After(receipt.Retention.RetainUntil) {
+			receipt.Retention.RetainUntil = input.RetainUntil
+		}
+		receipt.Retention.LegalHold = receipt.Retention.LegalHold || input.LegalHold
+		return nil
+	})
+}
+
+func (s *PostgresStore) PrivacyDeleteReceipt(ctx context.Context, input ReceiptPrivacyDeleteInput) (ReceiptRetentionResult, error) {
+	if input.ReceiptID == "" || input.Reason == "" || input.IdempotencyKey == "" {
+		return ReceiptRetentionResult{}, ErrInvalidReceiptRetentionInput
+	}
+	requestHash, err := hashJSON(struct {
+		ReceiptID string `json:"receiptId"`
+		Reason    string `json:"reason"`
+	}{input.ReceiptID, input.Reason})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	return s.mutateReceipt(ctx, "receipt-privacy", input.IdempotencyKey, requestHash, input.ReceiptID, func(receipt *Receipt) error {
+		if receipt.Retention.LegalHold {
+			return ErrReceiptLegalHold
+		}
+		if receipt.Retention.RetainUntil.After(s.now()) {
+			return ErrReceiptRetentionActive
+		}
+		if receipt.Retention.PrivacyRedaction == nil {
+			receipt.Actor = nil
+			receipt.Owner = nil
+			receipt.Continuation = nil
+			receipt.Retention.PrivacyRedaction = &PrivacyRedactionEvidence{AppliedAt: s.now(), Reason: input.Reason, Eligible: true}
+		}
+		return nil
+	})
+}
+
+func (s *PostgresStore) mutateReceipt(ctx context.Context, service, idempotencyKey, requestHash, receiptID string, mutate func(*Receipt) error) (ReceiptRetentionResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	lockKey := service + ":" + idempotencyKey
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lockKey); err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	idempotencyID := evidenceID("idempotency", lockKey)
+	var existingHash, responseJSON string
+	err = tx.QueryRowContext(ctx, "SELECT request_hash, response_ref FROM idempotency_keys WHERE id = $1", idempotencyID).Scan(&existingHash, &responseJSON)
+	if err == nil {
+		if existingHash != requestHash {
+			return ReceiptRetentionResult{}, ErrIdempotencyConflict
+		}
+		var result ReceiptRetentionResult
+		if err := json.Unmarshal([]byte(responseJSON), &result); err != nil {
+			return ReceiptRetentionResult{}, err
+		}
+		result.Replayed = true
+		return result, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ReceiptRetentionResult{}, err
+	}
+	var payloadJSON string
+	var createdAt time.Time
+	if err := tx.QueryRowContext(ctx, "SELECT payload_json, created_at FROM evidence_receipts WHERE id = $1 FOR UPDATE /* ledger_receipt_mutation */", receiptID).Scan(&payloadJSON, &createdAt); errors.Is(err, sql.ErrNoRows) {
+		return ReceiptRetentionResult{}, ErrReceiptNotFound
+	} else if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	var stored receiptPayload
+	if err := json.Unmarshal([]byte(payloadJSON), &stored); err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	receipt := Receipt{ReceiptInput: stored.ReceiptInput, ReceiptID: receiptID, CreatedAt: createdAt, Retention: stored.Retention}
+	if err := mutate(&receipt); err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	payload, err := json.Marshal(receiptPayload{ReceiptInput: receipt.ReceiptInput, Retention: receipt.Retention})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	result := ReceiptRetentionResult{ReceiptID: receipt.ReceiptID, Retention: receipt.Retention}
+	response, err := json.Marshal(result)
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE evidence_receipts SET payload_json = $1 WHERE id = $2", string(payload), receiptID); err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO idempotency_keys (id, service, idempotency_key, request_hash, response_ref, created_at) VALUES ($1, $2, $3, $4, $5, $6)", idempotencyID, service, idempotencyKey, requestHash, string(response), s.now()); err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	return result, tx.Commit()
 }
 
 func (s *PostgresStore) receipt(ctx context.Context, receiptID string) (Receipt, error) {
@@ -1015,8 +1127,9 @@ func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string)
 
 func receiptFromEnt(row *ledgerent.EvidenceReceipt) Receipt {
 	// ponytail: payload is canonical; promote fields to columns only when a real query needs an index.
-	var input ReceiptInput
-	_ = json.Unmarshal([]byte(row.PayloadJSON), &input)
+	var stored receiptPayload
+	_ = json.Unmarshal([]byte(row.PayloadJSON), &stored)
+	input := stored.ReceiptInput
 	input.Type = row.ReceiptType
 	input.Status = row.Status
 	input.OrganizationID = row.OrganizationID
@@ -1025,7 +1138,12 @@ func receiptFromEnt(row *ledgerent.EvidenceReceipt) Receipt {
 	input.TaskID = row.TaskID
 	input.JobID = row.JobID
 	input.SupersedesReceiptID = row.SupersedesReceiptID
-	return Receipt{ReceiptInput: input, ReceiptID: row.ID, CreatedAt: row.CreatedAt}
+	return Receipt{ReceiptInput: input, ReceiptID: row.ID, CreatedAt: row.CreatedAt, Retention: stored.Retention}
+}
+
+type receiptPayload struct {
+	ReceiptInput
+	Retention ReceiptRetention `json:"retention"`
 }
 
 func (s *PostgresStore) settlementByIdempotencyKey(ctx context.Context, tx *ledgerent.Tx, key string) (ResourceSettlementResult, string, error) {

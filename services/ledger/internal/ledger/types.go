@@ -26,6 +26,10 @@ var ErrInvalidReviewInput = errors.New("invalid review input")
 var ErrReviewPolicyNotFound = errors.New("review policy not found")
 var ErrInvalidReviewPolicyInput = errors.New("invalid review policy input")
 var ErrInvalidReviewGateInput = errors.New("invalid review gate input")
+var ErrInvalidReceiptRetentionInput = errors.New("invalid receipt retention input")
+var ErrReceiptRetentionShortening = errors.New("receipt retention cannot be shortened")
+var ErrReceiptRetentionActive = errors.New("receipt retention is active")
+var ErrReceiptLegalHold = errors.New("receipt is under legal hold")
 
 const artifactReceiptType = "artifact.manifest.v1"
 const reviewReceiptType = "review.result.v1"
@@ -176,11 +180,57 @@ type ReceiptInput struct {
 	IdempotencyKey      string         `json:"-"`
 }
 
+type ReceiptRetention struct {
+	RetainUntil      time.Time                 `json:"retainUntil,omitempty"`
+	LegalHold        bool                      `json:"legalHold"`
+	PrivacyRedaction *PrivacyRedactionEvidence `json:"privacyRedaction,omitempty"`
+}
+
+func (retention ReceiptRetention) MarshalJSON() ([]byte, error) {
+	type retentionJSON struct {
+		RetainUntil      *time.Time                `json:"retainUntil,omitempty"`
+		LegalHold        bool                      `json:"legalHold"`
+		PrivacyRedaction *PrivacyRedactionEvidence `json:"privacyRedaction,omitempty"`
+	}
+	var retainUntil *time.Time
+	if !retention.RetainUntil.IsZero() {
+		value := retention.RetainUntil
+		retainUntil = &value
+	}
+	return json.Marshal(retentionJSON{RetainUntil: retainUntil, LegalHold: retention.LegalHold, PrivacyRedaction: retention.PrivacyRedaction})
+}
+
+type PrivacyRedactionEvidence struct {
+	AppliedAt time.Time `json:"appliedAt"`
+	Reason    string    `json:"reason"`
+	Eligible  bool      `json:"eligible"`
+}
+
+type ReceiptRetentionInput struct {
+	ReceiptID      string    `json:"-"`
+	RetainUntil    time.Time `json:"retainUntil,omitempty"`
+	LegalHold      bool      `json:"legalHold"`
+	IdempotencyKey string    `json:"-"`
+}
+
+type ReceiptPrivacyDeleteInput struct {
+	ReceiptID      string `json:"-"`
+	Reason         string `json:"reason"`
+	IdempotencyKey string `json:"-"`
+}
+
+type ReceiptRetentionResult struct {
+	ReceiptID string           `json:"receiptId"`
+	Retention ReceiptRetention `json:"retention"`
+	Replayed  bool             `json:"replayed"`
+}
+
 type Receipt struct {
 	ReceiptInput
-	ReceiptID string    `json:"receiptId"`
-	CreatedAt time.Time `json:"createdAt"`
-	Replayed  bool      `json:"replayed"`
+	ReceiptID string           `json:"receiptId"`
+	CreatedAt time.Time        `json:"createdAt"`
+	Retention ReceiptRetention `json:"retention"`
+	Replayed  bool             `json:"replayed"`
 }
 
 const (
