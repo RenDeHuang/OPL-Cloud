@@ -462,6 +462,7 @@ test("TKE production diagnostics workflow is read-only and matches the deploymen
   const workflow = await readWorkflow(contract.diagnosticsWorkflow.file);
   assertWorkflowContract(workflow, contract.diagnosticsWorkflow, contract);
   const serviceLogs = serializedStep(stepsByName(job(workflow, contract.diagnosticsWorkflow.job)).get("Show previous control plane crash logs"));
+  const workloadStatus = serializedStep(stepsByName(job(workflow, contract.diagnosticsWorkflow.job)).get("Show workload status"));
   const text = JSON.stringify(workflow);
   assert.match(text, /app\.kubernetes\.io\/name=opl-compute-allocation/, "diagnostics must inspect current compute allocation pods");
   assert.match(text, /for component in control-plane ledger fabric/, "diagnostics must inspect all service component logs");
@@ -469,6 +470,9 @@ test("TKE production diagnostics workflow is read-only and matches the deploymen
   assert.match(serviceLogs, /--all-containers=true --tail=300/, "diagnostics must print current service logs");
   assert.match(text, /information_schema\.columns/, "diagnostics must expose ledger schema shape without row data");
   assert.match(text, /LEDGER_SCHEMA_COLUMNS/, "diagnostics must label redacted ledger schema output");
+  assert.match(workloadStatus, /api-resources --api-group=snapshot\.storage\.k8s\.io/, "diagnostics must inventory the snapshot API");
+  assert.match(workloadStatus, /get volumesnapshotclass/, "diagnostics must inventory snapshot classes");
+  assert.match(workloadStatus, /-n kube-system get pods/, "diagnostics must inventory cluster storage controllers");
   assert.match(text, /--all-containers=true --previous --tail=300/, "diagnostics must print previous Workspace crash logs");
   assert.doesNotMatch(text, /app\.kubernetes\.io\/name=opl-workspace/, "diagnostics must not use retired workspace pod labels");
 });
