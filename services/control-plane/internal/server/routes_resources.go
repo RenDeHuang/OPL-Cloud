@@ -91,34 +91,27 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 	mux.HandleFunc("GET /api/compute-allocations/{id}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))
 		compute, ok := app.getCompute(id)
-		if ok && stringValue(compute["status"]) != "provisioning" {
-			if !app.canAccessResource(r, compute) {
-				writeError(w, http.StatusForbidden, "account_scope_forbidden")
-				return
-			}
-			writeJSON(w, http.StatusOK, compute)
-			return
-		}
-		fresh, err := service.GetComputeAllocation(r.Context(), id)
-		if err == nil && fresh.ID != "" {
-			body := computeResponse(structToMap(fresh))
-			if !app.canAccessResource(r, body) {
-				writeError(w, http.StatusForbidden, "account_scope_forbidden")
-				return
-			}
-			if err := app.saveComputeFact(body); err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			writeJSON(w, http.StatusOK, body)
-			return
-		}
 		if !ok {
 			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
 			return
 		}
 		if !app.canAccessResource(r, compute) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		if stringValue(compute["status"]) != "provisioning" {
+			writeJSON(w, http.StatusOK, compute)
+			return
+		}
+		fresh, err := service.GetComputeAllocation(r.Context(), id)
+		if err == nil && fresh.ID != "" {
+			body := computeResponse(mergeMaps(compute, structToMap(fresh)))
+			body["accountId"] = firstNonEmpty(stringValue(compute["accountId"]), stringValue(compute["ownerAccountId"]))
+			if err := app.saveComputeFact(body); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, body)
 			return
 		}
 		writeJSON(w, http.StatusOK, compute)

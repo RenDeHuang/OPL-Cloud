@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,6 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/lib/pq"
 
-	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -67,7 +67,8 @@ func TestBackendRejectsRolesOutsideOwnerAdminMember(t *testing.T) {
 
 func TestAdminCannotUseCustomerEndpointsAcrossAccountsOrOrganizations(t *testing.T) {
 	app := newControlPlaneApp()
-	req := requestForStoredUser(t, app, map[string]any{"id": "usr-admin", "email": "admin@example.com", "accountId": "acct-admin", "role": "admin", "status": "active"})
+	req := requestForStoredUser(t, app, map[string]any{"id": "usr-tenant-admin", "email": "admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active"})
+	mustStore(t, app.tables.SaveMembership(context.Background(), map[string]any{"id": "mem-tenant-admin", "organizationId": "org-alpha", "userId": "usr-tenant-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
 
 	rec := httptest.NewRecorder()
 	if _, ok := app.scopedAccountID(rec, req, map[string]any{"accountId": "acct-other"}); ok || rec.Code != http.StatusForbidden {
@@ -83,20 +84,38 @@ func TestAdminCannotUseCustomerEndpointsAcrossAccountsOrOrganizations(t *testing
 	}
 }
 
-type crossTenantComputeFabric struct{ fakeFabricClient }
-
-func (crossTenantComputeFabric) GetComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
-	return clients.ComputeAllocation{ID: id, AccountID: "acct-beta", Status: "running"}, nil
-}
-
-func TestFreshComputeReadRejectsCrossTenantProjection(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &crossTenantComputeFabric{}))
-	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-beta", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
+func TestMissingComputeReadReturnsNotFoundWithoutFabric(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	calls := []string{}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-missing", nil)
+	addSessionCookies(req, loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("fresh cross-tenant compute status = %d, want 403: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound || len(calls) != 0 {
+		t.Fatalf("missing compute status=%d calls=%#v body=%s", rec.Code, calls, rec.Body.String())
+	}
+}
+
+func TestOwnedProvisioningComputeMayRefreshFromFabric(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "status": "provisioning"}))
+	calls := []string{}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/compute-alpha", nil)
+	addSessionCookies(req, loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !slices.Contains(calls, "fabric.compute-get") || !strings.Contains(rec.Body.String(), `"accountId":"acct-alpha"`) {
+		t.Fatalf("provisioning compute status=%d calls=%#v body=%s", rec.Code, calls, rec.Body.String())
 	}
 }
 
@@ -355,6 +374,12 @@ func TestOperatorLoginNeverAdoptsTenantAdmin(t *testing.T) {
 	}
 	if rec := requestWithSession(t, server, operator, http.MethodGet, "/api/management/state", ""); rec.Code != http.StatusOK {
 		t.Fatalf("explicit operator management status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBootstrapAdminIsNotOperatorAuthority(t *testing.T) {
+	if isOperatorUser(map[string]any{"id": "usr-admin", "accountId": "acct-admin", "role": "admin", "status": "active"}) {
+		t.Fatal("bootstrap admin was treated as reserved operator authority")
 	}
 }
 

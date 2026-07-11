@@ -66,7 +66,7 @@ func (app *controlPlaneServer) disableUser(input map[string]any) (map[string]any
 	if stringValue(user["status"]) == "deleted" {
 		return nil, errUserDeleted
 	}
-	if isOperatorUser(user) && stringValue(user["status"]) == "active" && app.activeOperatorCount() <= 1 {
+	if isOperatorUser(user) && stringValue(user["status"]) == "active" {
 		return nil, errLastActiveAdmin
 	}
 	user["status"] = "disabled"
@@ -91,7 +91,7 @@ func (app *controlPlaneServer) softDeleteUser(input map[string]any) (map[string]
 	if stringValue(user["status"]) == "deleted" {
 		return sanitizeUser(user), nil
 	}
-	if isOperatorUser(user) && stringValue(user["status"]) == "active" && app.activeOperatorCount() <= 1 {
+	if isOperatorUser(user) && stringValue(user["status"]) == "active" {
 		return nil, errLastActiveAdmin
 	}
 	user["status"] = "deleted"
@@ -102,20 +102,6 @@ func (app *controlPlaneServer) softDeleteUser(input map[string]any) (map[string]
 		return nil, err
 	}
 	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
-}
-
-func (app *controlPlaneServer) activeOperatorCount() int {
-	users, err := app.tables.ListUsers(context.Background(), false)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, user := range users {
-		if isOperatorUser(user) && stringValue(user["status"]) == "active" {
-			count++
-		}
-	}
-	return count
 }
 
 func (app *controlPlaneServer) revokeUserSessions(userID string) error {
@@ -320,7 +306,7 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, bool) {
 
 func isOperatorUser(user map[string]any) bool {
 	id, accountID := stringValue(user["id"]), stringValue(user["accountId"])
-	return stringValue(user["role"]) == "admin" && ((id == "usr-operator" && accountID == "acct-operator") || (id == "usr-admin" && accountID == "acct-admin"))
+	return stringValue(user["role"]) == "admin" && id == "usr-operator" && accountID == "acct-operator"
 }
 
 func (app *controlPlaneServer) hasActiveCustomerMembership(ctx context.Context, user map[string]any) (bool, error) {
