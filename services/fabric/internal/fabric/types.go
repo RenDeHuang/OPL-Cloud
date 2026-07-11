@@ -101,6 +101,37 @@ type StorageVolume struct {
 	CreatedAt          time.Time         `json:"createdAt"`
 }
 
+type StorageSnapshotInput struct {
+	AccountID      string `json:"accountId"`
+	WorkspaceID    string `json:"workspaceId"`
+	VolumeID       string `json:"volumeId"`
+	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
+}
+
+type StorageRestoreInput struct {
+	SnapshotID     string `json:"snapshotId"`
+	AccountID      string `json:"accountId"`
+	WorkspaceID    string `json:"workspaceId"`
+	TargetVolumeID string `json:"targetVolumeId"`
+	IdempotencyKey string `json:"-"`
+	OperationID    string `json:"-"`
+}
+
+type StorageSnapshot struct {
+	ID                  string    `json:"id"`
+	AccountID           string    `json:"accountId"`
+	WorkspaceID         string    `json:"workspaceId"`
+	VolumeID            string    `json:"volumeId"`
+	Status              string    `json:"status"`
+	Provider            string    `json:"provider"`
+	ProviderSnapshotRef string    `json:"providerSnapshotRef"`
+	ProviderRequestID   string    `json:"providerRequestId"`
+	SnapshotClass       string    `json:"snapshotClass,omitempty"`
+	SizeGB              int       `json:"sizeGb"`
+	CreatedAt           time.Time `json:"createdAt"`
+}
+
 type StorageAttachmentInput struct {
 	WorkspaceID    string `json:"workspaceId"`
 	ComputeID      string `json:"computeId"`

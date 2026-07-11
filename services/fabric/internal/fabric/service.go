@@ -20,6 +20,10 @@ type Provider interface {
 	CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error)
 	SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error)
 	DestroyStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error)
+	CreateStorageSnapshot(ctx context.Context, input StorageSnapshotInput, volume StorageVolume) (StorageSnapshot, error)
+	SyncStorageSnapshot(ctx context.Context, snapshot StorageSnapshot) (StorageSnapshot, error)
+	RestoreStorageSnapshot(ctx context.Context, input StorageRestoreInput, snapshot StorageSnapshot) (StorageVolume, error)
+	DestroyStorageSnapshot(ctx context.Context, snapshot StorageSnapshot) (StorageSnapshot, error)
 	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error)
 	DetachStorageAttachment(ctx context.Context, attachment StorageAttachment) (StorageAttachment, error)
 	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error)
@@ -33,6 +37,7 @@ type Service struct {
 	jobMu       sync.Mutex
 	computes    map[string]ComputeAllocation
 	volumes     map[string]StorageVolume
+	snapshots   map[string]StorageSnapshot
 	attachments map[string]StorageAttachment
 	runtimes    map[string]WorkspaceRuntime
 	operations  OperationStore
@@ -49,13 +54,13 @@ func NewServiceWithOperationStore(provider Provider, operations OperationStore) 
 	if operations == nil {
 		operations = NewMemoryOperationStore()
 	}
-	computes, volumes, attachments, runtimes := replayResourceState(context.Background(), operations)
+	computes, volumes, snapshots, attachments, runtimes := replayResourceState(context.Background(), operations)
 	accessStore, _ := operations.(RuntimeAccessStore)
 	transferStore, _ := operations.(TransferStore)
 	if transferStore == nil {
 		transferStore = newMemoryTransferStore()
 	}
-	return &Service{provider: provider, computes: computes, volumes: volumes, attachments: attachments, runtimes: runtimes, operations: operations, access: accessStore, transfers: transferStore, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{provider: provider, computes: computes, volumes: volumes, snapshots: snapshots, attachments: attachments, runtimes: runtimes, operations: operations, access: accessStore, transfers: transferStore, now: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *Service) Catalog(_ context.Context) Catalog {
@@ -224,6 +229,151 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	defer s.mu.Unlock()
 	s.volumes[volume.ID] = volume
 	return volume, nil
+}
+
+func (s *Service) GetStorageVolume(_ context.Context, volumeID string) (StorageVolume, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	volume, ok := s.volumes[volumeID]
+	return volume, ok
+}
+
+func (s *Service) CreateStorageSnapshot(ctx context.Context, input StorageSnapshotInput) (StorageSnapshot, error) {
+	if input.AccountID == "" || input.WorkspaceID == "" || input.VolumeID == "" || input.IdempotencyKey == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_input_required")
+	}
+	requestHash := hashInput(input)
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return StorageSnapshot{}, err
+	}
+	for _, operation := range operations {
+		if operation.Action != "create_storage_snapshot" || operation.IdempotencyKey != input.IdempotencyKey {
+			continue
+		}
+		if operation.RequestHash != requestHash {
+			return StorageSnapshot{}, fmt.Errorf("storage_snapshot_idempotency_conflict")
+		}
+		var replayed StorageSnapshot
+		if operation.Status == "succeeded" && decodeOperationResource(operation, &replayed) {
+			return replayed, nil
+		}
+	}
+	s.mu.Lock()
+	volume := s.volumes[input.VolumeID]
+	s.mu.Unlock()
+	if volume.ID == "" || volume.Status != "ready" {
+		return StorageSnapshot{}, fmt.Errorf("storage_volume_not_ready")
+	}
+	now := s.now()
+	id := "snap-" + stableSuffix(input.WorkspaceID, input.VolumeID, input.IdempotencyKey)[:16]
+	operation := newOperation("create_storage_snapshot", "storage_snapshot", id, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	input.OperationID = operation.OperationID
+	if err := s.recordOperation(ctx, operation, "started", StorageSnapshot{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, VolumeID: input.VolumeID, Status: "creating", Provider: "tencent-tke", ProviderRequestID: providerRequestID("snapshot", input.IdempotencyKey), CreatedAt: now}, nil); err != nil {
+		return StorageSnapshot{}, err
+	}
+	snapshot, err := s.provider.CreateStorageSnapshot(ctx, input, volume)
+	if snapshot.ID == "" {
+		snapshot.ID = id
+	}
+	if err != nil {
+		_ = s.recordOperation(ctx, operation, "failed", snapshot, err)
+		return snapshot, err
+	}
+	operation.ResourceID = snapshot.ID
+	if err := s.recordOperation(ctx, operation, "succeeded", snapshot, nil); err != nil {
+		return snapshot, err
+	}
+	s.mu.Lock()
+	s.snapshots[snapshot.ID] = snapshot
+	s.mu.Unlock()
+	return snapshot, nil
+}
+
+func (s *Service) GetStorageSnapshot(_ context.Context, snapshotID string) (StorageSnapshot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.snapshots[snapshotID]
+	return snapshot, ok
+}
+
+func (s *Service) SyncStorageSnapshot(ctx context.Context, snapshotID string) (StorageSnapshot, error) {
+	s.mu.Lock()
+	snapshot := s.snapshots[snapshotID]
+	s.mu.Unlock()
+	if snapshot.ID == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_not_found")
+	}
+	operation := newOperation("sync_storage_snapshot", "storage_snapshot", snapshotID, snapshot.AccountID, snapshot.WorkspaceID, "", hashInput(map[string]string{"id": snapshotID}), s.now())
+	if err := s.recordOperation(ctx, operation, "started", snapshot, nil); err != nil {
+		return StorageSnapshot{}, err
+	}
+	synced, err := s.provider.SyncStorageSnapshot(ctx, snapshot)
+	if err != nil {
+		_ = s.recordOperation(ctx, operation, "failed", synced, err)
+		return synced, err
+	}
+	if err := s.recordOperation(ctx, operation, "succeeded", synced, nil); err != nil {
+		return synced, err
+	}
+	s.mu.Lock()
+	s.snapshots[snapshotID] = synced
+	s.mu.Unlock()
+	return synced, nil
+}
+
+func (s *Service) RestoreStorageSnapshot(ctx context.Context, input StorageRestoreInput) (StorageVolume, error) {
+	if input.SnapshotID == "" || input.AccountID == "" || input.WorkspaceID == "" || input.TargetVolumeID == "" || input.IdempotencyKey == "" {
+		return StorageVolume{}, fmt.Errorf("storage_restore_input_required")
+	}
+	s.mu.Lock()
+	snapshot := s.snapshots[input.SnapshotID]
+	s.mu.Unlock()
+	if snapshot.ID == "" || snapshot.Status != "ready" {
+		return StorageVolume{}, fmt.Errorf("storage_snapshot_not_ready")
+	}
+	operation := newOperation("restore_storage_snapshot", "storage_volume", input.TargetVolumeID, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), s.now())
+	input.OperationID = operation.OperationID
+	if err := s.recordOperation(ctx, operation, "started", StorageVolume{ID: input.TargetVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "restoring", Provider: snapshot.Provider, ProviderRequestID: providerRequestID("restore", input.IdempotencyKey)}, nil); err != nil {
+		return StorageVolume{}, err
+	}
+	volume, err := s.provider.RestoreStorageSnapshot(ctx, input, snapshot)
+	if err != nil {
+		_ = s.recordOperation(ctx, operation, "failed", volume, err)
+		return volume, err
+	}
+	if err := s.recordOperation(ctx, operation, "succeeded", volume, nil); err != nil {
+		return volume, err
+	}
+	s.mu.Lock()
+	s.volumes[volume.ID] = volume
+	s.mu.Unlock()
+	return volume, nil
+}
+
+func (s *Service) DestroyStorageSnapshot(ctx context.Context, snapshotID string) (StorageSnapshot, error) {
+	s.mu.Lock()
+	snapshot := s.snapshots[snapshotID]
+	s.mu.Unlock()
+	if snapshot.ID == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_not_found")
+	}
+	operation := newOperation("destroy_storage_snapshot", "storage_snapshot", snapshotID, snapshot.AccountID, snapshot.WorkspaceID, "", hashInput(map[string]string{"id": snapshotID}), s.now())
+	if err := s.recordOperation(ctx, operation, "started", snapshot, nil); err != nil {
+		return StorageSnapshot{}, err
+	}
+	destroyed, err := s.provider.DestroyStorageSnapshot(ctx, snapshot)
+	if err != nil {
+		_ = s.recordOperation(ctx, operation, "failed", destroyed, err)
+		return destroyed, err
+	}
+	if err := s.recordOperation(ctx, operation, "succeeded", destroyed, nil); err != nil {
+		return destroyed, err
+	}
+	s.mu.Lock()
+	s.snapshots[snapshotID] = destroyed
+	s.mu.Unlock()
+	return destroyed, nil
 }
 
 func (s *Service) DestroyStorageVolume(ctx context.Context, volumeID string) (StorageVolume, error) {
@@ -748,14 +898,15 @@ func (s *Service) attachRuntimeAccess(ctx context.Context, runtime *WorkspaceRun
 	return nil
 }
 
-func replayResourceState(ctx context.Context, operations OperationStore) (map[string]ComputeAllocation, map[string]StorageVolume, map[string]StorageAttachment, map[string]WorkspaceRuntime) {
+func replayResourceState(ctx context.Context, operations OperationStore) (map[string]ComputeAllocation, map[string]StorageVolume, map[string]StorageSnapshot, map[string]StorageAttachment, map[string]WorkspaceRuntime) {
 	computes := map[string]ComputeAllocation{}
 	volumes := map[string]StorageVolume{}
+	snapshots := map[string]StorageSnapshot{}
 	attachments := map[string]StorageAttachment{}
 	runtimes := map[string]WorkspaceRuntime{}
 	records, err := operations.List(ctx)
 	if err != nil {
-		return computes, volumes, attachments, runtimes
+		return computes, volumes, snapshots, attachments, runtimes
 	}
 	for _, operation := range records {
 		switch operation.ResourceKind {
@@ -777,6 +928,12 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 				continue
 			}
 			volumes[resource.ID] = resource
+		case "storage_snapshot":
+			var resource StorageSnapshot
+			if operation.Status != "succeeded" || !decodeOperationResource(operation, &resource) {
+				continue
+			}
+			snapshots[resource.ID] = resource
 		case "storage_attachment":
 			var resource StorageAttachment
 			if operation.Status != "succeeded" || !decodeOperationResource(operation, &resource) {
@@ -791,7 +948,7 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 			runtimes[resource.WorkspaceID] = resource
 		}
 	}
-	return computes, volumes, attachments, runtimes
+	return computes, volumes, snapshots, attachments, runtimes
 }
 
 func decodeOperationResource(operation FabricOperation, target any) bool {
@@ -854,6 +1011,13 @@ func fillOperationResource(operation *FabricOperation, resource any) {
 		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
 		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
 		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerResourceId": value.ProviderResourceID, "storageClass": value.StorageClass, "sizeGb": value.SizeGB, "costTags": value.CostTags}
+	case StorageSnapshot:
+		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
+		operation.AccountID = firstNonEmpty(value.AccountID, operation.AccountID)
+		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)
+		operation.Provider = firstNonEmpty(value.Provider, operation.Provider)
+		operation.ProviderRequestID = firstNonEmpty(value.ProviderRequestID, operation.ProviderRequestID)
+		operation.RedactedProviderPayload = map[string]any{"resource": value, "providerSnapshotRef": value.ProviderSnapshotRef, "volumeId": value.VolumeID, "snapshotClass": value.SnapshotClass}
 	case StorageAttachment:
 		operation.ResourceID = firstNonEmpty(value.ID, operation.ResourceID)
 		operation.WorkspaceID = firstNonEmpty(value.WorkspaceID, operation.WorkspaceID)

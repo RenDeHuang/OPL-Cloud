@@ -189,6 +189,43 @@ func NewServer(service *fabric.Service) http.Handler {
 		volume, err := service.SyncStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		writeResult(w, volume, err)
 	})
+	mux.HandleFunc("POST /fabric/storage-snapshots", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.StorageSnapshotInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		snapshot, err := service.CreateStorageSnapshot(r.Context(), input)
+		writeResult(w, snapshot, err)
+	})
+	mux.HandleFunc("GET /fabric/storage-snapshots/{id}", func(w http.ResponseWriter, r *http.Request) {
+		snapshot, ok := service.GetStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		if !ok {
+			writeError(w, http.StatusNotFound, "storage_snapshot_not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/sync", func(w http.ResponseWriter, r *http.Request) {
+		snapshot, err := service.SyncStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		writeResult(w, snapshot, err)
+	})
+	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.StorageRestoreInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		input.SnapshotID = strings.TrimSpace(r.PathValue("id"))
+		volume, err := service.RestoreStorageSnapshot(r.Context(), input)
+		writeResult(w, volume, err)
+	})
+	mux.HandleFunc("POST /fabric/storage-snapshots/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Idempotency-Key") == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		snapshot, err := service.DestroyStorageSnapshot(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		writeResult(w, snapshot, err)
+	})
 	mux.HandleFunc("POST /fabric/storage-attachments", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageAttachmentInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {

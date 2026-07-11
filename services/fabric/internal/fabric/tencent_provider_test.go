@@ -393,6 +393,37 @@ func TestTencentProviderRejectsInvalidWorkspaceContentDigestOutput(t *testing.T)
 	}
 }
 
+func TestTencentProviderSnapshotsAndRestoresStorageWithoutMutatingSource(t *testing.T) {
+	t.Setenv("OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS", "cbs-snapshot")
+	t.Setenv("OPL_WORKSPACE_STORAGE_CLASS", "cbs")
+	provider := NewTencentProvider()
+	var manifests [][]byte
+	provider.kubectl = func(_ context.Context, args []string, stdin []byte) ([]byte, error) {
+		if len(args) >= 2 && args[0] == "apply" {
+			manifests = append(manifests, append([]byte(nil), stdin...))
+		}
+		return nil, nil
+	}
+	source := StorageVolume{ID: "vol-source", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", ProviderResourceID: "pvc/opl-storage-source-data", SizeGB: 10}
+	snapshot, err := provider.CreateStorageSnapshot(context.Background(), StorageSnapshotInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", VolumeID: source.ID, IdempotencyKey: "snapshot-once"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifests) != 1 || !bytes.Contains(manifests[0], []byte(`"kind":"VolumeSnapshot"`)) || !bytes.Contains(manifests[0], []byte(`"persistentVolumeClaimName":"opl-storage-source-data"`)) {
+		t.Fatalf("snapshot manifest = %s", manifests)
+	}
+	restored, err := provider.RestoreStorageSnapshot(context.Background(), StorageRestoreInput{SnapshotID: snapshot.ID, AccountID: "acct-alpha", WorkspaceID: "ws-restored", TargetVolumeID: "vol-restored", IdempotencyKey: "restore-once"}, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != "vol-restored" || restored.SizeGB != 10 || len(manifests) != 2 || !bytes.Contains(manifests[1], []byte(`"kind":"PersistentVolumeClaim"`)) || !bytes.Contains(manifests[1], []byte(`"name":"`+resourceName(snapshot.ProviderSnapshotRef)+`"`)) {
+		t.Fatalf("restored=%#v manifest=%s", restored, manifests[1])
+	}
+	if bytes.Contains(manifests[1], []byte("opl-storage-source-data")) {
+		t.Fatalf("restore manifest must reference snapshot, not source pvc: %s", manifests[1])
+	}
+}
+
 func envMap(entries []any) map[string]string {
 	values := map[string]string{}
 	for _, entry := range entries {

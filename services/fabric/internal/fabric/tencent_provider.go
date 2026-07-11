@@ -279,6 +279,74 @@ func (p *TencentProvider) DestroyStorageVolume(ctx context.Context, volume Stora
 	return volume, nil
 }
 
+func (p *TencentProvider) CreateStorageSnapshot(ctx context.Context, input StorageSnapshotInput, volume StorageVolume) (StorageSnapshot, error) {
+	if volume.ID == "" || resourceName(volume.ProviderResourceID) == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_volume_provider_ref_required")
+	}
+	now := time.Now().UTC()
+	id := "snap-" + stableSuffix(input.WorkspaceID, input.VolumeID, input.IdempotencyKey)[:16]
+	name := k8sName(id)
+	snapshotClass := os.Getenv("OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS")
+	if snapshotClass == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_class_required")
+	}
+	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, volumeSnapshotManifest(name, resourceName(volume.ProviderResourceID), snapshotClass, input)); err != nil {
+		return StorageSnapshot{}, err
+	}
+	return StorageSnapshot{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, VolumeID: input.VolumeID, Status: "creating", Provider: "tencent-tke", ProviderSnapshotRef: "volumesnapshot/" + name, ProviderRequestID: providerRequestID("snapshot", input.IdempotencyKey), SnapshotClass: snapshotClass, SizeGB: volume.SizeGB, CreatedAt: now}, nil
+}
+
+func (p *TencentProvider) SyncStorageSnapshot(ctx context.Context, snapshot StorageSnapshot) (StorageSnapshot, error) {
+	name := resourceName(snapshot.ProviderSnapshotRef)
+	if name == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_provider_ref_required")
+	}
+	raw, err := p.kubectl(ctx, []string{"get", "volumesnapshot/" + name, "-o", "json"}, nil)
+	if err != nil {
+		return StorageSnapshot{}, err
+	}
+	var item map[string]any
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return StorageSnapshot{}, err
+	}
+	if ready, _ := nested(item, "status", "readyToUse").(bool); ready {
+		snapshot.Status = "ready"
+	} else {
+		snapshot.Status = "creating"
+	}
+	snapshot.ProviderRequestID = providerRequestID("snapshot-sync", snapshot.ID)
+	return snapshot, nil
+}
+
+func (p *TencentProvider) RestoreStorageSnapshot(ctx context.Context, input StorageRestoreInput, snapshot StorageSnapshot) (StorageVolume, error) {
+	snapshotName := resourceName(snapshot.ProviderSnapshotRef)
+	if snapshotName == "" {
+		return StorageVolume{}, fmt.Errorf("storage_snapshot_provider_ref_required")
+	}
+	sizeGB := snapshot.SizeGB
+	if sizeGB < 1 {
+		return StorageVolume{}, fmt.Errorf("storage_snapshot_size_required")
+	}
+	name := k8sName(input.TargetVolumeID)
+	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, restoredPVCManifest(name, input.TargetVolumeID, input.AccountID, sizeGB, snapshotName)); err != nil {
+		return StorageVolume{}, err
+	}
+	return StorageVolume{ID: input.TargetVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "restoring", Provider: "tencent-tke", ProviderResourceID: "pvc/" + name + "-data", ProviderRequestID: providerRequestID("restore", input.IdempotencyKey), SizeGB: sizeGB, StorageClass: os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), CreatedAt: time.Now().UTC()}, nil
+}
+
+func (p *TencentProvider) DestroyStorageSnapshot(ctx context.Context, snapshot StorageSnapshot) (StorageSnapshot, error) {
+	name := resourceName(snapshot.ProviderSnapshotRef)
+	if name == "" {
+		return StorageSnapshot{}, fmt.Errorf("storage_snapshot_provider_ref_required")
+	}
+	if _, err := p.kubectl(ctx, []string{"delete", "volumesnapshot/" + name, "--ignore-not-found=true"}, nil); err != nil {
+		return StorageSnapshot{}, err
+	}
+	snapshot.Status = "destroyed"
+	snapshot.ProviderRequestID = providerRequestID("snapshot-destroy", snapshot.ID)
+	return snapshot, nil
+}
+
 func (p *TencentProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error) {
 	if input.VolumeID == "" {
 		return StorageAttachment{}, fmt.Errorf("storage_volume_id_required")
@@ -471,6 +539,29 @@ func pvcManifest(name string, storageID string, accountID string, sizeGB int, ta
 		"kind":       "PersistentVolumeClaim",
 		"metadata":   map[string]any{"name": name + "-data", "labels": labels, "annotations": tags},
 		"spec":       map[string]any{"accessModes": []string{"ReadWriteOnce"}, "storageClassName": os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), "resources": map[string]any{"requests": map[string]any{"storage": fmt.Sprintf("%dGi", sizeGB)}}},
+	})
+}
+
+func volumeSnapshotManifest(name, pvcName, snapshotClass string, input StorageSnapshotInput) []byte {
+	return mustJSON(map[string]any{
+		"apiVersion": "snapshot.storage.k8s.io/v1",
+		"kind":       "VolumeSnapshot",
+		"metadata":   map[string]any{"name": name, "labels": map[string]string{"app.kubernetes.io/name": "opl-storage-snapshot", "oplcloud.cn/account-id": input.AccountID, "oplcloud.cn/workspace-id": input.WorkspaceID, "oplcloud.cn/storage-id": input.VolumeID}},
+		"spec":       map[string]any{"volumeSnapshotClassName": snapshotClass, "source": map[string]any{"persistentVolumeClaimName": pvcName}},
+	})
+}
+
+func restoredPVCManifest(name, storageID, accountID string, sizeGB int, snapshotName string) []byte {
+	return mustJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "PersistentVolumeClaim",
+		"metadata":   map[string]any{"name": name + "-data", "labels": map[string]string{"app.kubernetes.io/name": "opl-storage-volume", "oplcloud.cn/storage-id": storageID, "oplcloud.cn/account-id": accountID}},
+		"spec": map[string]any{
+			"accessModes":      []string{"ReadWriteOnce"},
+			"storageClassName": os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"),
+			"resources":        map[string]any{"requests": map[string]any{"storage": fmt.Sprintf("%dGi", sizeGB)}},
+			"dataSource":       map[string]any{"apiGroup": "snapshot.storage.k8s.io", "kind": "VolumeSnapshot", "name": snapshotName},
+		},
 	})
 }
 

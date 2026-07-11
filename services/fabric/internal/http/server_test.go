@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/fabric/internal/fabric"
 )
@@ -91,6 +92,46 @@ func TestCatalogHTTP(t *testing.T) {
 	}
 	if len(catalog.WorkspacePackages) == 0 {
 		t.Fatalf("expected workspace packages")
+	}
+}
+
+func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
+	service := fabric.NewService(testProvider{})
+	server := NewServer(service)
+	createVolume := httptest.NewRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(`{"id":"vol-source","accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`))
+	createVolume.Header.Set("Idempotency-Key", "volume-once")
+	volumeRec := httptest.NewRecorder()
+	server.ServeHTTP(volumeRec, createVolume)
+
+	create := httptest.NewRequest(http.MethodPost, "/fabric/storage-snapshots", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","volumeId":"vol-source"}`))
+	create.Header.Set("Idempotency-Key", "snapshot-once")
+	createdRec := httptest.NewRecorder()
+	server.ServeHTTP(createdRec, create)
+	if createdRec.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", createdRec.Code, createdRec.Body.String())
+	}
+	var snapshot fabric.StorageSnapshot
+	if err := json.NewDecoder(createdRec.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	getRec := httptest.NewRecorder()
+	server.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/fabric/storage-snapshots/"+snapshot.ID, nil))
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	restore := httptest.NewRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/restore", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-restored","targetVolumeId":"vol-restored"}`))
+	restore.Header.Set("Idempotency-Key", "restore-once")
+	restoreRec := httptest.NewRecorder()
+	server.ServeHTTP(restoreRec, restore)
+	if restoreRec.Code != http.StatusAccepted {
+		t.Fatalf("restore status=%d body=%s", restoreRec.Code, restoreRec.Body.String())
+	}
+	destroy := httptest.NewRequest(http.MethodPost, "/fabric/storage-snapshots/"+snapshot.ID+"/destroy", nil)
+	destroy.Header.Set("Idempotency-Key", "destroy-once")
+	destroyRec := httptest.NewRecorder()
+	server.ServeHTTP(destroyRec, destroy)
+	if destroyRec.Code != http.StatusAccepted {
+		t.Fatalf("destroy status=%d body=%s", destroyRec.Code, destroyRec.Body.String())
 	}
 }
 
@@ -376,6 +417,23 @@ func (testProvider) SyncStorageVolume(_ context.Context, volume fabric.StorageVo
 func (testProvider) DestroyStorageVolume(_ context.Context, volume fabric.StorageVolume) (fabric.StorageVolume, error) {
 	volume.Status = "destroyed"
 	return volume, nil
+}
+
+func (testProvider) CreateStorageSnapshot(_ context.Context, input fabric.StorageSnapshotInput, volume fabric.StorageVolume) (fabric.StorageSnapshot, error) {
+	return fabric.StorageSnapshot{ID: "snap-http", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, VolumeID: volume.ID, Status: "ready", Provider: "test", ProviderSnapshotRef: "volumesnapshot/snap-http", ProviderRequestID: "snapshot-request", SizeGB: volume.SizeGB, CreatedAt: time.Now().UTC()}, nil
+}
+
+func (testProvider) SyncStorageSnapshot(_ context.Context, snapshot fabric.StorageSnapshot) (fabric.StorageSnapshot, error) {
+	return snapshot, nil
+}
+
+func (testProvider) RestoreStorageSnapshot(_ context.Context, input fabric.StorageRestoreInput, snapshot fabric.StorageSnapshot) (fabric.StorageVolume, error) {
+	return fabric.StorageVolume{ID: input.TargetVolumeID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "test", ProviderResourceID: "pvc/" + input.TargetVolumeID, ProviderRequestID: "restore-request", SizeGB: snapshot.SizeGB, CreatedAt: time.Now().UTC()}, nil
+}
+
+func (testProvider) DestroyStorageSnapshot(_ context.Context, snapshot fabric.StorageSnapshot) (fabric.StorageSnapshot, error) {
+	snapshot.Status = "destroyed"
+	return snapshot, nil
 }
 
 func (testProvider) CreateStorageAttachment(_ context.Context, input fabric.StorageAttachmentInput, _ fabric.ComputeAllocation, _ fabric.StorageVolume) (fabric.StorageAttachment, error) {
