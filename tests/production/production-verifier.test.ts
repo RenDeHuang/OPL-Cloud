@@ -206,9 +206,8 @@ function chainResponses(chain) {
     [`PUT /api/workspaces/${chain.workspace.id}/transfers/${transfer.transferId}/chunks/1`]: { ...transfer, receivedChunks: [0, 1] },
     [`POST /api/workspaces/${chain.workspace.id}/transfers/${transfer.transferId}/complete`]: { ...transfer, receivedChunks: [0, 1], status: "completed" },
     [`GET /api/workspaces/${chain.workspace.id}/contents/${transferDigest}`]: { binaryBody: transferText, digest: transferDigest, path: transfer.path },
-    [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`]: { success: true, data: transferText },
     [`GET ${chain.workspace.url}#2`]: "<html>one-person-lab-app</html>",
-    [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#3`]: { success: true, data: persistenceText },
+    [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`]: { success: true, data: persistenceText },
     "POST /api/billing/resource-settlements": { entries: [
       { accountId: "pi-prod", computeAllocationId: chain.replacementCompute.id, type: "compute_debit", pricingVersion, priceSnapshot: computePriceSnapshot, providerCostEvidenceRef: "fabric:op-runtime-prod002", quantity: 1, unit: "verification" }
     ] },
@@ -1061,7 +1060,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     `PUT /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/chunks/1`,
     `POST /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/complete`,
     `GET /api/workspaces/${chain.workspace.id}/contents/${createHash("sha256").update(`${"x".repeat(4 << 20)}opl transfer prod-run`).digest("hex")}`,
-    `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`,
     "POST /api/storage-attachments/detach",
     `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/compute-allocations#2",
@@ -1071,7 +1069,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     `GET ${chain.workspace.url}#2`,
     `GET ${scrubbedWorkspaceUrl(chain.workspace.url)}#2`,
     `GET ${workspaceUrl(chain.workspace.url, "/api/auth/user")}#3`,
-    `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#3`,
+    `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`,
     "POST /api/billing/resource-settlements",
     "POST /api/billing/resource-settlements#2",
     "GET /api/state?accountId=pi-prod",
@@ -1095,10 +1093,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     path: "/data/opl-e2e-prod-run.txt",
     workspace: "/data"
   });
-  assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`).body, {
-    path: "/projects/production-verifier/opl-transfer-prod-run.txt",
-    workspace: "/projects"
-  });
   assert.ok(requests.filter((request) => request.key.includes("/chunks/")).every((request) => request.contentType === "application/octet-stream"));
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments#2").body.storageId, chain.storage.id);
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces#2").body, {
@@ -1108,7 +1102,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
   });
   assert.equal(chain.replacementWorkspace.id, chain.workspace.id);
   assert.equal(chain.replacementWorkspace.url, chain.workspace.url);
-  assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#3`).body, {
+  assert.deepEqual(requests.find((request) => request.key === `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`).body, {
     path: "/data/opl-e2e-prod-run.txt",
     workspace: "/data"
   });
@@ -1143,7 +1137,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "workspace_content_transfer_interrupted:true",
     "workspace_content_transfer_completed:true",
     "workspace_content_transfer_downloaded:true",
-    "workspace_content_transfer_volume_read:true",
     "verification_storage_detached:true",
     "verification_compute_destroyed:true",
     "replacement_compute_created:true",
@@ -1255,7 +1248,7 @@ test("production verifier keeps workspace API calls on the discovered prefixed b
     if (String(url) === prefixedEndpoint("/api/fs/read")) {
       const body = options.body ? JSON.parse(options.body) : null;
       requests.push({ key: `POST ${String(url)}`, body });
-      return jsonResponse({ success: true, data: body?.workspace === "/projects" ? `${"x".repeat(4 << 20)}opl transfer prod-run` : "opl persistence prod-run" });
+      return jsonResponse({ success: true, data: "opl persistence prod-run" });
     }
     return baseFetch(url, options);
   };

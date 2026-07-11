@@ -433,6 +433,13 @@ func (p *TencentProvider) PublishWorkspaceContent(ctx context.Context, workspace
 	if _, err := p.kubectl(ctx, []string{"exec", deployment, "--", "mv", temporary, target}, nil); err != nil {
 		return err
 	}
+	published, err := p.kubectl(ctx, []string{"exec", deployment, "--", "cat", target}, nil)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(published, body) {
+		return fmt.Errorf("workspace_content_verification_failed")
+	}
 	return nil
 }
 

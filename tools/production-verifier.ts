@@ -332,7 +332,7 @@ async function verifyWorkspaceRuntimeFile({ fetchImpl, checks, workspaceUrl, run
   return { filePath, content };
 }
 
-async function verifyWorkspaceContentTransfer({ fetchImpl, checks, origin, workspace, runId, auth, workspaceAuth }) {
+async function verifyWorkspaceContentTransfer({ fetchImpl, checks, origin, workspace, runId, auth }) {
   const organizationId = "org-production-verifier";
   const content = `${"x".repeat(4 << 20)}opl transfer ${runId}`;
   const digest = createHash("sha256").update(content).digest("hex");
@@ -394,16 +394,6 @@ async function verifyWorkspaceContentTransfer({ fetchImpl, checks, origin, works
   const downloaded = await fetchImpl(endpoint(origin, `/api/workspaces/${encodeURIComponent(workspace.id)}/contents/${digest}`), { headers: authHeaderValues(auth) });
   const downloadedBody = await downloaded.text();
   addCheck(checks, "workspace_content_transfer_downloaded", downloaded.ok && downloaded.headers.get("x-content-sha256") === digest && downloadedBody === content);
-
-  const volumeRead = await requestWorkspaceJson({
-    fetchImpl,
-    workspaceUrl: workspaceAuth.apiBaseUrl || workspaceAuth.url || workspace.url,
-    path: "/api/fs/read",
-    method: "POST",
-    body: { path: `/projects/${path}`, workspace: "/projects" },
-    cookie: workspaceAuth.cookie || ""
-  });
-  addCheck(checks, "workspace_content_transfer_volume_read", runtimePayloadData(volumeRead) === content, { path: `/projects/${path}` });
 }
 
 async function verifyWorkspacePersistedFile({ fetchImpl, checks, workspaceUrl, fileProof, workspaceAuth = null }) {
@@ -1568,8 +1558,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       workspace,
       runId,
-      auth,
-      workspaceAuth: workspaceApiAuth
+      auth
     });
 
     const firstCleanupErrors = await cleanupVerificationResources({

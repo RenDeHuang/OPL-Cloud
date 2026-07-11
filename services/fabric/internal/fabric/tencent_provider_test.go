@@ -303,12 +303,15 @@ func TestTencentProviderPublishesWorkspaceContentAtomically(t *testing.T) {
 		if stdin != nil {
 			uploaded = append([]byte(nil), stdin...)
 		}
+		if len(args) > 3 && args[3] == "cat" {
+			return append([]byte(nil), uploaded...), nil
+		}
 		return nil, nil
 	}
 	if err := provider.PublishWorkspaceContent(context.Background(), "workspace-alpha", "inputs/paper.txt", []byte("verified")); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if string(uploaded) != "verified" || len(calls) != 4 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || calls[2][0] != "exec" || calls[2][4] != "dd" || !slices.Equal(calls[3][:4], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv"}) {
+	if string(uploaded) != "verified" || len(calls) != 5 || !slices.Equal(calls[1], []string{"exec", "deployment/opl-workspace-alpha", "--", "mkdir", "-p", "/projects/inputs"}) || calls[2][0] != "exec" || calls[2][4] != "dd" || !slices.Equal(calls[3][:4], []string{"exec", "deployment/opl-workspace-alpha", "--", "mv"}) || !slices.Equal(calls[4], []string{"exec", "deployment/opl-workspace-alpha", "--", "cat", "/projects/inputs/paper.txt"}) {
 		t.Fatalf("calls=%#v uploaded=%q", calls, uploaded)
 	}
 }
