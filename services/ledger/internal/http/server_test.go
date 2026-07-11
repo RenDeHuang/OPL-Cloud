@@ -146,6 +146,64 @@ func TestHoldAndReceiptHTTP(t *testing.T) {
 	}
 }
 
+func TestReceiptRetentionAndPrivacyHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	create := func(key, body string) ledger.Receipt {
+		t.Helper()
+		req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(body))
+		req.Header.Set("Idempotency-Key", key)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create receipt status = %d: %s", rec.Code, rec.Body.String())
+		}
+		var receipt ledger.Receipt
+		if err := json.NewDecoder(rec.Body).Decode(&receipt); err != nil {
+			t.Fatal(err)
+		}
+		return receipt
+	}
+	seeded := create("http-retention-seed", `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-retention","actor":{"email":"person@example.test"},"retention":{"legalHold":true,"privacyRedaction":{"eligible":true,"reason":"caller supplied"}}}`)
+	if seeded.Retention.LegalHold || seeded.Retention.PrivacyRedaction != nil {
+		t.Fatalf("receipt create accepted caller retention = %#v", seeded.Retention)
+	}
+
+	retention := testRequest(http.MethodPost, "/ledger/receipts/"+seeded.ReceiptID+"/retention", bytes.NewBufferString(`{"retainUntil":"2099-01-02T03:04:05Z","legalHold":true}`))
+	retention.Header.Set("Idempotency-Key", "http-retention-update")
+	retentionRec := httptest.NewRecorder()
+	server.ServeHTTP(retentionRec, retention)
+	if retentionRec.Code != http.StatusOK {
+		t.Fatalf("retention status = %d: %s", retentionRec.Code, retentionRec.Body.String())
+	}
+	detailRec := httptest.NewRecorder()
+	server.ServeHTTP(detailRec, testRequest(http.MethodGet, "/ledger/receipts/"+seeded.ReceiptID, nil))
+	if detailRec.Code != http.StatusOK || !strings.Contains(detailRec.Body.String(), `"retainUntil":"2099-01-02T03:04:05Z"`) || !strings.Contains(detailRec.Body.String(), `"legalHold":true`) {
+		t.Fatalf("receipt detail status = %d: %s", detailRec.Code, detailRec.Body.String())
+	}
+
+	privacy := create("http-privacy-seed", `{"type":"execution.receipt.v1","status":"completed","surface":"workspace","organizationId":"org-privacy","workspaceId":"workspace-privacy","projectId":"project-privacy","taskId":"task-privacy","jobId":"job-privacy","continuationId":"continuation-privacy","actor":{"email":"person@example.test"},"owner":{"name":"Person"},"environment":{"environmentRef":"env-alpha"},"inputRefs":{"digest":"sha256:input"},"outputRefs":{"digest":"sha256:output"},"continuation":{"freeForm":"personal note"}}`)
+	privacyReq := testRequest(http.MethodPost, "/ledger/receipts/"+privacy.ReceiptID+"/privacy-delete", bytes.NewBufferString(`{"reason":"verified account deletion"}`))
+	privacyReq.Header.Set("Idempotency-Key", "http-privacy-delete")
+	privacyRec := httptest.NewRecorder()
+	server.ServeHTTP(privacyRec, privacyReq)
+	if privacyRec.Code != http.StatusOK {
+		t.Fatalf("privacy delete status = %d: %s", privacyRec.Code, privacyRec.Body.String())
+	}
+	var redaction ledger.ReceiptRetentionResult
+	if err := json.NewDecoder(privacyRec.Body).Decode(&redaction); err != nil {
+		t.Fatal(err)
+	}
+	redactedRec := httptest.NewRecorder()
+	server.ServeHTTP(redactedRec, testRequest(http.MethodGet, "/ledger/receipts/"+privacy.ReceiptID, nil))
+	var redacted ledger.Receipt
+	if err := json.NewDecoder(redactedRec.Body).Decode(&redacted); err != nil {
+		t.Fatal(err)
+	}
+	if redacted.Actor != nil || redacted.Owner != nil || redacted.Continuation != nil || redacted.Environment["environmentRef"] != "env-alpha" || redacted.InputRefs["digest"] != "sha256:input" || redacted.OutputRefs["digest"] != "sha256:output" || redaction.Retention.PrivacyRedaction == nil {
+		t.Fatalf("privacy boundary = %#v", redacted)
+	}
+}
+
 func TestContinuationHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	receipt := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"execution.receipt.v1","status":"completed","surface":"workspace","organizationId":"org-alpha","workspaceId":"workspace-alpha","projectId":"project-alpha","taskId":"task-alpha","jobId":"job-alpha","continuation":{"continuationId":"continuation-alpha","taskVersion":2}}`))

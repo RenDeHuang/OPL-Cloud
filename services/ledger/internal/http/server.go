@@ -172,6 +172,60 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("POST /ledger/receipts/{id}/retention", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.ReceiptRetentionInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.ReceiptID = r.PathValue("id")
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.UpdateReceiptRetention(r.Context(), input)
+		switch {
+		case errors.Is(err, ledger.ErrInvalidReceiptRetentionInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ledger.ErrReceiptNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ledger.ErrIdempotencyConflict), errors.Is(err, ledger.ErrReceiptRetentionShortening), errors.Is(err, ledger.ErrReceiptLegalHold):
+			writeError(w, http.StatusConflict, err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "receipt retention update failed")
+		default:
+			writeJSON(w, http.StatusOK, result)
+		}
+	})
+	mux.HandleFunc("POST /ledger/receipts/{id}/privacy-delete", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.ReceiptPrivacyDeleteInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.ReceiptID = r.PathValue("id")
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.PrivacyDeleteReceipt(r.Context(), input)
+		switch {
+		case errors.Is(err, ledger.ErrInvalidReceiptRetentionInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, ledger.ErrReceiptNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		case errors.Is(err, ledger.ErrIdempotencyConflict), errors.Is(err, ledger.ErrReceiptRetentionActive), errors.Is(err, ledger.ErrReceiptLegalHold):
+			writeError(w, http.StatusConflict, err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "receipt privacy delete failed")
+		default:
+			writeJSON(w, http.StatusOK, result)
+		}
+	})
 	mux.HandleFunc("GET /ledger/receipts/{id}/continuation", func(w http.ResponseWriter, r *http.Request) {
 		result, err := store.Continuation(r.Context(), r.PathValue("id"))
 		if errors.Is(err, ledger.ErrReceiptNotFound) || errors.Is(err, ledger.ErrContinuationNotFound) {

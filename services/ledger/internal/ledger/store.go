@@ -8,6 +8,8 @@ type Store interface {
 	ReleaseHold(ctx context.Context, input HoldReleaseInput) (HoldReleaseResult, error)
 	RecordReceipt(ctx context.Context, input ReceiptInput) (Receipt, error)
 	Receipt(ctx context.Context, receiptID string) (Receipt, error)
+	UpdateReceiptRetention(ctx context.Context, input ReceiptRetentionInput) (ReceiptRetentionResult, error)
+	PrivacyDeleteReceipt(ctx context.Context, input ReceiptPrivacyDeleteInput) (ReceiptRetentionResult, error)
 	ListReceipts(ctx context.Context, query ReceiptQuery) (ReceiptPage, error)
 	Continuation(ctx context.Context, receiptID string) (map[string]any, error)
 	RecordArtifact(ctx context.Context, input ArtifactInput) (Artifact, error)

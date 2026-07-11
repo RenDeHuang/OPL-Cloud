@@ -310,6 +310,90 @@ func (s *MemoryStore) Receipt(_ context.Context, receiptID string) (Receipt, err
 	return receiptForRead(receipt, gate, err), nil
 }
 
+func (s *MemoryStore) UpdateReceiptRetention(_ context.Context, input ReceiptRetentionInput) (ReceiptRetentionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if input.ReceiptID == "" || input.IdempotencyKey == "" || (input.RetainUntil.IsZero() && !input.LegalHold) {
+		return ReceiptRetentionResult{}, ErrInvalidReceiptRetentionInput
+	}
+	payloadHash, err := hashJSON(struct {
+		ReceiptID   string    `json:"receiptId"`
+		RetainUntil time.Time `json:"retainUntil"`
+		LegalHold   bool      `json:"legalHold"`
+	}{input.ReceiptID, input.RetainUntil, input.LegalHold})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	key := "receipt-retention:" + input.IdempotencyKey
+	if existing, ok := s.idempotency[key]; ok {
+		if existing.payloadHash != payloadHash {
+			return ReceiptRetentionResult{}, ErrIdempotencyConflict
+		}
+		result := existing.result.(ReceiptRetentionResult)
+		result.Replayed = true
+		return result, nil
+	}
+	receipt, ok := s.receipts[input.ReceiptID]
+	if !ok {
+		return ReceiptRetentionResult{}, ErrReceiptNotFound
+	}
+	if !input.RetainUntil.IsZero() && !receipt.Retention.RetainUntil.IsZero() && input.RetainUntil.Before(receipt.Retention.RetainUntil) {
+		return ReceiptRetentionResult{}, ErrReceiptRetentionShortening
+	}
+	if input.RetainUntil.After(receipt.Retention.RetainUntil) {
+		receipt.Retention.RetainUntil = input.RetainUntil
+	}
+	receipt.Retention.LegalHold = receipt.Retention.LegalHold || input.LegalHold
+	s.receipts[input.ReceiptID] = receipt
+	result := ReceiptRetentionResult{ReceiptID: receipt.ReceiptID, Retention: receipt.Retention}
+	s.idempotency[key] = idempotencyRecord{payloadHash: payloadHash, result: result}
+	return result, nil
+}
+
+func (s *MemoryStore) PrivacyDeleteReceipt(_ context.Context, input ReceiptPrivacyDeleteInput) (ReceiptRetentionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if input.ReceiptID == "" || input.Reason == "" || input.IdempotencyKey == "" {
+		return ReceiptRetentionResult{}, ErrInvalidReceiptRetentionInput
+	}
+	payloadHash, err := hashJSON(struct {
+		ReceiptID string `json:"receiptId"`
+		Reason    string `json:"reason"`
+	}{input.ReceiptID, input.Reason})
+	if err != nil {
+		return ReceiptRetentionResult{}, err
+	}
+	key := "receipt-privacy:" + input.IdempotencyKey
+	if existing, ok := s.idempotency[key]; ok {
+		if existing.payloadHash != payloadHash {
+			return ReceiptRetentionResult{}, ErrIdempotencyConflict
+		}
+		result := existing.result.(ReceiptRetentionResult)
+		result.Replayed = true
+		return result, nil
+	}
+	receipt, ok := s.receipts[input.ReceiptID]
+	if !ok {
+		return ReceiptRetentionResult{}, ErrReceiptNotFound
+	}
+	if receipt.Retention.LegalHold {
+		return ReceiptRetentionResult{}, ErrReceiptLegalHold
+	}
+	if receipt.Retention.RetainUntil.After(time.Now().UTC()) {
+		return ReceiptRetentionResult{}, ErrReceiptRetentionActive
+	}
+	if receipt.Retention.PrivacyRedaction == nil {
+		receipt.Actor = nil
+		receipt.Owner = nil
+		receipt.Continuation = nil
+		receipt.Retention.PrivacyRedaction = &PrivacyRedactionEvidence{AppliedAt: time.Now().UTC(), Reason: input.Reason, Eligible: true}
+		s.receipts[input.ReceiptID] = receipt
+	}
+	result := ReceiptRetentionResult{ReceiptID: receipt.ReceiptID, Retention: receipt.Retention}
+	s.idempotency[key] = idempotencyRecord{payloadHash: payloadHash, result: result}
+	return result, nil
+}
+
 func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (ReceiptPage, error) {
 	query, cursor, err := normalizeReceiptQuery(query)
 	if err != nil {
