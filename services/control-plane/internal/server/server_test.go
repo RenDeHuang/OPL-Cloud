@@ -39,6 +39,26 @@ func newExecutionTestServer(t *testing.T, service *controlplane.Service) http.Ha
 	return server
 }
 
+type failingProjectIdentityStore struct {
+	*memoryTableStore
+	workspaceErr    error
+	organizationErr error
+}
+
+func (s *failingProjectIdentityStore) ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error) {
+	if s.workspaceErr != nil {
+		return nil, s.workspaceErr
+	}
+	return s.memoryTableStore.ListWorkspaces(ctx, accountID)
+}
+
+func (s *failingProjectIdentityStore) ListOrganizations(ctx context.Context) ([]map[string]any, error) {
+	if s.organizationErr != nil {
+		return nil, s.organizationErr
+	}
+	return s.memoryTableStore.ListOrganizations(ctx)
+}
+
 func storedWorkspace(t *testing.T, app *controlPlaneServer, id string) map[string]any {
 	t.Helper()
 	workspace, ok := app.getWorkspace(id)
@@ -862,6 +882,77 @@ func TestProjectCreationRequiresWorkspaceOrganizationOwnership(t *testing.T) {
 	created := requestWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-beta","workspaceId":"workspace-beta"}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("same-organization status = %d, want %d: %s", created.Code, http.StatusCreated, created.Body.String())
+	}
+}
+
+func TestProjectCreationReportsIdentityStoreFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		workspaceErr    error
+		organizationErr error
+	}{
+		{name: "workspace read", workspaceErr: errors.New("workspace store unavailable")},
+		{name: "organization read", organizationErr: errors.New("organization store unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &failingProjectIdentityStore{memoryTableStore: newMemoryTableStore(), workspaceErr: tc.workspaceErr, organizationErr: tc.organizationErr}
+			mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}))
+			mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}))
+			server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+			if err != nil {
+				t.Fatalf("create server: %v", err)
+			}
+
+			rec := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+			if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "state_read_failed") {
+				t.Fatalf("status = %d body=%s, want state_read_failed", rec.Code, rec.Body.String())
+			}
+			heads, err := store.ListProjectTaskSyncHeads(context.Background())
+			if err != nil {
+				t.Fatalf("list projects: %v", err)
+			}
+			if len(heads) != 0 {
+				t.Fatalf("failed identity read persisted projects: %#v", heads)
+			}
+		})
+	}
+}
+
+func TestProjectCreationReportsMissingIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		organization map[string]any
+		workspace    map[string]any
+		errorCode    string
+	}{
+		{name: "workspace", organization: map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}, errorCode: "workspace_not_found"},
+		{name: "organization", workspace: map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}, errorCode: "organization_not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMemoryTableStore()
+			if tc.organization != nil {
+				mustStore(t, store.SaveOrganization(context.Background(), tc.organization))
+			}
+			if tc.workspace != nil {
+				mustStore(t, store.SaveWorkspace(context.Background(), tc.workspace))
+			}
+			server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+			if err != nil {
+				t.Fatalf("create server: %v", err)
+			}
+
+			rec := requestWithSession(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
+			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), tc.errorCode) {
+				t.Fatalf("status = %d body=%s, want %s", rec.Code, rec.Body.String(), tc.errorCode)
+			}
+			heads, err := store.ListProjectTaskSyncHeads(context.Background())
+			if err != nil {
+				t.Fatalf("list projects: %v", err)
+			}
+			if len(heads) != 0 {
+				t.Fatalf("missing identity persisted projects: %#v", heads)
+			}
+		})
 	}
 }
 

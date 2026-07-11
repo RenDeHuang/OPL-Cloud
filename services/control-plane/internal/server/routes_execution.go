@@ -28,13 +28,29 @@ func registerExecutionRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		if !ok {
 			return
 		}
-		workspace, ok := app.getWorkspace(workspaceID)
-		if !ok {
+		workspaces, err := app.tables.ListWorkspaces(r.Context(), "")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		var workspace map[string]any
+		for _, candidate := range workspaces {
+			if stringValue(candidate["id"]) == workspaceID {
+				workspace = candidate
+				break
+			}
+		}
+		if workspace == nil {
 			writeError(w, http.StatusNotFound, "workspace_not_found")
 			return
 		}
+		organizations, err := app.tables.ListOrganizations(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
 		organizationAccountID := ""
-		for _, organization := range app.listOrganizations() {
+		for _, organization := range organizations {
 			if stringValue(organization["id"]) == organizationID {
 				organizationAccountID = stringValue(organization["billingAccountId"])
 				break
