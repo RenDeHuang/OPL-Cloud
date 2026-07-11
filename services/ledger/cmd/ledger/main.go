@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -20,8 +21,12 @@ func main() {
 		addr = ":8081"
 	}
 
+	databaseURL, err := storeDatabaseURL(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
 	store := ledger.Store(ledger.NewMemoryStore())
-	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
+	if databaseURL != "" {
 		db, err := sql.Open("postgres", databaseURL)
 		if err != nil {
 			log.Fatal(err)
@@ -40,4 +45,12 @@ func main() {
 	if err := http.ListenAndServe(addr, server); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func storeDatabaseURL(getenv func(string) string) (string, error) {
+	databaseURL := getenv("DATABASE_URL")
+	if getenv("NODE_ENV") == "production" && databaseURL == "" {
+		return "", errors.New("DATABASE_URL is required for production Ledger persistence")
+	}
+	return databaseURL, nil
 }
