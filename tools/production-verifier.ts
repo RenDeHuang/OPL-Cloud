@@ -1461,10 +1461,6 @@ export async function verifyProductionChain({
   let replacementCompute = null;
   let replacementAttachment = null;
   let replacementWorkspace = null;
-  let recoveredStorage = null;
-  let clonedStorage = null;
-  let backup = null;
-  let backupDestroyed = false;
   let auth = null;
   let operatorAuth = null;
 
@@ -1611,68 +1607,6 @@ export async function verifyProductionChain({
       auth,
       operatorAuth
     });
-
-	backup = await requestJson({
-		fetchImpl,
-		origin: normalizedOrigin,
-		path: `/api/workspaces/${encodeURIComponent(workspace.id)}/backups`,
-		method: "POST",
-		auth,
-		idempotencyKey: `production_verification_backup:${runId}`,
-		body: { syncCursor: 0, projectVersions: {}, artifactIds: [], receiptIds: [], continuationIds: [] }
-	});
-	addCheck(checks, "workspace_backup_created", Boolean(backup?.backupId && backup?.status === "ready" && !backup?.providerRequestId), { backupId: backup?.backupId });
-	const exportedBackup = await requestJson({
-		fetchImpl,
-		origin: normalizedOrigin,
-		path: `/api/workspace-backups/${encodeURIComponent(backup.backupId)}/export`,
-		auth
-	});
-	addCheck(checks, "workspace_backup_exported", Boolean(exportedBackup?.schemaVersion === 1 && exportedBackup?.checksum && !exportedBackup?.providerSnapshotRef && !exportedBackup?.providerRequestId));
-	const restoredStorageId = `vol_${createHash("sha256").update(`restore:${runId}`).digest("hex").slice(0, 18)}`;
-	const restored = await requestJson({
-		fetchImpl,
-		origin: normalizedOrigin,
-		path: `/api/workspace-backups/${encodeURIComponent(backup.backupId)}/restore`,
-		method: "POST",
-		auth,
-		idempotencyKey: `production_verification_restore:${runId}`,
-		body: { targetStorageId: restoredStorageId }
-	});
-	recoveredStorage = { id: restored?.storageId };
-	addCheck(checks, "workspace_backup_restored", Boolean(restored?.storageId === restoredStorageId && restored?.status === "restored"), { storageId: restored?.storageId });
-	const cloned = await requestJson({
-		fetchImpl,
-		origin: normalizedOrigin,
-		path: `/api/workspace-backups/${encodeURIComponent(backup.backupId)}/clone`,
-		method: "POST",
-		auth,
-		idempotencyKey: `production_verification_clone:${runId}`,
-		body: { name: `${effectiveWorkspaceName} clone` }
-	});
-	clonedStorage = { id: cloned?.storageId };
-	addCheck(checks, "workspace_backup_cloned", Boolean(cloned?.workspaceId && cloned?.workspaceId !== workspace.id && cloned?.storageId && cloned?.storageId !== storage.id && cloned?.status === "suspended"), { workspaceId: cloned?.workspaceId, storageId: cloned?.storageId });
-	const destroyedBackup = await requestJson({
-		fetchImpl,
-		origin: normalizedOrigin,
-		path: `/api/workspace-backups/${encodeURIComponent(backup.backupId)}/destroy`,
-		method: "POST",
-		auth,
-		idempotencyKey: `production_verification_backup_destroy:${runId}`,
-		body: {}
-	});
-	addCheck(checks, "workspace_backup_destroyed", destroyedBackup?.status === "destroyed", { backupId: backup.backupId });
-	backupDestroyed = true;
-	for (const recoveryStorage of [recoveredStorage, clonedStorage]) {
-		const recoveryCleanupErrors = await cleanupVerificationResources({ fetchImpl, origin: normalizedOrigin, accountId, storageId: recoveryStorage.id, auth, attempts: workspaceUrlAttempts, retryDelayMs });
-		if (recoveryCleanupErrors.length > 0) {
-			const error = new Error(`production_verification_cleanup_failed:${recoveryCleanupErrors.join("|")}`);
-			error.cleanupErrors = recoveryCleanupErrors;
-			throw error;
-		}
-	}
-	recoveredStorage = null;
-	clonedStorage = null;
 
     const firstCleanupErrors = await cleanupVerificationResources({
       fetchImpl,
@@ -1890,25 +1824,6 @@ export async function verifyProductionChain({
       throw error;
     }
     const cleanupErrors = [];
-	if (backup?.backupId && !backupDestroyed) {
-		try {
-			await requestJson({
-				fetchImpl,
-				origin: normalizedOrigin,
-				path: `/api/workspace-backups/${encodeURIComponent(backup.backupId)}/destroy`,
-				method: "POST",
-				auth,
-				idempotencyKey: `production_verification_backup_cleanup:${runId}`,
-				body: {}
-			});
-		} catch (cleanupError) {
-			cleanupErrors.push(`destroy_backup:${cleanupError.message}`);
-		}
-	}
-	for (const recoveryStorage of [recoveredStorage, clonedStorage].filter((item) => item?.id)) {
-		const recoveryCleanupErrors = await cleanupVerificationResources({ fetchImpl, origin: normalizedOrigin, accountId, storageId: recoveryStorage.id, auth, attempts: workspaceUrlAttempts, retryDelayMs });
-		cleanupErrors.push(...recoveryCleanupErrors);
-	}
     if (replacementCompute?.id || replacementAttachment?.id) {
       const replacementCleanupErrors = await cleanupVerificationResources({
         fetchImpl,

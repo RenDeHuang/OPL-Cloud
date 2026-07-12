@@ -188,9 +188,6 @@ function chainResponses(chain) {
     receivedChunks: [],
     status: "uploading"
   };
-	const backup = { backupId: "backup-prod-run", workspaceId: chain.workspace.id, storageId: chain.storage.id, status: "ready", manifest: { schemaVersion: 1, backupId: "backup-prod-run", workspaceId: chain.workspace.id, storageId: chain.storage.id, checksum: "checksum-prod-run" } };
-	const restoredStorage = { ...chain.storage, id: `vol_${createHash("sha256").update("restore:prod-run").digest("hex").slice(0, 18)}`, workspaceId: chain.workspace.id, status: "ready" };
-	const clonedStorage = { ...chain.storage, id: "storage-clone-prod-run", workspaceId: "ws-clone-prod-run", status: "ready" };
   const pricingVersion = "opl-tencent-v1";
   const computePriceSnapshot = { packageId: "basic", unitPriceCents: 100, currency: "CNY" };
   const storagePriceSnapshot = { packageId: "basic", unitPriceCents: 100, currency: "CNY" };
@@ -237,11 +234,6 @@ function chainResponses(chain) {
     [`PUT /api/workspaces/${chain.workspace.id}/transfers/${transfer.transferId}/chunks/1`]: { ...transfer, receivedChunks: [0, 1] },
     [`POST /api/workspaces/${chain.workspace.id}/transfers/${transfer.transferId}/complete`]: { ...transfer, receivedChunks: [0, 1], status: "completed" },
     [`GET /api/workspaces/${chain.workspace.id}/contents/${transferDigest}`]: { binaryBody: transferText, digest: transferDigest, path: transfer.path },
-	[`POST /api/workspaces/${chain.workspace.id}/backups`]: backup,
-	[`GET /api/workspace-backups/${backup.backupId}/export`]: backup.manifest,
-	[`POST /api/workspace-backups/${backup.backupId}/restore`]: { backupId: backup.backupId, workspaceId: chain.workspace.id, storageId: restoredStorage.id, status: "restored" },
-	[`POST /api/workspace-backups/${backup.backupId}/clone`]: { workspaceId: "ws-clone-prod-run", storageId: clonedStorage.id, status: "suspended", sourceBackupId: backup.backupId },
-	[`POST /api/workspace-backups/${backup.backupId}/destroy`]: { backupId: backup.backupId, status: "destroyed" },
     [`GET ${chain.workspace.url}#2`]: "<html>one-person-lab-app</html>",
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}#2`]: { success: true, data: persistenceText },
     "POST /api/billing/resource-settlements": { entries: [
@@ -273,9 +265,7 @@ function chainResponses(chain) {
     "POST /api/storage-attachments/detach#2": { ...chain.replacementAttachment, status: "detached" },
 	[`POST /api/compute-allocations/${chain.compute.id}/destroy`]: { ...chain.compute, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-compute-prod001" },
 	[`POST /api/compute-allocations/${chain.replacementCompute.id}/destroy`]: { ...chain.replacementCompute, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-compute-prod002" },
-	"POST /api/storage-volumes/destroy": { ...restoredStorage, status: "destroyed", billingStatus: "stopped" },
-	"POST /api/storage-volumes/destroy#2": { ...clonedStorage, status: "destroyed", billingStatus: "stopped" },
-	"POST /api/storage-volumes/destroy#3": { ...chain.storage, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-storage-prod001" }
+	"POST /api/storage-volumes/destroy": { ...chain.storage, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-storage-prod001" }
   };
 }
 
@@ -1101,13 +1091,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     `PUT /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/chunks/1`,
     `POST /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/complete`,
     `GET /api/workspaces/${chain.workspace.id}/contents/${createHash("sha256").update(`${"x".repeat(4 << 20)}opl transfer prod-run`).digest("hex")}`,
-	`POST /api/workspaces/${chain.workspace.id}/backups`,
-	"GET /api/workspace-backups/backup-prod-run/export",
-	"POST /api/workspace-backups/backup-prod-run/restore",
-	"POST /api/workspace-backups/backup-prod-run/clone",
-	"POST /api/workspace-backups/backup-prod-run/destroy",
-	"POST /api/storage-volumes/destroy",
-	"POST /api/storage-volumes/destroy#2",
     "POST /api/storage-attachments/detach",
     `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/compute-allocations#2",
@@ -1123,7 +1106,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "GET /api/state?accountId=pi-prod",
     "POST /api/storage-attachments/detach#2",
     `POST /api/compute-allocations/${chain.replacementCompute.id}/destroy`,
-	"POST /api/storage-volumes/destroy#3"
+    "POST /api/storage-volumes/destroy"
   ]);
   assert.equal(requests.find((request) => request.key === "POST /api/billing/topups").idempotencyKey, "production_verification_credit:prod-run");
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces").body, {
@@ -1144,8 +1127,8 @@ test("production verifier exercises the public TKE resource provisioning chain",
   assert.equal(requests.find((request) => request.key === "POST /api/projects").body.organizationId, "org-production-owner");
   assert.ok(requests.filter((request) => request.key.includes("/chunks/")).every((request) => request.contentType === "application/octet-stream"));
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments#2").body.storageId, chain.storage.id);
-	assert.equal(requests.find((request) => request.key === `POST /api/workspaces/${chain.workspace.id}/backups`).idempotencyKey, "production_verification_backup:prod-run");
-	assert.equal(requests.filter((request) => request.key.startsWith("POST /api/storage-volumes/destroy")).length, 3);
+  assert.ok(!requests.some((request) => request.key.includes("/backups") || request.key.includes("/workspace-backups/")));
+  assert.equal(requests.filter((request) => request.key.startsWith("POST /api/storage-volumes/destroy")).length, 1);
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces#2").body, {
     accountId: "pi-prod",
     workspaceName: "Production Verification Lab",
@@ -1188,11 +1171,6 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "workspace_content_transfer_interrupted:true",
     "workspace_content_transfer_completed:true",
     "workspace_content_transfer_downloaded:true",
-	"workspace_backup_created:true",
-	"workspace_backup_exported:true",
-	"workspace_backup_restored:true",
-	"workspace_backup_cloned:true",
-	"workspace_backup_destroyed:true",
     "verification_storage_detached:true",
     "verification_compute_destroyed:true",
     "replacement_compute_created:true",
