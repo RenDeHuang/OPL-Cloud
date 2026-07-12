@@ -51,7 +51,15 @@ Use `npm run staging:e2e` from a local operator shell before rollout when the lo
 
 Use `npm run verify:production` only after cloud staging rollout from an approved operator environment. This command requires public HTTPS Console and Workspace URLs.
 
-Both verifiers create a real ComputeAllocation, StorageVolume, and StorageAttachment, create a Workspace URL entry, open the public URL, verify wallet, Ledger facts, Fabric/provider evidence, and attempt cleanup.
+Both verifiers create a real ComputeAllocation, StorageVolume, and StorageAttachment, create a Workspace URL entry, open the public URL, verify wallet, Ledger facts, Fabric/provider evidence, and attempt cleanup. Paid resource cleanup passes only when the destroy response is `billingStatus=stopped` and returns a `holdReleaseId` for the same `holdId` created during provisioning.
+
+Resource billing must follow this order:
+
+1. Reserve seven days plus the first hour in the resource Hold.
+2. Activate the Hold only after Fabric verifies the claimed CVM/PVC identity; activation charges the first hour.
+3. Start periodic settlement after that prepaid hour. Settlement uses available balance first, then only the resource's own Hold.
+4. Persist `billingStatus=stopping` before cloud deletion. After deletion is confirmed, stop future settlement and release the Hold remainder without another debit.
+5. If provisioning exhausts its retries without a Machine, persist `failed`; reconciliation releases the unactivated Hold.
 
 Verification output belongs in runtime evidence or `docs/history/**`, not active docs.
 

@@ -1323,7 +1323,7 @@ function verificationResourceIds({ compute, storage, attachment, workspace, repl
   });
 }
 
-async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeAllocationId, storageId, attachmentId, checks = null, auth = null }) {
+async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeAllocationId, storageId, attachmentId, expectedComputeHoldId = "", expectedStorageHoldId = "", checks = null, auth = null }) {
   const cleanupErrors = [];
 
   if (attachmentId) {
@@ -1357,7 +1357,8 @@ async function cleanupVerificationResources({ fetchImpl, origin, accountId, comp
       if (checks) {
         addCheck(checks, "verification_compute_destroyed", Boolean(
           destroyed?.status === "destroyed" &&
-          destroyed?.billingStatus === "stopped"
+          destroyed?.billingStatus === "stopped" &&
+          (!expectedComputeHoldId || (destroyed?.holdId === expectedComputeHoldId && Boolean(destroyed?.holdReleaseId)))
         ));
       }
     } catch (error) {
@@ -1378,7 +1379,8 @@ async function cleanupVerificationResources({ fetchImpl, origin, accountId, comp
       if (checks) {
         addCheck(checks, "verification_storage_destroyed", Boolean(
           destroyed?.status === "destroyed" &&
-          destroyed?.billingStatus === "stopped"
+          destroyed?.billingStatus === "stopped" &&
+          (!expectedStorageHoldId || (destroyed?.holdId === expectedStorageHoldId && Boolean(destroyed?.holdReleaseId)))
         ));
       }
     } catch (error) {
@@ -1633,6 +1635,7 @@ export async function verifyProductionChain({
       accountId,
       computeAllocationId: compute.id,
       attachmentId: attachment.id,
+      expectedComputeHoldId: compute.holdId,
       checks,
       auth
     });
@@ -1798,6 +1801,8 @@ export async function verifyProductionChain({
       computeAllocationId: replacementCompute.id,
       storageId: storage.id,
       attachmentId: replacementAttachment.id,
+      expectedComputeHoldId: replacementCompute.holdId,
+      expectedStorageHoldId: storage.holdId,
       checks,
       auth
     });
@@ -1950,6 +1955,10 @@ export async function runProductionVerifierCli({
   stderr = process.stderr,
   fetchImpl = globalThis.fetch
 } = {}) {
+	if (argv.includes("--help") || argv.includes("-h")) {
+		stdout.write("Usage: npm run verify:production -- --origin <https-url> [--account <id>] [--run-id <id>] [--package <id>] [--browser-e2e]\n");
+		return 0;
+	}
   try {
     const result = await verifyProductionChain(verifierOptionsFromArgs({ argv, env, fetchImpl }));
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);

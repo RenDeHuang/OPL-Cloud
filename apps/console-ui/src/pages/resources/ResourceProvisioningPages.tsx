@@ -35,15 +35,15 @@ type AnyRecord = Record<string, any>;
 
 const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
 const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
-const storageDestroyStages = Object.freeze(["已提交", "释放冻结", "销毁存储", "已删除"]);
+const storageDestroyStages = Object.freeze(["已提交", "停止计费", "销毁存储", "释放冻结", "已删除"]);
 const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
 const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
 
 function resourceStatus(value) {
   const normalized = String(value || "pending");
   if (["running", "bound", "attached", "ready", "active"].includes(normalized)) return "good";
-  if (["destroyed", "failed", "detached", "external_deleted", "deleted", "missing"].includes(normalized)) return "danger";
-  if (["creating", "attaching", "pending"].includes(normalized)) return "warn";
+  if (["destroyed", "failed", "detached", "external_deleted", "deleted", "missing", "quarantined"].includes(normalized)) return "danger";
+  if (["creating", "attaching", "pending", "provisioning", "destroying"].includes(normalized)) return "warn";
   return "info";
 }
 
@@ -77,6 +77,7 @@ function billingStatusLabel(value) {
     active: "计费中",
     released: "已释放",
     stopped: "已停止",
+    stopping: "停止中",
     pending: "等待中"
   }[value] || value || "等待中";
 }

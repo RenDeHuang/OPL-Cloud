@@ -232,7 +232,7 @@ Allocator 按 `cluster + package + instanceType` 获取 PostgreSQL advisory lock
 
 - [ ] **Step 4: 标签与复核**
 
-认领后写入 CVM Tag 和 Node Label：`resource_id`、`account_id`、`workspace_id`，重新读取 Provider 状态；全部一致才将 ownership 变为 active。失败进入 quarantined，禁止返回 running。
+认领后把 CVM 实例名写为 `resource_id` 并回读确认，再写入包含 `resource_id`、`account_id`、`workspace_id` 的 Node Label；全部一致才将 ownership 变为 active。失败进入 quarantined，禁止返回 running。
 
 - [ ] **Step 5: 清退旧算法**
 

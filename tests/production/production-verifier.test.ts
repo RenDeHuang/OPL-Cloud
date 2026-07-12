@@ -66,6 +66,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     privateIp: "10.0.0.21",
     status: "running",
     billingStatus: "active",
+    holdId: "hold-compute-prod001",
     spec: "2c4g",
     image: "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app:latest",
     runtime: { service: "service/opl-compute-prod001", serviceName: "opl-compute-prod001" }
@@ -78,6 +79,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     providerResourceId: "pvc/opl-storage-prod001-data",
     status: "available",
     billingStatus: "active",
+    holdId: "hold-storage-prod001",
     sizeGb: 10,
     storageClass: "cbs"
   };
@@ -111,6 +113,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
   const replacementCompute = {
     ...compute,
     id: "compute-prod002",
+    holdId: "hold-compute-prod002",
     providerResourceId: "node/opl-node-prod002",
     instanceId: "ins-prod002",
     nodeName: "opl-node-prod002",
@@ -243,11 +246,11 @@ function chainResponses(chain) {
     },
     "POST /api/storage-attachments/detach": { ...chain.attachment, status: "detached" },
     "POST /api/storage-attachments/detach#2": { ...chain.replacementAttachment, status: "detached" },
-    [`POST /api/compute-allocations/${chain.compute.id}/destroy`]: { ...chain.compute, status: "destroyed", billingStatus: "stopped" },
-    [`POST /api/compute-allocations/${chain.replacementCompute.id}/destroy`]: { ...chain.replacementCompute, status: "destroyed", billingStatus: "stopped" },
+	[`POST /api/compute-allocations/${chain.compute.id}/destroy`]: { ...chain.compute, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-compute-prod001" },
+	[`POST /api/compute-allocations/${chain.replacementCompute.id}/destroy`]: { ...chain.replacementCompute, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-compute-prod002" },
 	"POST /api/storage-volumes/destroy": { ...restoredStorage, status: "destroyed", billingStatus: "stopped" },
 	"POST /api/storage-volumes/destroy#2": { ...clonedStorage, status: "destroyed", billingStatus: "stopped" },
-	"POST /api/storage-volumes/destroy#3": { ...chain.storage, status: "destroyed", billingStatus: "stopped" }
+	"POST /api/storage-volumes/destroy#3": { ...chain.storage, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-storage-prod001" }
   };
 }
 
@@ -1180,6 +1183,21 @@ test("production verifier exercises the public TKE resource provisioning chain",
   ]);
 });
 
+test("production verifier rejects paid resource cleanup without Hold release evidence", async () => {
+	const chain = tkeChain();
+	const responses = chainResponses(chain);
+	delete responses[`POST /api/compute-allocations/${chain.replacementCompute.id}/destroy`].holdReleaseId;
+	await assert.rejects(
+		verifyProductionChain({
+			origin: "https://console.oplcloud.cn",
+			accountId: "pi-prod",
+			runId: "prod-run",
+			fetchImpl: keyedFetch({ responses })
+		}),
+		/verification_compute_destroyed/
+	);
+});
+
 test("production verifier preserves Workspace gateway cookies after token cleanup redirects", async () => {
   const requests = [];
   const chain = tkeChain();
@@ -1917,6 +1935,19 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
     `destroy_compute:request_failed:POST:/api/compute-allocations/${chain.compute.id}/destroy:500:destroy_compute_failed`,
     "destroy_storage:request_failed:POST:/api/storage-volumes/destroy:500:destroy_storage_failed"
   ]);
+});
+
+test("production verifier CLI help is read-only", async () => {
+	let output = "";
+	const code = await runProductionVerifierCli({
+		argv: ["--help"],
+		env: {},
+		stdout: { write(value) { output += value; } },
+		stderr: { write() { throw new Error("unexpected stderr"); } },
+		fetchImpl: async () => { throw new Error("unexpected network request"); }
+	});
+	assert.equal(code, 0);
+	assert.match(output, /--origin/);
 });
 
 test("production verifier CLI preserves safe provider failure details", async () => {
