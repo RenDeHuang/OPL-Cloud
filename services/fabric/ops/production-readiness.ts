@@ -121,7 +121,7 @@ function hasSeedUser(users, role) {
 
 function hasProductionAuthSeed(env) {
   const users = seedUsersFromJson(env.OPL_CONSOLE_USERS_JSON);
-  if (users.length > 0) return hasSeedUser(users, "pi") && hasSeedUser(users, "admin");
+  if (users.length > 0) return hasSeedUser(users, "owner") && hasSeedUser(users, "admin");
   return Boolean(
     env.OPL_PI_EMAIL &&
     env.OPL_PI_ACCOUNT_ID &&

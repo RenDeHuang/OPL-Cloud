@@ -167,6 +167,17 @@ test("TKE deploy can roll forward with an existing auth seed secret", async () =
   );
 });
 
+test("TKE deploy migrates the legacy PI bootstrap role without printing the auth seed", async () => {
+  const workflow = await readWorkflow(new URL("../../.github/workflows/deploy-tke-production.yml", import.meta.url));
+  const install = serializedStep(stepsByName(job(workflow, "deploy")).get("Install Kubernetes secrets"));
+
+  assert.match(install, /get secret opl-cloud-auth[^\n]*jsonpath='\{\.data\.OPL_CONSOLE_USERS_JSON\}'/);
+  assert.match(install, /base64 -d > "\$secret_dir\/auth-users-json"/);
+  assert.match(install, /user\.role === "pi" \? \{ \.\.\.user, role: "owner" \} : user/);
+  assert.match(install, /writeFileSync\(path, JSON\.stringify\(users\.map/);
+  assert.doesNotMatch(install, /console\.log\([^)]*auth-users-json/);
+});
+
 test("TKE production deploy workflow defaults to the versioned pricing contract", async () => {
   const deploymentContract = await readJson(deploymentContractPath);
   const workflow = await readWorkflow(deploymentContract.deployWorkflow.file);

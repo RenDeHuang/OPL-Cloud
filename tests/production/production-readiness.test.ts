@@ -29,7 +29,7 @@ const tkeProductionEnv = {
       email: "pi@medopl.cn",
       password: "ProdPiPass2026!",
       name: "Production PI",
-      role: "pi",
+      role: "owner",
       accountId: "pi-production"
     },
     {
