@@ -1148,10 +1148,12 @@ test("production verifier exercises the public TKE resource provisioning chain",
   const computeSettlementBody = requests.find((request) => request.key === "POST /api/billing/resource-settlements").body;
   const storageSettlementBody = requests.find((request) => request.key === "POST /api/billing/resource-settlements#2").body;
   assert.equal(computeSettlementBody.holdId, chain.replacementCompute.holdId);
+  assert.equal(computeSettlementBody.workspaceId, chain.replacementCompute.workspaceId || "");
   assert.equal(computeSettlementBody.pricingVersion, "opl-tencent-v1");
   assert.equal(computeSettlementBody.providerCostEvidenceRef, "fabric:op-runtime-prod002");
   assert.deepEqual(computeSettlementBody.priceSnapshot, { packageId: "basic", resourceType: "compute", unitPriceCents: 100, currency: "CNY", source: "production_verifier" });
   assert.equal(storageSettlementBody.holdId, chain.storage.holdId);
+  assert.equal(storageSettlementBody.workspaceId, chain.storage.workspaceId || "");
   assert.equal(storageSettlementBody.pricingVersion, "opl-tencent-v1");
   assert.equal(storageSettlementBody.providerCostEvidenceRef, "fabric:op-runtime-prod002");
   assert.deepEqual(storageSettlementBody.priceSnapshot, { packageId: "basic", resourceType: "storage", unitPriceCents: 100, currency: "CNY", source: "production_verifier" });

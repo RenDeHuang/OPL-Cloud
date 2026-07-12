@@ -1721,7 +1721,7 @@ export async function verifyProductionChain({
       auth: operatorAuth || auth,
       body: {
         accountId,
-        workspaceId: replacementWorkspace.id,
+        workspaceId: replacementCompute.workspaceId || "",
         resourceType: "compute",
         resourceId: replacementCompute.id,
         computeAllocationId: replacementCompute.id,
@@ -1741,7 +1741,7 @@ export async function verifyProductionChain({
       auth: operatorAuth || auth,
       body: {
         accountId,
-        workspaceId: replacementWorkspace.id,
+        workspaceId: storage.workspaceId || "",
         resourceType: "storage",
         resourceId: storage.id,
         storageId: storage.id,
