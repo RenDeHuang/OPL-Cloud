@@ -15,7 +15,7 @@ on:
       account_id:
         description: Account id used for the paid verifier resources.
         required: false
-        default: "pi-production-verifier"
+        default: ""
         type: string
       package_id:
         description: Compute package id to verify.

@@ -1933,8 +1933,9 @@ function cliArgs(argv) {
 
 function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalThis.fetch }) {
   const args = cliArgs(argv);
-  const accountId = args.account || env.OPL_VERIFY_ACCOUNT_ID || DEFAULT_ACCOUNT_ID;
-  const owner = verificationOwnerFromSeed(env.OPL_VERIFY_AUTH_USERS_JSON, accountId);
+  const requestedAccountId = args.account || env.OPL_VERIFY_ACCOUNT_ID || "";
+  const owner = verificationOwnerFromSeed(env.OPL_VERIFY_AUTH_USERS_JSON, requestedAccountId);
+  const accountId = owner.accountId || requestedAccountId || DEFAULT_ACCOUNT_ID;
   return {
     origin: args.origin || env.OPL_CONSOLE_ORIGIN,
     accountId,
@@ -1955,19 +1956,21 @@ function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalTh
   };
 }
 
-function verificationOwnerFromSeed(raw, accountId) {
-  if (!raw) return { email: "", password: "" };
+export function verificationOwnerFromSeed(raw, accountId) {
+  if (!raw) return { accountId: "", email: "", password: "" };
   let users;
   try {
     users = JSON.parse(raw);
   } catch {
     throw new Error("verification_owner_credentials_required");
   }
-  const owner = Array.isArray(users) && users.find((user) =>
-    user?.accountId === accountId && (user.role === "owner" || user.role === "pi") && user.email && user.password
-  );
-  if (!owner) throw new Error("verification_owner_credentials_required");
-  return { email: owner.email, password: owner.password };
+  const owners = Array.isArray(users) ? users.filter((user) =>
+    (!accountId || user?.accountId === accountId) &&
+    (user.role === "owner" || user.role === "pi") &&
+    user.accountId && user.email && user.password
+  ) : [];
+  if (owners.length !== 1) throw new Error("verification_owner_credentials_required");
+  return { accountId: owners[0].accountId, email: owners[0].email, password: owners[0].password };
 }
 
 function errorPayload(error) {

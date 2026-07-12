@@ -5,9 +5,26 @@ import test from "node:test";
 
 import {
   runProductionVerifierCli,
+  verificationOwnerFromSeed,
   verifyProductionChain,
   verifyWorkspaceBrowserUi
 } from "../../tools/production-verifier.ts";
+
+test("production verifier resolves only one unambiguous owner account from the auth seed", () => {
+  const seed = JSON.stringify([
+    { accountId: "acct-owner", role: "pi", email: "owner@example.com", password: "owner-password" },
+    { accountId: "acct-admin", role: "admin", email: "admin@example.com", password: "admin-password" }
+  ]);
+  assert.deepEqual(verificationOwnerFromSeed(seed, ""), {
+    accountId: "acct-owner",
+    email: "owner@example.com",
+    password: "owner-password"
+  });
+  assert.throws(
+    () => verificationOwnerFromSeed(seed, "acct-missing"),
+    /verification_owner_credentials_required/
+  );
+});
 
 function jsonResponse(payload, status = 200, headers = new Headers({ "content-type": "application/json" })) {
   return {
