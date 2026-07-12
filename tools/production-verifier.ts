@@ -346,8 +346,16 @@ async function verifyWorkspaceRuntimeFile({ fetchImpl, checks, workspaceUrl, run
   return { filePath, content };
 }
 
-async function verifyWorkspaceContentTransfer({ fetchImpl, checks, origin, workspace, runId, auth }) {
-  const organizationId = "org-production-verifier";
+async function verifyWorkspaceContentTransfer({ fetchImpl, checks, origin, accountId, workspace, runId, auth, operatorAuth }) {
+  const state = await requestJson({ fetchImpl, origin, path: "/api/management/state", auth: operatorAuth });
+  const organizations = new Map((state.organizations || [])
+    .filter((item) => item.id && item.billingAccountId === accountId && item.status === "active")
+    .map((item) => [item.id, item]));
+  const organizationIds = new Set((state.memberships || [])
+    .filter((item) => item.accountId === accountId && item.status === "active" && organizations.has(item.organizationId))
+    .map((item) => item.organizationId));
+  if (organizationIds.size !== 1) throw new Error("verification_organization_membership_required");
+  const [organizationId] = organizationIds;
   const content = `${"x".repeat(4 << 20)}opl transfer ${runId}`;
   const digest = createHash("sha256").update(content).digest("hex");
   const path = `production-verifier/opl-transfer-${runId}.txt`;
@@ -1597,9 +1605,11 @@ export async function verifyProductionChain({
       fetchImpl,
       checks,
       origin: normalizedOrigin,
+      accountId,
       workspace,
       runId,
-      auth
+      auth,
+      operatorAuth
     });
 
 	backup = await requestJson({

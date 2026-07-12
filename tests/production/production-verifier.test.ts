@@ -177,7 +177,7 @@ function chainResponses(chain) {
   const transferDigest = createHash("sha256").update(transferText).digest("hex");
   const transfer = {
     transferId: "transfer-prod-run",
-    organizationId: "org-production-verifier",
+    organizationId: "org-production-owner",
     workspaceId: chain.workspace.id,
     projectId: "project-prod-run",
     path: "production-verifier/opl-transfer-prod-run.txt",
@@ -222,6 +222,14 @@ function chainResponses(chain) {
     },
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/write")}`]: { success: true, data: true },
     [`POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}`]: { success: true, data: persistenceText },
+    "GET /api/management/state": {
+      organizations: [{ id: transfer.organizationId, billingAccountId: "pi-prod", status: "active" }],
+      memberships: [
+        { organizationId: "org-missing", accountId: "pi-prod", status: "active" },
+        { organizationId: transfer.organizationId, accountId: "pi-prod", status: "active" },
+        { organizationId: transfer.organizationId, accountId: "pi-prod", status: "active" }
+      ]
+    },
     "POST /api/projects": { projectId: transfer.projectId, organizationId: transfer.organizationId, workspaceId: transfer.workspaceId },
     [`POST /api/workspaces/${chain.workspace.id}/transfers`]: transfer,
     [`PUT /api/workspaces/${chain.workspace.id}/transfers/${transfer.transferId}/chunks/0`]: { ...transfer, receivedChunks: [0] },
@@ -1085,6 +1093,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     `GET ${workspaceUrl(chain.workspace.url, "/api/auth/user")}#2`,
     `POST ${workspaceUrl(chain.workspace.url, "/api/fs/write")}`,
     `POST ${workspaceUrl(chain.workspace.url, "/api/fs/read")}`,
+    "GET /api/management/state",
     "POST /api/projects",
     `POST /api/workspaces/${chain.workspace.id}/transfers`,
     `PUT /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/chunks/0`,
@@ -1132,6 +1141,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     path: "/data/opl-e2e-prod-run.txt",
     workspace: "/data"
   });
+  assert.equal(requests.find((request) => request.key === "POST /api/projects").body.organizationId, "org-production-owner");
   assert.ok(requests.filter((request) => request.key.includes("/chunks/")).every((request) => request.contentType === "application/octet-stream"));
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments#2").body.storageId, chain.storage.id);
 	assert.equal(requests.find((request) => request.key === `POST /api/workspaces/${chain.workspace.id}/backups`).idempotencyKey, "production_verification_backup:prod-run");
@@ -1198,6 +1208,38 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "verification_storage_detached:true",
     "verification_compute_destroyed:true",
     "verification_storage_destroyed:true"
+  ]);
+});
+
+test("production verifier rejects ambiguous owner organization memberships", async () => {
+  const chain = tkeChain();
+  const responses = chainResponses(chain);
+  const requests = [];
+  responses["GET /api/management/state"] = {
+    organizations: [
+      { id: "org-production-owner", billingAccountId: "pi-prod", status: "active" },
+      { id: "org-production-owner-2", billingAccountId: "pi-prod", status: "active" }
+    ],
+    memberships: [
+      { organizationId: "org-production-owner", accountId: "pi-prod", status: "active" },
+      { organizationId: "org-production-owner-2", accountId: "pi-prod", status: "active" }
+    ]
+  };
+
+  await assert.rejects(
+    verifyProductionChain({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      runId: "prod-run",
+      fetchImpl: keyedFetch({ responses, requests })
+    }),
+    /verification_organization_membership_required/
+  );
+  assert.ok(!requests.some((request) => request.key === "POST /api/projects" || request.key.includes("/transfers")));
+  assert.deepEqual(requests.map((request) => request.key).slice(-3), [
+    "POST /api/storage-attachments/detach",
+    `POST /api/compute-allocations/${chain.compute.id}/destroy`,
+    "POST /api/storage-volumes/destroy"
   ]);
 });
 
@@ -1762,12 +1804,21 @@ test("production verifier uses the account owner session for customer resource A
 
   const topup = requests.find((request) => request.key === "POST /api/billing/topups");
   const compute = requests.find((request) => request.key === "POST /api/compute-allocations");
+  const management = requests.find((request) => request.key === "GET /api/management/state");
+  const project = requests.find((request) => request.key === "POST /api/projects");
   const settlement = requests.find((request) => request.key === "POST /api/billing/resource-settlements");
   const destroy = requests.find((request) => request.key.includes("/api/compute-allocations/") && request.key.endsWith("/destroy"));
   assert.deepEqual(requests.find((request) => request.key === "POST /api/auth/login")?.body, { email: "owner@example.com", password: "owner-password" });
   assert.match(topup.cookie, /operator-session/);
   assert.match(settlement.cookie, /operator-session/);
   assert.match(compute.cookie, /owner-session/);
+  assert.match(management.cookie, /operator-session/);
+  assert.match(project.cookie, /owner-session/);
+  assert.equal(project.csrf, "csrf-owner");
+  for (const request of requests.filter((item) => item.key.includes("/transfers"))) {
+    assert.match(request.cookie, /owner-session/);
+    if (request.key.startsWith("POST ") || request.key.startsWith("PUT ")) assert.equal(request.csrf, "csrf-owner");
+  }
   assert.match(destroy.cookie, /owner-session/);
 });
 
