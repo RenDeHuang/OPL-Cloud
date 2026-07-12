@@ -55,7 +55,6 @@ export async function verifyProductionExecutionChain({
   required(internalServiceToken, "internal_service_token");
   if (!/^[A-Za-z0-9._:-]{1,80}$/.test(runId || "")) throw new Error("run_id_invalid");
 
-  const organizationId = "org-production-verifier";
   const workspaceId = `workspace-${runId}`;
   const runnerId = `runner-${runId}`;
   const environmentRef = "environment-production-verifier";
@@ -74,6 +73,17 @@ export async function verifyProductionExecutionChain({
     cookie: required(login.response.headers.get("set-cookie")?.split(";", 1)[0], "session_cookie"),
     csrf: required(login.response.headers.get("x-opl-csrf-token") || login.payload.csrfToken, "csrf_token")
   };
+  const userId = required(login.payload?.user?.id, "operator_user_id");
+  const accountId = required(login.payload?.user?.accountId, "operator_account_id");
+  const management = (await requestJson({ fetchImpl, origin: controlPlane, path: "/api/management/state", auth })).payload;
+  const organizations = new Map((management.organizations || [])
+    .filter((organization) => organization.id && organization.billingAccountId === accountId && organization.status === "active")
+    .map((organization) => [organization.id, organization]));
+  const organizationIds = new Set((management.memberships || [])
+    .filter((membership) => membership.userId === userId && membership.accountId === accountId && membership.status === "active" && organizations.has(membership.organizationId))
+    .map((membership) => membership.organizationId));
+  if (organizationIds.size !== 1) throw new Error("execution_organization_membership_required");
+  const [organizationId] = organizationIds;
 
   const project = (await requestJson({
     fetchImpl, origin: controlPlane, path: "/api/projects", method: "POST", auth, idempotencyKey: key("project"),
