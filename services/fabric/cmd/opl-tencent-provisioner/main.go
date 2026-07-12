@@ -544,7 +544,13 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	if err != nil {
 		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", err)
 	}
-	if described.Response == nil || len(described.Response.InstanceSet) != 1 || stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID || stringValue(described.Response.InstanceSet[0].InstanceName) != resourceID {
+	if described == nil || described.Response == nil {
+		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", fmt.Errorf("Tencent CVM DescribeInstances readback response is missing"))
+	}
+	if len(described.Response.InstanceSet) != 1 || described.Response.InstanceSet[0] == nil {
+		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", fmt.Errorf("Tencent CVM DescribeInstances readback instance is missing"))
+	}
+	if stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID || stringValue(described.Response.InstanceSet[0].InstanceName) != resourceID {
 		return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM instance name did not match the resource id after update.", Retryable: true}
 	}
 	modifyRequestID := ""

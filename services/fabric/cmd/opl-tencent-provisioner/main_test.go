@@ -427,6 +427,9 @@ type fakeNativeCvmAPI struct {
 	err                      error
 	nilResponse              bool
 	nilEnvelope              bool
+	nilResponseCall          int
+	nilEnvelopeCall          int
+	nilInstanceCall          int
 }
 
 func (api *fakeNativeCvmAPI) ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error) {
@@ -437,14 +440,18 @@ func (api *fakeNativeCvmAPI) ModifyInstancesAttribute(request *cvm2017.ModifyIns
 
 func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error) {
 	api.describeInstancesRequest = append(api.describeInstancesRequest, request)
+	call := len(api.describeInstancesRequest)
 	if api.err != nil {
 		return nil, api.err
 	}
-	if api.nilResponse {
+	if api.nilResponse || api.nilResponseCall == call {
 		return nil, nil
 	}
-	if api.nilEnvelope {
+	if api.nilEnvelope || api.nilEnvelopeCall == call {
 		return &cvm2017.DescribeInstancesResponse{}, nil
+	}
+	if api.nilInstanceCall == call {
+		return &cvm2017.DescribeInstancesResponse{Response: &cvm2017.DescribeInstancesResponseParams{InstanceSet: []*cvm2017.Instance{nil}, TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-malformed-cvm")}}, nil
 	}
 	if api.empty {
 		return &cvm2017.DescribeInstancesResponse{
@@ -1008,6 +1015,28 @@ func TestTencentSDKClientRejectsMalformedCVMResponses(t *testing.T) {
 			}, nil)
 			if tagged.Ok || tagged.ErrorCode != "tencent_verify_compute_machine_failed" {
 				t.Fatalf("tag malformed CVM response = %#v", tagged)
+			}
+		})
+	}
+}
+
+func TestTencentSDKTagComputeMachineRejectsMalformedCVMReadback(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		api  *fakeNativeCvmAPI
+	}{
+		{name: "nil response", api: &fakeNativeCvmAPI{nilResponseCall: 2}},
+		{name: "nil envelope", api: &fakeNativeCvmAPI{nilEnvelopeCall: 2}},
+		{name: "nil instance", api: &fakeNativeCvmAPI{nilInstanceCall: 2}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &tencentSDKClient{nativeCvmClient: test.api}
+			response := client.TagComputeMachine(Request{
+				Tags:       map[string]string{"opl_resource_id": "compute-alpha"},
+				Allocation: ComputeAllocationInput{InstanceId: "ins-alpha"},
+			}, nil)
+			if response.Ok || response.ErrorCode != "tencent_verify_compute_machine_tag_failed" {
+				t.Fatalf("malformed CVM readback = %#v", response)
 			}
 		})
 	}
