@@ -185,6 +185,20 @@ async function requestOperatorSession({ fetchImpl, origin, operatorToken }) {
   };
 }
 
+async function requestOwnerSession({ fetchImpl, origin, email, password }) {
+  const { payload, response } = await requestJsonWithResponse({
+    fetchImpl,
+    origin,
+    path: "/api/auth/login",
+    method: "POST",
+    body: { email, password }
+  });
+  return {
+    cookie: cookieHeaderFromSetCookie(setCookieHeader(response.headers)),
+    csrf: response.headers?.get?.("x-opl-csrf-token") || payload?.csrfToken || ""
+  };
+}
+
 function sleep(ms) {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1401,6 +1415,8 @@ export async function verifyProductionChain({
   workspaceUrlAttempts = DEFAULT_WORKSPACE_URL_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   operatorToken = "",
+  ownerEmail = "",
+  ownerPassword = "",
   allowPrivateConsoleOrigin = false,
   browserE2E = false,
   browserFactory = null,
@@ -1429,6 +1445,7 @@ export async function verifyProductionChain({
   let backup = null;
   let backupDestroyed = false;
   let auth = null;
+  let operatorAuth = null;
 
   try {
     const productionReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/production/readiness" });
@@ -1437,17 +1454,22 @@ export async function verifyProductionChain({
     const runtimeReadiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/runtime/readiness" });
     assertReady({ checks, name: "runtime_readiness", payload: runtimeReadiness });
 
-    auth = await requestOperatorSession({ fetchImpl, origin: normalizedOrigin, operatorToken });
+    operatorAuth = await requestOperatorSession({ fetchImpl, origin: normalizedOrigin, operatorToken });
 
     await requestJson({
       fetchImpl,
       origin: normalizedOrigin,
       path: "/api/billing/topups",
       method: "POST",
-      auth,
+      auth: operatorAuth,
       idempotencyKey: creditSourceEventId,
       body: { accountId, amount: creditAmount, reason: creditSourceEventId, confirm: true }
     });
+
+    if (Boolean(ownerEmail) !== Boolean(ownerPassword)) throw new Error("verification_owner_credentials_required");
+    auth = ownerEmail
+      ? await requestOwnerSession({ fetchImpl, origin: normalizedOrigin, email: ownerEmail, password: ownerPassword })
+      : operatorAuth;
 
     compute = await requestJson({
       fetchImpl,
@@ -1737,7 +1759,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/billing/resource-settlements",
       method: "POST",
-      auth,
+      auth: operatorAuth || auth,
       body: {
         accountId,
         workspaceId: replacementWorkspace.id,
@@ -1756,7 +1778,7 @@ export async function verifyProductionChain({
       origin: normalizedOrigin,
       path: "/api/billing/resource-settlements",
       method: "POST",
-      auth,
+      auth: operatorAuth || auth,
       body: {
         accountId,
         workspaceId: replacementWorkspace.id,
@@ -1911,9 +1933,11 @@ function cliArgs(argv) {
 
 function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalThis.fetch }) {
   const args = cliArgs(argv);
+  const accountId = args.account || env.OPL_VERIFY_ACCOUNT_ID || DEFAULT_ACCOUNT_ID;
+  const owner = verificationOwnerFromSeed(env.OPL_VERIFY_AUTH_USERS_JSON, accountId);
   return {
     origin: args.origin || env.OPL_CONSOLE_ORIGIN,
-    accountId: args.account || env.OPL_VERIFY_ACCOUNT_ID || DEFAULT_ACCOUNT_ID,
+    accountId,
     workspaceName: args.workspace || env.OPL_VERIFY_WORKSPACE_NAME,
     runId: args["run-id"] || env.OPL_VERIFY_RUN_ID,
     packageId: args.package || env.OPL_VERIFY_PACKAGE_ID || DEFAULT_PACKAGE_ID,
@@ -1921,12 +1945,29 @@ function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalTh
     workspaceUrlAttempts: Number(args["url-attempts"] || env.OPL_VERIFY_URL_ATTEMPTS || DEFAULT_WORKSPACE_URL_ATTEMPTS),
     retryDelayMs: Number(args["retry-delay-ms"] || env.OPL_VERIFY_RETRY_DELAY_MS || DEFAULT_RETRY_DELAY_MS),
     operatorToken: args["operator-token"] || env.OPL_VERIFY_OPERATOR_TOKEN || "",
+    ownerEmail: owner.email,
+    ownerPassword: owner.password,
     browserE2E: ["1", "true"].includes(String(args["browser-e2e"] || env.OPL_VERIFY_BROWSER_E2E || "").toLowerCase()),
     screenshotDir: args["screenshot-dir"] || env.OPL_VERIFY_SCREENSHOT_DIR || "",
     modelAccessKey: args["model-access-key"] || env.OPL_VERIFY_MODEL_ACCESS_KEY || env.OPL_CODEX_API_KEY || "",
     cleanupOnFailure: !["0", "false", "no"].includes(String(args["cleanup-on-failure"] || env.OPL_VERIFY_CLEANUP_ON_FAILURE || "true").toLowerCase()),
     fetchImpl
   };
+}
+
+function verificationOwnerFromSeed(raw, accountId) {
+  if (!raw) return { email: "", password: "" };
+  let users;
+  try {
+    users = JSON.parse(raw);
+  } catch {
+    throw new Error("verification_owner_credentials_required");
+  }
+  const owner = Array.isArray(users) && users.find((user) =>
+    user?.accountId === accountId && (user.role === "owner" || user.role === "pi") && user.email && user.password
+  );
+  if (!owner) throw new Error("verification_owner_credentials_required");
+  return { email: owner.email, password: owner.password };
 }
 
 function errorPayload(error) {

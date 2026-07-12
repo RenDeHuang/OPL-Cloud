@@ -1679,6 +1679,57 @@ test("production verifier authenticates as operator and sends CSRF on commercial
   }
 });
 
+test("production verifier uses the account owner session for customer resource APIs", async () => {
+  const requests = [];
+  const chain = tkeChain();
+  const responses = {
+    ...chainResponses(chain),
+    "POST /api/auth/operator-login": { accountId: "operator", role: "operator" },
+    "POST /api/auth/login": { accountId: "pi-prod", role: "owner" }
+  };
+  const baseFetch = keyedFetch({ responses, requests, responseHeaders: new Headers({
+    "content-type": "application/json",
+    "set-cookie": "opl_console_session=operator-session; Path=/; HttpOnly; SameSite=Lax",
+    "x-opl-csrf-token": "csrf-operator"
+  }) });
+  const fetchImpl = (url, options = {}) => {
+    if (new URL(String(url)).pathname === "/api/auth/login") {
+      requests.push({
+        key: "POST /api/auth/login",
+        body: JSON.parse(String(options.body || "{}")),
+        cookie: options.headers?.cookie || "",
+        csrf: options.headers?.["x-opl-csrf"] || ""
+      });
+      return Promise.resolve(jsonResponse(responses["POST /api/auth/login"], 200, new Headers({
+        "content-type": "application/json",
+        "set-cookie": "opl_console_session=owner-session; Path=/; HttpOnly; SameSite=Lax",
+        "x-opl-csrf-token": "csrf-owner"
+      })));
+    }
+    return baseFetch(url, options);
+  };
+
+  await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    operatorToken: "operator-token",
+    ownerEmail: "owner@example.com",
+    ownerPassword: "owner-password",
+    fetchImpl
+  });
+
+  const topup = requests.find((request) => request.key === "POST /api/billing/topups");
+  const compute = requests.find((request) => request.key === "POST /api/compute-allocations");
+  const settlement = requests.find((request) => request.key === "POST /api/billing/resource-settlements");
+  const destroy = requests.find((request) => request.key.includes("/api/compute-allocations/") && request.key.endsWith("/destroy"));
+  assert.deepEqual(requests.find((request) => request.key === "POST /api/auth/login")?.body, { email: "owner@example.com", password: "owner-password" });
+  assert.match(topup.cookie, /operator-session/);
+  assert.match(settlement.cookie, /operator-session/);
+  assert.match(compute.cookie, /owner-session/);
+  assert.match(destroy.cookie, /owner-session/);
+});
+
 test("production verifier reports safe ledger mismatch details", async () => {
   const chain = tkeChain();
   const responses = chainResponses(chain);

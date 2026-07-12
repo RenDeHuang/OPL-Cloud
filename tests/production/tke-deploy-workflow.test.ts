@@ -111,6 +111,7 @@ test("production verifier workflow always cleans failed paid resources", async (
 
   assert.equal(workflow.on.workflow_dispatch.inputs.cleanup_on_failure, undefined);
   assert.equal(currentJob.env.OPL_VERIFY_CLEANUP_ON_FAILURE, "true");
+  assert.ok(String(currentJob.env.OPL_VERIFY_AUTH_USERS_JSON || "").includes("secrets.OPL_CONSOLE_USERS_JSON"));
 });
 
 test("production execution verifier runs inside TKE and matches the deployment contract", async () => {

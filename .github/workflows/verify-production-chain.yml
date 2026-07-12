@@ -51,6 +51,7 @@ jobs:
     env:
       OPL_CONSOLE_ORIGIN: ${{ inputs.origin }}
       OPL_VERIFY_OPERATOR_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
+      OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
       OPL_VERIFY_ACCOUNT_ID: ${{ inputs.account_id }}
       OPL_VERIFY_PACKAGE_ID: ${{ inputs.package_id }}
       OPL_VERIFY_CREDIT_AMOUNT: ${{ inputs.credit_amount }}
