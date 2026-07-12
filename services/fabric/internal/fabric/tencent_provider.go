@@ -782,11 +782,11 @@ func executeKubectl(ctx context.Context, args []string, stdin []byte) ([]byte, e
 }
 
 func tkeNodeSelector(providerData map[string]string, nodeName string) map[string]any {
-	if machineName := strings.TrimSpace(providerData["machineName"]); machineName != "" {
-		return map[string]any{"cloud.tencent.com/node-instance-id": machineName}
-	}
 	if nodeName := strings.TrimSpace(nodeName); nodeName != "" {
 		return map[string]any{"kubernetes.io/hostname": nodeName}
+	}
+	if machineName := strings.TrimSpace(providerData["machineName"]); machineName != "" {
+		return map[string]any{"cloud.tencent.com/node-instance-id": machineName}
 	}
 	return map[string]any{}
 }

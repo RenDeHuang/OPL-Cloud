@@ -15,13 +15,13 @@ import (
 	"testing"
 )
 
-func TestTKENodeSelectorUsesTencentInstanceLabel(t *testing.T) {
+func TestTKENodeSelectorPrefersClaimedNodeHostname(t *testing.T) {
 	withMachine := tkeNodeSelector(map[string]string{"machineName": "np-basic-2"}, "10.0.0.8")
-	if withMachine["cloud.tencent.com/node-instance-id"] != "np-basic-2" {
+	if withMachine["kubernetes.io/hostname"] != "10.0.0.8" {
 		t.Fatalf("selector with machineName = %#v", withMachine)
 	}
-	if _, ok := withMachine["kubernetes.io/hostname"]; ok {
-		t.Fatalf("selector must not use machineName as hostname: %#v", withMachine)
+	if _, ok := withMachine["cloud.tencent.com/node-instance-id"]; ok {
+		t.Fatalf("selector must not use TKE machine name as CVM instance id: %#v", withMachine)
 	}
 	withoutMachine := tkeNodeSelector(map[string]string{}, "10.0.0.8")
 	if withoutMachine["kubernetes.io/hostname"] != "10.0.0.8" {
@@ -42,7 +42,7 @@ func TestSyncComputeAllocationRestoresClaimedMachineSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allocation.NodeSelector["cloud.tencent.com/node-instance-id"] != "np-basic-2" {
+	if allocation.NodeSelector["kubernetes.io/hostname"] != "10.0.0.8" {
 		t.Fatalf("synced selector = %#v", allocation.NodeSelector)
 	}
 }
