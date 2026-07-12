@@ -21,6 +21,8 @@ const (
 	FieldResourceType = "resource_type"
 	// FieldResourceID holds the string denoting the resource_id field in the database.
 	FieldResourceID = "resource_id"
+	// FieldHoldID holds the string denoting the hold_id field in the database.
+	FieldHoldID = "hold_id"
 	// FieldAmountCents holds the string denoting the amount_cents field in the database.
 	FieldAmountCents = "amount_cents"
 	// FieldCurrency holds the string denoting the currency field in the database.
@@ -62,6 +64,7 @@ var Columns = []string{
 	FieldWorkspaceID,
 	FieldResourceType,
 	FieldResourceID,
+	FieldHoldID,
 	FieldAmountCents,
 	FieldCurrency,
 	FieldStatus,
@@ -98,6 +101,8 @@ var (
 	ResourceTypeValidator func(string) error
 	// ResourceIDValidator is a validator for the "resource_id" field. It is called by the builders before save.
 	ResourceIDValidator func(string) error
+	// DefaultHoldID holds the default value on creation for the "hold_id" field.
+	DefaultHoldID string
 	// DefaultCurrency holds the default value on creation for the "currency" field.
 	DefaultCurrency string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -156,6 +161,11 @@ func ByResourceType(opts ...sql.OrderTermOption) OrderOption {
 // ByResourceID orders the results by the resource_id field.
 func ByResourceID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldResourceID, opts...).ToFunc()
+}
+
+// ByHoldID orders the results by the hold_id field.
+func ByHoldID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldHoldID, opts...).ToFunc()
 }
 
 // ByAmountCents orders the results by the amount_cents field.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/hold"
+	"opl-cloud/services/ledger/ent/holdactivation"
 	"opl-cloud/services/ledger/ent/holdrelease"
 	"opl-cloud/services/ledger/ent/idempotencykey"
 	"opl-cloud/services/ledger/ent/ledgerentry"
@@ -85,6 +86,7 @@ func checkColumn(table, column string) error {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			evidencereceipt.Table:      evidencereceipt.ValidColumn,
 			hold.Table:                 hold.ValidColumn,
+			holdactivation.Table:       holdactivation.ValidColumn,
 			holdrelease.Table:          holdrelease.ValidColumn,
 			idempotencykey.Table:       idempotencykey.ValidColumn,
 			ledgerentry.Table:          ledgerentry.ValidColumn,

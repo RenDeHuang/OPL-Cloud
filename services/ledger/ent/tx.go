@@ -16,6 +16,8 @@ type Tx struct {
 	EvidenceReceipt *EvidenceReceiptClient
 	// Hold is the client for interacting with the Hold builders.
 	Hold *HoldClient
+	// HoldActivation is the client for interacting with the HoldActivation builders.
+	HoldActivation *HoldActivationClient
 	// HoldRelease is the client for interacting with the HoldRelease builders.
 	HoldRelease *HoldReleaseClient
 	// IdempotencyKey is the client for interacting with the IdempotencyKey builders.
@@ -167,6 +169,7 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.EvidenceReceipt = NewEvidenceReceiptClient(tx.config)
 	tx.Hold = NewHoldClient(tx.config)
+	tx.HoldActivation = NewHoldActivationClient(tx.config)
 	tx.HoldRelease = NewHoldReleaseClient(tx.config)
 	tx.IdempotencyKey = NewIdempotencyKeyClient(tx.config)
 	tx.LedgerEntry = NewLedgerEntryClient(tx.config)

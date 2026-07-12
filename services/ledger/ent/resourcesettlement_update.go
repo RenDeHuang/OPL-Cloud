@@ -84,6 +84,20 @@ func (rsu *ResourceSettlementUpdate) SetNillableResourceID(s *string) *ResourceS
 	return rsu
 }
 
+// SetHoldID sets the "hold_id" field.
+func (rsu *ResourceSettlementUpdate) SetHoldID(s string) *ResourceSettlementUpdate {
+	rsu.mutation.SetHoldID(s)
+	return rsu
+}
+
+// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
+func (rsu *ResourceSettlementUpdate) SetNillableHoldID(s *string) *ResourceSettlementUpdate {
+	if s != nil {
+		rsu.SetHoldID(*s)
+	}
+	return rsu
+}
+
 // SetAmountCents sets the "amount_cents" field.
 func (rsu *ResourceSettlementUpdate) SetAmountCents(i int64) *ResourceSettlementUpdate {
 	rsu.mutation.ResetAmountCents()
@@ -409,6 +423,9 @@ func (rsu *ResourceSettlementUpdate) sqlSave(ctx context.Context) (n int, err er
 	if value, ok := rsu.mutation.ResourceID(); ok {
 		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
 	}
+	if value, ok := rsu.mutation.HoldID(); ok {
+		_spec.SetField(resourcesettlement.FieldHoldID, field.TypeString, value)
+	}
 	if value, ok := rsu.mutation.AmountCents(); ok {
 		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)
 	}
@@ -532,6 +549,20 @@ func (rsuo *ResourceSettlementUpdateOne) SetResourceID(s string) *ResourceSettle
 func (rsuo *ResourceSettlementUpdateOne) SetNillableResourceID(s *string) *ResourceSettlementUpdateOne {
 	if s != nil {
 		rsuo.SetResourceID(*s)
+	}
+	return rsuo
+}
+
+// SetHoldID sets the "hold_id" field.
+func (rsuo *ResourceSettlementUpdateOne) SetHoldID(s string) *ResourceSettlementUpdateOne {
+	rsuo.mutation.SetHoldID(s)
+	return rsuo
+}
+
+// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
+func (rsuo *ResourceSettlementUpdateOne) SetNillableHoldID(s *string) *ResourceSettlementUpdateOne {
+	if s != nil {
+		rsuo.SetHoldID(*s)
 	}
 	return rsuo
 }
@@ -890,6 +921,9 @@ func (rsuo *ResourceSettlementUpdateOne) sqlSave(ctx context.Context) (_node *Re
 	}
 	if value, ok := rsuo.mutation.ResourceID(); ok {
 		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
+	}
+	if value, ok := rsuo.mutation.HoldID(); ok {
+		_spec.SetField(resourcesettlement.FieldHoldID, field.TypeString, value)
 	}
 	if value, ok := rsuo.mutation.AmountCents(); ok {
 		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)

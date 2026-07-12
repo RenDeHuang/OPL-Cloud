@@ -102,6 +102,36 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusCreated, result)
 	})
+	mux.HandleFunc("POST /ledger/holds/activate", func(w http.ResponseWriter, r *http.Request) {
+		idempotencyKey := r.Header.Get("Idempotency-Key")
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		var input ledger.HoldActivationInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input.IdempotencyKey = idempotencyKey
+		result, err := store.ActivateHold(r.Context(), input)
+		switch {
+		case errors.Is(err, ledger.ErrIdempotencyConflict), errors.Is(err, ledger.ErrInvalidHoldState):
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		case errors.Is(err, ledger.ErrHoldNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		case errors.Is(err, ledger.ErrHoldIdentityMismatch), errors.Is(err, ledger.ErrInvalidHoldInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		case err != nil:
+			log.Printf("hold activation failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "hold activation failed")
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	})
 	mux.HandleFunc("POST /ledger/receipts", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 		if idempotencyKey == "" {
@@ -413,8 +443,16 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		if errors.Is(err, ledger.ErrInsufficientBalance) {
+		if errors.Is(err, ledger.ErrInsufficientBalance) || errors.Is(err, ledger.ErrInsufficientResourceHold) {
 			writeError(w, http.StatusPaymentRequired, err.Error())
+			return
+		}
+		if errors.Is(err, ledger.ErrHoldNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, ledger.ErrHoldIdentityMismatch) || errors.Is(err, ledger.ErrInvalidHoldState) {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/hold"
+	"opl-cloud/services/ledger/ent/holdactivation"
 	"opl-cloud/services/ledger/ent/holdrelease"
 	"opl-cloud/services/ledger/ent/idempotencykey"
 	"opl-cloud/services/ledger/ent/ledgerentry"
@@ -36,6 +37,7 @@ const (
 	// Node types.
 	TypeEvidenceReceipt      = "EvidenceReceipt"
 	TypeHold                 = "Hold"
+	TypeHoldActivation       = "HoldActivation"
 	TypeHoldRelease          = "HoldRelease"
 	TypeIdempotencyKey       = "IdempotencyKey"
 	TypeLedgerEntry          = "LedgerEntry"
@@ -1138,26 +1140,37 @@ func (m *EvidenceReceiptMutation) ResetEdge(name string) error {
 // HoldMutation represents an operation that mutates the Hold nodes in the graph.
 type HoldMutation struct {
 	config
-	op                    Op
-	typ                   string
-	id                    *string
-	account_id            *string
-	workspace_id          *string
-	resource_type         *string
-	resource_id           *string
-	amount_cents          *int64
-	addamount_cents       *int64
-	currency              *string
-	status                *string
-	ledger_entry_id       *string
-	wallet_transaction_id *string
-	idempotency_key       *string
-	request_hash          *string
-	created_at            *time.Time
-	clearedFields         map[string]struct{}
-	done                  bool
-	oldValue              func(context.Context) (*Hold, error)
-	predicates            []predicate.Hold
+	op                         Op
+	typ                        string
+	id                         *string
+	account_id                 *string
+	workspace_id               *string
+	resource_type              *string
+	resource_id                *string
+	amount_cents               *int64
+	addamount_cents            *int64
+	activation_amount_cents    *int64
+	addactivation_amount_cents *int64
+	original_cents             *int64
+	addoriginal_cents          *int64
+	remaining_cents            *int64
+	addremaining_cents         *int64
+	consumed_cents             *int64
+	addconsumed_cents          *int64
+	released_cents             *int64
+	addreleased_cents          *int64
+	provider_evidence_ref      *string
+	currency                   *string
+	status                     *string
+	ledger_entry_id            *string
+	wallet_transaction_id      *string
+	idempotency_key            *string
+	request_hash               *string
+	created_at                 *time.Time
+	clearedFields              map[string]struct{}
+	done                       bool
+	oldValue                   func(context.Context) (*Hold, error)
+	predicates                 []predicate.Hold
 }
 
 var _ ent.Mutation = (*HoldMutation)(nil)
@@ -1464,6 +1477,322 @@ func (m *HoldMutation) ResetAmountCents() {
 	m.addamount_cents = nil
 }
 
+// SetActivationAmountCents sets the "activation_amount_cents" field.
+func (m *HoldMutation) SetActivationAmountCents(i int64) {
+	m.activation_amount_cents = &i
+	m.addactivation_amount_cents = nil
+}
+
+// ActivationAmountCents returns the value of the "activation_amount_cents" field in the mutation.
+func (m *HoldMutation) ActivationAmountCents() (r int64, exists bool) {
+	v := m.activation_amount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActivationAmountCents returns the old "activation_amount_cents" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldActivationAmountCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActivationAmountCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActivationAmountCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActivationAmountCents: %w", err)
+	}
+	return oldValue.ActivationAmountCents, nil
+}
+
+// AddActivationAmountCents adds i to the "activation_amount_cents" field.
+func (m *HoldMutation) AddActivationAmountCents(i int64) {
+	if m.addactivation_amount_cents != nil {
+		*m.addactivation_amount_cents += i
+	} else {
+		m.addactivation_amount_cents = &i
+	}
+}
+
+// AddedActivationAmountCents returns the value that was added to the "activation_amount_cents" field in this mutation.
+func (m *HoldMutation) AddedActivationAmountCents() (r int64, exists bool) {
+	v := m.addactivation_amount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetActivationAmountCents resets all changes to the "activation_amount_cents" field.
+func (m *HoldMutation) ResetActivationAmountCents() {
+	m.activation_amount_cents = nil
+	m.addactivation_amount_cents = nil
+}
+
+// SetOriginalCents sets the "original_cents" field.
+func (m *HoldMutation) SetOriginalCents(i int64) {
+	m.original_cents = &i
+	m.addoriginal_cents = nil
+}
+
+// OriginalCents returns the value of the "original_cents" field in the mutation.
+func (m *HoldMutation) OriginalCents() (r int64, exists bool) {
+	v := m.original_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOriginalCents returns the old "original_cents" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldOriginalCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOriginalCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOriginalCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOriginalCents: %w", err)
+	}
+	return oldValue.OriginalCents, nil
+}
+
+// AddOriginalCents adds i to the "original_cents" field.
+func (m *HoldMutation) AddOriginalCents(i int64) {
+	if m.addoriginal_cents != nil {
+		*m.addoriginal_cents += i
+	} else {
+		m.addoriginal_cents = &i
+	}
+}
+
+// AddedOriginalCents returns the value that was added to the "original_cents" field in this mutation.
+func (m *HoldMutation) AddedOriginalCents() (r int64, exists bool) {
+	v := m.addoriginal_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetOriginalCents resets all changes to the "original_cents" field.
+func (m *HoldMutation) ResetOriginalCents() {
+	m.original_cents = nil
+	m.addoriginal_cents = nil
+}
+
+// SetRemainingCents sets the "remaining_cents" field.
+func (m *HoldMutation) SetRemainingCents(i int64) {
+	m.remaining_cents = &i
+	m.addremaining_cents = nil
+}
+
+// RemainingCents returns the value of the "remaining_cents" field in the mutation.
+func (m *HoldMutation) RemainingCents() (r int64, exists bool) {
+	v := m.remaining_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRemainingCents returns the old "remaining_cents" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldRemainingCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRemainingCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRemainingCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRemainingCents: %w", err)
+	}
+	return oldValue.RemainingCents, nil
+}
+
+// AddRemainingCents adds i to the "remaining_cents" field.
+func (m *HoldMutation) AddRemainingCents(i int64) {
+	if m.addremaining_cents != nil {
+		*m.addremaining_cents += i
+	} else {
+		m.addremaining_cents = &i
+	}
+}
+
+// AddedRemainingCents returns the value that was added to the "remaining_cents" field in this mutation.
+func (m *HoldMutation) AddedRemainingCents() (r int64, exists bool) {
+	v := m.addremaining_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRemainingCents resets all changes to the "remaining_cents" field.
+func (m *HoldMutation) ResetRemainingCents() {
+	m.remaining_cents = nil
+	m.addremaining_cents = nil
+}
+
+// SetConsumedCents sets the "consumed_cents" field.
+func (m *HoldMutation) SetConsumedCents(i int64) {
+	m.consumed_cents = &i
+	m.addconsumed_cents = nil
+}
+
+// ConsumedCents returns the value of the "consumed_cents" field in the mutation.
+func (m *HoldMutation) ConsumedCents() (r int64, exists bool) {
+	v := m.consumed_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConsumedCents returns the old "consumed_cents" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldConsumedCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConsumedCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConsumedCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConsumedCents: %w", err)
+	}
+	return oldValue.ConsumedCents, nil
+}
+
+// AddConsumedCents adds i to the "consumed_cents" field.
+func (m *HoldMutation) AddConsumedCents(i int64) {
+	if m.addconsumed_cents != nil {
+		*m.addconsumed_cents += i
+	} else {
+		m.addconsumed_cents = &i
+	}
+}
+
+// AddedConsumedCents returns the value that was added to the "consumed_cents" field in this mutation.
+func (m *HoldMutation) AddedConsumedCents() (r int64, exists bool) {
+	v := m.addconsumed_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConsumedCents resets all changes to the "consumed_cents" field.
+func (m *HoldMutation) ResetConsumedCents() {
+	m.consumed_cents = nil
+	m.addconsumed_cents = nil
+}
+
+// SetReleasedCents sets the "released_cents" field.
+func (m *HoldMutation) SetReleasedCents(i int64) {
+	m.released_cents = &i
+	m.addreleased_cents = nil
+}
+
+// ReleasedCents returns the value of the "released_cents" field in the mutation.
+func (m *HoldMutation) ReleasedCents() (r int64, exists bool) {
+	v := m.released_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReleasedCents returns the old "released_cents" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldReleasedCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReleasedCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReleasedCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReleasedCents: %w", err)
+	}
+	return oldValue.ReleasedCents, nil
+}
+
+// AddReleasedCents adds i to the "released_cents" field.
+func (m *HoldMutation) AddReleasedCents(i int64) {
+	if m.addreleased_cents != nil {
+		*m.addreleased_cents += i
+	} else {
+		m.addreleased_cents = &i
+	}
+}
+
+// AddedReleasedCents returns the value that was added to the "released_cents" field in this mutation.
+func (m *HoldMutation) AddedReleasedCents() (r int64, exists bool) {
+	v := m.addreleased_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetReleasedCents resets all changes to the "released_cents" field.
+func (m *HoldMutation) ResetReleasedCents() {
+	m.released_cents = nil
+	m.addreleased_cents = nil
+}
+
+// SetProviderEvidenceRef sets the "provider_evidence_ref" field.
+func (m *HoldMutation) SetProviderEvidenceRef(s string) {
+	m.provider_evidence_ref = &s
+}
+
+// ProviderEvidenceRef returns the value of the "provider_evidence_ref" field in the mutation.
+func (m *HoldMutation) ProviderEvidenceRef() (r string, exists bool) {
+	v := m.provider_evidence_ref
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderEvidenceRef returns the old "provider_evidence_ref" field's value of the Hold entity.
+// If the Hold object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldMutation) OldProviderEvidenceRef(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderEvidenceRef is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderEvidenceRef requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderEvidenceRef: %w", err)
+	}
+	return oldValue.ProviderEvidenceRef, nil
+}
+
+// ResetProviderEvidenceRef resets all changes to the "provider_evidence_ref" field.
+func (m *HoldMutation) ResetProviderEvidenceRef() {
+	m.provider_evidence_ref = nil
+}
+
 // SetCurrency sets the "currency" field.
 func (m *HoldMutation) SetCurrency(s string) {
 	m.currency = &s
@@ -1750,7 +2079,7 @@ func (m *HoldMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *HoldMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 18)
 	if m.account_id != nil {
 		fields = append(fields, hold.FieldAccountID)
 	}
@@ -1765,6 +2094,24 @@ func (m *HoldMutation) Fields() []string {
 	}
 	if m.amount_cents != nil {
 		fields = append(fields, hold.FieldAmountCents)
+	}
+	if m.activation_amount_cents != nil {
+		fields = append(fields, hold.FieldActivationAmountCents)
+	}
+	if m.original_cents != nil {
+		fields = append(fields, hold.FieldOriginalCents)
+	}
+	if m.remaining_cents != nil {
+		fields = append(fields, hold.FieldRemainingCents)
+	}
+	if m.consumed_cents != nil {
+		fields = append(fields, hold.FieldConsumedCents)
+	}
+	if m.released_cents != nil {
+		fields = append(fields, hold.FieldReleasedCents)
+	}
+	if m.provider_evidence_ref != nil {
+		fields = append(fields, hold.FieldProviderEvidenceRef)
 	}
 	if m.currency != nil {
 		fields = append(fields, hold.FieldCurrency)
@@ -1805,6 +2152,18 @@ func (m *HoldMutation) Field(name string) (ent.Value, bool) {
 		return m.ResourceID()
 	case hold.FieldAmountCents:
 		return m.AmountCents()
+	case hold.FieldActivationAmountCents:
+		return m.ActivationAmountCents()
+	case hold.FieldOriginalCents:
+		return m.OriginalCents()
+	case hold.FieldRemainingCents:
+		return m.RemainingCents()
+	case hold.FieldConsumedCents:
+		return m.ConsumedCents()
+	case hold.FieldReleasedCents:
+		return m.ReleasedCents()
+	case hold.FieldProviderEvidenceRef:
+		return m.ProviderEvidenceRef()
 	case hold.FieldCurrency:
 		return m.Currency()
 	case hold.FieldStatus:
@@ -1838,6 +2197,18 @@ func (m *HoldMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldResourceID(ctx)
 	case hold.FieldAmountCents:
 		return m.OldAmountCents(ctx)
+	case hold.FieldActivationAmountCents:
+		return m.OldActivationAmountCents(ctx)
+	case hold.FieldOriginalCents:
+		return m.OldOriginalCents(ctx)
+	case hold.FieldRemainingCents:
+		return m.OldRemainingCents(ctx)
+	case hold.FieldConsumedCents:
+		return m.OldConsumedCents(ctx)
+	case hold.FieldReleasedCents:
+		return m.OldReleasedCents(ctx)
+	case hold.FieldProviderEvidenceRef:
+		return m.OldProviderEvidenceRef(ctx)
 	case hold.FieldCurrency:
 		return m.OldCurrency(ctx)
 	case hold.FieldStatus:
@@ -1895,6 +2266,48 @@ func (m *HoldMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAmountCents(v)
+		return nil
+	case hold.FieldActivationAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActivationAmountCents(v)
+		return nil
+	case hold.FieldOriginalCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOriginalCents(v)
+		return nil
+	case hold.FieldRemainingCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRemainingCents(v)
+		return nil
+	case hold.FieldConsumedCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConsumedCents(v)
+		return nil
+	case hold.FieldReleasedCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReleasedCents(v)
+		return nil
+	case hold.FieldProviderEvidenceRef:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderEvidenceRef(v)
 		return nil
 	case hold.FieldCurrency:
 		v, ok := value.(string)
@@ -1956,6 +2369,21 @@ func (m *HoldMutation) AddedFields() []string {
 	if m.addamount_cents != nil {
 		fields = append(fields, hold.FieldAmountCents)
 	}
+	if m.addactivation_amount_cents != nil {
+		fields = append(fields, hold.FieldActivationAmountCents)
+	}
+	if m.addoriginal_cents != nil {
+		fields = append(fields, hold.FieldOriginalCents)
+	}
+	if m.addremaining_cents != nil {
+		fields = append(fields, hold.FieldRemainingCents)
+	}
+	if m.addconsumed_cents != nil {
+		fields = append(fields, hold.FieldConsumedCents)
+	}
+	if m.addreleased_cents != nil {
+		fields = append(fields, hold.FieldReleasedCents)
+	}
 	return fields
 }
 
@@ -1966,6 +2394,16 @@ func (m *HoldMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case hold.FieldAmountCents:
 		return m.AddedAmountCents()
+	case hold.FieldActivationAmountCents:
+		return m.AddedActivationAmountCents()
+	case hold.FieldOriginalCents:
+		return m.AddedOriginalCents()
+	case hold.FieldRemainingCents:
+		return m.AddedRemainingCents()
+	case hold.FieldConsumedCents:
+		return m.AddedConsumedCents()
+	case hold.FieldReleasedCents:
+		return m.AddedReleasedCents()
 	}
 	return nil, false
 }
@@ -1981,6 +2419,41 @@ func (m *HoldMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAmountCents(v)
+		return nil
+	case hold.FieldActivationAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddActivationAmountCents(v)
+		return nil
+	case hold.FieldOriginalCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOriginalCents(v)
+		return nil
+	case hold.FieldRemainingCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRemainingCents(v)
+		return nil
+	case hold.FieldConsumedCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConsumedCents(v)
+		return nil
+	case hold.FieldReleasedCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddReleasedCents(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Hold numeric field %s", name)
@@ -2023,6 +2496,24 @@ func (m *HoldMutation) ResetField(name string) error {
 		return nil
 	case hold.FieldAmountCents:
 		m.ResetAmountCents()
+		return nil
+	case hold.FieldActivationAmountCents:
+		m.ResetActivationAmountCents()
+		return nil
+	case hold.FieldOriginalCents:
+		m.ResetOriginalCents()
+		return nil
+	case hold.FieldRemainingCents:
+		m.ResetRemainingCents()
+		return nil
+	case hold.FieldConsumedCents:
+		m.ResetConsumedCents()
+		return nil
+	case hold.FieldReleasedCents:
+		m.ResetReleasedCents()
+		return nil
+	case hold.FieldProviderEvidenceRef:
+		m.ResetProviderEvidenceRef()
 		return nil
 	case hold.FieldCurrency:
 		m.ResetCurrency()
@@ -2095,6 +2586,1076 @@ func (m *HoldMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *HoldMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown Hold edge %s", name)
+}
+
+// HoldActivationMutation represents an operation that mutates the HoldActivation nodes in the graph.
+type HoldActivationMutation struct {
+	config
+	op                    Op
+	typ                   string
+	id                    *string
+	account_id            *string
+	workspace_id          *string
+	resource_type         *string
+	resource_id           *string
+	hold_id               *string
+	amount_cents          *int64
+	addamount_cents       *int64
+	currency              *string
+	status                *string
+	provider_evidence_ref *string
+	ledger_entry_id       *string
+	wallet_transaction_id *string
+	idempotency_key       *string
+	request_hash          *string
+	created_at            *time.Time
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*HoldActivation, error)
+	predicates            []predicate.HoldActivation
+}
+
+var _ ent.Mutation = (*HoldActivationMutation)(nil)
+
+// holdactivationOption allows management of the mutation configuration using functional options.
+type holdactivationOption func(*HoldActivationMutation)
+
+// newHoldActivationMutation creates new mutation for the HoldActivation entity.
+func newHoldActivationMutation(c config, op Op, opts ...holdactivationOption) *HoldActivationMutation {
+	m := &HoldActivationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeHoldActivation,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withHoldActivationID sets the ID field of the mutation.
+func withHoldActivationID(id string) holdactivationOption {
+	return func(m *HoldActivationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *HoldActivation
+		)
+		m.oldValue = func(ctx context.Context) (*HoldActivation, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().HoldActivation.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withHoldActivation sets the old HoldActivation of the mutation.
+func withHoldActivation(node *HoldActivation) holdactivationOption {
+	return func(m *HoldActivationMutation) {
+		m.oldValue = func(context.Context) (*HoldActivation, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m HoldActivationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m HoldActivationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of HoldActivation entities.
+func (m *HoldActivationMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *HoldActivationMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *HoldActivationMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().HoldActivation.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *HoldActivationMutation) SetAccountID(s string) {
+	m.account_id = &s
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *HoldActivationMutation) AccountID() (r string, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldAccountID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *HoldActivationMutation) ResetAccountID() {
+	m.account_id = nil
+}
+
+// SetWorkspaceID sets the "workspace_id" field.
+func (m *HoldActivationMutation) SetWorkspaceID(s string) {
+	m.workspace_id = &s
+}
+
+// WorkspaceID returns the value of the "workspace_id" field in the mutation.
+func (m *HoldActivationMutation) WorkspaceID() (r string, exists bool) {
+	v := m.workspace_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWorkspaceID returns the old "workspace_id" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldWorkspaceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWorkspaceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWorkspaceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWorkspaceID: %w", err)
+	}
+	return oldValue.WorkspaceID, nil
+}
+
+// ResetWorkspaceID resets all changes to the "workspace_id" field.
+func (m *HoldActivationMutation) ResetWorkspaceID() {
+	m.workspace_id = nil
+}
+
+// SetResourceType sets the "resource_type" field.
+func (m *HoldActivationMutation) SetResourceType(s string) {
+	m.resource_type = &s
+}
+
+// ResourceType returns the value of the "resource_type" field in the mutation.
+func (m *HoldActivationMutation) ResourceType() (r string, exists bool) {
+	v := m.resource_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResourceType returns the old "resource_type" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldResourceType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResourceType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResourceType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResourceType: %w", err)
+	}
+	return oldValue.ResourceType, nil
+}
+
+// ResetResourceType resets all changes to the "resource_type" field.
+func (m *HoldActivationMutation) ResetResourceType() {
+	m.resource_type = nil
+}
+
+// SetResourceID sets the "resource_id" field.
+func (m *HoldActivationMutation) SetResourceID(s string) {
+	m.resource_id = &s
+}
+
+// ResourceID returns the value of the "resource_id" field in the mutation.
+func (m *HoldActivationMutation) ResourceID() (r string, exists bool) {
+	v := m.resource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResourceID returns the old "resource_id" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldResourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResourceID: %w", err)
+	}
+	return oldValue.ResourceID, nil
+}
+
+// ResetResourceID resets all changes to the "resource_id" field.
+func (m *HoldActivationMutation) ResetResourceID() {
+	m.resource_id = nil
+}
+
+// SetHoldID sets the "hold_id" field.
+func (m *HoldActivationMutation) SetHoldID(s string) {
+	m.hold_id = &s
+}
+
+// HoldID returns the value of the "hold_id" field in the mutation.
+func (m *HoldActivationMutation) HoldID() (r string, exists bool) {
+	v := m.hold_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHoldID returns the old "hold_id" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldHoldID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHoldID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
+	}
+	return oldValue.HoldID, nil
+}
+
+// ResetHoldID resets all changes to the "hold_id" field.
+func (m *HoldActivationMutation) ResetHoldID() {
+	m.hold_id = nil
+}
+
+// SetAmountCents sets the "amount_cents" field.
+func (m *HoldActivationMutation) SetAmountCents(i int64) {
+	m.amount_cents = &i
+	m.addamount_cents = nil
+}
+
+// AmountCents returns the value of the "amount_cents" field in the mutation.
+func (m *HoldActivationMutation) AmountCents() (r int64, exists bool) {
+	v := m.amount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountCents returns the old "amount_cents" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldAmountCents(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountCents is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountCents requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountCents: %w", err)
+	}
+	return oldValue.AmountCents, nil
+}
+
+// AddAmountCents adds i to the "amount_cents" field.
+func (m *HoldActivationMutation) AddAmountCents(i int64) {
+	if m.addamount_cents != nil {
+		*m.addamount_cents += i
+	} else {
+		m.addamount_cents = &i
+	}
+}
+
+// AddedAmountCents returns the value that was added to the "amount_cents" field in this mutation.
+func (m *HoldActivationMutation) AddedAmountCents() (r int64, exists bool) {
+	v := m.addamount_cents
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountCents resets all changes to the "amount_cents" field.
+func (m *HoldActivationMutation) ResetAmountCents() {
+	m.amount_cents = nil
+	m.addamount_cents = nil
+}
+
+// SetCurrency sets the "currency" field.
+func (m *HoldActivationMutation) SetCurrency(s string) {
+	m.currency = &s
+}
+
+// Currency returns the value of the "currency" field in the mutation.
+func (m *HoldActivationMutation) Currency() (r string, exists bool) {
+	v := m.currency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrency returns the old "currency" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldCurrency(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrency: %w", err)
+	}
+	return oldValue.Currency, nil
+}
+
+// ResetCurrency resets all changes to the "currency" field.
+func (m *HoldActivationMutation) ResetCurrency() {
+	m.currency = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *HoldActivationMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *HoldActivationMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *HoldActivationMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetProviderEvidenceRef sets the "provider_evidence_ref" field.
+func (m *HoldActivationMutation) SetProviderEvidenceRef(s string) {
+	m.provider_evidence_ref = &s
+}
+
+// ProviderEvidenceRef returns the value of the "provider_evidence_ref" field in the mutation.
+func (m *HoldActivationMutation) ProviderEvidenceRef() (r string, exists bool) {
+	v := m.provider_evidence_ref
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderEvidenceRef returns the old "provider_evidence_ref" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldProviderEvidenceRef(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderEvidenceRef is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderEvidenceRef requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderEvidenceRef: %w", err)
+	}
+	return oldValue.ProviderEvidenceRef, nil
+}
+
+// ResetProviderEvidenceRef resets all changes to the "provider_evidence_ref" field.
+func (m *HoldActivationMutation) ResetProviderEvidenceRef() {
+	m.provider_evidence_ref = nil
+}
+
+// SetLedgerEntryID sets the "ledger_entry_id" field.
+func (m *HoldActivationMutation) SetLedgerEntryID(s string) {
+	m.ledger_entry_id = &s
+}
+
+// LedgerEntryID returns the value of the "ledger_entry_id" field in the mutation.
+func (m *HoldActivationMutation) LedgerEntryID() (r string, exists bool) {
+	v := m.ledger_entry_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLedgerEntryID returns the old "ledger_entry_id" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldLedgerEntryID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLedgerEntryID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLedgerEntryID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLedgerEntryID: %w", err)
+	}
+	return oldValue.LedgerEntryID, nil
+}
+
+// ResetLedgerEntryID resets all changes to the "ledger_entry_id" field.
+func (m *HoldActivationMutation) ResetLedgerEntryID() {
+	m.ledger_entry_id = nil
+}
+
+// SetWalletTransactionID sets the "wallet_transaction_id" field.
+func (m *HoldActivationMutation) SetWalletTransactionID(s string) {
+	m.wallet_transaction_id = &s
+}
+
+// WalletTransactionID returns the value of the "wallet_transaction_id" field in the mutation.
+func (m *HoldActivationMutation) WalletTransactionID() (r string, exists bool) {
+	v := m.wallet_transaction_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWalletTransactionID returns the old "wallet_transaction_id" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldWalletTransactionID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWalletTransactionID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWalletTransactionID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWalletTransactionID: %w", err)
+	}
+	return oldValue.WalletTransactionID, nil
+}
+
+// ResetWalletTransactionID resets all changes to the "wallet_transaction_id" field.
+func (m *HoldActivationMutation) ResetWalletTransactionID() {
+	m.wallet_transaction_id = nil
+}
+
+// SetIdempotencyKey sets the "idempotency_key" field.
+func (m *HoldActivationMutation) SetIdempotencyKey(s string) {
+	m.idempotency_key = &s
+}
+
+// IdempotencyKey returns the value of the "idempotency_key" field in the mutation.
+func (m *HoldActivationMutation) IdempotencyKey() (r string, exists bool) {
+	v := m.idempotency_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIdempotencyKey returns the old "idempotency_key" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldIdempotencyKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIdempotencyKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIdempotencyKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIdempotencyKey: %w", err)
+	}
+	return oldValue.IdempotencyKey, nil
+}
+
+// ResetIdempotencyKey resets all changes to the "idempotency_key" field.
+func (m *HoldActivationMutation) ResetIdempotencyKey() {
+	m.idempotency_key = nil
+}
+
+// SetRequestHash sets the "request_hash" field.
+func (m *HoldActivationMutation) SetRequestHash(s string) {
+	m.request_hash = &s
+}
+
+// RequestHash returns the value of the "request_hash" field in the mutation.
+func (m *HoldActivationMutation) RequestHash() (r string, exists bool) {
+	v := m.request_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestHash returns the old "request_hash" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldRequestHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestHash: %w", err)
+	}
+	return oldValue.RequestHash, nil
+}
+
+// ResetRequestHash resets all changes to the "request_hash" field.
+func (m *HoldActivationMutation) ResetRequestHash() {
+	m.request_hash = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *HoldActivationMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *HoldActivationMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the HoldActivation entity.
+// If the HoldActivation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *HoldActivationMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *HoldActivationMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the HoldActivationMutation builder.
+func (m *HoldActivationMutation) Where(ps ...predicate.HoldActivation) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the HoldActivationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *HoldActivationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.HoldActivation, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *HoldActivationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *HoldActivationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (HoldActivation).
+func (m *HoldActivationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *HoldActivationMutation) Fields() []string {
+	fields := make([]string, 0, 14)
+	if m.account_id != nil {
+		fields = append(fields, holdactivation.FieldAccountID)
+	}
+	if m.workspace_id != nil {
+		fields = append(fields, holdactivation.FieldWorkspaceID)
+	}
+	if m.resource_type != nil {
+		fields = append(fields, holdactivation.FieldResourceType)
+	}
+	if m.resource_id != nil {
+		fields = append(fields, holdactivation.FieldResourceID)
+	}
+	if m.hold_id != nil {
+		fields = append(fields, holdactivation.FieldHoldID)
+	}
+	if m.amount_cents != nil {
+		fields = append(fields, holdactivation.FieldAmountCents)
+	}
+	if m.currency != nil {
+		fields = append(fields, holdactivation.FieldCurrency)
+	}
+	if m.status != nil {
+		fields = append(fields, holdactivation.FieldStatus)
+	}
+	if m.provider_evidence_ref != nil {
+		fields = append(fields, holdactivation.FieldProviderEvidenceRef)
+	}
+	if m.ledger_entry_id != nil {
+		fields = append(fields, holdactivation.FieldLedgerEntryID)
+	}
+	if m.wallet_transaction_id != nil {
+		fields = append(fields, holdactivation.FieldWalletTransactionID)
+	}
+	if m.idempotency_key != nil {
+		fields = append(fields, holdactivation.FieldIdempotencyKey)
+	}
+	if m.request_hash != nil {
+		fields = append(fields, holdactivation.FieldRequestHash)
+	}
+	if m.created_at != nil {
+		fields = append(fields, holdactivation.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *HoldActivationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case holdactivation.FieldAccountID:
+		return m.AccountID()
+	case holdactivation.FieldWorkspaceID:
+		return m.WorkspaceID()
+	case holdactivation.FieldResourceType:
+		return m.ResourceType()
+	case holdactivation.FieldResourceID:
+		return m.ResourceID()
+	case holdactivation.FieldHoldID:
+		return m.HoldID()
+	case holdactivation.FieldAmountCents:
+		return m.AmountCents()
+	case holdactivation.FieldCurrency:
+		return m.Currency()
+	case holdactivation.FieldStatus:
+		return m.Status()
+	case holdactivation.FieldProviderEvidenceRef:
+		return m.ProviderEvidenceRef()
+	case holdactivation.FieldLedgerEntryID:
+		return m.LedgerEntryID()
+	case holdactivation.FieldWalletTransactionID:
+		return m.WalletTransactionID()
+	case holdactivation.FieldIdempotencyKey:
+		return m.IdempotencyKey()
+	case holdactivation.FieldRequestHash:
+		return m.RequestHash()
+	case holdactivation.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *HoldActivationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case holdactivation.FieldAccountID:
+		return m.OldAccountID(ctx)
+	case holdactivation.FieldWorkspaceID:
+		return m.OldWorkspaceID(ctx)
+	case holdactivation.FieldResourceType:
+		return m.OldResourceType(ctx)
+	case holdactivation.FieldResourceID:
+		return m.OldResourceID(ctx)
+	case holdactivation.FieldHoldID:
+		return m.OldHoldID(ctx)
+	case holdactivation.FieldAmountCents:
+		return m.OldAmountCents(ctx)
+	case holdactivation.FieldCurrency:
+		return m.OldCurrency(ctx)
+	case holdactivation.FieldStatus:
+		return m.OldStatus(ctx)
+	case holdactivation.FieldProviderEvidenceRef:
+		return m.OldProviderEvidenceRef(ctx)
+	case holdactivation.FieldLedgerEntryID:
+		return m.OldLedgerEntryID(ctx)
+	case holdactivation.FieldWalletTransactionID:
+		return m.OldWalletTransactionID(ctx)
+	case holdactivation.FieldIdempotencyKey:
+		return m.OldIdempotencyKey(ctx)
+	case holdactivation.FieldRequestHash:
+		return m.OldRequestHash(ctx)
+	case holdactivation.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown HoldActivation field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *HoldActivationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case holdactivation.FieldAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
+	case holdactivation.FieldWorkspaceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWorkspaceID(v)
+		return nil
+	case holdactivation.FieldResourceType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResourceType(v)
+		return nil
+	case holdactivation.FieldResourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResourceID(v)
+		return nil
+	case holdactivation.FieldHoldID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHoldID(v)
+		return nil
+	case holdactivation.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountCents(v)
+		return nil
+	case holdactivation.FieldCurrency:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCurrency(v)
+		return nil
+	case holdactivation.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case holdactivation.FieldProviderEvidenceRef:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderEvidenceRef(v)
+		return nil
+	case holdactivation.FieldLedgerEntryID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLedgerEntryID(v)
+		return nil
+	case holdactivation.FieldWalletTransactionID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWalletTransactionID(v)
+		return nil
+	case holdactivation.FieldIdempotencyKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIdempotencyKey(v)
+		return nil
+	case holdactivation.FieldRequestHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestHash(v)
+		return nil
+	case holdactivation.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown HoldActivation field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *HoldActivationMutation) AddedFields() []string {
+	var fields []string
+	if m.addamount_cents != nil {
+		fields = append(fields, holdactivation.FieldAmountCents)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *HoldActivationMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case holdactivation.FieldAmountCents:
+		return m.AddedAmountCents()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *HoldActivationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case holdactivation.FieldAmountCents:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAmountCents(v)
+		return nil
+	}
+	return fmt.Errorf("unknown HoldActivation numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *HoldActivationMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *HoldActivationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *HoldActivationMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown HoldActivation nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *HoldActivationMutation) ResetField(name string) error {
+	switch name {
+	case holdactivation.FieldAccountID:
+		m.ResetAccountID()
+		return nil
+	case holdactivation.FieldWorkspaceID:
+		m.ResetWorkspaceID()
+		return nil
+	case holdactivation.FieldResourceType:
+		m.ResetResourceType()
+		return nil
+	case holdactivation.FieldResourceID:
+		m.ResetResourceID()
+		return nil
+	case holdactivation.FieldHoldID:
+		m.ResetHoldID()
+		return nil
+	case holdactivation.FieldAmountCents:
+		m.ResetAmountCents()
+		return nil
+	case holdactivation.FieldCurrency:
+		m.ResetCurrency()
+		return nil
+	case holdactivation.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case holdactivation.FieldProviderEvidenceRef:
+		m.ResetProviderEvidenceRef()
+		return nil
+	case holdactivation.FieldLedgerEntryID:
+		m.ResetLedgerEntryID()
+		return nil
+	case holdactivation.FieldWalletTransactionID:
+		m.ResetWalletTransactionID()
+		return nil
+	case holdactivation.FieldIdempotencyKey:
+		m.ResetIdempotencyKey()
+		return nil
+	case holdactivation.FieldRequestHash:
+		m.ResetRequestHash()
+		return nil
+	case holdactivation.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown HoldActivation field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *HoldActivationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *HoldActivationMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *HoldActivationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *HoldActivationMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *HoldActivationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *HoldActivationMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *HoldActivationMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown HoldActivation unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *HoldActivationMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown HoldActivation edge %s", name)
 }
 
 // HoldReleaseMutation represents an operation that mutates the HoldRelease nodes in the graph.
@@ -5927,6 +7488,7 @@ type ResourceSettlementMutation struct {
 	workspace_id               *string
 	resource_type              *string
 	resource_id                *string
+	hold_id                    *string
 	amount_cents               *int64
 	addamount_cents            *int64
 	currency                   *string
@@ -6196,6 +7758,42 @@ func (m *ResourceSettlementMutation) OldResourceID(ctx context.Context) (v strin
 // ResetResourceID resets all changes to the "resource_id" field.
 func (m *ResourceSettlementMutation) ResetResourceID() {
 	m.resource_id = nil
+}
+
+// SetHoldID sets the "hold_id" field.
+func (m *ResourceSettlementMutation) SetHoldID(s string) {
+	m.hold_id = &s
+}
+
+// HoldID returns the value of the "hold_id" field in the mutation.
+func (m *ResourceSettlementMutation) HoldID() (r string, exists bool) {
+	v := m.hold_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHoldID returns the old "hold_id" field's value of the ResourceSettlement entity.
+// If the ResourceSettlement object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ResourceSettlementMutation) OldHoldID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHoldID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHoldID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHoldID: %w", err)
+	}
+	return oldValue.HoldID, nil
+}
+
+// ResetHoldID resets all changes to the "hold_id" field.
+func (m *ResourceSettlementMutation) ResetHoldID() {
+	m.hold_id = nil
 }
 
 // SetAmountCents sets the "amount_cents" field.
@@ -6812,7 +8410,7 @@ func (m *ResourceSettlementMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ResourceSettlementMutation) Fields() []string {
-	fields := make([]string, 0, 19)
+	fields := make([]string, 0, 20)
 	if m.account_id != nil {
 		fields = append(fields, resourcesettlement.FieldAccountID)
 	}
@@ -6824,6 +8422,9 @@ func (m *ResourceSettlementMutation) Fields() []string {
 	}
 	if m.resource_id != nil {
 		fields = append(fields, resourcesettlement.FieldResourceID)
+	}
+	if m.hold_id != nil {
+		fields = append(fields, resourcesettlement.FieldHoldID)
 	}
 	if m.amount_cents != nil {
 		fields = append(fields, resourcesettlement.FieldAmountCents)
@@ -6886,6 +8487,8 @@ func (m *ResourceSettlementMutation) Field(name string) (ent.Value, bool) {
 		return m.ResourceType()
 	case resourcesettlement.FieldResourceID:
 		return m.ResourceID()
+	case resourcesettlement.FieldHoldID:
+		return m.HoldID()
 	case resourcesettlement.FieldAmountCents:
 		return m.AmountCents()
 	case resourcesettlement.FieldCurrency:
@@ -6933,6 +8536,8 @@ func (m *ResourceSettlementMutation) OldField(ctx context.Context, name string) 
 		return m.OldResourceType(ctx)
 	case resourcesettlement.FieldResourceID:
 		return m.OldResourceID(ctx)
+	case resourcesettlement.FieldHoldID:
+		return m.OldHoldID(ctx)
 	case resourcesettlement.FieldAmountCents:
 		return m.OldAmountCents(ctx)
 	case resourcesettlement.FieldCurrency:
@@ -6999,6 +8604,13 @@ func (m *ResourceSettlementMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetResourceID(v)
+		return nil
+	case resourcesettlement.FieldHoldID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHoldID(v)
 		return nil
 	case resourcesettlement.FieldAmountCents:
 		v, ok := value.(int64)
@@ -7192,6 +8804,9 @@ func (m *ResourceSettlementMutation) ResetField(name string) error {
 		return nil
 	case resourcesettlement.FieldResourceID:
 		m.ResetResourceID()
+		return nil
+	case resourcesettlement.FieldHoldID:
+		m.ResetHoldID()
 		return nil
 	case resourcesettlement.FieldAmountCents:
 		m.ResetAmountCents()

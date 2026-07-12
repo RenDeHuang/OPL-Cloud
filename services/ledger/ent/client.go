@@ -13,6 +13,7 @@ import (
 
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/hold"
+	"opl-cloud/services/ledger/ent/holdactivation"
 	"opl-cloud/services/ledger/ent/holdrelease"
 	"opl-cloud/services/ledger/ent/idempotencykey"
 	"opl-cloud/services/ledger/ent/ledgerentry"
@@ -37,6 +38,8 @@ type Client struct {
 	EvidenceReceipt *EvidenceReceiptClient
 	// Hold is the client for interacting with the Hold builders.
 	Hold *HoldClient
+	// HoldActivation is the client for interacting with the HoldActivation builders.
+	HoldActivation *HoldActivationClient
 	// HoldRelease is the client for interacting with the HoldRelease builders.
 	HoldRelease *HoldReleaseClient
 	// IdempotencyKey is the client for interacting with the IdempotencyKey builders.
@@ -68,6 +71,7 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.EvidenceReceipt = NewEvidenceReceiptClient(c.config)
 	c.Hold = NewHoldClient(c.config)
+	c.HoldActivation = NewHoldActivationClient(c.config)
 	c.HoldRelease = NewHoldReleaseClient(c.config)
 	c.IdempotencyKey = NewIdempotencyKeyClient(c.config)
 	c.LedgerEntry = NewLedgerEntryClient(c.config)
@@ -171,6 +175,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		config:               cfg,
 		EvidenceReceipt:      NewEvidenceReceiptClient(cfg),
 		Hold:                 NewHoldClient(cfg),
+		HoldActivation:       NewHoldActivationClient(cfg),
 		HoldRelease:          NewHoldReleaseClient(cfg),
 		IdempotencyKey:       NewIdempotencyKeyClient(cfg),
 		LedgerEntry:          NewLedgerEntryClient(cfg),
@@ -201,6 +206,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		config:               cfg,
 		EvidenceReceipt:      NewEvidenceReceiptClient(cfg),
 		Hold:                 NewHoldClient(cfg),
+		HoldActivation:       NewHoldActivationClient(cfg),
 		HoldRelease:          NewHoldReleaseClient(cfg),
 		IdempotencyKey:       NewIdempotencyKeyClient(cfg),
 		LedgerEntry:          NewLedgerEntryClient(cfg),
@@ -239,9 +245,9 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.EvidenceReceipt, c.Hold, c.HoldRelease, c.IdempotencyKey, c.LedgerEntry,
-		c.ManualTopup, c.ReconciliationReport, c.ResourceSettlement, c.ReviewPolicy,
-		c.Wallet, c.WalletTransaction,
+		c.EvidenceReceipt, c.Hold, c.HoldActivation, c.HoldRelease, c.IdempotencyKey,
+		c.LedgerEntry, c.ManualTopup, c.ReconciliationReport, c.ResourceSettlement,
+		c.ReviewPolicy, c.Wallet, c.WalletTransaction,
 	} {
 		n.Use(hooks...)
 	}
@@ -251,9 +257,9 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.EvidenceReceipt, c.Hold, c.HoldRelease, c.IdempotencyKey, c.LedgerEntry,
-		c.ManualTopup, c.ReconciliationReport, c.ResourceSettlement, c.ReviewPolicy,
-		c.Wallet, c.WalletTransaction,
+		c.EvidenceReceipt, c.Hold, c.HoldActivation, c.HoldRelease, c.IdempotencyKey,
+		c.LedgerEntry, c.ManualTopup, c.ReconciliationReport, c.ResourceSettlement,
+		c.ReviewPolicy, c.Wallet, c.WalletTransaction,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -266,6 +272,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.EvidenceReceipt.mutate(ctx, m)
 	case *HoldMutation:
 		return c.Hold.mutate(ctx, m)
+	case *HoldActivationMutation:
+		return c.HoldActivation.mutate(ctx, m)
 	case *HoldReleaseMutation:
 		return c.HoldRelease.mutate(ctx, m)
 	case *IdempotencyKeyMutation:
@@ -552,6 +560,139 @@ func (c *HoldClient) mutate(ctx context.Context, m *HoldMutation) (Value, error)
 		return (&HoldDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown Hold mutation op: %q", m.Op())
+	}
+}
+
+// HoldActivationClient is a client for the HoldActivation schema.
+type HoldActivationClient struct {
+	config
+}
+
+// NewHoldActivationClient returns a client for the HoldActivation from the given config.
+func NewHoldActivationClient(c config) *HoldActivationClient {
+	return &HoldActivationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `holdactivation.Hooks(f(g(h())))`.
+func (c *HoldActivationClient) Use(hooks ...Hook) {
+	c.hooks.HoldActivation = append(c.hooks.HoldActivation, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `holdactivation.Intercept(f(g(h())))`.
+func (c *HoldActivationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.HoldActivation = append(c.inters.HoldActivation, interceptors...)
+}
+
+// Create returns a builder for creating a HoldActivation entity.
+func (c *HoldActivationClient) Create() *HoldActivationCreate {
+	mutation := newHoldActivationMutation(c.config, OpCreate)
+	return &HoldActivationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of HoldActivation entities.
+func (c *HoldActivationClient) CreateBulk(builders ...*HoldActivationCreate) *HoldActivationCreateBulk {
+	return &HoldActivationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *HoldActivationClient) MapCreateBulk(slice any, setFunc func(*HoldActivationCreate, int)) *HoldActivationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &HoldActivationCreateBulk{err: fmt.Errorf("calling to HoldActivationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*HoldActivationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &HoldActivationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for HoldActivation.
+func (c *HoldActivationClient) Update() *HoldActivationUpdate {
+	mutation := newHoldActivationMutation(c.config, OpUpdate)
+	return &HoldActivationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *HoldActivationClient) UpdateOne(ha *HoldActivation) *HoldActivationUpdateOne {
+	mutation := newHoldActivationMutation(c.config, OpUpdateOne, withHoldActivation(ha))
+	return &HoldActivationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *HoldActivationClient) UpdateOneID(id string) *HoldActivationUpdateOne {
+	mutation := newHoldActivationMutation(c.config, OpUpdateOne, withHoldActivationID(id))
+	return &HoldActivationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for HoldActivation.
+func (c *HoldActivationClient) Delete() *HoldActivationDelete {
+	mutation := newHoldActivationMutation(c.config, OpDelete)
+	return &HoldActivationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *HoldActivationClient) DeleteOne(ha *HoldActivation) *HoldActivationDeleteOne {
+	return c.DeleteOneID(ha.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *HoldActivationClient) DeleteOneID(id string) *HoldActivationDeleteOne {
+	builder := c.Delete().Where(holdactivation.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &HoldActivationDeleteOne{builder}
+}
+
+// Query returns a query builder for HoldActivation.
+func (c *HoldActivationClient) Query() *HoldActivationQuery {
+	return &HoldActivationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeHoldActivation},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a HoldActivation entity by its id.
+func (c *HoldActivationClient) Get(ctx context.Context, id string) (*HoldActivation, error) {
+	return c.Query().Where(holdactivation.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *HoldActivationClient) GetX(ctx context.Context, id string) *HoldActivation {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *HoldActivationClient) Hooks() []Hook {
+	return c.hooks.HoldActivation
+}
+
+// Interceptors returns the client interceptors.
+func (c *HoldActivationClient) Interceptors() []Interceptor {
+	return c.inters.HoldActivation
+}
+
+func (c *HoldActivationClient) mutate(ctx context.Context, m *HoldActivationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&HoldActivationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&HoldActivationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&HoldActivationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&HoldActivationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown HoldActivation mutation op: %q", m.Op())
 	}
 }
 
@@ -1755,13 +1896,13 @@ func (c *WalletTransactionClient) mutate(ctx context.Context, m *WalletTransacti
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		EvidenceReceipt, Hold, HoldRelease, IdempotencyKey, LedgerEntry, ManualTopup,
-		ReconciliationReport, ResourceSettlement, ReviewPolicy, Wallet,
+		EvidenceReceipt, Hold, HoldActivation, HoldRelease, IdempotencyKey, LedgerEntry,
+		ManualTopup, ReconciliationReport, ResourceSettlement, ReviewPolicy, Wallet,
 		WalletTransaction []ent.Hook
 	}
 	inters struct {
-		EvidenceReceipt, Hold, HoldRelease, IdempotencyKey, LedgerEntry, ManualTopup,
-		ReconciliationReport, ResourceSettlement, ReviewPolicy, Wallet,
+		EvidenceReceipt, Hold, HoldActivation, HoldRelease, IdempotencyKey, LedgerEntry,
+		ManualTopup, ReconciliationReport, ResourceSettlement, ReviewPolicy, Wallet,
 		WalletTransaction []ent.Interceptor
 	}
 )

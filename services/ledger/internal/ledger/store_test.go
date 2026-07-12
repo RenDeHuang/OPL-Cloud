@@ -502,7 +502,7 @@ func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("release failed: %v", err)
 	}
-	if released.Status != "released" || released.Wallet.BalanceCents != 2000 || released.Wallet.FrozenCents != 400 || released.Wallet.AvailableCents != 1600 || released.Wallet.TotalSpentCents != 0 {
+	if released.Status != "released" || released.AmountCents != 1000 || released.Wallet.BalanceCents != 2000 || released.Wallet.FrozenCents != 0 || released.Wallet.AvailableCents != 2000 || released.Wallet.TotalSpentCents != 0 {
 		t.Fatalf("unexpected release wallet: %#v", released)
 	}
 
@@ -515,9 +515,9 @@ func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	}
 
 	releaseInput.AmountCents = 700
-	_, err = store.ReleaseHold(ctx, releaseInput)
-	if !errors.Is(err, ErrIdempotencyConflict) {
-		t.Fatalf("expected idempotency conflict, got %v", err)
+	replayed, err = store.ReleaseHold(ctx, releaseInput)
+	if err != nil || !replayed.Replayed {
+		t.Fatalf("caller amount must not affect release replay: %#v, %v", replayed, err)
 	}
 }
 
@@ -567,7 +567,7 @@ func TestLedgerMutationsReturnStableAuditFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hold failed: %v", err)
 	}
-	if hold.ID == "" || hold.LedgerEntryID == "" || hold.WalletTransactionID == "" || hold.Status != "held" || hold.Wallet.FrozenCents != 2000 {
+	if hold.ID == "" || hold.LedgerEntryID == "" || hold.WalletTransactionID == "" || hold.Status != "reserved" || hold.Wallet.FrozenCents != 2000 {
 		t.Fatalf("hold must return linked audit facts, got %#v", hold)
 	}
 
@@ -575,15 +575,23 @@ func TestLedgerMutationsReturnStableAuditFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("release failed: %v", err)
 	}
-	if release.ID == "" || release.LedgerEntryID == "" || release.WalletTransactionID == "" || release.Status != "released" || release.Wallet.BalanceCents != 5000 || release.Wallet.FrozenCents != 1500 || release.Wallet.TotalSpentCents != 0 {
+	if release.ID == "" || release.LedgerEntryID == "" || release.WalletTransactionID == "" || release.Status != "released" || release.AmountCents != 2000 || release.Wallet.BalanceCents != 5000 || release.Wallet.FrozenCents != 0 || release.Wallet.TotalSpentCents != 0 {
 		t.Fatalf("release must return linked audit facts without debiting balance, got %#v", release)
+	}
+	settlementHold, err := store.CreateHold(ctx, HoldInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-settlement", AmountCents: 2000, ActivationAmountCents: 100, Currency: "CNY", IdempotencyKey: "audit-settlement-hold"})
+	if err != nil {
+		t.Fatalf("settlement hold: %v", err)
+	}
+	if _, err := store.ActivateHold(ctx, HoldActivationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-settlement", HoldID: settlementHold.ID, Currency: "CNY", ProviderEvidenceRef: "fabric:op-settlement", IdempotencyKey: "audit-activate"}); err != nil {
+		t.Fatalf("activate: %v", err)
 	}
 
 	settlementInput := ResourceSettlementInput{
 		AccountID:               "acct-alpha",
 		WorkspaceID:             "ws-alpha",
 		ResourceType:            "compute",
-		ResourceID:              "compute-alpha",
+		ResourceID:              "compute-settlement",
+		HoldID:                  settlementHold.ID,
 		AmountCents:             1200,
 		Currency:                "CNY",
 		PricingVersion:          "pricing-2026-07",
@@ -599,7 +607,7 @@ func TestLedgerMutationsReturnStableAuditFacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settlement failed: %v", err)
 	}
-	if settlement.ID == "" || settlement.LedgerEntryID == "" || settlement.WalletTransactionID == "" || settlement.Status != "settled" || settlement.Wallet.BalanceCents != 3800 || settlement.Wallet.FrozenCents != 300 || settlement.Wallet.TotalSpentCents != 1200 {
+	if settlement.ID == "" || settlement.LedgerEntryID == "" || settlement.WalletTransactionID == "" || settlement.Status != "settled" || settlement.Wallet.BalanceCents != 3700 || settlement.Wallet.FrozenCents != 1900 || settlement.Wallet.TotalSpentCents != 1300 {
 		t.Fatalf("settlement must return linked audit facts and debit balance, got %#v", settlement)
 	}
 	if settlement.PricingVersion != "pricing-2026-07" || settlement.PriceSnapshot["priceBasis"] != "hourly" || settlement.UsagePeriodStart == "" || settlement.UsagePeriodEnd == "" || settlement.Quantity != 1 || settlement.Unit != "hour" || settlement.ProviderCostEvidenceRef == "" {
@@ -654,18 +662,21 @@ func TestWalletTransactionsCarryAfterSnapshot(t *testing.T) {
 	if topup.WalletTransaction.BalanceCents != 5000 || topup.WalletTransaction.AvailableCents != 5000 || topup.WalletTransaction.TotalSpentCents != 0 {
 		t.Fatalf("topup wallet transaction missing after snapshot: %#v", topup.WalletTransaction)
 	}
-	hold, err := store.CreateHold(ctx, HoldInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", AmountCents: 2000, Currency: "CNY", IdempotencyKey: "snapshot-hold"})
+	hold, err := store.CreateHold(ctx, HoldInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", AmountCents: 2000, ActivationAmountCents: 100, Currency: "CNY", IdempotencyKey: "snapshot-hold"})
 	if err != nil {
 		t.Fatalf("hold failed: %v", err)
 	}
 	if hold.Wallet.FrozenCents != 2000 || hold.Wallet.AvailableCents != 3000 {
 		t.Fatalf("hold wallet missing after snapshot: %#v", hold.Wallet)
 	}
-	settlement, err := store.SettleResource(ctx, ResourceSettlementInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", AmountCents: 1200, Currency: "CNY", PricingVersion: "pricing-2026-07", PriceSnapshot: map[string]any{"priceBasis": "hourly"}, UsagePeriodStart: "2026-07-08T00:00:00Z", UsagePeriodEnd: "2026-07-08T01:00:00Z", Quantity: 1, Unit: "hour", ProviderCostEvidenceRef: "tencent-bill-row-001", IdempotencyKey: "snapshot-settlement"})
+	if _, err := store.ActivateHold(ctx, HoldActivationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", HoldID: hold.ID, Currency: "CNY", ProviderEvidenceRef: "fabric:snapshot", IdempotencyKey: "snapshot-activate"}); err != nil {
+		t.Fatalf("activate failed: %v", err)
+	}
+	settlement, err := store.SettleResource(ctx, ResourceSettlementInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ResourceType: "compute", ResourceID: "compute-alpha", HoldID: hold.ID, AmountCents: 1200, Currency: "CNY", PricingVersion: "pricing-2026-07", PriceSnapshot: map[string]any{"priceBasis": "hourly"}, UsagePeriodStart: "2026-07-08T00:00:00Z", UsagePeriodEnd: "2026-07-08T01:00:00Z", Quantity: 1, Unit: "hour", ProviderCostEvidenceRef: "tencent-bill-row-001", IdempotencyKey: "snapshot-settlement"})
 	if err != nil {
 		t.Fatalf("settlement failed: %v", err)
 	}
-	if settlement.Wallet.BalanceCents != 3800 || settlement.Wallet.FrozenCents != 800 || settlement.Wallet.AvailableCents != 3000 || settlement.Wallet.TotalSpentCents != 1200 {
+	if settlement.Wallet.BalanceCents != 3700 || settlement.Wallet.FrozenCents != 1900 || settlement.Wallet.AvailableCents != 1800 || settlement.Wallet.TotalSpentCents != 1300 {
 		t.Fatalf("settlement wallet missing after snapshot: %#v", settlement.Wallet)
 	}
 }

@@ -112,7 +112,7 @@ func TestHoldAndReceiptHTTP(t *testing.T) {
 	if err := json.NewDecoder(holdRec.Body).Decode(&holdBody); err != nil {
 		t.Fatalf("decode hold: %v", err)
 	}
-	if holdBody["accountId"] != "acct-alpha" || holdBody["workspaceId"] != "ws-alpha" || holdBody["resourceType"] != "compute" || holdBody["resourceId"] != "compute-alpha" || holdBody["status"] != "held" {
+	if holdBody["accountId"] != "acct-alpha" || holdBody["workspaceId"] != "ws-alpha" || holdBody["resourceType"] != "compute" || holdBody["resourceId"] != "compute-alpha" || holdBody["status"] != "reserved" {
 		t.Fatalf("unexpected hold body: %#v", holdBody)
 	}
 
@@ -439,7 +439,7 @@ func TestReleaseHoldHTTP(t *testing.T) {
 	if err := json.NewDecoder(releaseRec.Body).Decode(&releaseBody); err != nil {
 		t.Fatalf("decode release: %v", err)
 	}
-	if releaseBody.Status != "released" || releaseBody.Wallet.BalanceCents != 2000 || releaseBody.Wallet.FrozenCents != 400 || releaseBody.Wallet.AvailableCents != 1600 {
+	if releaseBody.Status != "released" || releaseBody.AmountCents != 1000 || releaseBody.Wallet.BalanceCents != 2000 || releaseBody.Wallet.FrozenCents != 0 || releaseBody.Wallet.AvailableCents != 2000 {
 		t.Fatalf("unexpected release body: %#v", releaseBody)
 	}
 
@@ -450,7 +450,7 @@ func TestReleaseHoldHTTP(t *testing.T) {
 	if err := json.NewDecoder(walletRec.Body).Decode(&wallet); err != nil {
 		t.Fatalf("decode wallet: %v", err)
 	}
-	if wallet.BalanceCents != 2000 || wallet.FrozenCents != 400 || wallet.AvailableCents != 1600 {
+	if wallet.BalanceCents != 2000 || wallet.FrozenCents != 0 || wallet.AvailableCents != 2000 {
 		t.Fatalf("unexpected wallet: %#v", wallet)
 	}
 }
@@ -464,8 +464,23 @@ func TestSettlementAndReconciliationHTTP(t *testing.T) {
 	if topupRec.Code != http.StatusCreated {
 		t.Fatalf("topup status = %d, want %d: %s", topupRec.Code, http.StatusCreated, topupRec.Body.String())
 	}
+	hold := testRequest(http.MethodPost, "/ledger/holds", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":2000,"activationAmountCents":100,"currency":"CNY"}`))
+	hold.Header.Set("Idempotency-Key", "http-settlement-hold")
+	holdRec := httptest.NewRecorder()
+	server.ServeHTTP(holdRec, hold)
+	var holdBody ledger.HoldResult
+	if holdRec.Code != http.StatusCreated || json.NewDecoder(holdRec.Body).Decode(&holdBody) != nil {
+		t.Fatalf("hold status = %d: %s", holdRec.Code, holdRec.Body.String())
+	}
+	activate := testRequest(http.MethodPost, "/ledger/holds/activate", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","holdId":"`+holdBody.ID+`","currency":"CNY","providerEvidenceRef":"fabric:op-alpha"}`))
+	activate.Header.Set("Idempotency-Key", "http-settlement-activate")
+	activateRec := httptest.NewRecorder()
+	server.ServeHTTP(activateRec, activate)
+	if activateRec.Code != http.StatusCreated {
+		t.Fatalf("activate status = %d: %s", activateRec.Code, activateRec.Body.String())
+	}
 
-	settlement := testRequest(http.MethodPost, "/ledger/resource-settlements", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","amountCents":1200,"currency":"CNY","resourceType":"compute","resourceId":"compute-alpha"}`))
+	settlement := testRequest(http.MethodPost, "/ledger/resource-settlements", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","amountCents":1200,"currency":"CNY","resourceType":"compute","resourceId":"compute-alpha","holdId":"`+holdBody.ID+`"}`))
 	settlement.Header.Set("Idempotency-Key", "http-settlement-once")
 	settlementRec := httptest.NewRecorder()
 	server.ServeHTTP(settlementRec, settlement)

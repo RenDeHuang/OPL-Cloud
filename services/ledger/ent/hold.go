@@ -27,6 +27,18 @@ type Hold struct {
 	ResourceID string `json:"resource_id,omitempty"`
 	// AmountCents holds the value of the "amount_cents" field.
 	AmountCents int64 `json:"amount_cents,omitempty"`
+	// ActivationAmountCents holds the value of the "activation_amount_cents" field.
+	ActivationAmountCents int64 `json:"activation_amount_cents,omitempty"`
+	// OriginalCents holds the value of the "original_cents" field.
+	OriginalCents int64 `json:"original_cents,omitempty"`
+	// RemainingCents holds the value of the "remaining_cents" field.
+	RemainingCents int64 `json:"remaining_cents,omitempty"`
+	// ConsumedCents holds the value of the "consumed_cents" field.
+	ConsumedCents int64 `json:"consumed_cents,omitempty"`
+	// ReleasedCents holds the value of the "released_cents" field.
+	ReleasedCents int64 `json:"released_cents,omitempty"`
+	// ProviderEvidenceRef holds the value of the "provider_evidence_ref" field.
+	ProviderEvidenceRef string `json:"provider_evidence_ref,omitempty"`
 	// Currency holds the value of the "currency" field.
 	Currency string `json:"currency,omitempty"`
 	// Status holds the value of the "status" field.
@@ -49,9 +61,9 @@ func (*Hold) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case hold.FieldAmountCents:
+		case hold.FieldAmountCents, hold.FieldActivationAmountCents, hold.FieldOriginalCents, hold.FieldRemainingCents, hold.FieldConsumedCents, hold.FieldReleasedCents:
 			values[i] = new(sql.NullInt64)
-		case hold.FieldID, hold.FieldAccountID, hold.FieldWorkspaceID, hold.FieldResourceType, hold.FieldResourceID, hold.FieldCurrency, hold.FieldStatus, hold.FieldLedgerEntryID, hold.FieldWalletTransactionID, hold.FieldIdempotencyKey, hold.FieldRequestHash:
+		case hold.FieldID, hold.FieldAccountID, hold.FieldWorkspaceID, hold.FieldResourceType, hold.FieldResourceID, hold.FieldProviderEvidenceRef, hold.FieldCurrency, hold.FieldStatus, hold.FieldLedgerEntryID, hold.FieldWalletTransactionID, hold.FieldIdempotencyKey, hold.FieldRequestHash:
 			values[i] = new(sql.NullString)
 		case hold.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -105,6 +117,42 @@ func (h *Hold) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field amount_cents", values[i])
 			} else if value.Valid {
 				h.AmountCents = value.Int64
+			}
+		case hold.FieldActivationAmountCents:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field activation_amount_cents", values[i])
+			} else if value.Valid {
+				h.ActivationAmountCents = value.Int64
+			}
+		case hold.FieldOriginalCents:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field original_cents", values[i])
+			} else if value.Valid {
+				h.OriginalCents = value.Int64
+			}
+		case hold.FieldRemainingCents:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field remaining_cents", values[i])
+			} else if value.Valid {
+				h.RemainingCents = value.Int64
+			}
+		case hold.FieldConsumedCents:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field consumed_cents", values[i])
+			} else if value.Valid {
+				h.ConsumedCents = value.Int64
+			}
+		case hold.FieldReleasedCents:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field released_cents", values[i])
+			} else if value.Valid {
+				h.ReleasedCents = value.Int64
+			}
+		case hold.FieldProviderEvidenceRef:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_evidence_ref", values[i])
+			} else if value.Valid {
+				h.ProviderEvidenceRef = value.String
 			}
 		case hold.FieldCurrency:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -198,6 +246,24 @@ func (h *Hold) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("amount_cents=")
 	builder.WriteString(fmt.Sprintf("%v", h.AmountCents))
+	builder.WriteString(", ")
+	builder.WriteString("activation_amount_cents=")
+	builder.WriteString(fmt.Sprintf("%v", h.ActivationAmountCents))
+	builder.WriteString(", ")
+	builder.WriteString("original_cents=")
+	builder.WriteString(fmt.Sprintf("%v", h.OriginalCents))
+	builder.WriteString(", ")
+	builder.WriteString("remaining_cents=")
+	builder.WriteString(fmt.Sprintf("%v", h.RemainingCents))
+	builder.WriteString(", ")
+	builder.WriteString("consumed_cents=")
+	builder.WriteString(fmt.Sprintf("%v", h.ConsumedCents))
+	builder.WriteString(", ")
+	builder.WriteString("released_cents=")
+	builder.WriteString(fmt.Sprintf("%v", h.ReleasedCents))
+	builder.WriteString(", ")
+	builder.WriteString("provider_evidence_ref=")
+	builder.WriteString(h.ProviderEvidenceRef)
 	builder.WriteString(", ")
 	builder.WriteString("currency=")
 	builder.WriteString(h.Currency)

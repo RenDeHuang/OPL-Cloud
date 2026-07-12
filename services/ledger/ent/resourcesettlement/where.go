@@ -84,6 +84,11 @@ func ResourceID(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldResourceID, v))
 }
 
+// HoldID applies equality check predicate on the "hold_id" field. It's identical to HoldIDEQ.
+func HoldID(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldHoldID, v))
+}
+
 // AmountCents applies equality check predicate on the "amount_cents" field. It's identical to AmountCentsEQ.
 func AmountCents(v int64) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldEQ(FieldAmountCents, v))
@@ -417,6 +422,71 @@ func ResourceIDEqualFold(v string) predicate.ResourceSettlement {
 // ResourceIDContainsFold applies the ContainsFold predicate on the "resource_id" field.
 func ResourceIDContainsFold(v string) predicate.ResourceSettlement {
 	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldResourceID, v))
+}
+
+// HoldIDEQ applies the EQ predicate on the "hold_id" field.
+func HoldIDEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEQ(FieldHoldID, v))
+}
+
+// HoldIDNEQ applies the NEQ predicate on the "hold_id" field.
+func HoldIDNEQ(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNEQ(FieldHoldID, v))
+}
+
+// HoldIDIn applies the In predicate on the "hold_id" field.
+func HoldIDIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldIn(FieldHoldID, vs...))
+}
+
+// HoldIDNotIn applies the NotIn predicate on the "hold_id" field.
+func HoldIDNotIn(vs ...string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldNotIn(FieldHoldID, vs...))
+}
+
+// HoldIDGT applies the GT predicate on the "hold_id" field.
+func HoldIDGT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGT(FieldHoldID, v))
+}
+
+// HoldIDGTE applies the GTE predicate on the "hold_id" field.
+func HoldIDGTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldGTE(FieldHoldID, v))
+}
+
+// HoldIDLT applies the LT predicate on the "hold_id" field.
+func HoldIDLT(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLT(FieldHoldID, v))
+}
+
+// HoldIDLTE applies the LTE predicate on the "hold_id" field.
+func HoldIDLTE(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldLTE(FieldHoldID, v))
+}
+
+// HoldIDContains applies the Contains predicate on the "hold_id" field.
+func HoldIDContains(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContains(FieldHoldID, v))
+}
+
+// HoldIDHasPrefix applies the HasPrefix predicate on the "hold_id" field.
+func HoldIDHasPrefix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasPrefix(FieldHoldID, v))
+}
+
+// HoldIDHasSuffix applies the HasSuffix predicate on the "hold_id" field.
+func HoldIDHasSuffix(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldHasSuffix(FieldHoldID, v))
+}
+
+// HoldIDEqualFold applies the EqualFold predicate on the "hold_id" field.
+func HoldIDEqualFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldEqualFold(FieldHoldID, v))
+}
+
+// HoldIDContainsFold applies the ContainsFold predicate on the "hold_id" field.
+func HoldIDContainsFold(v string) predicate.ResourceSettlement {
+	return predicate.ResourceSettlement(sql.FieldContainsFold(FieldHoldID, v))
 }
 
 // AmountCentsEQ applies the EQ predicate on the "amount_cents" field.

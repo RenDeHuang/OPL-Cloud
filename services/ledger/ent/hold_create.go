@@ -58,6 +58,90 @@ func (hc *HoldCreate) SetAmountCents(i int64) *HoldCreate {
 	return hc
 }
 
+// SetActivationAmountCents sets the "activation_amount_cents" field.
+func (hc *HoldCreate) SetActivationAmountCents(i int64) *HoldCreate {
+	hc.mutation.SetActivationAmountCents(i)
+	return hc
+}
+
+// SetNillableActivationAmountCents sets the "activation_amount_cents" field if the given value is not nil.
+func (hc *HoldCreate) SetNillableActivationAmountCents(i *int64) *HoldCreate {
+	if i != nil {
+		hc.SetActivationAmountCents(*i)
+	}
+	return hc
+}
+
+// SetOriginalCents sets the "original_cents" field.
+func (hc *HoldCreate) SetOriginalCents(i int64) *HoldCreate {
+	hc.mutation.SetOriginalCents(i)
+	return hc
+}
+
+// SetNillableOriginalCents sets the "original_cents" field if the given value is not nil.
+func (hc *HoldCreate) SetNillableOriginalCents(i *int64) *HoldCreate {
+	if i != nil {
+		hc.SetOriginalCents(*i)
+	}
+	return hc
+}
+
+// SetRemainingCents sets the "remaining_cents" field.
+func (hc *HoldCreate) SetRemainingCents(i int64) *HoldCreate {
+	hc.mutation.SetRemainingCents(i)
+	return hc
+}
+
+// SetNillableRemainingCents sets the "remaining_cents" field if the given value is not nil.
+func (hc *HoldCreate) SetNillableRemainingCents(i *int64) *HoldCreate {
+	if i != nil {
+		hc.SetRemainingCents(*i)
+	}
+	return hc
+}
+
+// SetConsumedCents sets the "consumed_cents" field.
+func (hc *HoldCreate) SetConsumedCents(i int64) *HoldCreate {
+	hc.mutation.SetConsumedCents(i)
+	return hc
+}
+
+// SetNillableConsumedCents sets the "consumed_cents" field if the given value is not nil.
+func (hc *HoldCreate) SetNillableConsumedCents(i *int64) *HoldCreate {
+	if i != nil {
+		hc.SetConsumedCents(*i)
+	}
+	return hc
+}
+
+// SetReleasedCents sets the "released_cents" field.
+func (hc *HoldCreate) SetReleasedCents(i int64) *HoldCreate {
+	hc.mutation.SetReleasedCents(i)
+	return hc
+}
+
+// SetNillableReleasedCents sets the "released_cents" field if the given value is not nil.
+func (hc *HoldCreate) SetNillableReleasedCents(i *int64) *HoldCreate {
+	if i != nil {
+		hc.SetReleasedCents(*i)
+	}
+	return hc
+}
+
+// SetProviderEvidenceRef sets the "provider_evidence_ref" field.
+func (hc *HoldCreate) SetProviderEvidenceRef(s string) *HoldCreate {
+	hc.mutation.SetProviderEvidenceRef(s)
+	return hc
+}
+
+// SetNillableProviderEvidenceRef sets the "provider_evidence_ref" field if the given value is not nil.
+func (hc *HoldCreate) SetNillableProviderEvidenceRef(s *string) *HoldCreate {
+	if s != nil {
+		hc.SetProviderEvidenceRef(*s)
+	}
+	return hc
+}
+
 // SetCurrency sets the "currency" field.
 func (hc *HoldCreate) SetCurrency(s string) *HoldCreate {
 	hc.mutation.SetCurrency(s)
@@ -161,6 +245,30 @@ func (hc *HoldCreate) defaults() {
 		v := hold.DefaultWorkspaceID
 		hc.mutation.SetWorkspaceID(v)
 	}
+	if _, ok := hc.mutation.ActivationAmountCents(); !ok {
+		v := hold.DefaultActivationAmountCents
+		hc.mutation.SetActivationAmountCents(v)
+	}
+	if _, ok := hc.mutation.OriginalCents(); !ok {
+		v := hold.DefaultOriginalCents
+		hc.mutation.SetOriginalCents(v)
+	}
+	if _, ok := hc.mutation.RemainingCents(); !ok {
+		v := hold.DefaultRemainingCents
+		hc.mutation.SetRemainingCents(v)
+	}
+	if _, ok := hc.mutation.ConsumedCents(); !ok {
+		v := hold.DefaultConsumedCents
+		hc.mutation.SetConsumedCents(v)
+	}
+	if _, ok := hc.mutation.ReleasedCents(); !ok {
+		v := hold.DefaultReleasedCents
+		hc.mutation.SetReleasedCents(v)
+	}
+	if _, ok := hc.mutation.ProviderEvidenceRef(); !ok {
+		v := hold.DefaultProviderEvidenceRef
+		hc.mutation.SetProviderEvidenceRef(v)
+	}
 	if _, ok := hc.mutation.Currency(); !ok {
 		v := hold.DefaultCurrency
 		hc.mutation.SetCurrency(v)
@@ -202,6 +310,24 @@ func (hc *HoldCreate) check() error {
 	}
 	if _, ok := hc.mutation.AmountCents(); !ok {
 		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "Hold.amount_cents"`)}
+	}
+	if _, ok := hc.mutation.ActivationAmountCents(); !ok {
+		return &ValidationError{Name: "activation_amount_cents", err: errors.New(`ent: missing required field "Hold.activation_amount_cents"`)}
+	}
+	if _, ok := hc.mutation.OriginalCents(); !ok {
+		return &ValidationError{Name: "original_cents", err: errors.New(`ent: missing required field "Hold.original_cents"`)}
+	}
+	if _, ok := hc.mutation.RemainingCents(); !ok {
+		return &ValidationError{Name: "remaining_cents", err: errors.New(`ent: missing required field "Hold.remaining_cents"`)}
+	}
+	if _, ok := hc.mutation.ConsumedCents(); !ok {
+		return &ValidationError{Name: "consumed_cents", err: errors.New(`ent: missing required field "Hold.consumed_cents"`)}
+	}
+	if _, ok := hc.mutation.ReleasedCents(); !ok {
+		return &ValidationError{Name: "released_cents", err: errors.New(`ent: missing required field "Hold.released_cents"`)}
+	}
+	if _, ok := hc.mutation.ProviderEvidenceRef(); !ok {
+		return &ValidationError{Name: "provider_evidence_ref", err: errors.New(`ent: missing required field "Hold.provider_evidence_ref"`)}
 	}
 	if _, ok := hc.mutation.Currency(); !ok {
 		return &ValidationError{Name: "currency", err: errors.New(`ent: missing required field "Hold.currency"`)}
@@ -308,6 +434,30 @@ func (hc *HoldCreate) createSpec() (*Hold, *sqlgraph.CreateSpec) {
 	if value, ok := hc.mutation.AmountCents(); ok {
 		_spec.SetField(hold.FieldAmountCents, field.TypeInt64, value)
 		_node.AmountCents = value
+	}
+	if value, ok := hc.mutation.ActivationAmountCents(); ok {
+		_spec.SetField(hold.FieldActivationAmountCents, field.TypeInt64, value)
+		_node.ActivationAmountCents = value
+	}
+	if value, ok := hc.mutation.OriginalCents(); ok {
+		_spec.SetField(hold.FieldOriginalCents, field.TypeInt64, value)
+		_node.OriginalCents = value
+	}
+	if value, ok := hc.mutation.RemainingCents(); ok {
+		_spec.SetField(hold.FieldRemainingCents, field.TypeInt64, value)
+		_node.RemainingCents = value
+	}
+	if value, ok := hc.mutation.ConsumedCents(); ok {
+		_spec.SetField(hold.FieldConsumedCents, field.TypeInt64, value)
+		_node.ConsumedCents = value
+	}
+	if value, ok := hc.mutation.ReleasedCents(); ok {
+		_spec.SetField(hold.FieldReleasedCents, field.TypeInt64, value)
+		_node.ReleasedCents = value
+	}
+	if value, ok := hc.mutation.ProviderEvidenceRef(); ok {
+		_spec.SetField(hold.FieldProviderEvidenceRef, field.TypeString, value)
+		_node.ProviderEvidenceRef = value
 	}
 	if value, ok := hc.mutation.Currency(); ok {
 		_spec.SetField(hold.FieldCurrency, field.TypeString, value)

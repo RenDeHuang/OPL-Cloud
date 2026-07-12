@@ -32,6 +32,18 @@ func (f HoldFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error)
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HoldMutation", m)
 }
 
+// The HoldActivationFunc type is an adapter to allow the use of ordinary
+// function as HoldActivation mutator.
+type HoldActivationFunc func(context.Context, *ent.HoldActivationMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f HoldActivationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.HoldActivationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HoldActivationMutation", m)
+}
+
 // The HoldReleaseFunc type is an adapter to allow the use of ordinary
 // function as HoldRelease mutator.
 type HoldReleaseFunc func(context.Context, *ent.HoldReleaseMutation) (ent.Value, error)

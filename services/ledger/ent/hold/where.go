@@ -89,6 +89,36 @@ func AmountCents(v int64) predicate.Hold {
 	return predicate.Hold(sql.FieldEQ(FieldAmountCents, v))
 }
 
+// ActivationAmountCents applies equality check predicate on the "activation_amount_cents" field. It's identical to ActivationAmountCentsEQ.
+func ActivationAmountCents(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldActivationAmountCents, v))
+}
+
+// OriginalCents applies equality check predicate on the "original_cents" field. It's identical to OriginalCentsEQ.
+func OriginalCents(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldOriginalCents, v))
+}
+
+// RemainingCents applies equality check predicate on the "remaining_cents" field. It's identical to RemainingCentsEQ.
+func RemainingCents(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldRemainingCents, v))
+}
+
+// ConsumedCents applies equality check predicate on the "consumed_cents" field. It's identical to ConsumedCentsEQ.
+func ConsumedCents(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldConsumedCents, v))
+}
+
+// ReleasedCents applies equality check predicate on the "released_cents" field. It's identical to ReleasedCentsEQ.
+func ReleasedCents(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldReleasedCents, v))
+}
+
+// ProviderEvidenceRef applies equality check predicate on the "provider_evidence_ref" field. It's identical to ProviderEvidenceRefEQ.
+func ProviderEvidenceRef(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldProviderEvidenceRef, v))
+}
+
 // Currency applies equality check predicate on the "currency" field. It's identical to CurrencyEQ.
 func Currency(v string) predicate.Hold {
 	return predicate.Hold(sql.FieldEQ(FieldCurrency, v))
@@ -422,6 +452,271 @@ func AmountCentsLT(v int64) predicate.Hold {
 // AmountCentsLTE applies the LTE predicate on the "amount_cents" field.
 func AmountCentsLTE(v int64) predicate.Hold {
 	return predicate.Hold(sql.FieldLTE(FieldAmountCents, v))
+}
+
+// ActivationAmountCentsEQ applies the EQ predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldActivationAmountCents, v))
+}
+
+// ActivationAmountCentsNEQ applies the NEQ predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsNEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNEQ(FieldActivationAmountCents, v))
+}
+
+// ActivationAmountCentsIn applies the In predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldIn(FieldActivationAmountCents, vs...))
+}
+
+// ActivationAmountCentsNotIn applies the NotIn predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsNotIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNotIn(FieldActivationAmountCents, vs...))
+}
+
+// ActivationAmountCentsGT applies the GT predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsGT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGT(FieldActivationAmountCents, v))
+}
+
+// ActivationAmountCentsGTE applies the GTE predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsGTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGTE(FieldActivationAmountCents, v))
+}
+
+// ActivationAmountCentsLT applies the LT predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsLT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLT(FieldActivationAmountCents, v))
+}
+
+// ActivationAmountCentsLTE applies the LTE predicate on the "activation_amount_cents" field.
+func ActivationAmountCentsLTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLTE(FieldActivationAmountCents, v))
+}
+
+// OriginalCentsEQ applies the EQ predicate on the "original_cents" field.
+func OriginalCentsEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldOriginalCents, v))
+}
+
+// OriginalCentsNEQ applies the NEQ predicate on the "original_cents" field.
+func OriginalCentsNEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNEQ(FieldOriginalCents, v))
+}
+
+// OriginalCentsIn applies the In predicate on the "original_cents" field.
+func OriginalCentsIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldIn(FieldOriginalCents, vs...))
+}
+
+// OriginalCentsNotIn applies the NotIn predicate on the "original_cents" field.
+func OriginalCentsNotIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNotIn(FieldOriginalCents, vs...))
+}
+
+// OriginalCentsGT applies the GT predicate on the "original_cents" field.
+func OriginalCentsGT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGT(FieldOriginalCents, v))
+}
+
+// OriginalCentsGTE applies the GTE predicate on the "original_cents" field.
+func OriginalCentsGTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGTE(FieldOriginalCents, v))
+}
+
+// OriginalCentsLT applies the LT predicate on the "original_cents" field.
+func OriginalCentsLT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLT(FieldOriginalCents, v))
+}
+
+// OriginalCentsLTE applies the LTE predicate on the "original_cents" field.
+func OriginalCentsLTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLTE(FieldOriginalCents, v))
+}
+
+// RemainingCentsEQ applies the EQ predicate on the "remaining_cents" field.
+func RemainingCentsEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldRemainingCents, v))
+}
+
+// RemainingCentsNEQ applies the NEQ predicate on the "remaining_cents" field.
+func RemainingCentsNEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNEQ(FieldRemainingCents, v))
+}
+
+// RemainingCentsIn applies the In predicate on the "remaining_cents" field.
+func RemainingCentsIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldIn(FieldRemainingCents, vs...))
+}
+
+// RemainingCentsNotIn applies the NotIn predicate on the "remaining_cents" field.
+func RemainingCentsNotIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNotIn(FieldRemainingCents, vs...))
+}
+
+// RemainingCentsGT applies the GT predicate on the "remaining_cents" field.
+func RemainingCentsGT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGT(FieldRemainingCents, v))
+}
+
+// RemainingCentsGTE applies the GTE predicate on the "remaining_cents" field.
+func RemainingCentsGTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGTE(FieldRemainingCents, v))
+}
+
+// RemainingCentsLT applies the LT predicate on the "remaining_cents" field.
+func RemainingCentsLT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLT(FieldRemainingCents, v))
+}
+
+// RemainingCentsLTE applies the LTE predicate on the "remaining_cents" field.
+func RemainingCentsLTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLTE(FieldRemainingCents, v))
+}
+
+// ConsumedCentsEQ applies the EQ predicate on the "consumed_cents" field.
+func ConsumedCentsEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldConsumedCents, v))
+}
+
+// ConsumedCentsNEQ applies the NEQ predicate on the "consumed_cents" field.
+func ConsumedCentsNEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNEQ(FieldConsumedCents, v))
+}
+
+// ConsumedCentsIn applies the In predicate on the "consumed_cents" field.
+func ConsumedCentsIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldIn(FieldConsumedCents, vs...))
+}
+
+// ConsumedCentsNotIn applies the NotIn predicate on the "consumed_cents" field.
+func ConsumedCentsNotIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNotIn(FieldConsumedCents, vs...))
+}
+
+// ConsumedCentsGT applies the GT predicate on the "consumed_cents" field.
+func ConsumedCentsGT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGT(FieldConsumedCents, v))
+}
+
+// ConsumedCentsGTE applies the GTE predicate on the "consumed_cents" field.
+func ConsumedCentsGTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGTE(FieldConsumedCents, v))
+}
+
+// ConsumedCentsLT applies the LT predicate on the "consumed_cents" field.
+func ConsumedCentsLT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLT(FieldConsumedCents, v))
+}
+
+// ConsumedCentsLTE applies the LTE predicate on the "consumed_cents" field.
+func ConsumedCentsLTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLTE(FieldConsumedCents, v))
+}
+
+// ReleasedCentsEQ applies the EQ predicate on the "released_cents" field.
+func ReleasedCentsEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldReleasedCents, v))
+}
+
+// ReleasedCentsNEQ applies the NEQ predicate on the "released_cents" field.
+func ReleasedCentsNEQ(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNEQ(FieldReleasedCents, v))
+}
+
+// ReleasedCentsIn applies the In predicate on the "released_cents" field.
+func ReleasedCentsIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldIn(FieldReleasedCents, vs...))
+}
+
+// ReleasedCentsNotIn applies the NotIn predicate on the "released_cents" field.
+func ReleasedCentsNotIn(vs ...int64) predicate.Hold {
+	return predicate.Hold(sql.FieldNotIn(FieldReleasedCents, vs...))
+}
+
+// ReleasedCentsGT applies the GT predicate on the "released_cents" field.
+func ReleasedCentsGT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGT(FieldReleasedCents, v))
+}
+
+// ReleasedCentsGTE applies the GTE predicate on the "released_cents" field.
+func ReleasedCentsGTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldGTE(FieldReleasedCents, v))
+}
+
+// ReleasedCentsLT applies the LT predicate on the "released_cents" field.
+func ReleasedCentsLT(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLT(FieldReleasedCents, v))
+}
+
+// ReleasedCentsLTE applies the LTE predicate on the "released_cents" field.
+func ReleasedCentsLTE(v int64) predicate.Hold {
+	return predicate.Hold(sql.FieldLTE(FieldReleasedCents, v))
+}
+
+// ProviderEvidenceRefEQ applies the EQ predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefEQ(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldEQ(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefNEQ applies the NEQ predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefNEQ(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldNEQ(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefIn applies the In predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefIn(vs ...string) predicate.Hold {
+	return predicate.Hold(sql.FieldIn(FieldProviderEvidenceRef, vs...))
+}
+
+// ProviderEvidenceRefNotIn applies the NotIn predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefNotIn(vs ...string) predicate.Hold {
+	return predicate.Hold(sql.FieldNotIn(FieldProviderEvidenceRef, vs...))
+}
+
+// ProviderEvidenceRefGT applies the GT predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefGT(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldGT(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefGTE applies the GTE predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefGTE(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldGTE(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefLT applies the LT predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefLT(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldLT(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefLTE applies the LTE predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefLTE(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldLTE(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefContains applies the Contains predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefContains(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldContains(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefHasPrefix applies the HasPrefix predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefHasPrefix(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldHasPrefix(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefHasSuffix applies the HasSuffix predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefHasSuffix(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldHasSuffix(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefEqualFold applies the EqualFold predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefEqualFold(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldEqualFold(FieldProviderEvidenceRef, v))
+}
+
+// ProviderEvidenceRefContainsFold applies the ContainsFold predicate on the "provider_evidence_ref" field.
+func ProviderEvidenceRefContainsFold(v string) predicate.Hold {
+	return predicate.Hold(sql.FieldContainsFold(FieldProviderEvidenceRef, v))
 }
 
 // CurrencyEQ applies the EQ predicate on the "currency" field.

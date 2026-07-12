@@ -25,6 +25,8 @@ type ResourceSettlement struct {
 	ResourceType string `json:"resource_type,omitempty"`
 	// ResourceID holds the value of the "resource_id" field.
 	ResourceID string `json:"resource_id,omitempty"`
+	// HoldID holds the value of the "hold_id" field.
+	HoldID string `json:"hold_id,omitempty"`
 	// AmountCents holds the value of the "amount_cents" field.
 	AmountCents int64 `json:"amount_cents,omitempty"`
 	// Currency holds the value of the "currency" field.
@@ -67,7 +69,7 @@ func (*ResourceSettlement) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case resourcesettlement.FieldAmountCents:
 			values[i] = new(sql.NullInt64)
-		case resourcesettlement.FieldID, resourcesettlement.FieldAccountID, resourcesettlement.FieldWorkspaceID, resourcesettlement.FieldResourceType, resourcesettlement.FieldResourceID, resourcesettlement.FieldCurrency, resourcesettlement.FieldStatus, resourcesettlement.FieldLedgerEntryID, resourcesettlement.FieldWalletTransactionID, resourcesettlement.FieldPricingVersion, resourcesettlement.FieldPriceSnapshotJSON, resourcesettlement.FieldUsagePeriodStart, resourcesettlement.FieldUsagePeriodEnd, resourcesettlement.FieldUnit, resourcesettlement.FieldProviderCostEvidenceRef, resourcesettlement.FieldIdempotencyKey, resourcesettlement.FieldRequestHash:
+		case resourcesettlement.FieldID, resourcesettlement.FieldAccountID, resourcesettlement.FieldWorkspaceID, resourcesettlement.FieldResourceType, resourcesettlement.FieldResourceID, resourcesettlement.FieldHoldID, resourcesettlement.FieldCurrency, resourcesettlement.FieldStatus, resourcesettlement.FieldLedgerEntryID, resourcesettlement.FieldWalletTransactionID, resourcesettlement.FieldPricingVersion, resourcesettlement.FieldPriceSnapshotJSON, resourcesettlement.FieldUsagePeriodStart, resourcesettlement.FieldUsagePeriodEnd, resourcesettlement.FieldUnit, resourcesettlement.FieldProviderCostEvidenceRef, resourcesettlement.FieldIdempotencyKey, resourcesettlement.FieldRequestHash:
 			values[i] = new(sql.NullString)
 		case resourcesettlement.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -115,6 +117,12 @@ func (rs *ResourceSettlement) assignValues(columns []string, values []any) error
 				return fmt.Errorf("unexpected type %T for field resource_id", values[i])
 			} else if value.Valid {
 				rs.ResourceID = value.String
+			}
+		case resourcesettlement.FieldHoldID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field hold_id", values[i])
+			} else if value.Valid {
+				rs.HoldID = value.String
 			}
 		case resourcesettlement.FieldAmountCents:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -253,6 +261,9 @@ func (rs *ResourceSettlement) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("resource_id=")
 	builder.WriteString(rs.ResourceID)
+	builder.WriteString(", ")
+	builder.WriteString("hold_id=")
+	builder.WriteString(rs.HoldID)
 	builder.WriteString(", ")
 	builder.WriteString("amount_cents=")
 	builder.WriteString(fmt.Sprintf("%v", rs.AmountCents))

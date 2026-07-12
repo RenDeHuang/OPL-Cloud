@@ -14,6 +14,10 @@ var ErrIdempotencyConflict = errors.New("idempotency key already used with diffe
 var ErrInsufficientBalance = errors.New("insufficient available balance")
 var ErrInsufficientFrozen = errors.New("insufficient frozen balance")
 var ErrInvalidHoldInput = errors.New("hold resource identity required")
+var ErrHoldNotFound = errors.New("resource hold not found")
+var ErrHoldIdentityMismatch = errors.New("resource hold identity mismatch")
+var ErrInvalidHoldState = errors.New("invalid resource hold state")
+var ErrInsufficientResourceHold = errors.New("insufficient resource hold")
 var ErrReceiptNotFound = errors.New("receipt not found")
 var ErrContinuationNotFound = errors.New("continuation not found")
 var ErrContinuationIneligible = errors.New("continuation is not eligible")
@@ -98,29 +102,53 @@ type ManualTopUpResult struct {
 }
 
 type HoldInput struct {
-	AccountID      string `json:"accountId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ResourceType   string `json:"resourceType"`
-	ResourceID     string `json:"resourceId"`
-	AmountCents    int64  `json:"amountCents"`
-	Currency       string `json:"currency"`
-	IdempotencyKey string `json:"-"`
+	AccountID             string `json:"accountId"`
+	WorkspaceID           string `json:"workspaceId"`
+	ResourceType          string `json:"resourceType"`
+	ResourceID            string `json:"resourceId"`
+	AmountCents           int64  `json:"amountCents"`
+	ActivationAmountCents int64  `json:"activationAmountCents,omitempty"`
+	Currency              string `json:"currency"`
+	IdempotencyKey        string `json:"-"`
 }
 
 type HoldResult struct {
-	ID                  string    `json:"id"`
-	AccountID           string    `json:"accountId"`
-	WorkspaceID         string    `json:"workspaceId"`
-	ResourceType        string    `json:"resourceType"`
-	ResourceID          string    `json:"resourceId"`
-	AmountCents         int64     `json:"amountCents"`
-	Currency            string    `json:"currency"`
-	Status              string    `json:"status"`
-	LedgerEntryID       string    `json:"ledgerEntryId"`
-	WalletTransactionID string    `json:"walletTransactionId"`
-	Wallet              Wallet    `json:"wallet"`
-	CreatedAt           time.Time `json:"createdAt"`
-	Replayed            bool      `json:"replayed"`
+	ID                    string    `json:"id"`
+	AccountID             string    `json:"accountId"`
+	WorkspaceID           string    `json:"workspaceId"`
+	ResourceType          string    `json:"resourceType"`
+	ResourceID            string    `json:"resourceId"`
+	AmountCents           int64     `json:"amountCents"`
+	ActivationAmountCents int64     `json:"activationAmountCents"`
+	OriginalCents         int64     `json:"originalCents"`
+	RemainingCents        int64     `json:"remainingCents"`
+	ConsumedCents         int64     `json:"consumedCents"`
+	ReleasedCents         int64     `json:"releasedCents"`
+	ProviderEvidenceRef   string    `json:"providerEvidenceRef,omitempty"`
+	Currency              string    `json:"currency"`
+	Status                string    `json:"status"`
+	LedgerEntryID         string    `json:"ledgerEntryId"`
+	WalletTransactionID   string    `json:"walletTransactionId"`
+	Wallet                Wallet    `json:"wallet"`
+	CreatedAt             time.Time `json:"createdAt"`
+	Replayed              bool      `json:"replayed"`
+}
+
+type HoldActivationInput struct {
+	AccountID           string `json:"accountId"`
+	WorkspaceID         string `json:"workspaceId"`
+	ResourceType        string `json:"resourceType"`
+	ResourceID          string `json:"resourceId"`
+	HoldID              string `json:"holdId"`
+	Currency            string `json:"currency"`
+	ProviderEvidenceRef string `json:"providerEvidenceRef"`
+	IdempotencyKey      string `json:"-"`
+}
+
+type HoldActivationResult struct {
+	HoldResult
+	ActivationLedgerEntryID       string `json:"activationLedgerEntryId"`
+	ActivationWalletTransactionID string `json:"activationWalletTransactionId"`
 }
 
 type HoldReleaseInput struct {
@@ -691,6 +719,7 @@ type ResourceSettlementInput struct {
 	WorkspaceID             string         `json:"workspaceId"`
 	ResourceType            string         `json:"resourceType"`
 	ResourceID              string         `json:"resourceId"`
+	HoldID                  string         `json:"holdId"`
 	AmountCents             int64          `json:"amountCents"`
 	Currency                string         `json:"currency"`
 	PricingVersion          string         `json:"pricingVersion"`
@@ -709,6 +738,8 @@ type ResourceSettlementResult struct {
 	WorkspaceID             string         `json:"workspaceId"`
 	ResourceType            string         `json:"resourceType"`
 	ResourceID              string         `json:"resourceId"`
+	HoldID                  string         `json:"holdId"`
+	HoldRemainingCents      int64          `json:"holdRemainingCents"`
 	AmountCents             int64          `json:"amountCents"`
 	Currency                string         `json:"currency"`
 	Status                  string         `json:"status"`

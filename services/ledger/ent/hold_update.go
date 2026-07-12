@@ -105,6 +105,125 @@ func (hu *HoldUpdate) AddAmountCents(i int64) *HoldUpdate {
 	return hu
 }
 
+// SetActivationAmountCents sets the "activation_amount_cents" field.
+func (hu *HoldUpdate) SetActivationAmountCents(i int64) *HoldUpdate {
+	hu.mutation.ResetActivationAmountCents()
+	hu.mutation.SetActivationAmountCents(i)
+	return hu
+}
+
+// SetNillableActivationAmountCents sets the "activation_amount_cents" field if the given value is not nil.
+func (hu *HoldUpdate) SetNillableActivationAmountCents(i *int64) *HoldUpdate {
+	if i != nil {
+		hu.SetActivationAmountCents(*i)
+	}
+	return hu
+}
+
+// AddActivationAmountCents adds i to the "activation_amount_cents" field.
+func (hu *HoldUpdate) AddActivationAmountCents(i int64) *HoldUpdate {
+	hu.mutation.AddActivationAmountCents(i)
+	return hu
+}
+
+// SetOriginalCents sets the "original_cents" field.
+func (hu *HoldUpdate) SetOriginalCents(i int64) *HoldUpdate {
+	hu.mutation.ResetOriginalCents()
+	hu.mutation.SetOriginalCents(i)
+	return hu
+}
+
+// SetNillableOriginalCents sets the "original_cents" field if the given value is not nil.
+func (hu *HoldUpdate) SetNillableOriginalCents(i *int64) *HoldUpdate {
+	if i != nil {
+		hu.SetOriginalCents(*i)
+	}
+	return hu
+}
+
+// AddOriginalCents adds i to the "original_cents" field.
+func (hu *HoldUpdate) AddOriginalCents(i int64) *HoldUpdate {
+	hu.mutation.AddOriginalCents(i)
+	return hu
+}
+
+// SetRemainingCents sets the "remaining_cents" field.
+func (hu *HoldUpdate) SetRemainingCents(i int64) *HoldUpdate {
+	hu.mutation.ResetRemainingCents()
+	hu.mutation.SetRemainingCents(i)
+	return hu
+}
+
+// SetNillableRemainingCents sets the "remaining_cents" field if the given value is not nil.
+func (hu *HoldUpdate) SetNillableRemainingCents(i *int64) *HoldUpdate {
+	if i != nil {
+		hu.SetRemainingCents(*i)
+	}
+	return hu
+}
+
+// AddRemainingCents adds i to the "remaining_cents" field.
+func (hu *HoldUpdate) AddRemainingCents(i int64) *HoldUpdate {
+	hu.mutation.AddRemainingCents(i)
+	return hu
+}
+
+// SetConsumedCents sets the "consumed_cents" field.
+func (hu *HoldUpdate) SetConsumedCents(i int64) *HoldUpdate {
+	hu.mutation.ResetConsumedCents()
+	hu.mutation.SetConsumedCents(i)
+	return hu
+}
+
+// SetNillableConsumedCents sets the "consumed_cents" field if the given value is not nil.
+func (hu *HoldUpdate) SetNillableConsumedCents(i *int64) *HoldUpdate {
+	if i != nil {
+		hu.SetConsumedCents(*i)
+	}
+	return hu
+}
+
+// AddConsumedCents adds i to the "consumed_cents" field.
+func (hu *HoldUpdate) AddConsumedCents(i int64) *HoldUpdate {
+	hu.mutation.AddConsumedCents(i)
+	return hu
+}
+
+// SetReleasedCents sets the "released_cents" field.
+func (hu *HoldUpdate) SetReleasedCents(i int64) *HoldUpdate {
+	hu.mutation.ResetReleasedCents()
+	hu.mutation.SetReleasedCents(i)
+	return hu
+}
+
+// SetNillableReleasedCents sets the "released_cents" field if the given value is not nil.
+func (hu *HoldUpdate) SetNillableReleasedCents(i *int64) *HoldUpdate {
+	if i != nil {
+		hu.SetReleasedCents(*i)
+	}
+	return hu
+}
+
+// AddReleasedCents adds i to the "released_cents" field.
+func (hu *HoldUpdate) AddReleasedCents(i int64) *HoldUpdate {
+	hu.mutation.AddReleasedCents(i)
+	return hu
+}
+
+// SetProviderEvidenceRef sets the "provider_evidence_ref" field.
+func (hu *HoldUpdate) SetProviderEvidenceRef(s string) *HoldUpdate {
+	hu.mutation.SetProviderEvidenceRef(s)
+	return hu
+}
+
+// SetNillableProviderEvidenceRef sets the "provider_evidence_ref" field if the given value is not nil.
+func (hu *HoldUpdate) SetNillableProviderEvidenceRef(s *string) *HoldUpdate {
+	if s != nil {
+		hu.SetProviderEvidenceRef(*s)
+	}
+	return hu
+}
+
 // SetCurrency sets the "currency" field.
 func (hu *HoldUpdate) SetCurrency(s string) *HoldUpdate {
 	hu.mutation.SetCurrency(s)
@@ -310,6 +429,39 @@ func (hu *HoldUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := hu.mutation.AddedAmountCents(); ok {
 		_spec.AddField(hold.FieldAmountCents, field.TypeInt64, value)
 	}
+	if value, ok := hu.mutation.ActivationAmountCents(); ok {
+		_spec.SetField(hold.FieldActivationAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.AddedActivationAmountCents(); ok {
+		_spec.AddField(hold.FieldActivationAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.OriginalCents(); ok {
+		_spec.SetField(hold.FieldOriginalCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.AddedOriginalCents(); ok {
+		_spec.AddField(hold.FieldOriginalCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.RemainingCents(); ok {
+		_spec.SetField(hold.FieldRemainingCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.AddedRemainingCents(); ok {
+		_spec.AddField(hold.FieldRemainingCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.ConsumedCents(); ok {
+		_spec.SetField(hold.FieldConsumedCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.AddedConsumedCents(); ok {
+		_spec.AddField(hold.FieldConsumedCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.ReleasedCents(); ok {
+		_spec.SetField(hold.FieldReleasedCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.AddedReleasedCents(); ok {
+		_spec.AddField(hold.FieldReleasedCents, field.TypeInt64, value)
+	}
+	if value, ok := hu.mutation.ProviderEvidenceRef(); ok {
+		_spec.SetField(hold.FieldProviderEvidenceRef, field.TypeString, value)
+	}
 	if value, ok := hu.mutation.Currency(); ok {
 		_spec.SetField(hold.FieldCurrency, field.TypeString, value)
 	}
@@ -425,6 +577,125 @@ func (huo *HoldUpdateOne) SetNillableAmountCents(i *int64) *HoldUpdateOne {
 // AddAmountCents adds i to the "amount_cents" field.
 func (huo *HoldUpdateOne) AddAmountCents(i int64) *HoldUpdateOne {
 	huo.mutation.AddAmountCents(i)
+	return huo
+}
+
+// SetActivationAmountCents sets the "activation_amount_cents" field.
+func (huo *HoldUpdateOne) SetActivationAmountCents(i int64) *HoldUpdateOne {
+	huo.mutation.ResetActivationAmountCents()
+	huo.mutation.SetActivationAmountCents(i)
+	return huo
+}
+
+// SetNillableActivationAmountCents sets the "activation_amount_cents" field if the given value is not nil.
+func (huo *HoldUpdateOne) SetNillableActivationAmountCents(i *int64) *HoldUpdateOne {
+	if i != nil {
+		huo.SetActivationAmountCents(*i)
+	}
+	return huo
+}
+
+// AddActivationAmountCents adds i to the "activation_amount_cents" field.
+func (huo *HoldUpdateOne) AddActivationAmountCents(i int64) *HoldUpdateOne {
+	huo.mutation.AddActivationAmountCents(i)
+	return huo
+}
+
+// SetOriginalCents sets the "original_cents" field.
+func (huo *HoldUpdateOne) SetOriginalCents(i int64) *HoldUpdateOne {
+	huo.mutation.ResetOriginalCents()
+	huo.mutation.SetOriginalCents(i)
+	return huo
+}
+
+// SetNillableOriginalCents sets the "original_cents" field if the given value is not nil.
+func (huo *HoldUpdateOne) SetNillableOriginalCents(i *int64) *HoldUpdateOne {
+	if i != nil {
+		huo.SetOriginalCents(*i)
+	}
+	return huo
+}
+
+// AddOriginalCents adds i to the "original_cents" field.
+func (huo *HoldUpdateOne) AddOriginalCents(i int64) *HoldUpdateOne {
+	huo.mutation.AddOriginalCents(i)
+	return huo
+}
+
+// SetRemainingCents sets the "remaining_cents" field.
+func (huo *HoldUpdateOne) SetRemainingCents(i int64) *HoldUpdateOne {
+	huo.mutation.ResetRemainingCents()
+	huo.mutation.SetRemainingCents(i)
+	return huo
+}
+
+// SetNillableRemainingCents sets the "remaining_cents" field if the given value is not nil.
+func (huo *HoldUpdateOne) SetNillableRemainingCents(i *int64) *HoldUpdateOne {
+	if i != nil {
+		huo.SetRemainingCents(*i)
+	}
+	return huo
+}
+
+// AddRemainingCents adds i to the "remaining_cents" field.
+func (huo *HoldUpdateOne) AddRemainingCents(i int64) *HoldUpdateOne {
+	huo.mutation.AddRemainingCents(i)
+	return huo
+}
+
+// SetConsumedCents sets the "consumed_cents" field.
+func (huo *HoldUpdateOne) SetConsumedCents(i int64) *HoldUpdateOne {
+	huo.mutation.ResetConsumedCents()
+	huo.mutation.SetConsumedCents(i)
+	return huo
+}
+
+// SetNillableConsumedCents sets the "consumed_cents" field if the given value is not nil.
+func (huo *HoldUpdateOne) SetNillableConsumedCents(i *int64) *HoldUpdateOne {
+	if i != nil {
+		huo.SetConsumedCents(*i)
+	}
+	return huo
+}
+
+// AddConsumedCents adds i to the "consumed_cents" field.
+func (huo *HoldUpdateOne) AddConsumedCents(i int64) *HoldUpdateOne {
+	huo.mutation.AddConsumedCents(i)
+	return huo
+}
+
+// SetReleasedCents sets the "released_cents" field.
+func (huo *HoldUpdateOne) SetReleasedCents(i int64) *HoldUpdateOne {
+	huo.mutation.ResetReleasedCents()
+	huo.mutation.SetReleasedCents(i)
+	return huo
+}
+
+// SetNillableReleasedCents sets the "released_cents" field if the given value is not nil.
+func (huo *HoldUpdateOne) SetNillableReleasedCents(i *int64) *HoldUpdateOne {
+	if i != nil {
+		huo.SetReleasedCents(*i)
+	}
+	return huo
+}
+
+// AddReleasedCents adds i to the "released_cents" field.
+func (huo *HoldUpdateOne) AddReleasedCents(i int64) *HoldUpdateOne {
+	huo.mutation.AddReleasedCents(i)
+	return huo
+}
+
+// SetProviderEvidenceRef sets the "provider_evidence_ref" field.
+func (huo *HoldUpdateOne) SetProviderEvidenceRef(s string) *HoldUpdateOne {
+	huo.mutation.SetProviderEvidenceRef(s)
+	return huo
+}
+
+// SetNillableProviderEvidenceRef sets the "provider_evidence_ref" field if the given value is not nil.
+func (huo *HoldUpdateOne) SetNillableProviderEvidenceRef(s *string) *HoldUpdateOne {
+	if s != nil {
+		huo.SetProviderEvidenceRef(*s)
+	}
 	return huo
 }
 
@@ -662,6 +933,39 @@ func (huo *HoldUpdateOne) sqlSave(ctx context.Context) (_node *Hold, err error) 
 	}
 	if value, ok := huo.mutation.AddedAmountCents(); ok {
 		_spec.AddField(hold.FieldAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.ActivationAmountCents(); ok {
+		_spec.SetField(hold.FieldActivationAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.AddedActivationAmountCents(); ok {
+		_spec.AddField(hold.FieldActivationAmountCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.OriginalCents(); ok {
+		_spec.SetField(hold.FieldOriginalCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.AddedOriginalCents(); ok {
+		_spec.AddField(hold.FieldOriginalCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.RemainingCents(); ok {
+		_spec.SetField(hold.FieldRemainingCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.AddedRemainingCents(); ok {
+		_spec.AddField(hold.FieldRemainingCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.ConsumedCents(); ok {
+		_spec.SetField(hold.FieldConsumedCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.AddedConsumedCents(); ok {
+		_spec.AddField(hold.FieldConsumedCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.ReleasedCents(); ok {
+		_spec.SetField(hold.FieldReleasedCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.AddedReleasedCents(); ok {
+		_spec.AddField(hold.FieldReleasedCents, field.TypeInt64, value)
+	}
+	if value, ok := huo.mutation.ProviderEvidenceRef(); ok {
+		_spec.SetField(hold.FieldProviderEvidenceRef, field.TypeString, value)
 	}
 	if value, ok := huo.mutation.Currency(); ok {
 		_spec.SetField(hold.FieldCurrency, field.TypeString, value)

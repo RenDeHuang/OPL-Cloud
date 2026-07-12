@@ -16,6 +16,7 @@ import (
 	ledgerent "opl-cloud/services/ledger/ent"
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/hold"
+	"opl-cloud/services/ledger/ent/holdactivation"
 	"opl-cloud/services/ledger/ent/holdrelease"
 	"opl-cloud/services/ledger/ent/ledgerentry"
 	"opl-cloud/services/ledger/ent/manualtopup"
@@ -131,17 +132,23 @@ func (s *PostgresStore) ManualTopUp(ctx context.Context, input ManualTopUpInput)
 }
 
 func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldResult, error) {
-	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 {
+	unlock, err := s.lockAccount(ctx, input.AccountID)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	defer unlock()
+	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 || input.ActivationAmountCents < 0 || input.ActivationAmountCents > input.AmountCents {
 		return HoldResult{}, ErrInvalidHoldInput
 	}
 	requestHash, err := hashJSON(struct {
-		AccountID    string `json:"accountId"`
-		WorkspaceID  string `json:"workspaceId"`
-		ResourceType string `json:"resourceType"`
-		ResourceID   string `json:"resourceId"`
-		AmountCents  int64  `json:"amountCents"`
-		Currency     string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
+		AccountID             string `json:"accountId"`
+		WorkspaceID           string `json:"workspaceId"`
+		ResourceType          string `json:"resourceType"`
+		ResourceID            string `json:"resourceId"`
+		AmountCents           int64  `json:"amountCents"`
+		ActivationAmountCents int64  `json:"activationAmountCents"`
+		Currency              string `json:"currency"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.ActivationAmountCents, input.Currency})
 	if err != nil {
 		return HoldResult{}, err
 	}
@@ -185,7 +192,7 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 	if err := createWalletTransaction(ctx, tx, walletTx); err != nil {
 		return HoldResult{}, err
 	}
-	result := HoldResult{ID: postgresID("hold", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "held", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
+	result := HoldResult{ID: postgresID("hold", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, ActivationAmountCents: input.ActivationAmountCents, OriginalCents: input.AmountCents, RemainingCents: input.AmountCents, Currency: input.Currency, Status: "reserved", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
 	if err := tx.Hold.Create().
 		SetID(result.ID).
 		SetAccountID(result.AccountID).
@@ -193,6 +200,11 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 		SetResourceType(result.ResourceType).
 		SetResourceID(result.ResourceID).
 		SetAmountCents(result.AmountCents).
+		SetActivationAmountCents(result.ActivationAmountCents).
+		SetOriginalCents(result.OriginalCents).
+		SetRemainingCents(result.RemainingCents).
+		SetConsumedCents(0).
+		SetReleasedCents(0).
 		SetCurrency(result.Currency).
 		SetStatus(result.Status).
 		SetLedgerEntryID(result.LedgerEntryID).
@@ -206,7 +218,92 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 	return result, tx.Commit()
 }
 
+func (s *PostgresStore) ActivateHold(ctx context.Context, input HoldActivationInput) (HoldActivationResult, error) {
+	unlock, err := s.lockAccount(ctx, input.AccountID)
+	if err != nil {
+		return HoldActivationResult{}, err
+	}
+	defer unlock()
+	requestHash, err := hashJSON(input)
+	if err != nil {
+		return HoldActivationResult{}, err
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return HoldActivationResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if existing, existingHash, err := s.holdActivationByIdempotencyKey(ctx, tx, input.IdempotencyKey); err == nil {
+		if existingHash != requestHash {
+			return HoldActivationResult{}, ErrIdempotencyConflict
+		}
+		existing.Replayed = true
+		return existing, tx.Commit()
+	} else if !ledgerent.IsNotFound(err) {
+		return HoldActivationResult{}, err
+	}
+	row, err := tx.Hold.Get(ctx, input.HoldID)
+	if ledgerent.IsNotFound(err) {
+		return HoldActivationResult{}, ErrHoldNotFound
+	}
+	if err != nil {
+		return HoldActivationResult{}, err
+	}
+	if !holdEntMatches(row, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
+		return HoldActivationResult{}, ErrHoldIdentityMismatch
+	}
+	if row.Status != "reserved" || row.ActivationAmountCents <= 0 || row.RemainingCents < row.ActivationAmountCents {
+		return HoldActivationResult{}, ErrInvalidHoldState
+	}
+	wallet, err := s.walletByAccount(ctx, tx, input.AccountID)
+	if err != nil {
+		return HoldActivationResult{}, err
+	}
+	amount := row.ActivationAmountCents
+	if wallet.BalanceCents < amount || wallet.FrozenCents < amount {
+		return HoldActivationResult{}, ErrInsufficientBalance
+	}
+	now := s.now()
+	wallet.BalanceCents -= amount
+	wallet.FrozenCents -= amount
+	wallet.TotalSpentCents += amount
+	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
+	wallet.UpdatedAt = now
+	if err := s.saveWallet(ctx, tx, wallet); err != nil {
+		return HoldActivationResult{}, err
+	}
+	remaining := row.RemainingCents - amount
+	consumed := row.ConsumedCents + amount
+	if err := tx.Hold.UpdateOneID(row.ID).SetRemainingCents(remaining).SetConsumedCents(consumed).SetProviderEvidenceRef(input.ProviderEvidenceRef).SetStatus("active").Exec(ctx); err != nil {
+		return HoldActivationResult{}, err
+	}
+	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: amount, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_activation", Reason: input.ResourceID, CreatedAt: now}
+	if err := createLedgerEntry(ctx, tx, entry); err != nil {
+		return HoldActivationResult{}, err
+	}
+	walletTx := WalletTransaction{ID: postgresID("wtx", now.Add(time.Nanosecond)), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -amount, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
+	if err := createWalletTransaction(ctx, tx, walletTx); err != nil {
+		return HoldActivationResult{}, err
+	}
+	id := postgresID("hact", now.Add(2*time.Nanosecond))
+	if err := tx.HoldActivation.Create().SetID(id).SetAccountID(input.AccountID).SetWorkspaceID(input.WorkspaceID).SetResourceType(input.ResourceType).SetResourceID(input.ResourceID).SetHoldID(input.HoldID).SetAmountCents(amount).SetCurrency(input.Currency).SetStatus("activated").SetProviderEvidenceRef(input.ProviderEvidenceRef).SetLedgerEntryID(entry.ID).SetWalletTransactionID(walletTx.ID).SetIdempotencyKey(input.IdempotencyKey).SetRequestHash(requestHash).SetCreatedAt(now).Exec(ctx); err != nil {
+		return HoldActivationResult{}, err
+	}
+	holdResult := holdResultFromEnt(row, wallet)
+	holdResult.RemainingCents = remaining
+	holdResult.ConsumedCents = consumed
+	holdResult.ProviderEvidenceRef = input.ProviderEvidenceRef
+	holdResult.Status = "active"
+	result := HoldActivationResult{HoldResult: holdResult, ActivationLedgerEntryID: entry.ID, ActivationWalletTransactionID: walletTx.ID}
+	return result, tx.Commit()
+}
+
 func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput) (HoldReleaseResult, error) {
+	unlock, err := s.lockAccount(ctx, input.AccountID)
+	if err != nil {
+		return HoldReleaseResult{}, err
+	}
+	defer unlock()
 	requestHash, err := hashHoldRelease(input)
 	if err != nil {
 		return HoldReleaseResult{}, err
@@ -227,6 +324,20 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 		return HoldReleaseResult{}, err
 	}
 
+	row, err := tx.Hold.Get(ctx, input.HoldID)
+	if ledgerent.IsNotFound(err) {
+		return HoldReleaseResult{}, ErrHoldNotFound
+	}
+	if err != nil {
+		return HoldReleaseResult{}, err
+	}
+	if !holdEntMatches(row, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
+		return HoldReleaseResult{}, ErrHoldIdentityMismatch
+	}
+	if row.Status == "released" || row.RemainingCents <= 0 {
+		return HoldReleaseResult{}, ErrInvalidHoldState
+	}
+	amount := row.RemainingCents
 	now := s.now()
 	wallet, err := s.walletByAccount(ctx, tx, input.AccountID)
 	if ledgerent.IsNotFound(err) {
@@ -235,10 +346,10 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 	if err != nil {
 		return HoldReleaseResult{}, err
 	}
-	if wallet.FrozenCents < input.AmountCents {
+	if wallet.FrozenCents < amount {
 		return HoldReleaseResult{}, ErrInsufficientFrozen
 	}
-	wallet.FrozenCents -= input.AmountCents
+	wallet.FrozenCents -= amount
 	wallet.Currency = input.Currency
 	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
 	wallet.UpdatedAt = now
@@ -246,7 +357,7 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 		return HoldReleaseResult{}, err
 	}
 
-	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "release", Source: input.ResourceType + "_hold_released", Reason: input.Reason, CreatedAt: now}
+	entry := LedgerEntry{ID: postgresID("le", now), AccountID: input.AccountID, AmountCents: amount, Currency: input.Currency, Direction: "release", Source: input.ResourceType + "_hold_released", Reason: input.Reason, CreatedAt: now}
 	if err := createLedgerEntry(ctx, tx, entry); err != nil {
 		return HoldReleaseResult{}, err
 	}
@@ -254,7 +365,7 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 	if err := createWalletTransaction(ctx, tx, walletTx); err != nil {
 		return HoldReleaseResult{}, err
 	}
-	result := HoldReleaseResult{ID: postgresID("hrel", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "released", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
+	result := HoldReleaseResult{ID: postgresID("hrel", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: amount, Currency: input.Currency, Status: "released", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, Wallet: wallet, CreatedAt: now}
 	if err := tx.HoldRelease.Create().
 		SetID(result.ID).
 		SetAccountID(result.AccountID).
@@ -271,6 +382,9 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 		SetRequestHash(requestHash).
 		SetCreatedAt(result.CreatedAt).
 		Exec(ctx); err != nil {
+		return HoldReleaseResult{}, err
+	}
+	if err := tx.Hold.UpdateOneID(row.ID).SetRemainingCents(0).SetReleasedCents(row.ReleasedCents + amount).SetStatus("released").Exec(ctx); err != nil {
 		return HoldReleaseResult{}, err
 	}
 	return result, tx.Commit()
@@ -818,11 +932,17 @@ func reviewPolicyScopePredicates(identity ExecutionIdentity) []predicate.ReviewP
 }
 
 func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
+	unlock, err := s.lockAccount(ctx, input.AccountID)
+	if err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	defer unlock()
 	requestHash, err := hashJSON(struct {
 		AccountID               string         `json:"accountId"`
 		WorkspaceID             string         `json:"workspaceId"`
 		ResourceType            string         `json:"resourceType"`
 		ResourceID              string         `json:"resourceId"`
+		HoldID                  string         `json:"holdId"`
 		AmountCents             int64          `json:"amountCents"`
 		Currency                string         `json:"currency"`
 		PricingVersion          string         `json:"pricingVersion"`
@@ -832,7 +952,7 @@ func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettle
 		Quantity                float64        `json:"quantity"`
 		Unit                    string         `json:"unit"`
 		ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.HoldID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
 	if err != nil {
 		return ResourceSettlementResult{}, err
 	}
@@ -852,6 +972,19 @@ func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettle
 		return ResourceSettlementResult{}, err
 	}
 
+	row, err := tx.Hold.Get(ctx, input.HoldID)
+	if ledgerent.IsNotFound(err) {
+		return ResourceSettlementResult{}, ErrHoldNotFound
+	}
+	if err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	if !holdEntMatches(row, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
+		return ResourceSettlementResult{}, ErrHoldIdentityMismatch
+	}
+	if row.Status != "active" && row.Status != "exhausted" {
+		return ResourceSettlementResult{}, ErrInvalidHoldState
+	}
 	now := s.now()
 	wallet, err := s.walletByAccount(ctx, tx, input.AccountID)
 	if ledgerent.IsNotFound(err) {
@@ -860,11 +993,13 @@ func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettle
 	if err != nil {
 		return ResourceSettlementResult{}, err
 	}
-	if wallet.BalanceCents < input.AmountCents {
-		return ResourceSettlementResult{}, ErrInsufficientBalance
+	availablePart := minInt64(input.AmountCents, wallet.AvailableCents)
+	holdPart := input.AmountCents - availablePart
+	if holdPart > row.RemainingCents {
+		return ResourceSettlementResult{}, ErrInsufficientResourceHold
 	}
 	wallet.BalanceCents -= input.AmountCents
-	wallet.FrozenCents -= minInt64(wallet.FrozenCents, input.AmountCents)
+	wallet.FrozenCents -= holdPart
 	wallet.TotalSpentCents += input.AmountCents
 	wallet.Currency = input.Currency
 	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
@@ -881,7 +1016,15 @@ func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettle
 	if err := createWalletTransaction(ctx, tx, walletTx); err != nil {
 		return ResourceSettlementResult{}, err
 	}
-	result := ResourceSettlementResult{ID: postgresID("settle", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
+	remaining := row.RemainingCents - holdPart
+	status := row.Status
+	if remaining == 0 {
+		status = "exhausted"
+	}
+	if err := tx.Hold.UpdateOneID(row.ID).SetRemainingCents(remaining).SetConsumedCents(row.ConsumedCents + holdPart).SetStatus(status).Exec(ctx); err != nil {
+		return ResourceSettlementResult{}, err
+	}
+	result := ResourceSettlementResult{ID: postgresID("settle", now.Add(2*time.Nanosecond)), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, HoldRemainingCents: remaining, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: walletTx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
 	priceSnapshotJSON, err := json.Marshal(result.PriceSnapshot)
 	if err != nil {
 		return ResourceSettlementResult{}, err
@@ -892,6 +1035,7 @@ func (s *PostgresStore) SettleResource(ctx context.Context, input ResourceSettle
 		SetWorkspaceID(result.WorkspaceID).
 		SetResourceType(result.ResourceType).
 		SetResourceID(result.ResourceID).
+		SetHoldID(result.HoldID).
 		SetAmountCents(result.AmountCents).
 		SetCurrency(result.Currency).
 		SetStatus(result.Status).
@@ -1102,7 +1246,23 @@ func (s *PostgresStore) holdByIdempotencyKey(ctx context.Context, tx *ledgerent.
 	if err != nil {
 		return HoldResult{}, "", err
 	}
-	return HoldResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, AmountCents: row.AmountCents, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, Wallet: wallet, CreatedAt: row.CreatedAt}, row.RequestHash, nil
+	return holdResultFromEnt(row, wallet), row.RequestHash, nil
+}
+
+func (s *PostgresStore) holdActivationByIdempotencyKey(ctx context.Context, tx *ledgerent.Tx, key string) (HoldActivationResult, string, error) {
+	row, err := tx.HoldActivation.Query().Where(holdactivation.IdempotencyKey(key)).Only(ctx)
+	if err != nil {
+		return HoldActivationResult{}, "", err
+	}
+	holdRow, err := tx.Hold.Get(ctx, row.HoldID)
+	if err != nil {
+		return HoldActivationResult{}, "", err
+	}
+	wallet, err := s.walletByAccount(ctx, tx, row.AccountID)
+	if err != nil {
+		return HoldActivationResult{}, "", err
+	}
+	return HoldActivationResult{HoldResult: holdResultFromEnt(holdRow, wallet), ActivationLedgerEntryID: row.LedgerEntryID, ActivationWalletTransactionID: row.WalletTransactionID}, row.RequestHash, nil
 }
 
 func (s *PostgresStore) holdReleaseByIdempotencyKey(ctx context.Context, tx *ledgerent.Tx, key string) (HoldReleaseResult, string, error) {
@@ -1214,9 +1374,33 @@ func manualTopUpFromEnt(row *ledgerent.ManualTopup) ManualTopUp {
 }
 
 func resourceSettlementFromEnt(row *ledgerent.ResourceSettlement, wallet Wallet) ResourceSettlementResult {
-	result := ResourceSettlementResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, AmountCents: row.AmountCents, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, PricingVersion: row.PricingVersion, UsagePeriodStart: row.UsagePeriodStart, UsagePeriodEnd: row.UsagePeriodEnd, Quantity: row.Quantity, Unit: row.Unit, ProviderCostEvidenceRef: row.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: row.CreatedAt}
+	result := ResourceSettlementResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, HoldID: row.HoldID, AmountCents: row.AmountCents, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, PricingVersion: row.PricingVersion, UsagePeriodStart: row.UsagePeriodStart, UsagePeriodEnd: row.UsagePeriodEnd, Quantity: row.Quantity, Unit: row.Unit, ProviderCostEvidenceRef: row.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: row.CreatedAt}
 	_ = json.Unmarshal([]byte(row.PriceSnapshotJSON), &result.PriceSnapshot)
 	return result
+}
+
+func holdResultFromEnt(row *ledgerent.Hold, wallet Wallet) HoldResult {
+	return HoldResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, AmountCents: row.AmountCents, ActivationAmountCents: row.ActivationAmountCents, OriginalCents: row.OriginalCents, RemainingCents: row.RemainingCents, ConsumedCents: row.ConsumedCents, ReleasedCents: row.ReleasedCents, ProviderEvidenceRef: row.ProviderEvidenceRef, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, Wallet: wallet, CreatedAt: row.CreatedAt}
+}
+
+func holdEntMatches(row *ledgerent.Hold, accountID, workspaceID, resourceType, resourceID, currency string) bool {
+	return row.AccountID == accountID && row.WorkspaceID == workspaceID && row.ResourceType == resourceType && row.ResourceID == resourceID && row.Currency == currency
+}
+
+func (s *PostgresStore) lockAccount(ctx context.Context, accountID string) (func(), error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	key := "ledger-account:" + accountID
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock(hashtext($1))", key); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return func() {
+		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock(hashtext($1))", key)
+		_ = conn.Close()
+	}, nil
 }
 
 func postgresID(prefix string, t time.Time) string {

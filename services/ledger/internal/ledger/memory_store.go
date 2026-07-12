@@ -23,6 +23,7 @@ type MemoryStore struct {
 	walletTx                []WalletTransaction
 	topups                  []ManualTopUp
 	settlements             []ResourceSettlementResult
+	holds                   map[string]HoldResult
 	nextID                  int64
 }
 
@@ -45,6 +46,7 @@ func NewMemoryStore() *MemoryStore {
 		reviewPolicyIdempotency: map[string]idempotencyRecord{},
 		receipts:                map[string]Receipt{},
 		reviewPolicies:          map[string]ReviewPolicy{},
+		holds:                   map[string]HoldResult{},
 	}
 }
 
@@ -122,17 +124,18 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 {
+	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 || input.ActivationAmountCents < 0 || input.ActivationAmountCents > input.AmountCents {
 		return HoldResult{}, ErrInvalidHoldInput
 	}
 	payloadHash, err := hashJSON(struct {
-		AccountID    string `json:"accountId"`
-		WorkspaceID  string `json:"workspaceId"`
-		ResourceType string `json:"resourceType"`
-		ResourceID   string `json:"resourceId"`
-		AmountCents  int64  `json:"amountCents"`
-		Currency     string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency})
+		AccountID             string `json:"accountId"`
+		WorkspaceID           string `json:"workspaceId"`
+		ResourceType          string `json:"resourceType"`
+		ResourceID            string `json:"resourceId"`
+		AmountCents           int64  `json:"amountCents"`
+		ActivationAmountCents int64  `json:"activationAmountCents"`
+		Currency              string `json:"currency"`
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.ActivationAmountCents, input.Currency})
 	if err != nil {
 		return HoldResult{}, err
 	}
@@ -182,20 +185,77 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 		CreatedAt:       now,
 	}
 	result := HoldResult{
-		ID:                  s.newID("hold"),
-		AccountID:           input.AccountID,
-		WorkspaceID:         input.WorkspaceID,
-		ResourceType:        input.ResourceType,
-		ResourceID:          input.ResourceID,
-		AmountCents:         input.AmountCents,
-		Currency:            input.Currency,
-		Status:              "held",
-		LedgerEntryID:       entry.ID,
-		WalletTransactionID: tx.ID,
-		Wallet:              wallet,
-		CreatedAt:           now,
+		ID:                    s.newID("hold"),
+		AccountID:             input.AccountID,
+		WorkspaceID:           input.WorkspaceID,
+		ResourceType:          input.ResourceType,
+		ResourceID:            input.ResourceID,
+		AmountCents:           input.AmountCents,
+		ActivationAmountCents: input.ActivationAmountCents,
+		OriginalCents:         input.AmountCents,
+		RemainingCents:        input.AmountCents,
+		Currency:              input.Currency,
+		Status:                "reserved",
+		LedgerEntryID:         entry.ID,
+		WalletTransactionID:   tx.ID,
+		Wallet:                wallet,
+		CreatedAt:             now,
 	}
 	s.wallets[input.AccountID] = wallet
+	s.holds[result.ID] = result
+	s.entries = append(s.entries, entry)
+	s.walletTx = append(s.walletTx, tx)
+	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
+	return result, nil
+}
+
+func (s *MemoryStore) ActivateHold(_ context.Context, input HoldActivationInput) (HoldActivationResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payloadHash, err := hashJSON(input)
+	if err != nil {
+		return HoldActivationResult{}, err
+	}
+	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
+		if existing.payloadHash != payloadHash {
+			return HoldActivationResult{}, ErrIdempotencyConflict
+		}
+		result := existing.result.(HoldActivationResult)
+		result.Replayed = true
+		return result, nil
+	}
+	hold, ok := s.holds[input.HoldID]
+	if !ok {
+		return HoldActivationResult{}, ErrHoldNotFound
+	}
+	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
+		return HoldActivationResult{}, ErrHoldIdentityMismatch
+	}
+	if hold.Status != "reserved" || hold.ActivationAmountCents <= 0 || hold.RemainingCents < hold.ActivationAmountCents {
+		return HoldActivationResult{}, ErrInvalidHoldState
+	}
+	wallet := s.wallets[input.AccountID]
+	if wallet.BalanceCents < hold.ActivationAmountCents || wallet.FrozenCents < hold.ActivationAmountCents {
+		return HoldActivationResult{}, ErrInsufficientBalance
+	}
+	now := time.Now().UTC()
+	amount := hold.ActivationAmountCents
+	wallet.BalanceCents -= amount
+	wallet.FrozenCents -= amount
+	wallet.TotalSpentCents += amount
+	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
+	wallet.UpdatedAt = now
+	hold.RemainingCents -= amount
+	hold.ConsumedCents += amount
+	hold.ProviderEvidenceRef = input.ProviderEvidenceRef
+	hold.Status = "active"
+	hold.Wallet = wallet
+	entry := LedgerEntry{ID: s.newID("le"), AccountID: input.AccountID, AmountCents: amount, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_activation", Reason: input.ResourceID, CreatedAt: now}
+	tx := WalletTransaction{ID: s.newID("wtx"), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -amount, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
+	result := HoldActivationResult{HoldResult: hold, ActivationLedgerEntryID: entry.ID, ActivationWalletTransactionID: tx.ID}
+	s.wallets[input.AccountID] = wallet
+	s.holds[hold.ID] = hold
 	s.entries = append(s.entries, entry)
 	s.walletTx = append(s.walletTx, tx)
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
@@ -219,15 +279,26 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 		return result, nil
 	}
 
+	hold, ok := s.holds[input.HoldID]
+	if !ok {
+		return HoldReleaseResult{}, ErrHoldNotFound
+	}
+	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
+		return HoldReleaseResult{}, ErrHoldIdentityMismatch
+	}
+	if hold.Status == "released" || hold.RemainingCents <= 0 {
+		return HoldReleaseResult{}, ErrInvalidHoldState
+	}
+	amount := hold.RemainingCents
 	now := time.Now().UTC()
 	wallet := s.wallets[input.AccountID]
 	if wallet.AccountID == "" {
 		wallet = Wallet{AccountID: input.AccountID, Currency: input.Currency}
 	}
-	if wallet.FrozenCents < input.AmountCents {
+	if wallet.FrozenCents < amount {
 		return HoldReleaseResult{}, ErrInsufficientFrozen
 	}
-	wallet.FrozenCents -= input.AmountCents
+	wallet.FrozenCents -= amount
 	wallet.Currency = input.Currency
 	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
 	wallet.UpdatedAt = now
@@ -235,7 +306,7 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 	entry := LedgerEntry{
 		ID:          s.newID("le"),
 		AccountID:   input.AccountID,
-		AmountCents: input.AmountCents,
+		AmountCents: amount,
 		Currency:    input.Currency,
 		Direction:   "release",
 		Source:      input.ResourceType + "_hold_released",
@@ -261,7 +332,7 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 		ResourceType:        input.ResourceType,
 		ResourceID:          input.ResourceID,
 		HoldID:              input.HoldID,
-		AmountCents:         input.AmountCents,
+		AmountCents:         amount,
 		Currency:            input.Currency,
 		Status:              "released",
 		LedgerEntryID:       entry.ID,
@@ -270,6 +341,11 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 		CreatedAt:           now,
 	}
 	s.wallets[input.AccountID] = wallet
+	hold.RemainingCents = 0
+	hold.ReleasedCents += amount
+	hold.Status = "released"
+	hold.Wallet = wallet
+	s.holds[hold.ID] = hold
 	s.entries = append(s.entries, entry)
 	s.walletTx = append(s.walletTx, tx)
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
@@ -657,6 +733,7 @@ func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlement
 		WorkspaceID             string         `json:"workspaceId"`
 		ResourceType            string         `json:"resourceType"`
 		ResourceID              string         `json:"resourceId"`
+		HoldID                  string         `json:"holdId"`
 		AmountCents             int64          `json:"amountCents"`
 		Currency                string         `json:"currency"`
 		PricingVersion          string         `json:"pricingVersion"`
@@ -666,7 +743,7 @@ func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlement
 		Quantity                float64        `json:"quantity"`
 		Unit                    string         `json:"unit"`
 		ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
+	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.HoldID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
 	if err != nil {
 		return ResourceSettlementResult{}, err
 	}
@@ -680,16 +757,27 @@ func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlement
 	}
 
 	now := time.Now().UTC()
+	hold, ok := s.holds[input.HoldID]
+	if !ok {
+		return ResourceSettlementResult{}, ErrHoldNotFound
+	}
+	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
+		return ResourceSettlementResult{}, ErrHoldIdentityMismatch
+	}
+	if hold.Status != "active" && hold.Status != "exhausted" {
+		return ResourceSettlementResult{}, ErrInvalidHoldState
+	}
 	wallet := s.wallets[input.AccountID]
 	if wallet.AccountID == "" {
 		wallet = Wallet{AccountID: input.AccountID, Currency: input.Currency}
 	}
-	if wallet.BalanceCents < input.AmountCents {
-		return ResourceSettlementResult{}, ErrInsufficientBalance
+	availablePart := minInt64(input.AmountCents, wallet.AvailableCents)
+	holdPart := input.AmountCents - availablePart
+	if holdPart > hold.RemainingCents {
+		return ResourceSettlementResult{}, ErrInsufficientResourceHold
 	}
-	released := minInt64(wallet.FrozenCents, input.AmountCents)
 	wallet.BalanceCents -= input.AmountCents
-	wallet.FrozenCents -= released
+	wallet.FrozenCents -= holdPart
 	wallet.TotalSpentCents += input.AmountCents
 	wallet.Currency = input.Currency
 	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
@@ -697,13 +785,24 @@ func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlement
 
 	entry := LedgerEntry{ID: s.newID("le"), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_settlement", Reason: input.WorkspaceID, CreatedAt: now}
 	tx := WalletTransaction{ID: s.newID("wtx"), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
-	result := ResourceSettlementResult{ID: s.newID("settle"), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: tx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
+	hold.RemainingCents -= holdPart
+	hold.ConsumedCents += holdPart
+	if hold.RemainingCents == 0 {
+		hold.Status = "exhausted"
+	}
+	hold.Wallet = wallet
+	result := ResourceSettlementResult{ID: s.newID("settle"), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, HoldRemainingCents: hold.RemainingCents, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: tx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
 	s.wallets[input.AccountID] = wallet
+	s.holds[hold.ID] = hold
 	s.entries = append(s.entries, entry)
 	s.walletTx = append(s.walletTx, tx)
 	s.settlements = append(s.settlements, result)
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
 	return result, nil
+}
+
+func holdMatches(hold HoldResult, accountID, workspaceID, resourceType, resourceID, currency string) bool {
+	return hold.AccountID == accountID && hold.WorkspaceID == workspaceID && hold.ResourceType == resourceType && hold.ResourceID == resourceID && hold.Currency == currency
 }
 
 func (s *MemoryStore) RecordReconciliation(_ context.Context, input ReconciliationInput) (ReconciliationResult, error) {
@@ -836,7 +935,6 @@ func hashHoldRelease(input HoldReleaseInput) (string, error) {
 		ResourceType string `json:"resourceType"`
 		ResourceID   string `json:"resourceId"`
 		HoldID       string `json:"holdId"`
-		AmountCents  int64  `json:"amountCents"`
 		Currency     string `json:"currency"`
 		Reason       string `json:"reason,omitempty"`
 	}{
@@ -845,7 +943,6 @@ func hashHoldRelease(input HoldReleaseInput) (string, error) {
 		ResourceType: input.ResourceType,
 		ResourceID:   input.ResourceID,
 		HoldID:       input.HoldID,
-		AmountCents:  input.AmountCents,
 		Currency:     input.Currency,
 		Reason:       input.Reason,
 	})

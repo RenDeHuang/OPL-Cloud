@@ -12,6 +12,9 @@ type EvidenceReceipt func(*sql.Selector)
 // Hold is the predicate function for hold builders.
 type Hold func(*sql.Selector)
 
+// HoldActivation is the predicate function for holdactivation builders.
+type HoldActivation func(*sql.Selector)
+
 // HoldRelease is the predicate function for holdrelease builders.
 type HoldRelease func(*sql.Selector)
 

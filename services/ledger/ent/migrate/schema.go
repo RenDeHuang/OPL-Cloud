@@ -78,6 +78,12 @@ var (
 		{Name: "resource_type", Type: field.TypeString},
 		{Name: "resource_id", Type: field.TypeString},
 		{Name: "amount_cents", Type: field.TypeInt64},
+		{Name: "activation_amount_cents", Type: field.TypeInt64, Default: 0},
+		{Name: "original_cents", Type: field.TypeInt64, Default: 0},
+		{Name: "remaining_cents", Type: field.TypeInt64, Default: 0},
+		{Name: "consumed_cents", Type: field.TypeInt64, Default: 0},
+		{Name: "released_cents", Type: field.TypeInt64, Default: 0},
+		{Name: "provider_evidence_ref", Type: field.TypeString, Default: ""},
 		{Name: "currency", Type: field.TypeString, Default: "CNY"},
 		{Name: "status", Type: field.TypeString},
 		{Name: "ledger_entry_id", Type: field.TypeString},
@@ -91,6 +97,30 @@ var (
 		Name:       "holds",
 		Columns:    HoldsColumns,
 		PrimaryKey: []*schema.Column{HoldsColumns[0]},
+	}
+	// HoldActivationsColumns holds the columns for the "hold_activations" table.
+	HoldActivationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Unique: true},
+		{Name: "account_id", Type: field.TypeString},
+		{Name: "workspace_id", Type: field.TypeString, Default: ""},
+		{Name: "resource_type", Type: field.TypeString},
+		{Name: "resource_id", Type: field.TypeString},
+		{Name: "hold_id", Type: field.TypeString},
+		{Name: "amount_cents", Type: field.TypeInt64},
+		{Name: "currency", Type: field.TypeString, Default: "CNY"},
+		{Name: "status", Type: field.TypeString},
+		{Name: "provider_evidence_ref", Type: field.TypeString},
+		{Name: "ledger_entry_id", Type: field.TypeString},
+		{Name: "wallet_transaction_id", Type: field.TypeString},
+		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
+		{Name: "request_hash", Type: field.TypeString},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// HoldActivationsTable holds the schema information for the "hold_activations" table.
+	HoldActivationsTable = &schema.Table{
+		Name:       "hold_activations",
+		Columns:    HoldActivationsColumns,
+		PrimaryKey: []*schema.Column{HoldActivationsColumns[0]},
 	}
 	// HoldReleasesColumns holds the columns for the "hold_releases" table.
 	HoldReleasesColumns = []*schema.Column{
@@ -192,6 +222,7 @@ var (
 		{Name: "workspace_id", Type: field.TypeString, Default: ""},
 		{Name: "resource_type", Type: field.TypeString},
 		{Name: "resource_id", Type: field.TypeString},
+		{Name: "hold_id", Type: field.TypeString, Default: ""},
 		{Name: "amount_cents", Type: field.TypeInt64},
 		{Name: "currency", Type: field.TypeString, Default: "CNY"},
 		{Name: "status", Type: field.TypeString},
@@ -287,6 +318,7 @@ var (
 	Tables = []*schema.Table{
 		EvidenceReceiptsTable,
 		HoldsTable,
+		HoldActivationsTable,
 		HoldReleasesTable,
 		IdempotencyKeysTable,
 		LedgerEntriesTable,

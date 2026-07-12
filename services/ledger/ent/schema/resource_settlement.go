@@ -14,6 +14,7 @@ func (ResourceSettlement) Fields() []ent.Field {
 		field.String("workspace_id").Default(""),
 		field.String("resource_type").NotEmpty(),
 		field.String("resource_id").NotEmpty(),
+		field.String("hold_id").Default(""),
 		field.Int64("amount_cents"),
 		field.String("currency").Default("CNY"),
 		field.String("status").NotEmpty(),

@@ -5,6 +5,7 @@ package ent
 import (
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/hold"
+	"opl-cloud/services/ledger/ent/holdactivation"
 	"opl-cloud/services/ledger/ent/holdrelease"
 	"opl-cloud/services/ledger/ent/idempotencykey"
 	"opl-cloud/services/ledger/ent/ledgerentry"
@@ -106,38 +107,120 @@ func init() {
 	holdDescResourceID := holdFields[4].Descriptor()
 	// hold.ResourceIDValidator is a validator for the "resource_id" field. It is called by the builders before save.
 	hold.ResourceIDValidator = holdDescResourceID.Validators[0].(func(string) error)
+	// holdDescActivationAmountCents is the schema descriptor for activation_amount_cents field.
+	holdDescActivationAmountCents := holdFields[6].Descriptor()
+	// hold.DefaultActivationAmountCents holds the default value on creation for the activation_amount_cents field.
+	hold.DefaultActivationAmountCents = holdDescActivationAmountCents.Default.(int64)
+	// holdDescOriginalCents is the schema descriptor for original_cents field.
+	holdDescOriginalCents := holdFields[7].Descriptor()
+	// hold.DefaultOriginalCents holds the default value on creation for the original_cents field.
+	hold.DefaultOriginalCents = holdDescOriginalCents.Default.(int64)
+	// holdDescRemainingCents is the schema descriptor for remaining_cents field.
+	holdDescRemainingCents := holdFields[8].Descriptor()
+	// hold.DefaultRemainingCents holds the default value on creation for the remaining_cents field.
+	hold.DefaultRemainingCents = holdDescRemainingCents.Default.(int64)
+	// holdDescConsumedCents is the schema descriptor for consumed_cents field.
+	holdDescConsumedCents := holdFields[9].Descriptor()
+	// hold.DefaultConsumedCents holds the default value on creation for the consumed_cents field.
+	hold.DefaultConsumedCents = holdDescConsumedCents.Default.(int64)
+	// holdDescReleasedCents is the schema descriptor for released_cents field.
+	holdDescReleasedCents := holdFields[10].Descriptor()
+	// hold.DefaultReleasedCents holds the default value on creation for the released_cents field.
+	hold.DefaultReleasedCents = holdDescReleasedCents.Default.(int64)
+	// holdDescProviderEvidenceRef is the schema descriptor for provider_evidence_ref field.
+	holdDescProviderEvidenceRef := holdFields[11].Descriptor()
+	// hold.DefaultProviderEvidenceRef holds the default value on creation for the provider_evidence_ref field.
+	hold.DefaultProviderEvidenceRef = holdDescProviderEvidenceRef.Default.(string)
 	// holdDescCurrency is the schema descriptor for currency field.
-	holdDescCurrency := holdFields[6].Descriptor()
+	holdDescCurrency := holdFields[12].Descriptor()
 	// hold.DefaultCurrency holds the default value on creation for the currency field.
 	hold.DefaultCurrency = holdDescCurrency.Default.(string)
 	// holdDescStatus is the schema descriptor for status field.
-	holdDescStatus := holdFields[7].Descriptor()
+	holdDescStatus := holdFields[13].Descriptor()
 	// hold.StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	hold.StatusValidator = holdDescStatus.Validators[0].(func(string) error)
 	// holdDescLedgerEntryID is the schema descriptor for ledger_entry_id field.
-	holdDescLedgerEntryID := holdFields[8].Descriptor()
+	holdDescLedgerEntryID := holdFields[14].Descriptor()
 	// hold.LedgerEntryIDValidator is a validator for the "ledger_entry_id" field. It is called by the builders before save.
 	hold.LedgerEntryIDValidator = holdDescLedgerEntryID.Validators[0].(func(string) error)
 	// holdDescWalletTransactionID is the schema descriptor for wallet_transaction_id field.
-	holdDescWalletTransactionID := holdFields[9].Descriptor()
+	holdDescWalletTransactionID := holdFields[15].Descriptor()
 	// hold.WalletTransactionIDValidator is a validator for the "wallet_transaction_id" field. It is called by the builders before save.
 	hold.WalletTransactionIDValidator = holdDescWalletTransactionID.Validators[0].(func(string) error)
 	// holdDescIdempotencyKey is the schema descriptor for idempotency_key field.
-	holdDescIdempotencyKey := holdFields[10].Descriptor()
+	holdDescIdempotencyKey := holdFields[16].Descriptor()
 	// hold.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
 	hold.IdempotencyKeyValidator = holdDescIdempotencyKey.Validators[0].(func(string) error)
 	// holdDescRequestHash is the schema descriptor for request_hash field.
-	holdDescRequestHash := holdFields[11].Descriptor()
+	holdDescRequestHash := holdFields[17].Descriptor()
 	// hold.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
 	hold.RequestHashValidator = holdDescRequestHash.Validators[0].(func(string) error)
 	// holdDescCreatedAt is the schema descriptor for created_at field.
-	holdDescCreatedAt := holdFields[12].Descriptor()
+	holdDescCreatedAt := holdFields[18].Descriptor()
 	// hold.DefaultCreatedAt holds the default value on creation for the created_at field.
 	hold.DefaultCreatedAt = holdDescCreatedAt.Default.(func() time.Time)
 	// holdDescID is the schema descriptor for id field.
 	holdDescID := holdFields[0].Descriptor()
 	// hold.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	hold.IDValidator = holdDescID.Validators[0].(func(string) error)
+	holdactivationFields := schema.HoldActivation{}.Fields()
+	_ = holdactivationFields
+	// holdactivationDescAccountID is the schema descriptor for account_id field.
+	holdactivationDescAccountID := holdactivationFields[1].Descriptor()
+	// holdactivation.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	holdactivation.AccountIDValidator = holdactivationDescAccountID.Validators[0].(func(string) error)
+	// holdactivationDescWorkspaceID is the schema descriptor for workspace_id field.
+	holdactivationDescWorkspaceID := holdactivationFields[2].Descriptor()
+	// holdactivation.DefaultWorkspaceID holds the default value on creation for the workspace_id field.
+	holdactivation.DefaultWorkspaceID = holdactivationDescWorkspaceID.Default.(string)
+	// holdactivationDescResourceType is the schema descriptor for resource_type field.
+	holdactivationDescResourceType := holdactivationFields[3].Descriptor()
+	// holdactivation.ResourceTypeValidator is a validator for the "resource_type" field. It is called by the builders before save.
+	holdactivation.ResourceTypeValidator = holdactivationDescResourceType.Validators[0].(func(string) error)
+	// holdactivationDescResourceID is the schema descriptor for resource_id field.
+	holdactivationDescResourceID := holdactivationFields[4].Descriptor()
+	// holdactivation.ResourceIDValidator is a validator for the "resource_id" field. It is called by the builders before save.
+	holdactivation.ResourceIDValidator = holdactivationDescResourceID.Validators[0].(func(string) error)
+	// holdactivationDescHoldID is the schema descriptor for hold_id field.
+	holdactivationDescHoldID := holdactivationFields[5].Descriptor()
+	// holdactivation.HoldIDValidator is a validator for the "hold_id" field. It is called by the builders before save.
+	holdactivation.HoldIDValidator = holdactivationDescHoldID.Validators[0].(func(string) error)
+	// holdactivationDescCurrency is the schema descriptor for currency field.
+	holdactivationDescCurrency := holdactivationFields[7].Descriptor()
+	// holdactivation.DefaultCurrency holds the default value on creation for the currency field.
+	holdactivation.DefaultCurrency = holdactivationDescCurrency.Default.(string)
+	// holdactivationDescStatus is the schema descriptor for status field.
+	holdactivationDescStatus := holdactivationFields[8].Descriptor()
+	// holdactivation.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	holdactivation.StatusValidator = holdactivationDescStatus.Validators[0].(func(string) error)
+	// holdactivationDescProviderEvidenceRef is the schema descriptor for provider_evidence_ref field.
+	holdactivationDescProviderEvidenceRef := holdactivationFields[9].Descriptor()
+	// holdactivation.ProviderEvidenceRefValidator is a validator for the "provider_evidence_ref" field. It is called by the builders before save.
+	holdactivation.ProviderEvidenceRefValidator = holdactivationDescProviderEvidenceRef.Validators[0].(func(string) error)
+	// holdactivationDescLedgerEntryID is the schema descriptor for ledger_entry_id field.
+	holdactivationDescLedgerEntryID := holdactivationFields[10].Descriptor()
+	// holdactivation.LedgerEntryIDValidator is a validator for the "ledger_entry_id" field. It is called by the builders before save.
+	holdactivation.LedgerEntryIDValidator = holdactivationDescLedgerEntryID.Validators[0].(func(string) error)
+	// holdactivationDescWalletTransactionID is the schema descriptor for wallet_transaction_id field.
+	holdactivationDescWalletTransactionID := holdactivationFields[11].Descriptor()
+	// holdactivation.WalletTransactionIDValidator is a validator for the "wallet_transaction_id" field. It is called by the builders before save.
+	holdactivation.WalletTransactionIDValidator = holdactivationDescWalletTransactionID.Validators[0].(func(string) error)
+	// holdactivationDescIdempotencyKey is the schema descriptor for idempotency_key field.
+	holdactivationDescIdempotencyKey := holdactivationFields[12].Descriptor()
+	// holdactivation.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
+	holdactivation.IdempotencyKeyValidator = holdactivationDescIdempotencyKey.Validators[0].(func(string) error)
+	// holdactivationDescRequestHash is the schema descriptor for request_hash field.
+	holdactivationDescRequestHash := holdactivationFields[13].Descriptor()
+	// holdactivation.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
+	holdactivation.RequestHashValidator = holdactivationDescRequestHash.Validators[0].(func(string) error)
+	// holdactivationDescCreatedAt is the schema descriptor for created_at field.
+	holdactivationDescCreatedAt := holdactivationFields[14].Descriptor()
+	// holdactivation.DefaultCreatedAt holds the default value on creation for the created_at field.
+	holdactivation.DefaultCreatedAt = holdactivationDescCreatedAt.Default.(func() time.Time)
+	// holdactivationDescID is the schema descriptor for id field.
+	holdactivationDescID := holdactivationFields[0].Descriptor()
+	// holdactivation.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	holdactivation.IDValidator = holdactivationDescID.Validators[0].(func(string) error)
 	holdreleaseFields := schema.HoldRelease{}.Fields()
 	_ = holdreleaseFields
 	// holdreleaseDescAccountID is the schema descriptor for account_id field.
@@ -346,60 +429,64 @@ func init() {
 	resourcesettlementDescResourceID := resourcesettlementFields[4].Descriptor()
 	// resourcesettlement.ResourceIDValidator is a validator for the "resource_id" field. It is called by the builders before save.
 	resourcesettlement.ResourceIDValidator = resourcesettlementDescResourceID.Validators[0].(func(string) error)
+	// resourcesettlementDescHoldID is the schema descriptor for hold_id field.
+	resourcesettlementDescHoldID := resourcesettlementFields[5].Descriptor()
+	// resourcesettlement.DefaultHoldID holds the default value on creation for the hold_id field.
+	resourcesettlement.DefaultHoldID = resourcesettlementDescHoldID.Default.(string)
 	// resourcesettlementDescCurrency is the schema descriptor for currency field.
-	resourcesettlementDescCurrency := resourcesettlementFields[6].Descriptor()
+	resourcesettlementDescCurrency := resourcesettlementFields[7].Descriptor()
 	// resourcesettlement.DefaultCurrency holds the default value on creation for the currency field.
 	resourcesettlement.DefaultCurrency = resourcesettlementDescCurrency.Default.(string)
 	// resourcesettlementDescStatus is the schema descriptor for status field.
-	resourcesettlementDescStatus := resourcesettlementFields[7].Descriptor()
+	resourcesettlementDescStatus := resourcesettlementFields[8].Descriptor()
 	// resourcesettlement.StatusValidator is a validator for the "status" field. It is called by the builders before save.
 	resourcesettlement.StatusValidator = resourcesettlementDescStatus.Validators[0].(func(string) error)
 	// resourcesettlementDescLedgerEntryID is the schema descriptor for ledger_entry_id field.
-	resourcesettlementDescLedgerEntryID := resourcesettlementFields[8].Descriptor()
+	resourcesettlementDescLedgerEntryID := resourcesettlementFields[9].Descriptor()
 	// resourcesettlement.LedgerEntryIDValidator is a validator for the "ledger_entry_id" field. It is called by the builders before save.
 	resourcesettlement.LedgerEntryIDValidator = resourcesettlementDescLedgerEntryID.Validators[0].(func(string) error)
 	// resourcesettlementDescWalletTransactionID is the schema descriptor for wallet_transaction_id field.
-	resourcesettlementDescWalletTransactionID := resourcesettlementFields[9].Descriptor()
+	resourcesettlementDescWalletTransactionID := resourcesettlementFields[10].Descriptor()
 	// resourcesettlement.WalletTransactionIDValidator is a validator for the "wallet_transaction_id" field. It is called by the builders before save.
 	resourcesettlement.WalletTransactionIDValidator = resourcesettlementDescWalletTransactionID.Validators[0].(func(string) error)
 	// resourcesettlementDescPricingVersion is the schema descriptor for pricing_version field.
-	resourcesettlementDescPricingVersion := resourcesettlementFields[10].Descriptor()
+	resourcesettlementDescPricingVersion := resourcesettlementFields[11].Descriptor()
 	// resourcesettlement.DefaultPricingVersion holds the default value on creation for the pricing_version field.
 	resourcesettlement.DefaultPricingVersion = resourcesettlementDescPricingVersion.Default.(string)
 	// resourcesettlementDescPriceSnapshotJSON is the schema descriptor for price_snapshot_json field.
-	resourcesettlementDescPriceSnapshotJSON := resourcesettlementFields[11].Descriptor()
+	resourcesettlementDescPriceSnapshotJSON := resourcesettlementFields[12].Descriptor()
 	// resourcesettlement.DefaultPriceSnapshotJSON holds the default value on creation for the price_snapshot_json field.
 	resourcesettlement.DefaultPriceSnapshotJSON = resourcesettlementDescPriceSnapshotJSON.Default.(string)
 	// resourcesettlementDescUsagePeriodStart is the schema descriptor for usage_period_start field.
-	resourcesettlementDescUsagePeriodStart := resourcesettlementFields[12].Descriptor()
+	resourcesettlementDescUsagePeriodStart := resourcesettlementFields[13].Descriptor()
 	// resourcesettlement.DefaultUsagePeriodStart holds the default value on creation for the usage_period_start field.
 	resourcesettlement.DefaultUsagePeriodStart = resourcesettlementDescUsagePeriodStart.Default.(string)
 	// resourcesettlementDescUsagePeriodEnd is the schema descriptor for usage_period_end field.
-	resourcesettlementDescUsagePeriodEnd := resourcesettlementFields[13].Descriptor()
+	resourcesettlementDescUsagePeriodEnd := resourcesettlementFields[14].Descriptor()
 	// resourcesettlement.DefaultUsagePeriodEnd holds the default value on creation for the usage_period_end field.
 	resourcesettlement.DefaultUsagePeriodEnd = resourcesettlementDescUsagePeriodEnd.Default.(string)
 	// resourcesettlementDescQuantity is the schema descriptor for quantity field.
-	resourcesettlementDescQuantity := resourcesettlementFields[14].Descriptor()
+	resourcesettlementDescQuantity := resourcesettlementFields[15].Descriptor()
 	// resourcesettlement.DefaultQuantity holds the default value on creation for the quantity field.
 	resourcesettlement.DefaultQuantity = resourcesettlementDescQuantity.Default.(float64)
 	// resourcesettlementDescUnit is the schema descriptor for unit field.
-	resourcesettlementDescUnit := resourcesettlementFields[15].Descriptor()
+	resourcesettlementDescUnit := resourcesettlementFields[16].Descriptor()
 	// resourcesettlement.DefaultUnit holds the default value on creation for the unit field.
 	resourcesettlement.DefaultUnit = resourcesettlementDescUnit.Default.(string)
 	// resourcesettlementDescProviderCostEvidenceRef is the schema descriptor for provider_cost_evidence_ref field.
-	resourcesettlementDescProviderCostEvidenceRef := resourcesettlementFields[16].Descriptor()
+	resourcesettlementDescProviderCostEvidenceRef := resourcesettlementFields[17].Descriptor()
 	// resourcesettlement.DefaultProviderCostEvidenceRef holds the default value on creation for the provider_cost_evidence_ref field.
 	resourcesettlement.DefaultProviderCostEvidenceRef = resourcesettlementDescProviderCostEvidenceRef.Default.(string)
 	// resourcesettlementDescIdempotencyKey is the schema descriptor for idempotency_key field.
-	resourcesettlementDescIdempotencyKey := resourcesettlementFields[17].Descriptor()
+	resourcesettlementDescIdempotencyKey := resourcesettlementFields[18].Descriptor()
 	// resourcesettlement.IdempotencyKeyValidator is a validator for the "idempotency_key" field. It is called by the builders before save.
 	resourcesettlement.IdempotencyKeyValidator = resourcesettlementDescIdempotencyKey.Validators[0].(func(string) error)
 	// resourcesettlementDescRequestHash is the schema descriptor for request_hash field.
-	resourcesettlementDescRequestHash := resourcesettlementFields[18].Descriptor()
+	resourcesettlementDescRequestHash := resourcesettlementFields[19].Descriptor()
 	// resourcesettlement.RequestHashValidator is a validator for the "request_hash" field. It is called by the builders before save.
 	resourcesettlement.RequestHashValidator = resourcesettlementDescRequestHash.Validators[0].(func(string) error)
 	// resourcesettlementDescCreatedAt is the schema descriptor for created_at field.
-	resourcesettlementDescCreatedAt := resourcesettlementFields[19].Descriptor()
+	resourcesettlementDescCreatedAt := resourcesettlementFields[20].Descriptor()
 	// resourcesettlement.DefaultCreatedAt holds the default value on creation for the created_at field.
 	resourcesettlement.DefaultCreatedAt = resourcesettlementDescCreatedAt.Default.(func() time.Time)
 	// resourcesettlementDescID is the schema descriptor for id field.

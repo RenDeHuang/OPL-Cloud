@@ -52,6 +52,20 @@ func (rsc *ResourceSettlementCreate) SetResourceID(s string) *ResourceSettlement
 	return rsc
 }
 
+// SetHoldID sets the "hold_id" field.
+func (rsc *ResourceSettlementCreate) SetHoldID(s string) *ResourceSettlementCreate {
+	rsc.mutation.SetHoldID(s)
+	return rsc
+}
+
+// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
+func (rsc *ResourceSettlementCreate) SetNillableHoldID(s *string) *ResourceSettlementCreate {
+	if s != nil {
+		rsc.SetHoldID(*s)
+	}
+	return rsc
+}
+
 // SetAmountCents sets the "amount_cents" field.
 func (rsc *ResourceSettlementCreate) SetAmountCents(i int64) *ResourceSettlementCreate {
 	rsc.mutation.SetAmountCents(i)
@@ -259,6 +273,10 @@ func (rsc *ResourceSettlementCreate) defaults() {
 		v := resourcesettlement.DefaultWorkspaceID
 		rsc.mutation.SetWorkspaceID(v)
 	}
+	if _, ok := rsc.mutation.HoldID(); !ok {
+		v := resourcesettlement.DefaultHoldID
+		rsc.mutation.SetHoldID(v)
+	}
 	if _, ok := rsc.mutation.Currency(); !ok {
 		v := resourcesettlement.DefaultCurrency
 		rsc.mutation.SetCurrency(v)
@@ -325,6 +343,9 @@ func (rsc *ResourceSettlementCreate) check() error {
 		if err := resourcesettlement.ResourceIDValidator(v); err != nil {
 			return &ValidationError{Name: "resource_id", err: fmt.Errorf(`ent: validator failed for field "ResourceSettlement.resource_id": %w`, err)}
 		}
+	}
+	if _, ok := rsc.mutation.HoldID(); !ok {
+		return &ValidationError{Name: "hold_id", err: errors.New(`ent: missing required field "ResourceSettlement.hold_id"`)}
 	}
 	if _, ok := rsc.mutation.AmountCents(); !ok {
 		return &ValidationError{Name: "amount_cents", err: errors.New(`ent: missing required field "ResourceSettlement.amount_cents"`)}
@@ -451,6 +472,10 @@ func (rsc *ResourceSettlementCreate) createSpec() (*ResourceSettlement, *sqlgrap
 	if value, ok := rsc.mutation.ResourceID(); ok {
 		_spec.SetField(resourcesettlement.FieldResourceID, field.TypeString, value)
 		_node.ResourceID = value
+	}
+	if value, ok := rsc.mutation.HoldID(); ok {
+		_spec.SetField(resourcesettlement.FieldHoldID, field.TypeString, value)
+		_node.HoldID = value
 	}
 	if value, ok := rsc.mutation.AmountCents(); ok {
 		_spec.SetField(resourcesettlement.FieldAmountCents, field.TypeInt64, value)

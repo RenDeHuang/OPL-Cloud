@@ -5,6 +5,7 @@ import "context"
 type Store interface {
 	ManualTopUp(ctx context.Context, input ManualTopUpInput) (ManualTopUpResult, error)
 	CreateHold(ctx context.Context, input HoldInput) (HoldResult, error)
+	ActivateHold(ctx context.Context, input HoldActivationInput) (HoldActivationResult, error)
 	ReleaseHold(ctx context.Context, input HoldReleaseInput) (HoldReleaseResult, error)
 	RecordReceipt(ctx context.Context, input ReceiptInput) (Receipt, error)
 	Receipt(ctx context.Context, receiptID string) (Receipt, error)
