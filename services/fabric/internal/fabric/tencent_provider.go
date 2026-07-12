@@ -130,8 +130,9 @@ func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine Provide
 	response, err := p.provision(ctx, provisionerRequest{
 		Action: "tag_compute_machine",
 		Tags:   oplCostTags(ownership.AccountID, ownership.WorkspaceID, ownership.ResourceID, ownership.ID),
+		Pool:   provisionerPool{NodePoolID: ownership.NodePoolID},
 		Allocation: provisionerAllocation{
-			ID: ownership.ResourceID, InstanceID: machine.InstanceID, MachineName: machine.MachineID, NodeName: machine.NodeName,
+			ID: ownership.ResourceID, InstanceID: machine.InstanceID, MachineName: machine.MachineID, NodeName: machine.NodeName, PrivateIP: machine.PrivateIP,
 		},
 	})
 	if err != nil {

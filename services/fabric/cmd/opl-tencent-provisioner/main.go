@@ -479,8 +479,8 @@ func (client *tencentSDKClient) ReconcileComputePool(request Request, env map[st
 		if cvmInstance, _, resolveErr := client.describeCvmInstanceByPrivateIp(privateIp); resolveErr == nil {
 			instanceId = stringValue(cvmInstance.InstanceId)
 			publicIp = firstString(cvmInstance.PublicIpAddresses)
-		} else {
-			ready = false
+		} else if tkeInstance, _, tkeErr := client.describeTkeClusterInstanceByPrivateIp(privateIp, nodePoolId); tkeErr == nil {
+			instanceId = stringValue(tkeInstance.InstanceId)
 		}
 		output = append(output, MachineOutput{MachineId: stringValue(machine.MachineName), InstanceId: instanceId, NodeName: kubernetesNodeName(machine), PrivateIp: privateIp, PublicIp: publicIp, InstanceType: stringValue(machine.InstanceType), Ready: ready && instanceId != ""})
 	}
@@ -494,7 +494,26 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	instanceID := strings.TrimSpace(request.Allocation.InstanceId)
 	resourceID := strings.TrimSpace(request.Tags["opl_resource_id"])
 	if instanceID == "" || resourceID == "" || len(resourceID) > 60 {
-		return Response{Ok: false, ErrorCode: "compute_machine_identity_required", Message: "CVM instance id and a resource id of at most 60 characters are required.", Retryable: false}
+		return Response{Ok: false, ErrorCode: "compute_machine_identity_required", Message: "Machine instance id and a resource id of at most 60 characters are required.", Retryable: false}
+	}
+	describe := cvm2017.NewDescribeInstancesRequest()
+	describe.InstanceIds = []*string{common.StringPtr(instanceID)}
+	described, err := client.nativeCvmClient.DescribeInstances(describe)
+	if err != nil {
+		return sdkErrorResponse("tencent_verify_compute_machine_failed", err)
+	}
+	if described.Response == nil || len(described.Response.InstanceSet) == 0 {
+		nativeInstance, requestID, nativeErr := client.describeTkeClusterInstanceByPrivateIp(request.Allocation.PrivateIp, request.Pool.NodePoolId)
+		if nativeErr != nil {
+			return sdkErrorResponse("tencent_verify_native_compute_machine_failed", nativeErr)
+		}
+		if stringValue(nativeInstance.InstanceId) != instanceID {
+			return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent TKE instance did not match the claimed machine identity.", ProviderRequestId: requestID, Retryable: true}
+		}
+		return Response{Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: requestID}
+	}
+	if len(described.Response.InstanceSet) != 1 || stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID {
+		return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent CVM instance did not match the claimed machine identity.", ProviderRequestId: stringValue(described.Response.RequestId), Retryable: true}
 	}
 	modify := cvm2017.NewModifyInstancesAttributeRequest()
 	modify.InstanceIds = []*string{common.StringPtr(instanceID)}
@@ -503,9 +522,9 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	if err != nil {
 		return sdkErrorResponse("tencent_tag_compute_machine_failed", err)
 	}
-	describe := cvm2017.NewDescribeInstancesRequest()
+	describe = cvm2017.NewDescribeInstancesRequest()
 	describe.InstanceIds = []*string{common.StringPtr(instanceID)}
-	described, err := client.nativeCvmClient.DescribeInstances(describe)
+	described, err = client.nativeCvmClient.DescribeInstances(describe)
 	if err != nil {
 		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", err)
 	}

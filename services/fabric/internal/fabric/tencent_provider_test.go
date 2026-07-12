@@ -34,7 +34,7 @@ func TestTencentTagComputeMachineWritesProviderIdentityBeforeNodeLabel(t *testin
 	var events []string
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
 		events = append(events, "provider")
-		if request.Action != "tag_compute_machine" || request.Allocation.InstanceID != "ins-alpha" || request.Tags["opl_resource_id"] != "compute-alpha" {
+		if request.Action != "tag_compute_machine" || request.Pool.NodePoolID != "np-basic" || request.Allocation.InstanceID != "ins-alpha" || request.Allocation.PrivateIP != "10.0.0.8" || request.Tags["opl_resource_id"] != "compute-alpha" {
 			t.Fatalf("provider request = %#v", request)
 		}
 		return provisionerResponse{OK: true, Status: "tagged"}, nil
@@ -47,7 +47,7 @@ func TestTencentTagComputeMachineWritesProviderIdentityBeforeNodeLabel(t *testin
 		return nil, nil
 	}
 
-	err := provider.TagComputeMachine(context.Background(), ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha"}, MachineOwnership{ResourceID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha"})
+	err := provider.TagComputeMachine(context.Background(), ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8"}, MachineOwnership{ResourceID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", NodePoolID: "np-basic"})
 	if err != nil || !slices.Equal(events, []string{"provider", "node"}) {
 		t.Fatalf("tag machine err=%v events=%#v", err, events)
 	}

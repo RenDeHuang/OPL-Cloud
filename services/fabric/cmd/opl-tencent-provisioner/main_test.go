@@ -432,9 +432,6 @@ func (api *fakeNativeCvmAPI) ModifyInstancesAttribute(request *cvm2017.ModifyIns
 
 func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error) {
 	api.describeInstancesRequest = append(api.describeInstancesRequest, request)
-	if len(request.InstanceIds) == 1 {
-		return &cvm2017.DescribeInstancesResponse{Response: &cvm2017.DescribeInstancesResponseParams{InstanceSet: []*cvm2017.Instance{{InstanceId: request.InstanceIds[0], InstanceName: common.StringPtr(api.instanceName)}}, TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-verify-cvm")}}, nil
-	}
 	if api.empty {
 		return &cvm2017.DescribeInstancesResponse{
 			Response: &cvm2017.DescribeInstancesResponseParams{
@@ -443,6 +440,9 @@ func (api *fakeNativeCvmAPI) DescribeInstances(request *cvm2017.DescribeInstance
 				RequestId:   common.StringPtr("req-describe-cvm-empty"),
 			},
 		}, nil
+	}
+	if len(request.InstanceIds) == 1 {
+		return &cvm2017.DescribeInstancesResponse{Response: &cvm2017.DescribeInstancesResponseParams{InstanceSet: []*cvm2017.Instance{{InstanceId: request.InstanceIds[0], InstanceName: common.StringPtr(api.instanceName)}}, TotalCount: common.Int64Ptr(1), RequestId: common.StringPtr("req-verify-cvm")}}, nil
 	}
 	privateIp := cvmPrivateIpFilterValue(request)
 	instanceIndex := 1
@@ -852,6 +852,43 @@ func TestTencentSDKClientPoolFallbackExcludesMachinesFromOtherPools(t *testing.T
 
 	if !response.Ok || len(response.Machines) != 1 || response.Machines[0].MachineId != "node-basic-2" {
 		t.Fatalf("pool fallback leaked another pool's machine: %#v", response)
+	}
+}
+
+func TestTencentSDKClientReconcileUsesNativeTKEIdentityWhenCVMIsAbsent(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
+	client := newFakeTencentSDKClient(tkeAPI)
+	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
+
+	response := client.ReconcileComputePool(Request{
+		PackageId: "basic",
+		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
+	}, map[string]string{})
+
+	if !response.Ok || len(response.Machines) != 1 {
+		t.Fatalf("native pool reconcile = %#v", response)
+	}
+	machine := response.Machines[0]
+	if !machine.Ready || machine.InstanceId != "np-native-1" || machine.MachineId != "node-basic-1" || machine.NodeName != "10.0.0.11" {
+		t.Fatalf("native machine identity = %#v", machine)
+	}
+}
+
+func TestTencentSDKTagComputeMachineVerifiesNativeTKEIdentityWithoutCVMRename(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
+	cvmAPI := &fakeNativeCvmAPI{empty: true}
+	client := &tencentSDKClient{clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+
+	response := client.TagComputeMachine(Request{
+		Tags: map[string]string{"opl_resource_id": "compute-alpha"},
+		Pool: ComputePoolInput{NodePoolId: "np-basic"},
+		Allocation: ComputeAllocationInput{
+			InstanceId: "np-native-1", MachineName: "node-basic-1", NodeName: "10.0.0.11", PrivateIp: "10.0.0.11",
+		},
+	}, nil)
+
+	if !response.Ok || response.InstanceId != "np-native-1" || len(cvmAPI.modifyInstancesRequest) != 0 {
+		t.Fatalf("native tag response=%#v modify requests=%#v", response, cvmAPI.modifyInstancesRequest)
 	}
 }
 
