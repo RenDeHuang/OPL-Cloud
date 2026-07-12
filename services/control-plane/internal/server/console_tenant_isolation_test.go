@@ -36,6 +36,19 @@ func TestBootstrapUsersUseOnlyFixedRoles(t *testing.T) {
 	}
 }
 
+func TestBootstrapOwnerGetsAnActiveTenantMembership(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-seed-owner","email":"seed-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-seed"}]`)
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	session := loginForTest(t, server, "seed-owner@example.com", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-seed", nil)
+	addSessionCookies(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap owner state status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestOrganizationRejectsMissingBillingAccount(t *testing.T) {
 	app := newControlPlaneApp()
 	if _, err := app.createOrganization(map[string]any{"name": "Orphan", "billingAccountId": "acct-missing"}); err == nil {

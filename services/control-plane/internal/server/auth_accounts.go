@@ -128,7 +128,11 @@ func (app *controlPlaneServer) importBootstrapUsers() error {
 		return err
 	}
 	for _, user := range users {
-		if err := app.upsertBootstrapUser(user); err != nil {
+		stored, err := app.upsertBootstrapUser(user)
+		if err != nil {
+			return err
+		}
+		if err := app.ensureBootstrapOwnerMembership(stored); err != nil {
 			return err
 		}
 	}
@@ -150,14 +154,14 @@ func (app *controlPlaneServer) dropLegacyOwnerUser() error {
 	return nil
 }
 
-func (app *controlPlaneServer) upsertBootstrapUser(seed map[string]any) error {
+func (app *controlPlaneServer) upsertBootstrapUser(seed map[string]any) (map[string]any, error) {
 	if err := app.ensureAccount(context.Background(), stringValue(seed["accountId"])); err != nil {
-		return err
+		return nil, err
 	}
 	id := stringValue(seed["id"])
 	users, err := app.tables.ListUsers(context.Background(), true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, existing := range users {
 		if stringValue(existing["id"]) == id || strings.EqualFold(stringValue(existing["email"]), stringValue(seed["email"])) {
@@ -170,10 +174,55 @@ func (app *controlPlaneServer) upsertBootstrapUser(seed map[string]any) error {
 				}
 				existing[key] = value
 			}
-			return app.tables.SaveUser(context.Background(), existing)
+			return cloneMap(existing), app.tables.SaveUser(context.Background(), existing)
 		}
 	}
-	return app.tables.SaveUser(context.Background(), seed)
+	return cloneMap(seed), app.tables.SaveUser(context.Background(), seed)
+}
+
+func (app *controlPlaneServer) ensureBootstrapOwnerMembership(user map[string]any) error {
+	if stringValue(user["role"]) != "owner" {
+		return nil
+	}
+	accountID := stringValue(user["accountId"])
+	organizations, err := app.tables.ListOrganizations(context.Background())
+	if err != nil {
+		return err
+	}
+	memberships, err := app.tables.ListMemberships(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, membership := range memberships {
+		organization := findRecord(organizations, stringValue(membership["organizationId"]))
+		if stringValue(membership["userId"]) == stringValue(user["id"]) &&
+			stringValue(membership["accountId"]) == accountID &&
+			stringValue(membership["status"]) == "active" &&
+			validRole(stringValue(membership["role"])) && organization != nil &&
+			stringValue(organization["status"]) == "active" && stringValue(organization["billingAccountId"]) == accountID {
+			return nil
+		}
+	}
+	candidates := []map[string]any{}
+	for _, organization := range organizations {
+		if stringValue(organization["billingAccountId"]) == accountID && stringValue(organization["status"]) == "active" {
+			candidates = append(candidates, organization)
+		}
+	}
+	if len(candidates) > 1 {
+		return errors.New("bootstrap_owner_organization_ambiguous")
+	}
+	var organization map[string]any
+	if len(candidates) == 1 {
+		organization = candidates[0]
+	} else {
+		organization, err = app.createOrganization(map[string]any{"name": "Organization " + accountID, "billingAccountId": accountID})
+		if err != nil {
+			return err
+		}
+	}
+	_, err = app.createMembership(map[string]any{"organizationId": stringValue(organization["id"]), "userId": stringValue(user["id"]), "accountId": accountID, "role": "owner"})
+	return err
 }
 
 func (app *controlPlaneServer) login(input map[string]any) (map[string]any, string, error) {
