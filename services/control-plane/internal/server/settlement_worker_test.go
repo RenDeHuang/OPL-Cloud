@@ -13,6 +13,7 @@ type settlementWorkerLedger struct {
 	fakeLedgerClient
 	settlements []clients.ResourceSettlementInput
 	keys        []string
+	releases    []clients.HoldReleaseInput
 }
 
 func (l *settlementWorkerLedger) SettleResource(_ context.Context, input clients.ResourceSettlementInput, idempotencyKey string) (clients.ResourceSettlementResult, error) {
@@ -36,6 +37,15 @@ func (l *settlementWorkerLedger) SettleResource(_ context.Context, input clients
 		Quantity:            input.Quantity,
 		Unit:                input.Unit,
 		Wallet:              clients.Wallet{AccountID: input.AccountID, BalanceCents: 10000, AvailableCents: 9000, Currency: "CNY"},
+	}, nil
+}
+
+func (l *settlementWorkerLedger) ReleaseHold(_ context.Context, input clients.HoldReleaseInput, _ string) (clients.HoldReleaseResult, error) {
+	l.releases = append(l.releases, input)
+	return clients.HoldReleaseResult{
+		ID: "release-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: input.AmountCents,
+		Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 10000, AvailableCents: 10000, Currency: "CNY"},
 	}, nil
 }
 
@@ -160,6 +170,43 @@ func TestProviderReconcileWorkerPersistsExternalDeleteAndRelease(t *testing.T) {
 	if compute["holdReleaseId"] != "release-compute-compute-alpha" || compute["externalDeletedAt"] == "" || compute["lastProviderSyncAt"] == "" {
 		t.Fatalf("provider reconcile missing release/sync evidence: %#v", compute)
 	}
+}
+
+func TestProviderReconcileReleasesFailedComputeHold(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-failed", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "packageId": "basic",
+		"status": "provisioning", "billingStatus": "pending", "holdId": "hold-compute-failed", "holdAmountCents": int64(7862),
+	}))
+	ledger := &settlementWorkerLedger{}
+	fabric := &failedComputeOperationFabric{fakeFabricClient: fakeFabricClient{}, operations: []clients.FabricOperation{{
+		ID: "fabric-failed", OperationID: "operation-failed", Action: "create_compute_allocation", ResourceKind: "compute_allocation",
+		ResourceID: "compute-failed", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "failed",
+		RedactedProviderPayload: map[string]any{"resource": map[string]any{
+			"id": "compute-failed", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "failed",
+		}},
+	}}}
+	service := controlplane.NewService(ledger, fabric)
+
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("first provider reconcile: %v", err)
+	}
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("second provider reconcile: %v", err)
+	}
+	compute, _ := app.getCompute("compute-failed")
+	if len(ledger.releases) != 1 || ledger.releases[0].HoldID != "hold-compute-failed" || ledger.releases[0].AmountCents != 7862 || compute["holdReleaseId"] != "release-compute-compute-failed" || compute["billingStatus"] != "stopped" {
+		t.Fatalf("failed compute hold was not released once: releases=%#v compute=%#v", ledger.releases, compute)
+	}
+}
+
+type failedComputeOperationFabric struct {
+	fakeFabricClient
+	operations []clients.FabricOperation
+}
+
+func (f *failedComputeOperationFabric) ListOperations(context.Context) ([]clients.FabricOperation, error) {
+	return f.operations, nil
 }
 
 func freshBillableResource(row map[string]any) map[string]any {
