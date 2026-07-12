@@ -52,6 +52,40 @@ func TestReleaseHoldReleasesLedgerRemainingWithoutDebitingBalance(t *testing.T) 
 	}
 }
 
+func TestReleaseHoldReplaysExistingReleaseAcrossIdempotencyKeys(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	_, _ = store.ManualTopUp(ctx, ManualTopUpInput{AccountID: "acct-a", AmountCents: 1000, Currency: "CNY", IdempotencyKey: "topup-release-replay"})
+	hold, _ := store.CreateHold(ctx, HoldInput{AccountID: "acct-a", ResourceType: "compute", ResourceID: "ca-a", AmountCents: 400, Currency: "CNY", IdempotencyKey: "hold-release-replay"})
+	first, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: "acct-a", ResourceType: "compute", ResourceID: "ca-a", HoldID: hold.ID, Currency: "CNY", Reason: "compute_create_failed", IdempotencyKey: "release-from-reconcile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: "acct-a", ResourceType: "compute", ResourceID: "ca-a", HoldID: hold.ID, Currency: "CNY", Reason: "destroy_compute", IdempotencyKey: "release-from-destroy"})
+	if err != nil || !second.Replayed || second.ID != first.ID || second.Wallet.BalanceCents != 1000 || second.Wallet.FrozenCents != 0 {
+		t.Fatalf("semantic release replay = %#v first=%#v err=%v", second, first, err)
+	}
+}
+
+func TestPostgresReleaseHoldReplaysExistingReleaseAcrossIdempotencyKeys(t *testing.T) {
+	db := openLedgerTestPostgres(t)
+	store := NewPostgresStore(db)
+	ctx := context.Background()
+	if err := store.Install(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = store.ManualTopUp(ctx, ManualTopUpInput{AccountID: "acct-pg", AmountCents: 1000, Currency: "CNY", IdempotencyKey: "topup-release-replay"})
+	hold, _ := store.CreateHold(ctx, HoldInput{AccountID: "acct-pg", ResourceType: "compute", ResourceID: "ca-pg", AmountCents: 400, Currency: "CNY", IdempotencyKey: "hold-release-replay"})
+	first, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: "acct-pg", ResourceType: "compute", ResourceID: "ca-pg", HoldID: hold.ID, Currency: "CNY", Reason: "compute_create_failed", IdempotencyKey: "release-from-reconcile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: "acct-pg", ResourceType: "compute", ResourceID: "ca-pg", HoldID: hold.ID, Currency: "CNY", Reason: "destroy_compute", IdempotencyKey: "release-from-destroy"})
+	if err != nil || !second.Replayed || second.ID != first.ID || second.Wallet.BalanceCents != 1000 || second.Wallet.FrozenCents != 0 {
+		t.Fatalf("postgres semantic release replay = %#v first=%#v err=%v", second, first, err)
+	}
+}
+
 func TestReleaseExhaustedHoldCompletesWithZeroAmount(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()

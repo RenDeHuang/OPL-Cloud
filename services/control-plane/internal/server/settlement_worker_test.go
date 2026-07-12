@@ -278,6 +278,28 @@ func TestProviderReconcileCompletesDestroyAndReleasesHold(t *testing.T) {
 	}
 }
 
+func TestProviderReconcileRepairsDestroyedComputeReleaseProjection(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-destroyed", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "packageId": "basic",
+		"status": "destroyed", "desiredStatus": "destroyed", "billingStatus": "stopped",
+		"holdId": "hold-compute-destroyed", "holdAmountCents": int64(7862),
+	}))
+	ledger := &settlementWorkerLedger{}
+	service := controlPlaneServiceForTest(ledger)
+
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("provider reconcile: %v", err)
+	}
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("provider reconcile replay: %v", err)
+	}
+	compute, _ := app.getCompute("compute-destroyed")
+	if len(ledger.releases) != 1 || compute["holdReleaseId"] != "release-compute-compute-destroyed" || compute["billingStatus"] != "stopped" {
+		t.Fatalf("destroyed release projection was not repaired: releases=%#v compute=%#v", ledger.releases, compute)
+	}
+}
+
 func TestProviderReconcileReleasesFailedComputeHold(t *testing.T) {
 	app := newControlPlaneAppEmpty()
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{

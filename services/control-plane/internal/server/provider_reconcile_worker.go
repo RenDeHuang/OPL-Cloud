@@ -93,6 +93,24 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 			}
 			continue
 		}
+		if isTerminalResourceStatus(stringValue(row["status"])) && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
+			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "compute", "destroy_compute", "provider-reconcile:release-compute:"+id)
+			if releaseErr != nil {
+				errs = append(errs, releaseErr)
+				continue
+			}
+			body := cloneMap(row)
+			body["holdReleaseId"] = release.ID
+			body["holdAmountCents"] = release.AmountCents
+			body["ledgerEntryId"] = release.LedgerEntryID
+			body["walletTransactionId"] = release.WalletTransactionID
+			body["wallet"] = structToMap(release.Wallet)
+			body["billingStatus"] = "stopped"
+			if saveErr := app.saveComputeFact(body); saveErr != nil {
+				errs = append(errs, saveErr)
+			}
+			continue
+		}
 		if stringValue(row["status"]) == "failed" && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
 			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "compute", "compute_create_failed", "provider-reconcile:compute:"+id)
 			if releaseErr != nil {

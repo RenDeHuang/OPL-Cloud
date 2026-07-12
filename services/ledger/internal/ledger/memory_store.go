@@ -24,6 +24,7 @@ type MemoryStore struct {
 	topups                  []ManualTopUp
 	settlements             []ResourceSettlementResult
 	holds                   map[string]HoldResult
+	holdReleases            map[string]HoldReleaseResult
 	nextID                  int64
 }
 
@@ -47,6 +48,7 @@ func NewMemoryStore() *MemoryStore {
 		receipts:                map[string]Receipt{},
 		reviewPolicies:          map[string]ReviewPolicy{},
 		holds:                   map[string]HoldResult{},
+		holdReleases:            map[string]HoldReleaseResult{},
 	}
 }
 
@@ -289,7 +291,15 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
 		return HoldReleaseResult{}, ErrHoldIdentityMismatch
 	}
-	if hold.Status == "released" || hold.RemainingCents < 0 {
+	if hold.Status == "released" {
+		result, ok := s.holdReleases[hold.ID]
+		if !ok {
+			return HoldReleaseResult{}, ErrInvalidHoldState
+		}
+		result.Replayed = true
+		return result, nil
+	}
+	if hold.RemainingCents < 0 {
 		return HoldReleaseResult{}, ErrInvalidHoldState
 	}
 	amount := hold.RemainingCents
@@ -349,6 +359,7 @@ func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (Ho
 	hold.Status = "released"
 	hold.Wallet = wallet
 	s.holds[hold.ID] = hold
+	s.holdReleases[hold.ID] = result
 	s.entries = append(s.entries, entry)
 	s.walletTx = append(s.walletTx, tx)
 	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}

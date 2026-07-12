@@ -337,7 +337,18 @@ func (s *PostgresStore) ReleaseHold(ctx context.Context, input HoldReleaseInput)
 	if !holdEntMatches(row, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
 		return HoldReleaseResult{}, ErrHoldIdentityMismatch
 	}
-	if row.Status == "released" || row.RemainingCents < 0 {
+	if row.Status == "released" {
+		existing, err := s.holdReleaseByHoldID(ctx, tx, row.ID)
+		if err != nil {
+			if ledgerent.IsNotFound(err) {
+				return HoldReleaseResult{}, ErrInvalidHoldState
+			}
+			return HoldReleaseResult{}, err
+		}
+		existing.Replayed = true
+		return existing, tx.Commit()
+	}
+	if row.RemainingCents < 0 {
 		return HoldReleaseResult{}, ErrInvalidHoldState
 	}
 	amount := row.RemainingCents
@@ -1278,6 +1289,18 @@ func (s *PostgresStore) holdReleaseByIdempotencyKey(ctx context.Context, tx *led
 		return HoldReleaseResult{}, "", err
 	}
 	return HoldReleaseResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, HoldID: row.HoldID, AmountCents: row.AmountCents, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, Wallet: wallet, CreatedAt: row.CreatedAt}, row.RequestHash, nil
+}
+
+func (s *PostgresStore) holdReleaseByHoldID(ctx context.Context, tx *ledgerent.Tx, holdID string) (HoldReleaseResult, error) {
+	row, err := tx.HoldRelease.Query().Where(holdrelease.HoldID(holdID)).First(ctx)
+	if err != nil {
+		return HoldReleaseResult{}, err
+	}
+	wallet, err := s.walletByAccount(ctx, tx, row.AccountID)
+	if err != nil {
+		return HoldReleaseResult{}, err
+	}
+	return HoldReleaseResult{ID: row.ID, AccountID: row.AccountID, WorkspaceID: row.WorkspaceID, ResourceType: row.ResourceType, ResourceID: row.ResourceID, HoldID: row.HoldID, AmountCents: row.AmountCents, Currency: row.Currency, Status: row.Status, LedgerEntryID: row.LedgerEntryID, WalletTransactionID: row.WalletTransactionID, Wallet: wallet, CreatedAt: row.CreatedAt}, nil
 }
 
 func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string) (Receipt, string, error) {
