@@ -344,6 +344,10 @@ func newResourceID(prefix string) string {
 	return prefix + "_" + stableID(prefix, time.Now().UTC().Format(time.RFC3339Nano))[:18]
 }
 
+func resourceIDForMutation(prefix, key string) string {
+	return prefix + "_" + stableID(prefix, key)[:18]
+}
+
 func structToMap(value any) map[string]any {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -460,14 +464,14 @@ func billingStatusFor(row map[string]any) string {
 	if isTerminalResourceStatus(status) {
 		return "stopped"
 	}
-	if billingStatus := stringValue(row["billingStatus"]); billingStatus != "" && !(billingStatus == "pending" && status != "pending" && status != "provisioning") {
+	if billingStatus := stringValue(row["billingStatus"]); billingStatus != "" {
 		return billingStatus
 	}
 	switch status {
 	case "detached", "failed":
 		return "stopped"
 	default:
-		return "active"
+		return "pending"
 	}
 }
 

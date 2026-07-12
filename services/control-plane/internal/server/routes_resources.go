@@ -34,7 +34,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		key := mutationKey(r, input)
-		resourceID := firstNonEmpty(stringField(input, "id", ""), newResourceID("ca"))
+		resourceID := firstNonEmpty(stringField(input, "id", ""), resourceIDForMutation("ca", key))
 		preview, err := app.pricingPreviewResponse(r.Context(), map[string]any{
 			"accountId":      accountID,
 			"resourceType":   "compute",
@@ -47,37 +47,44 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		pending := computeResponse(map[string]any{
-			"id":              resourceID,
-			"accountId":       accountID,
-			"ownerUserId":     app.sessionUserID(r),
-			"workspaceId":     stringField(input, "workspaceId", ""),
-			"name":            stringField(input, "name", ""),
-			"packageId":       stringField(input, "packageId", "basic"),
-			"status":          "provisioning",
-			"desiredStatus":   "running",
-			"providerStatus":  "pending",
-			"billingStatus":   "pending",
-			"pricingVersion":  stringValue(preview["pricingVersion"]),
-			"priceSnapshot":   mapField(preview, "priceSnapshot"),
-			"holdAmountCents": int64(numberField(preview, "holdAmountCents", 0)),
-			"createdAt":       time.Now().UTC().Format(time.RFC3339Nano),
+			"id":                    resourceID,
+			"accountId":             accountID,
+			"ownerUserId":           app.sessionUserID(r),
+			"workspaceId":           stringField(input, "workspaceId", ""),
+			"name":                  stringField(input, "name", ""),
+			"packageId":             stringField(input, "packageId", "basic"),
+			"status":                "provisioning",
+			"desiredStatus":         "running",
+			"providerStatus":        "pending",
+			"billingStatus":         "pending",
+			"pricingVersion":        stringValue(preview["pricingVersion"]),
+			"priceSnapshot":         mapField(preview, "priceSnapshot"),
+			"holdAmountCents":       int64(numberField(preview, "holdAmountCents", 0)),
+			"activationAmountCents": int64(numberField(preview, "activationAmountCents", 0)),
+			"createdAt":             time.Now().UTC().Format(time.RFC3339Nano),
 		})
 		if err := app.saveComputeFact(pending); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		compute, err := service.CreateComputeAllocation(r.Context(), controlplane.ComputeAllocationInput{
-			ID:              resourceID,
-			AccountID:       accountID,
-			WorkspaceID:     stringField(input, "workspaceId", ""),
-			PackageID:       stringField(input, "packageId", "basic"),
-			HoldAmountCents: int64(numberField(preview, "holdAmountCents", 0)),
+			ID:                    resourceID,
+			AccountID:             accountID,
+			WorkspaceID:           stringField(input, "workspaceId", ""),
+			PackageID:             stringField(input, "packageId", "basic"),
+			HoldAmountCents:       int64(numberField(preview, "holdAmountCents", 0)),
+			ActivationAmountCents: int64(numberField(preview, "activationAmountCents", 0)),
 		}, key)
 		if err != nil {
+			failed := providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), err)
+			if saveErr := app.saveComputeFact(failed); saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), nil)
+		body := billingActivationFacts(pending, providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), nil), time.Now())
 		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
@@ -139,7 +146,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil)
+		body := billingActivationFacts(existing, providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil), time.Now())
 		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
@@ -166,13 +173,21 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
+		stopping := cloneMap(existing)
+		stopping["status"] = "destroying"
+		stopping["desiredStatus"] = "destroyed"
+		stopping["billingStatus"] = "stopping"
+		if err := app.saveComputeFact(stopping); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, stopping), mutationKey(r, input))
 		if err != nil {
-			_ = app.saveComputeFact(providerSyncFacts(existing, err))
+			_ = app.saveComputeFact(providerSyncFacts(stopping, err))
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil)
+		body := providerSyncFacts(computeResponse(mergeMaps(stopping, structToMap(compute))), nil)
 		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
@@ -194,7 +209,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		key := mutationKey(r, input)
-		resourceID := firstNonEmpty(stringField(input, "id", ""), newResourceID("vol"))
+		resourceID := firstNonEmpty(stringField(input, "id", ""), resourceIDForMutation("vol", key))
 		packageID := stringField(input, "packageId", "basic")
 		preview, err := app.pricingPreviewResponse(r.Context(), map[string]any{
 			"accountId":      accountID,
@@ -209,38 +224,45 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		pending := storageResponse(map[string]any{
-			"id":              resourceID,
-			"accountId":       accountID,
-			"ownerUserId":     app.sessionUserID(r),
-			"workspaceId":     stringField(input, "workspaceId", ""),
-			"name":            stringField(input, "name", ""),
-			"packageId":       packageID,
-			"sizeGb":          numberField(input, "sizeGb", 10),
-			"status":          "provisioning",
-			"desiredStatus":   "available",
-			"providerStatus":  "pending",
-			"billingStatus":   "pending",
-			"pricingVersion":  stringValue(preview["pricingVersion"]),
-			"priceSnapshot":   mapField(preview, "priceSnapshot"),
-			"holdAmountCents": int64(numberField(preview, "holdAmountCents", 0)),
-			"createdAt":       time.Now().UTC().Format(time.RFC3339Nano),
+			"id":                    resourceID,
+			"accountId":             accountID,
+			"ownerUserId":           app.sessionUserID(r),
+			"workspaceId":           stringField(input, "workspaceId", ""),
+			"name":                  stringField(input, "name", ""),
+			"packageId":             packageID,
+			"sizeGb":                numberField(input, "sizeGb", 10),
+			"status":                "provisioning",
+			"desiredStatus":         "available",
+			"providerStatus":        "pending",
+			"billingStatus":         "pending",
+			"pricingVersion":        stringValue(preview["pricingVersion"]),
+			"priceSnapshot":         mapField(preview, "priceSnapshot"),
+			"holdAmountCents":       int64(numberField(preview, "holdAmountCents", 0)),
+			"activationAmountCents": int64(numberField(preview, "activationAmountCents", 0)),
+			"createdAt":             time.Now().UTC().Format(time.RFC3339Nano),
 		})
 		if err := app.saveStorageFact(pending); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		storage, err := service.CreateStorageVolume(r.Context(), controlplane.StorageVolumeInput{
-			ID:              resourceID,
-			AccountID:       accountID,
-			WorkspaceID:     stringField(input, "workspaceId", ""),
-			SizeGB:          int(numberField(input, "sizeGb", 10)),
-			HoldAmountCents: int64(numberField(preview, "holdAmountCents", 0)),
+			ID:                    resourceID,
+			AccountID:             accountID,
+			WorkspaceID:           stringField(input, "workspaceId", ""),
+			SizeGB:                int(numberField(input, "sizeGb", 10)),
+			HoldAmountCents:       int64(numberField(preview, "holdAmountCents", 0)),
+			ActivationAmountCents: int64(numberField(preview, "activationAmountCents", 0)),
 		}, key)
 		if err != nil {
+			failed := providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), err)
+			if saveErr := app.saveStorageFact(failed); saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), nil)
+		body := billingActivationFacts(pending, providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), nil), time.Now())
 		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
@@ -267,13 +289,21 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, existing), mutationKey(r, input))
+		stopping := cloneMap(existing)
+		stopping["status"] = "destroying"
+		stopping["desiredStatus"] = "destroyed"
+		stopping["billingStatus"] = "stopping"
+		if err := app.saveStorageFact(stopping); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, stopping), mutationKey(r, input))
 		if err != nil {
-			_ = app.saveStorageFact(providerSyncFacts(existing, err))
+			_ = app.saveStorageFact(providerSyncFacts(stopping, err))
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil)
+		body := providerSyncFacts(storageResponse(mergeMaps(stopping, structToMap(storage))), nil)
 		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
@@ -307,7 +337,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil)
+		body := billingActivationFacts(existing, providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil), time.Now())
 		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return

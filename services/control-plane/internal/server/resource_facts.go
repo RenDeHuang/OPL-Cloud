@@ -154,6 +154,17 @@ func providerSyncFacts(row map[string]any, err error) map[string]any {
 	return out
 }
 
+func billingActivationFacts(previous, current map[string]any, now time.Time) map[string]any {
+	out := cloneMap(current)
+	if billingStatusFor(previous) == "active" || billingStatusFor(out) != "active" || stringValue(out["billingNextSettlementAt"]) != "" {
+		return out
+	}
+	activatedAt := now.UTC()
+	out["billingActivatedAt"] = activatedAt.Format(time.RFC3339)
+	out["billingNextSettlementAt"] = activatedAt.Add(time.Hour).Format(time.RFC3339)
+	return out
+}
+
 func isExternallyDeletedStatus(status string) bool {
 	return status == "external_deleted" || status == "deleted" || status == "missing"
 }

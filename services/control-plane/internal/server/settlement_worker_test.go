@@ -76,6 +76,30 @@ func TestPeriodicSettlementWorkerSettlesActiveResources(t *testing.T) {
 	}
 }
 
+func TestPeriodicSettlementWaitsUntilPrepaidFirstHourEnds(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	next := time.Date(2026, 7, 9, 13, 30, 0, 0, time.UTC)
+	mustStore(t, app.tables.SaveCompute(context.Background(), freshBillableResource(map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "status": "running",
+		"billingNextSettlementAt": next.Format(time.RFC3339),
+	})))
+	ledger := &settlementWorkerLedger{}
+	service := controlPlaneServiceForTest(ledger)
+
+	if err := app.runPeriodicSettlementOnce(context.Background(), service, next.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.settlements) != 0 {
+		t.Fatalf("prepaid first hour was charged again: %#v", ledger.settlements)
+	}
+	if err := app.runPeriodicSettlementOnce(context.Background(), service, next.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.settlements) != 1 || ledger.settlements[0].UsagePeriodStart != "2026-07-09T13:30:00Z" || ledger.settlements[0].UsagePeriodEnd != "2026-07-09T14:30:00Z" {
+		t.Fatalf("next resource hour = %#v", ledger.settlements)
+	}
+}
+
 func TestPeriodicSettlementContinuesAfterResourceFailure(t *testing.T) {
 	app := newControlPlaneAppEmpty()
 	mustStore(t, app.tables.SaveCompute(context.Background(), freshBillableResource(map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "packageId": "basic", "status": "running"})))
@@ -93,9 +117,32 @@ func TestPeriodicSettlementContinuesAfterResourceFailure(t *testing.T) {
 	}
 }
 
+func TestPeriodicSettlementStopsAndReleasesExhaustedResource(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveCompute(context.Background(), freshBillableResource(map[string]any{"id": "compute-exhausted", "accountId": "acct-alpha", "packageId": "basic", "status": "running", "holdId": "hold-exhausted", "holdAmountCents": int64(100)})))
+	ledger := &exhaustedSettlementLedger{}
+	service := controlPlaneServiceForTest(ledger)
+	err := app.runPeriodicSettlementOnce(context.Background(), service, time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "insufficient resource hold") {
+		t.Fatalf("error = %v", err)
+	}
+	row, _ := app.getCompute("compute-exhausted")
+	if row["billingStatus"] != "stopped" || len(ledger.releases) != 1 || ledger.releases[0].HoldID != "hold-exhausted" {
+		t.Fatalf("resource not stopped/released: row=%#v releases=%#v", row, ledger.releases)
+	}
+}
+
 type failFirstSettlementLedger struct {
 	settlementWorkerLedger
 	failed bool
+}
+
+type exhaustedSettlementLedger struct{ settlementWorkerLedger }
+
+func (l *exhaustedSettlementLedger) SettleResource(_ context.Context, input clients.ResourceSettlementInput, key string) (clients.ResourceSettlementResult, error) {
+	l.settlements = append(l.settlements, input)
+	l.keys = append(l.keys, key)
+	return clients.ResourceSettlementResult{}, errors.New("insufficient resource hold")
 }
 
 func (l *failFirstSettlementLedger) SettleResource(ctx context.Context, input clients.ResourceSettlementInput, key string) (clients.ResourceSettlementResult, error) {
@@ -229,8 +276,26 @@ func TestProviderReconcileReleasesFailedComputeHold(t *testing.T) {
 		t.Fatalf("second provider reconcile: %v", err)
 	}
 	compute, _ := app.getCompute("compute-failed")
-	if len(ledger.releases) != 1 || ledger.releases[0].HoldID != "hold-compute-failed" || ledger.releases[0].AmountCents != 7862 || compute["holdReleaseId"] != "release-compute-compute-failed" || compute["billingStatus"] != "stopped" {
+	if len(ledger.releases) != 1 || ledger.releases[0].HoldID != "hold-compute-failed" || ledger.releases[0].AmountCents != 0 || compute["holdReleaseId"] != "release-compute-compute-failed" || compute["billingStatus"] != "stopped" {
 		t.Fatalf("failed compute hold was not released once: releases=%#v compute=%#v", ledger.releases, compute)
+	}
+}
+
+func TestProviderReconcileReleasesFailedStorageHold(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
+		"id": "storage-failed", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+		"status": "failed", "billingStatus": "pending", "holdId": "hold-storage-failed", "holdAmountCents": int64(101),
+	}))
+	ledger := &settlementWorkerLedger{}
+	service := controlPlaneServiceForTest(ledger)
+
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("provider reconcile: %v", err)
+	}
+	storage, _ := app.getStorage("storage-failed")
+	if len(ledger.releases) != 1 || ledger.releases[0].HoldID != "hold-storage-failed" || ledger.releases[0].AmountCents != 0 || storage["holdReleaseId"] != "release-storage-storage-failed" || storage["billingStatus"] != "stopped" {
+		t.Fatalf("failed storage hold was not released once: releases=%#v storage=%#v", ledger.releases, storage)
 	}
 }
 
@@ -246,6 +311,8 @@ func (f *failedComputeOperationFabric) ListOperations(context.Context) ([]client
 func freshBillableResource(row map[string]any) map[string]any {
 	row["providerStatus"] = firstNonEmpty(stringValue(row["providerStatus"]), stringValue(row["status"]))
 	row["lastProviderSyncAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	row["billingStatus"] = firstNonEmpty(stringValue(row["billingStatus"]), "active")
+	row["holdId"] = firstNonEmpty(stringValue(row["holdId"]), "hold-"+stringValue(row["id"]))
 	return row
 }
 

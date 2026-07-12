@@ -445,6 +445,14 @@ func TestPricingPreviewMatchesResourceHoldAmount(t *testing.T) {
 	}
 }
 
+func TestStoragePricingSnapshotUsesResourceHourlyAmount(t *testing.T) {
+	preview := pricingPreviewResponse(map[string]any{"resourceType": "storage", "packageId": "basic", "sizeGb": 10}, map[string]any{})
+	snapshot := mapField(preview, "priceSnapshot")
+	if int64(numberField(snapshot, "unitPriceCents", 0)) != int64(numberField(preview, "activationAmountCents", 0)) || int64(numberField(snapshot, "monthlyUnitPriceCents", 0)) != 43 {
+		t.Fatalf("storage pricing preview = %#v", preview)
+	}
+}
+
 func TestPricingCatalogMatchesContractDefaults(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "packages", "contracts", "opl-cloud-pricing-contract.json"))
 	if err != nil {
@@ -831,6 +839,16 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 
 type fakeLedgerClient struct{}
 
+type failingResourceCreateFabricClient struct{ fakeFabricClient }
+
+func (*failingResourceCreateFabricClient) CreateComputeAllocation(context.Context, clients.ComputeAllocationInput, string) (clients.ComputeAllocation, error) {
+	return clients.ComputeAllocation{}, errors.New("compute create failed")
+}
+
+func (*failingResourceCreateFabricClient) CreateStorageVolume(context.Context, clients.StorageVolumeInput, string) (clients.StorageVolume, error) {
+	return clients.StorageVolume{}, errors.New("storage create failed")
+}
+
 type fakeLedgerClientWithKeys struct {
 	fakeLedgerClient
 	keys []string
@@ -861,11 +879,15 @@ func (fakeLedgerClient) ManualTopUp(_ context.Context, input clients.ManualTopUp
 }
 
 func (fakeLedgerClient) CreateHold(_ context.Context, input clients.HoldInput, _ string) (clients.HoldResult, error) {
-	return clients.HoldResult{ID: "hold-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents, Currency: "CNY"}}, nil
+	return clients.HoldResult{ID: "hold-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, ActivationAmountCents: input.ActivationAmountCents, RemainingCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents, Currency: "CNY"}}, nil
+}
+
+func (fakeLedgerClient) ActivateHold(_ context.Context, input clients.HoldActivationInput, _ string) (clients.HoldActivationResult, error) {
+	return clients.HoldActivationResult{HoldResult: clients.HoldResult{ID: input.HoldID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, RemainingCents: 16800, Status: "active", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 19900, FrozenCents: 16800, AvailableCents: 3100, Currency: "CNY"}}, ActivationLedgerEntryID: "ledger-activation", ActivationWalletTransactionID: "wallet-activation"}, nil
 }
 
 func (fakeLedgerClient) ReleaseHold(_ context.Context, input clients.HoldReleaseInput, _ string) (clients.HoldReleaseResult, error) {
-	return clients.HoldReleaseResult{ID: "release-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: input.AmountCents, Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, FrozenCents: 0, AvailableCents: 8800, Currency: "CNY"}}, nil
+	return clients.HoldReleaseResult{ID: "release-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: 16800, Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, FrozenCents: 0, AvailableCents: 8800, Currency: "CNY"}}, nil
 }
 
 func (fakeLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
@@ -1645,7 +1667,7 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 	if stringValue(body["id"]) == "" || body["providerRequestId"] != "compute-request-from-fabric" || body["holdId"] != "hold-compute-"+stringValue(body["id"]) {
 		t.Fatalf("compute allocation did not come from Fabric: %#v", body)
 	}
-	if body["provider"] != "tencent-tke" || body["billingStatus"] != "active" || body["nodeName"] != "node-from-fabric" || body["instanceId"] != "ins-from-fabric" {
+	if body["provider"] != "tencent-tke" || body["billingStatus"] != "pending" || body["nodeName"] != "node-from-fabric" || body["instanceId"] != "ins-from-fabric" {
 		t.Fatalf("compute allocation missing route contract fields: %#v", body)
 	}
 	getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(body["id"]), nil)
@@ -1657,10 +1679,76 @@ func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
 	}
 }
 
-func TestStorageResponseActivatesBillingWhenProviderIsAvailable(t *testing.T) {
+func TestFailedResourceCreatePersistsReleasedHoldFacts(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		path   string
+		body   string
+	}{
+		{name: "compute", prefix: "ca", path: "/api/compute-allocations", body: `{"accountId":"acct-alpha","packageId":"basic"}`},
+		{name: "storage", prefix: "vol", path: "/api/storage-volumes", body: `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewServer(controlplane.NewService(fakeLedgerClient{}, &failingResourceCreateFabricClient{}))
+			key := "failed-" + tt.name
+			admin := tenantAdminSessionForTest(t, server)
+			req := httptest.NewRequest(http.MethodPost, tt.path, bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", key)
+			addAuth(req, admin)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("create status = %d, want 502: %s", rec.Code, rec.Body.String())
+			}
+
+			id := resourceIDForMutation(tt.prefix, key)
+			getReq := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+			addSessionCookies(getReq, admin)
+			getRec := httptest.NewRecorder()
+			server.ServeHTTP(getRec, getReq)
+			if getRec.Code != http.StatusOK {
+				t.Fatalf("get status = %d: %s", getRec.Code, getRec.Body.String())
+			}
+			var state map[string]any
+			if err := json.NewDecoder(getRec.Body).Decode(&state); err != nil {
+				t.Fatal(err)
+			}
+			items := state["computeAllocations"].([]any)
+			if tt.name == "storage" {
+				items = state["storageVolumes"].([]any)
+			}
+			row := items[0].(map[string]any)
+			if row["id"] != id || row["status"] != "failed" || row["billingStatus"] != "stopped" || stringValue(row["holdId"]) == "" || stringValue(row["holdReleaseId"]) == "" {
+				t.Fatalf("persisted failure facts = %#v", row)
+			}
+		})
+	}
+}
+
+func TestProviderStatusDoesNotActivateBillingWithoutLedgerEvidence(t *testing.T) {
 	body := storageResponse(map[string]any{"id": "storage-alpha", "status": "ready", "billingStatus": "pending"})
-	if body["status"] != "available" || body["billingStatus"] != "active" {
-		t.Fatalf("storage response should activate available provider resource, got %#v", body)
+	compute := computeResponse(map[string]any{"id": "compute-alpha", "status": "running", "billingStatus": "pending"})
+	if body["status"] != "available" || body["billingStatus"] != "pending" || compute["billingStatus"] != "pending" {
+		t.Fatalf("provider response activated billing without Ledger evidence: storage=%#v compute=%#v", body, compute)
+	}
+}
+
+func TestBillingActivationFactsStartsAfterPrepaidFirstHour(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 30, 0, 0, time.UTC)
+	body := billingActivationFacts(
+		map[string]any{"billingStatus": "pending"},
+		map[string]any{"billingStatus": "active"},
+		now,
+	)
+	if body["billingActivatedAt"] != "2026-07-09T12:30:00Z" || body["billingNextSettlementAt"] != "2026-07-09T13:30:00Z" {
+		t.Fatalf("activation schedule = %#v", body)
+	}
+	replayed := billingActivationFacts(body, cloneMap(body), now.Add(time.Hour))
+	if replayed["billingNextSettlementAt"] != "2026-07-09T13:30:00Z" {
+		t.Fatalf("activation replay reset settlement schedule: %#v", replayed)
 	}
 }
 

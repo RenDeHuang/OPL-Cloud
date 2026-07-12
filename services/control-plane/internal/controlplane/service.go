@@ -140,6 +140,7 @@ type ResourceSettlementInput struct {
 	WorkspaceID             string         `json:"workspaceId"`
 	ResourceType            string         `json:"resourceType"`
 	ResourceID              string         `json:"resourceId"`
+	HoldID                  string         `json:"holdId"`
 	AmountCents             int64          `json:"amountCents"`
 	Currency                string         `json:"currency"`
 	PricingVersion          string         `json:"pricingVersion,omitempty"`
@@ -156,19 +157,21 @@ type ReconciliationInput struct {
 }
 
 type ComputeAllocationInput struct {
-	ID              string `json:"id,omitempty"`
-	AccountID       string `json:"accountId"`
-	WorkspaceID     string `json:"workspaceId"`
-	PackageID       string `json:"packageId"`
-	HoldAmountCents int64  `json:"holdAmountCents"`
+	ID                    string `json:"id,omitempty"`
+	AccountID             string `json:"accountId"`
+	WorkspaceID           string `json:"workspaceId"`
+	PackageID             string `json:"packageId"`
+	HoldAmountCents       int64  `json:"holdAmountCents"`
+	ActivationAmountCents int64  `json:"activationAmountCents"`
 }
 
 type StorageVolumeInput struct {
-	ID              string `json:"id,omitempty"`
-	AccountID       string `json:"accountId"`
-	WorkspaceID     string `json:"workspaceId"`
-	SizeGB          int    `json:"sizeGb"`
-	HoldAmountCents int64  `json:"holdAmountCents"`
+	ID                    string `json:"id,omitempty"`
+	AccountID             string `json:"accountId"`
+	WorkspaceID           string `json:"workspaceId"`
+	SizeGB                int    `json:"sizeGb"`
+	HoldAmountCents       int64  `json:"holdAmountCents"`
+	ActivationAmountCents int64  `json:"activationAmountCents"`
 }
 
 type StorageAttachmentInput struct {
@@ -413,6 +416,7 @@ func (s *Service) SettleResource(ctx context.Context, input ResourceSettlementIn
 		WorkspaceID:             input.WorkspaceID,
 		ResourceType:            input.ResourceType,
 		ResourceID:              input.ResourceID,
+		HoldID:                  input.HoldID,
 		AmountCents:             input.AmountCents,
 		Currency:                input.Currency,
 		PricingVersion:          input.PricingVersion,
@@ -473,18 +477,26 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	if id == "" {
 		id = resourceID("ca")
 	}
-	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: id, AmountCents: input.HoldAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
+	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: id, AmountCents: input.HoldAmountCents, ActivationAmountCents: input.ActivationAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
 	if err != nil {
 		return clients.ComputeAllocation{}, err
 	}
 	allocation, err := s.fabric.CreateComputeAllocation(ctx, clients.ComputeAllocationInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID}, idempotencyKey)
 	if err != nil {
-		_, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID, HoldAmountCents: hold.AmountCents}, "compute", "compute_create_failed", idempotencyKey)
-		return clients.ComputeAllocation{}, errors.Join(err, releaseErr)
+		failed := clients.ComputeAllocation{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "failed", BillingStatus: "stopping", HoldID: hold.ID, HoldAmountCents: hold.RemainingCents, Wallet: hold.Wallet}
+		release, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID, HoldAmountCents: hold.AmountCents}, "compute", "compute_create_failed", idempotencyKey)
+		if releaseErr == nil {
+			failed.HoldAmountCents = release.AmountCents
+			failed.HoldReleaseID = release.ID
+			failed.Wallet = release.Wallet
+			failed.BillingStatus = "stopped"
+		}
+		return failed, errors.Join(err, releaseErr)
 	}
 	allocation.HoldID = hold.ID
 	allocation.HoldAmountCents = hold.AmountCents
 	allocation.Wallet = hold.Wallet
+	allocation.BillingStatus = "pending"
 	return allocation, nil
 }
 
@@ -497,7 +509,8 @@ func (s *Service) SyncComputeAllocation(ctx context.Context, input DestroyResour
 	if err != nil {
 		return allocation, err
 	}
-	if isExternallyDeletedResource(allocation.Status) && input.HoldID != "" && input.HoldAmountCents > 0 {
+	allocation.BillingStatus = "pending"
+	if isExternallyDeletedResource(allocation.Status) && input.HoldID != "" {
 		release, err := s.ReleaseResourceHold(ctx, input, "compute", "provider_external_deleted", idempotencyKey)
 		if err != nil {
 			return allocation, err
@@ -508,6 +521,19 @@ func (s *Service) SyncComputeAllocation(ctx context.Context, input DestroyResour
 		allocation.Wallet = release.Wallet
 		allocation.BillingStatus = "stopped"
 	}
+	if (allocation.Status == "running" || allocation.Status == "ready") && input.HoldID != "" && allocation.MachineName != "" && allocation.InstanceID != "" && allocation.NodeName != "" {
+		providerEvidenceRef := "fabric:" + allocation.MachineName + ":" + allocation.InstanceID + ":" + allocation.NodeName
+		activation, err := s.ledger.ActivateHold(ctx, clients.HoldActivationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: input.ID, HoldID: input.HoldID, Currency: "CNY", ProviderEvidenceRef: providerEvidenceRef}, idempotencyKey+":hold-activation")
+		if err != nil {
+			return allocation, err
+		}
+		allocation.HoldID = input.HoldID
+		allocation.HoldAmountCents = activation.RemainingCents
+		allocation.Wallet = activation.Wallet
+		allocation.LedgerEntryID = activation.ActivationLedgerEntryID
+		allocation.WalletTransactionID = activation.ActivationWalletTransactionID
+		allocation.BillingStatus = "active"
+	}
 	return allocation, nil
 }
 
@@ -516,15 +542,16 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, input DestroyRes
 	if err != nil {
 		return allocation, err
 	}
-	if input.HoldID != "" && input.HoldAmountCents > 0 {
+	if input.HoldID != "" {
 		release, err := s.ReleaseResourceHold(ctx, input, "compute", "destroy_compute", idempotencyKey)
 		if err != nil {
 			return allocation, err
 		}
 		allocation.HoldID = input.HoldID
-		allocation.HoldAmountCents = input.HoldAmountCents
+		allocation.HoldAmountCents = release.AmountCents
 		allocation.HoldReleaseID = release.ID
 		allocation.Wallet = release.Wallet
+		allocation.BillingStatus = "stopped"
 	}
 	return allocation, nil
 }
@@ -541,18 +568,38 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 	if id == "" {
 		id = resourceID("vol")
 	}
-	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: id, AmountCents: input.HoldAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
+	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: id, AmountCents: input.HoldAmountCents, ActivationAmountCents: input.ActivationAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
 	if err != nil {
 		return clients.StorageVolume{}, err
 	}
 	volume, err := s.fabric.CreateStorageVolume(ctx, clients.StorageVolumeInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB}, idempotencyKey)
 	if err != nil {
-		_, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID, HoldAmountCents: hold.AmountCents}, "storage", "storage_create_failed", idempotencyKey)
-		return clients.StorageVolume{}, errors.Join(err, releaseErr)
+		failed := clients.StorageVolume{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "failed", BillingStatus: "stopping", HoldID: hold.ID, HoldAmountCents: hold.RemainingCents, Wallet: hold.Wallet}
+		release, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID, HoldAmountCents: hold.AmountCents}, "storage", "storage_create_failed", idempotencyKey)
+		if releaseErr == nil {
+			failed.HoldAmountCents = release.AmountCents
+			failed.HoldReleaseID = release.ID
+			failed.Wallet = release.Wallet
+			failed.BillingStatus = "stopped"
+		}
+		return failed, errors.Join(err, releaseErr)
 	}
 	volume.HoldID = hold.ID
 	volume.HoldAmountCents = hold.AmountCents
 	volume.Wallet = hold.Wallet
+	volume.BillingStatus = "pending"
+	if (volume.Status == "ready" || volume.Status == "available") && volume.ProviderResourceID != "" {
+		activation, err := s.ledger.ActivateHold(ctx, clients.HoldActivationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: id, HoldID: hold.ID, Currency: "CNY", ProviderEvidenceRef: "fabric:" + volume.ProviderResourceID}, idempotencyKey+":hold-activation")
+		if err != nil {
+			_, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID}, "storage", "storage_activation_failed", idempotencyKey)
+			return clients.StorageVolume{}, errors.Join(err, releaseErr)
+		}
+		volume.HoldAmountCents = activation.RemainingCents
+		volume.Wallet = activation.Wallet
+		volume.LedgerEntryID = activation.ActivationLedgerEntryID
+		volume.WalletTransactionID = activation.ActivationWalletTransactionID
+		volume.BillingStatus = "active"
+	}
 	return volume, nil
 }
 
@@ -561,7 +608,8 @@ func (s *Service) SyncStorageVolume(ctx context.Context, input DestroyResourceIn
 	if err != nil {
 		return volume, err
 	}
-	if isExternallyDeletedResource(volume.Status) && input.HoldID != "" && input.HoldAmountCents > 0 {
+	volume.BillingStatus = "pending"
+	if isExternallyDeletedResource(volume.Status) && input.HoldID != "" {
 		release, err := s.ReleaseResourceHold(ctx, input, "storage", "provider_external_deleted", idempotencyKey)
 		if err != nil {
 			return volume, err
@@ -572,6 +620,18 @@ func (s *Service) SyncStorageVolume(ctx context.Context, input DestroyResourceIn
 		volume.Wallet = release.Wallet
 		volume.BillingStatus = "stopped"
 	}
+	if (volume.Status == "ready" || volume.Status == "available" || volume.Status == "bound") && input.HoldID != "" && volume.ProviderResourceID != "" {
+		activation, err := s.ledger.ActivateHold(ctx, clients.HoldActivationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: input.ID, HoldID: input.HoldID, Currency: "CNY", ProviderEvidenceRef: "fabric:" + volume.ProviderResourceID}, idempotencyKey+":hold-activation")
+		if err != nil {
+			return volume, err
+		}
+		volume.HoldID = input.HoldID
+		volume.HoldAmountCents = activation.RemainingCents
+		volume.Wallet = activation.Wallet
+		volume.LedgerEntryID = activation.ActivationLedgerEntryID
+		volume.WalletTransactionID = activation.ActivationWalletTransactionID
+		volume.BillingStatus = "active"
+	}
 	return volume, nil
 }
 
@@ -580,15 +640,16 @@ func (s *Service) DestroyStorageVolume(ctx context.Context, input DestroyResourc
 	if err != nil {
 		return volume, err
 	}
-	if input.HoldID != "" && input.HoldAmountCents > 0 {
+	if input.HoldID != "" {
 		release, err := s.ReleaseResourceHold(ctx, input, "storage", "destroy_storage", idempotencyKey)
 		if err != nil {
 			return volume, err
 		}
 		volume.HoldID = input.HoldID
-		volume.HoldAmountCents = input.HoldAmountCents
+		volume.HoldAmountCents = release.AmountCents
 		volume.HoldReleaseID = release.ID
 		volume.Wallet = release.Wallet
+		volume.BillingStatus = "stopped"
 	}
 	return volume, nil
 }
@@ -596,7 +657,7 @@ func (s *Service) DestroyStorageVolume(ctx context.Context, input DestroyResourc
 func (s *Service) ReleaseResourceHold(ctx context.Context, input DestroyResourceInput, resourceType, reason, idempotencyKey string) (clients.HoldReleaseResult, error) {
 	return s.ledger.ReleaseHold(ctx, clients.HoldReleaseInput{
 		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: resourceType, ResourceID: input.ID,
-		HoldID: input.HoldID, AmountCents: input.HoldAmountCents, Currency: "CNY", Reason: reason,
+		HoldID: input.HoldID, Currency: "CNY", Reason: reason,
 	}, idempotencyKey+":hold-release")
 }
 

@@ -52,6 +52,52 @@ func TestCreateWorkspaceOrchestratesLedgerAndFabric(t *testing.T) {
 	}
 }
 
+func TestComputeActivationWaitsForRunningProviderEvidence(t *testing.T) {
+	calls := []string{}
+	ledger := &fakeLedgerClient{calls: &calls}
+	fabric := &runningComputeFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}}
+	service := NewService(ledger, fabric)
+	created, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", HoldAmountCents: 16900, ActivationAmountCents: 100}, "create-compute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.BillingStatus == "active" || !reflect.DeepEqual(calls, []string{"ledger.hold", "fabric.compute"}) {
+		t.Fatalf("create activated before machine evidence: created=%#v calls=%#v", created, calls)
+	}
+	synced, err := service.SyncComputeAllocation(context.Background(), DestroyResourceInput{ID: "compute-alpha", AccountID: "acct-alpha", HoldID: created.HoldID, HoldAmountCents: created.HoldAmountCents}, "sync-compute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if synced.BillingStatus != "active" || synced.LedgerEntryID == "" || !reflect.DeepEqual(calls, []string{"ledger.hold", "fabric.compute", "fabric.compute-sync", "ledger.activate"}) {
+		t.Fatalf("sync did not activate: synced=%#v calls=%#v", synced, calls)
+	}
+}
+
+func TestComputeActivationRequiresClaimedMachineIdentity(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &incompleteComputeFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}})
+
+	synced, err := service.SyncComputeAllocation(context.Background(), DestroyResourceInput{ID: "compute-alpha", AccountID: "acct-alpha", HoldID: "hold-alpha"}, "sync-compute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if synced.BillingStatus == "active" || !reflect.DeepEqual(calls, []string{"fabric.compute-sync"}) {
+		t.Fatalf("compute without machine identity activated: synced=%#v calls=%#v", synced, calls)
+	}
+}
+
+func TestStorageActivationRequiresBoundPVCIdentity(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &readyStorageWithoutIdentityFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}})
+	volume, err := service.SyncStorageVolume(context.Background(), DestroyResourceInput{ID: "storage-alpha", AccountID: "acct-alpha", HoldID: "hold-alpha"}, "sync-storage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if volume.BillingStatus == "active" || !reflect.DeepEqual(calls, []string{"fabric.storage-sync"}) {
+		t.Fatalf("storage without PVC identity activated: volume=%#v calls=%#v", volume, calls)
+	}
+}
+
 func TestCreateWorkspaceCompensatesReceiptFailure(t *testing.T) {
 	calls := []string{}
 	ledger := &failingReceiptLedger{fakeLedgerClient: fakeLedgerClient{calls: &calls}, err: errReceiptWrite}
@@ -289,6 +335,25 @@ func TestCreateComputeAllocationHoldsBeforeFabric(t *testing.T) {
 	}
 }
 
+func TestCreateComputeFailureReturnsReleasedHoldFacts(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &failingComputeCreateFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}})
+	compute, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", HoldAmountCents: 200, ActivationAmountCents: 100}, "compute-failed")
+	if err == nil || compute.Status != "failed" || compute.HoldID != "hold-alpha" || compute.HoldReleaseID == "" || compute.BillingStatus != "stopped" {
+		t.Fatalf("failed compute = %#v err=%v", compute, err)
+	}
+}
+
+func TestCreateComputeFailureKeepsBillingStoppingWhenHoldReleaseFails(t *testing.T) {
+	calls := []string{}
+	ledger := &failingReleaseLedgerClient{fakeLedgerClient: fakeLedgerClient{calls: &calls}}
+	service := NewService(ledger, &failingComputeCreateFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}})
+	compute, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", HoldAmountCents: 200, ActivationAmountCents: 100}, "compute-failed")
+	if err == nil || compute.Status != "failed" || compute.HoldID != "hold-alpha" || compute.HoldReleaseID != "" || compute.BillingStatus != "stopping" {
+		t.Fatalf("failed compute with unreleased hold = %#v err=%v", compute, err)
+	}
+}
+
 func TestCreateStorageVolumeHoldsBeforeFabric(t *testing.T) {
 	calls := []string{}
 	service := NewService(&fakeLedgerClient{calls: &calls}, &fakeFabricClient{calls: &calls})
@@ -304,6 +369,15 @@ func TestCreateStorageVolumeHoldsBeforeFabric(t *testing.T) {
 	wantCalls := []string{"ledger.hold", "fabric.storage"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestCreateStorageFailureReturnsReleasedHoldFacts(t *testing.T) {
+	calls := []string{}
+	service := NewService(&fakeLedgerClient{calls: &calls}, &failingStorageCreateFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}})
+	volume, err := service.CreateStorageVolume(context.Background(), StorageVolumeInput{ID: "storage-alpha", AccountID: "acct-alpha", SizeGB: 10, HoldAmountCents: 200, ActivationAmountCents: 100}, "storage-failed")
+	if err == nil || volume.Status != "failed" || volume.HoldID != "hold-alpha" || volume.HoldReleaseID == "" || volume.BillingStatus != "stopped" {
+		t.Fatalf("failed storage = %#v err=%v", volume, err)
 	}
 }
 
@@ -389,12 +463,17 @@ func (f *fakeLedgerClient) ManualTopUp(ctx context.Context, input clients.Manual
 
 func (f *fakeLedgerClient) CreateHold(ctx context.Context, input clients.HoldInput, idempotencyKey string) (clients.HoldResult, error) {
 	*f.calls = append(*f.calls, "ledger.hold")
-	return clients.HoldResult{ID: "hold-alpha", AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents}}, nil
+	return clients.HoldResult{ID: "hold-alpha", AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, ActivationAmountCents: input.ActivationAmountCents, RemainingCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents}}, nil
+}
+
+func (f *fakeLedgerClient) ActivateHold(_ context.Context, input clients.HoldActivationInput, _ string) (clients.HoldActivationResult, error) {
+	*f.calls = append(*f.calls, "ledger.activate")
+	return clients.HoldActivationResult{HoldResult: clients.HoldResult{ID: input.HoldID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, RemainingCents: 16800, Status: "active", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 19900, FrozenCents: 16800, AvailableCents: 3100}}, ActivationLedgerEntryID: "ledger-activation", ActivationWalletTransactionID: "wallet-activation"}, nil
 }
 
 func (f *fakeLedgerClient) ReleaseHold(ctx context.Context, input clients.HoldReleaseInput, idempotencyKey string) (clients.HoldReleaseResult, error) {
 	*f.calls = append(*f.calls, "ledger.release")
-	return clients.HoldReleaseResult{ID: "release-alpha", AccountID: input.AccountID, AmountCents: input.AmountCents, Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, AvailableCents: 20000}}, nil
+	return clients.HoldReleaseResult{ID: "release-alpha", AccountID: input.AccountID, AmountCents: 16800, Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, AvailableCents: 20000}}, nil
 }
 
 func (f *fakeLedgerClient) RecordReceipt(ctx context.Context, input clients.ReceiptInput, idempotencyKey string) (clients.Receipt, error) {
@@ -466,6 +545,48 @@ type fakeFabricClient struct {
 	calls   *[]string
 	job     clients.Job
 	runtime clients.WorkspaceRuntime
+}
+
+type runningComputeFabricClient struct{ fakeFabricClient }
+
+type incompleteComputeFabricClient struct{ fakeFabricClient }
+
+type readyStorageWithoutIdentityFabricClient struct{ fakeFabricClient }
+
+type failingComputeCreateFabricClient struct{ fakeFabricClient }
+
+type failingStorageCreateFabricClient struct{ fakeFabricClient }
+
+type failingReleaseLedgerClient struct{ fakeLedgerClient }
+
+func (f *failingReleaseLedgerClient) ReleaseHold(_ context.Context, _ clients.HoldReleaseInput, _ string) (clients.HoldReleaseResult, error) {
+	*f.calls = append(*f.calls, "ledger.release")
+	return clients.HoldReleaseResult{}, errors.New("ledger release failed")
+}
+
+func (f *runningComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
+	*f.calls = append(*f.calls, "fabric.compute-sync")
+	return clients.ComputeAllocation{ID: id, Status: "running", ProviderRequestID: "pool-request-alpha", MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha"}, nil
+}
+
+func (f *incompleteComputeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
+	*f.calls = append(*f.calls, "fabric.compute-sync")
+	return clients.ComputeAllocation{ID: id, Status: "running", ProviderRequestID: "pool-request-alpha"}, nil
+}
+
+func (f *readyStorageWithoutIdentityFabricClient) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
+	*f.calls = append(*f.calls, "fabric.storage-sync")
+	return clients.StorageVolume{ID: id, Status: "ready", ProviderRequestID: "local-request-only"}, nil
+}
+
+func (f *failingComputeCreateFabricClient) CreateComputeAllocation(context.Context, clients.ComputeAllocationInput, string) (clients.ComputeAllocation, error) {
+	*f.calls = append(*f.calls, "fabric.compute")
+	return clients.ComputeAllocation{}, errors.New("tencent create failed")
+}
+
+func (f *failingStorageCreateFabricClient) CreateStorageVolume(context.Context, clients.StorageVolumeInput, string) (clients.StorageVolume, error) {
+	*f.calls = append(*f.calls, "fabric.storage")
+	return clients.StorageVolume{}, errors.New("tencent storage create failed")
 }
 
 func (f *fakeFabricClient) Catalog(ctx context.Context) (clients.FabricCatalog, error) {

@@ -13,6 +13,7 @@ import (
 type LedgerClient interface {
 	ManualTopUp(ctx context.Context, input ManualTopUpInput, idempotencyKey string) (ManualTopUpResult, error)
 	CreateHold(ctx context.Context, input HoldInput, idempotencyKey string) (HoldResult, error)
+	ActivateHold(ctx context.Context, input HoldActivationInput, idempotencyKey string) (HoldActivationResult, error)
 	ReleaseHold(ctx context.Context, input HoldReleaseInput, idempotencyKey string) (HoldReleaseResult, error)
 	RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error)
 	Receipt(ctx context.Context, receiptID string) (Receipt, error)
@@ -93,6 +94,7 @@ type ResourceSettlementInput struct {
 	WorkspaceID             string         `json:"workspaceId"`
 	ResourceType            string         `json:"resourceType"`
 	ResourceID              string         `json:"resourceId"`
+	HoldID                  string         `json:"holdId"`
 	AmountCents             int64          `json:"amountCents"`
 	Currency                string         `json:"currency"`
 	PricingVersion          string         `json:"pricingVersion,omitempty"`
@@ -110,6 +112,8 @@ type ResourceSettlementResult struct {
 	WorkspaceID             string         `json:"workspaceId"`
 	ResourceType            string         `json:"resourceType"`
 	ResourceID              string         `json:"resourceId"`
+	HoldID                  string         `json:"holdId"`
+	HoldRemainingCents      int64          `json:"holdRemainingCents"`
 	AmountCents             int64          `json:"amountCents"`
 	Currency                string         `json:"currency"`
 	Status                  string         `json:"status"`
@@ -141,24 +145,46 @@ type ReconciliationResult struct {
 }
 
 type HoldInput struct {
-	AccountID    string `json:"accountId"`
-	WorkspaceID  string `json:"workspaceId"`
-	ResourceType string `json:"resourceType"`
-	ResourceID   string `json:"resourceId"`
-	AmountCents  int64  `json:"amountCents"`
-	Currency     string `json:"currency"`
+	AccountID             string `json:"accountId"`
+	WorkspaceID           string `json:"workspaceId"`
+	ResourceType          string `json:"resourceType"`
+	ResourceID            string `json:"resourceId"`
+	AmountCents           int64  `json:"amountCents"`
+	ActivationAmountCents int64  `json:"activationAmountCents,omitempty"`
+	Currency              string `json:"currency"`
 }
 
 type HoldResult struct {
-	ID           string `json:"id"`
-	AccountID    string `json:"accountId"`
-	WorkspaceID  string `json:"workspaceId"`
-	ResourceType string `json:"resourceType"`
-	ResourceID   string `json:"resourceId"`
-	AmountCents  int64  `json:"amountCents"`
-	Currency     string `json:"currency"`
-	Status       string `json:"status"`
-	Wallet       Wallet `json:"wallet"`
+	ID                    string `json:"id"`
+	AccountID             string `json:"accountId"`
+	WorkspaceID           string `json:"workspaceId"`
+	ResourceType          string `json:"resourceType"`
+	ResourceID            string `json:"resourceId"`
+	AmountCents           int64  `json:"amountCents"`
+	ActivationAmountCents int64  `json:"activationAmountCents"`
+	OriginalCents         int64  `json:"originalCents"`
+	RemainingCents        int64  `json:"remainingCents"`
+	ConsumedCents         int64  `json:"consumedCents"`
+	ReleasedCents         int64  `json:"releasedCents"`
+	Currency              string `json:"currency"`
+	Status                string `json:"status"`
+	Wallet                Wallet `json:"wallet"`
+}
+
+type HoldActivationInput struct {
+	AccountID           string `json:"accountId"`
+	WorkspaceID         string `json:"workspaceId"`
+	ResourceType        string `json:"resourceType"`
+	ResourceID          string `json:"resourceId"`
+	HoldID              string `json:"holdId"`
+	Currency            string `json:"currency"`
+	ProviderEvidenceRef string `json:"providerEvidenceRef"`
+}
+
+type HoldActivationResult struct {
+	HoldResult
+	ActivationLedgerEntryID       string `json:"activationLedgerEntryId"`
+	ActivationWalletTransactionID string `json:"activationWalletTransactionId"`
 }
 
 type HoldReleaseInput struct {
@@ -273,6 +299,12 @@ func (c *ledgerHTTPClient) ManualTopUp(ctx context.Context, input ManualTopUpInp
 func (c *ledgerHTTPClient) CreateHold(ctx context.Context, input HoldInput, idempotencyKey string) (HoldResult, error) {
 	var result HoldResult
 	err := c.post(ctx, "/ledger/holds", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *ledgerHTTPClient) ActivateHold(ctx context.Context, input HoldActivationInput, idempotencyKey string) (HoldActivationResult, error) {
+	var result HoldActivationResult
+	err := c.post(ctx, "/ledger/holds/activate", input, idempotencyKey, &result)
 	return result, err
 }
 

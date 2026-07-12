@@ -62,7 +62,7 @@ func (app *controlPlaneServer) runPeriodicSettlementOnce(ctx context.Context, se
 		periodEnd = now.UTC()
 	}
 	periodStart := periodEnd.Add(-time.Hour)
-	inputs, err := app.periodicSettlementInputs(ctx, periodStart, periodEnd)
+	inputs, err := app.periodicSettlementInputs(ctx, periodStart, periodEnd, now.UTC())
 	if err != nil {
 		return err
 	}
@@ -72,6 +72,11 @@ func (app *controlPlaneServer) runPeriodicSettlementOnce(ctx context.Context, se
 		result, err := service.SettleResource(ctx, input, key)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("settle %s: %w", input.ResourceID, err))
+			if strings.Contains(strings.ToLower(err.Error()), "insufficient resource hold") {
+				if stopErr := app.stopExhaustedResource(ctx, service, input); stopErr != nil {
+					errs = append(errs, fmt.Errorf("stop exhausted %s: %w", input.ResourceID, stopErr))
+				}
+			}
 			continue
 		}
 		result = completeSettlementResult(result, input)
@@ -86,29 +91,79 @@ func (app *controlPlaneServer) runPeriodicSettlementOnce(ctx context.Context, se
 	return errors.Join(errs...)
 }
 
+func (app *controlPlaneServer) stopExhaustedResource(ctx context.Context, service *controlplane.Service, input controlplane.ResourceSettlementInput) error {
+	key := "hold-exhausted:" + input.ResourceType + ":" + input.ResourceID
+	if input.ResourceType == "compute" {
+		row, ok := app.getCompute(input.ResourceID)
+		if !ok {
+			return fmt.Errorf("compute_allocation_not_found")
+		}
+		stopping := cloneMap(row)
+		stopping["status"] = "destroying"
+		stopping["desiredStatus"] = "destroyed"
+		stopping["billingStatus"] = "stopping"
+		if err := app.saveComputeFact(stopping); err != nil {
+			return err
+		}
+		result, err := service.DestroyComputeAllocation(ctx, destroyResourceInput(input.ResourceID, stopping), key)
+		if err != nil {
+			_ = app.saveComputeFact(providerSyncFacts(stopping, err))
+			return err
+		}
+		return app.saveComputeFact(providerSyncFacts(computeResponse(mergeMaps(stopping, structToMap(result))), nil))
+	}
+	row, ok := app.getStorage(input.ResourceID)
+	if !ok {
+		return fmt.Errorf("storage_volume_not_found")
+	}
+	stopping := cloneMap(row)
+	stopping["status"] = "destroying"
+	stopping["desiredStatus"] = "destroyed"
+	stopping["billingStatus"] = "stopping"
+	if err := app.saveStorageFact(stopping); err != nil {
+		return err
+	}
+	result, err := service.DestroyStorageVolume(ctx, destroyResourceInput(input.ResourceID, stopping), key)
+	if err != nil {
+		_ = app.saveStorageFact(providerSyncFacts(stopping, err))
+		return err
+	}
+	return app.saveStorageFact(providerSyncFacts(storageResponse(mergeMaps(stopping, structToMap(result))), nil))
+}
+
 type settlementResourceStore interface {
 	SettlementResourceRows(ctx context.Context) (controlPlaneRecordSet, controlPlaneRecordSet, error)
 }
 
-func (app *controlPlaneServer) periodicSettlementInputs(ctx context.Context, periodStart time.Time, periodEnd time.Time) ([]controlplane.ResourceSettlementInput, error) {
+func (app *controlPlaneServer) periodicSettlementInputs(ctx context.Context, periodStart time.Time, periodEnd time.Time, now time.Time) ([]controlplane.ResourceSettlementInput, error) {
 	computes, storages, err := app.settlementResourceRows(ctx)
 	if err != nil {
 		return nil, err
 	}
 	inputs := []controlplane.ResourceSettlementInput{}
 	for _, row := range computes {
-		if !billableCompute(row) || alreadySettledForPeriod(row, periodEnd) {
+		start, end, due := settlementPeriod(row, periodStart, periodEnd, now)
+		if !billableCompute(row) || !due || alreadySettledForPeriod(row, end) {
 			continue
 		}
-		inputs = append(inputs, periodicSettlementInput(row, "compute", periodStart, periodEnd))
+		inputs = append(inputs, periodicSettlementInput(row, "compute", start, end))
 	}
 	for _, row := range storages {
-		if !billableStorage(row) || alreadySettledForPeriod(row, periodEnd) {
+		start, end, due := settlementPeriod(row, periodStart, periodEnd, now)
+		if !billableStorage(row) || !due || alreadySettledForPeriod(row, end) {
 			continue
 		}
-		inputs = append(inputs, periodicSettlementInput(row, "storage", periodStart, periodEnd))
+		inputs = append(inputs, periodicSettlementInput(row, "storage", start, end))
 	}
 	return inputs, nil
+}
+
+func settlementPeriod(row map[string]any, fallbackStart, fallbackEnd, now time.Time) (time.Time, time.Time, bool) {
+	next, ok := parseTimeString(stringValue(row["billingNextSettlementAt"]))
+	if !ok {
+		return fallbackStart, fallbackEnd, true
+	}
+	return next, next.Add(time.Hour), !now.Before(next)
 }
 
 func (app *controlPlaneServer) settlementResourceRows(ctx context.Context) (controlPlaneRecordSet, controlPlaneRecordSet, error) {
@@ -120,12 +175,12 @@ func (app *controlPlaneServer) settlementResourceRows(ctx context.Context) (cont
 
 func billableCompute(row map[string]any) bool {
 	status := stringValue(row["status"])
-	return providerFreshEnough(row) && billingStatusFor(row) != "stopped" && (status == "running" || status == "ready" || status == "active")
+	return providerFreshEnough(row) && billingStatusFor(row) == "active" && (status == "running" || status == "ready" || status == "active")
 }
 
 func billableStorage(row map[string]any) bool {
 	status := stringValue(row["status"])
-	return providerFreshEnough(row) && billingStatusFor(row) != "stopped" && (status == "available" || status == "ready" || status == "bound")
+	return providerFreshEnough(row) && billingStatusFor(row) == "active" && (status == "available" || status == "ready" || status == "bound")
 }
 
 func providerFreshEnough(row map[string]any) bool {
@@ -149,6 +204,7 @@ func periodicSettlementInput(row map[string]any, resourceType string, periodStar
 		WorkspaceID:             stringValue(row["workspaceId"]),
 		ResourceType:            resourceType,
 		ResourceID:              stringValue(row["id"]),
+		HoldID:                  stringValue(row["holdId"]),
 		AmountCents:             amountCents,
 		Currency:                firstNonEmpty(stringValue(valueOrNil(row, "priceSnapshot", "currency")), pricingCurrency),
 		PricingVersion:          firstNonEmpty(stringValue(row["pricingVersion"]), pricingCatalogVersion),
@@ -231,6 +287,13 @@ func (app *controlPlaneServer) markResourceSettlement(result clients.ResourceSet
 	row["ledgerEntryId"] = result.LedgerEntryID
 	row["walletTransactionId"] = result.WalletTransactionID
 	row["usagePeriodEnd"] = result.UsagePeriodEnd
+	nextSettlementAt := result.UsagePeriodEnd
+	if stringValue(row["billingNextSettlementAt"]) == "" {
+		if periodEnd, ok := parseTimeString(result.UsagePeriodEnd); ok {
+			nextSettlementAt = periodEnd.Add(time.Hour).Format(time.RFC3339)
+		}
+	}
+	row["billingNextSettlementAt"] = nextSettlementAt
 	if result.ResourceType == "storage" {
 		return app.tables.SaveStorage(context.Background(), row)
 	}

@@ -28,6 +28,29 @@ func TestLedgerHTTPClientReturnsErrorForFailedMutation(t *testing.T) {
 	}
 }
 
+func TestLedgerHTTPClientActivatesOwningHold(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ledger/holds/activate" || r.Header.Get("Idempotency-Key") != "activate-once" {
+			t.Fatalf("request = %s idempotency=%q", r.URL.Path, r.Header.Get("Idempotency-Key"))
+		}
+		var input HoldActivationInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input.ResourceID != "compute-alpha" || input.HoldID != "hold-alpha" || input.ProviderEvidenceRef != "fabric:machine-alpha:ins-alpha" {
+			t.Fatalf("activation input = %#v", input)
+		}
+		_ = json.NewEncoder(w).Encode(HoldActivationResult{HoldResult: HoldResult{ID: input.HoldID, RemainingCents: 16800, Status: "active"}})
+	}))
+	defer server.Close()
+
+	client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
+	result, err := client.ActivateHold(context.Background(), HoldActivationInput{ResourceID: "compute-alpha", HoldID: "hold-alpha", ProviderEvidenceRef: "fabric:machine-alpha:ins-alpha"}, "activate-once")
+	if err != nil || result.RemainingCents != 16800 || result.Status != "active" {
+		t.Fatalf("activation = %#v err=%v", result, err)
+	}
+}
+
 func TestLedgerHTTPClientReadsWalletAndSettlementFacts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

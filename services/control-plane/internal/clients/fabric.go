@@ -127,28 +127,31 @@ type ComputeAllocationInput struct {
 }
 
 type ComputeAllocation struct {
-	ID                 string `json:"id"`
-	AccountID          string `json:"accountId"`
-	WorkspaceID        string `json:"workspaceId"`
-	PackageID          string `json:"packageId"`
-	Status             string `json:"status"`
-	Provider           string `json:"provider"`
-	ProviderResourceID string `json:"providerResourceId"`
-	ProviderRequestID  string `json:"providerRequestId"`
-	ServiceName        string `json:"serviceName"`
-	PoolID             string `json:"poolId,omitempty"`
-	NodePoolID         string `json:"nodePoolId,omitempty"`
-	InstanceID         string `json:"instanceId,omitempty"`
-	CVMInstanceID      string `json:"cvmInstanceId,omitempty"`
-	NodeName           string `json:"nodeName,omitempty"`
-	MachineName        string `json:"machineName,omitempty"`
-	PrivateIP          string `json:"privateIp,omitempty"`
-	PublicIP           string `json:"publicIp,omitempty"`
-	BillingStatus      string `json:"billingStatus,omitempty"`
-	HoldID             string `json:"holdId,omitempty"`
-	HoldAmountCents    int64  `json:"holdAmountCents,omitempty"`
-	HoldReleaseID      string `json:"holdReleaseId,omitempty"`
-	Wallet             Wallet `json:"wallet,omitempty"`
+	ID                  string `json:"id"`
+	AccountID           string `json:"accountId"`
+	WorkspaceID         string `json:"workspaceId"`
+	PackageID           string `json:"packageId"`
+	Status              string `json:"status"`
+	Provider            string `json:"provider"`
+	ProviderResourceID  string `json:"providerResourceId"`
+	ProviderRequestID   string `json:"providerRequestId"`
+	OperationID         string `json:"operationId,omitempty"`
+	ServiceName         string `json:"serviceName"`
+	PoolID              string `json:"poolId,omitempty"`
+	NodePoolID          string `json:"nodePoolId,omitempty"`
+	InstanceID          string `json:"instanceId,omitempty"`
+	CVMInstanceID       string `json:"cvmInstanceId,omitempty"`
+	NodeName            string `json:"nodeName,omitempty"`
+	MachineName         string `json:"machineName,omitempty"`
+	PrivateIP           string `json:"privateIp,omitempty"`
+	PublicIP            string `json:"publicIp,omitempty"`
+	BillingStatus       string `json:"billingStatus,omitempty"`
+	HoldID              string `json:"holdId,omitempty"`
+	HoldAmountCents     int64  `json:"holdAmountCents,omitempty"`
+	HoldReleaseID       string `json:"holdReleaseId,omitempty"`
+	LedgerEntryID       string `json:"ledgerEntryId,omitempty"`
+	WalletTransactionID string `json:"walletTransactionId,omitempty"`
+	Wallet              Wallet `json:"wallet,omitempty"`
 }
 
 type StorageVolumeInput struct {
@@ -159,20 +162,22 @@ type StorageVolumeInput struct {
 }
 
 type StorageVolume struct {
-	ID                 string `json:"id"`
-	AccountID          string `json:"accountId,omitempty"`
-	Provider           string `json:"provider,omitempty"`
-	ProviderResourceID string `json:"providerResourceId,omitempty"`
-	ProviderRequestID  string `json:"providerRequestId"`
-	WorkspaceID        string `json:"workspaceId"`
-	Status             string `json:"status"`
-	SizeGB             int    `json:"sizeGb,omitempty"`
-	StorageClass       string `json:"storageClass,omitempty"`
-	BillingStatus      string `json:"billingStatus,omitempty"`
-	HoldID             string `json:"holdId,omitempty"`
-	HoldAmountCents    int64  `json:"holdAmountCents,omitempty"`
-	HoldReleaseID      string `json:"holdReleaseId,omitempty"`
-	Wallet             Wallet `json:"wallet,omitempty"`
+	ID                  string `json:"id"`
+	AccountID           string `json:"accountId,omitempty"`
+	Provider            string `json:"provider,omitempty"`
+	ProviderResourceID  string `json:"providerResourceId,omitempty"`
+	ProviderRequestID   string `json:"providerRequestId"`
+	WorkspaceID         string `json:"workspaceId"`
+	Status              string `json:"status"`
+	SizeGB              int    `json:"sizeGb,omitempty"`
+	StorageClass        string `json:"storageClass,omitempty"`
+	BillingStatus       string `json:"billingStatus,omitempty"`
+	HoldID              string `json:"holdId,omitempty"`
+	HoldAmountCents     int64  `json:"holdAmountCents,omitempty"`
+	HoldReleaseID       string `json:"holdReleaseId,omitempty"`
+	LedgerEntryID       string `json:"ledgerEntryId,omitempty"`
+	WalletTransactionID string `json:"walletTransactionId,omitempty"`
+	Wallet              Wallet `json:"wallet,omitempty"`
 }
 
 type StorageSnapshotInput struct {

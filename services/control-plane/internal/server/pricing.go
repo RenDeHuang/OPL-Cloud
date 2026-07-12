@@ -107,25 +107,31 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any,
 	}
 	unit := "hour"
 	unitPrice := plan.ComputeHourly
-	holdAmountCents := computeHoldAmountCentsFromCatalog(catalog, packageID)
+	guaranteeAmountCents := computeHoldAmountCentsFromCatalog(catalog, packageID)
+	activationAmountCents := cents(plan.ComputeHourly)
 	if resourceType == "storage" {
 		unit = "gb_month"
 		unitPrice = plan.StorageGBMonth
-		holdAmountCents = storageHoldAmountCentsFromCatalog(catalog, packageID, sizeGB)
+		guaranteeAmountCents = storageHoldAmountCentsFromCatalog(catalog, packageID, sizeGB)
+		activationAmountCents = cents(plan.StorageGBMonth * sizeGB / 30 / 24)
 		priceSnapshot["sizeGb"] = sizeGB
-		priceSnapshot["unitPriceCents"] = cents(plan.StorageGBMonth)
+		priceSnapshot["unitPriceCents"] = activationAmountCents
+		priceSnapshot["monthlyUnitPriceCents"] = cents(plan.StorageGBMonth)
 	}
+	holdAmountCents := guaranteeAmountCents + activationAmountCents
 	return map[string]any{
-		"pricingVersion":     catalog.Version,
-		"resourceType":       resourceType,
-		"packageId":          plan.ID,
-		"currency":           catalog.Currency,
-		"unit":               unit,
-		"unitPrice":          unitPrice,
-		"holdDays":           catalog.HoldDays,
-		"holdAmountCents":    holdAmountCents,
-		"priceSnapshot":      priceSnapshot,
-		"walletAfterPreview": walletAfterHoldPreview(wallet, holdAmountCents),
+		"pricingVersion":        catalog.Version,
+		"resourceType":          resourceType,
+		"packageId":             plan.ID,
+		"currency":              catalog.Currency,
+		"unit":                  unit,
+		"unitPrice":             unitPrice,
+		"holdDays":              catalog.HoldDays,
+		"holdAmountCents":       holdAmountCents,
+		"guaranteeAmountCents":  guaranteeAmountCents,
+		"activationAmountCents": activationAmountCents,
+		"priceSnapshot":         priceSnapshot,
+		"walletAfterPreview":    walletAfterHoldPreview(wallet, holdAmountCents),
 	}
 }
 

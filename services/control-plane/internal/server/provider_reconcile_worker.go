@@ -86,6 +86,7 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 			}
 			body := cloneMap(row)
 			body["holdReleaseId"] = release.ID
+			body["holdAmountCents"] = release.AmountCents
 			body["ledgerEntryId"] = release.LedgerEntryID
 			body["walletTransactionId"] = release.WalletTransactionID
 			body["wallet"] = structToMap(release.Wallet)
@@ -105,12 +106,30 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 			}
 			continue
 		}
-		body := providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil)
+		body := billingActivationFacts(row, providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil), now)
 		if err := app.saveComputeFact(body); err != nil {
 			return err
 		}
 	}
 	for id, row := range storages {
+		if stringValue(row["status"]) == "failed" && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
+			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "storage", "storage_create_failed", "provider-reconcile:storage:"+id)
+			if releaseErr != nil {
+				errs = append(errs, releaseErr)
+				continue
+			}
+			body := cloneMap(row)
+			body["holdReleaseId"] = release.ID
+			body["holdAmountCents"] = release.AmountCents
+			body["ledgerEntryId"] = release.LedgerEntryID
+			body["walletTransactionId"] = release.WalletTransactionID
+			body["wallet"] = structToMap(release.Wallet)
+			body["billingStatus"] = "stopped"
+			if saveErr := app.saveStorageFact(body); saveErr != nil {
+				errs = append(errs, saveErr)
+			}
+			continue
+		}
 		if !providerSyncDue(row, now) {
 			continue
 		}
@@ -121,7 +140,7 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 			}
 			continue
 		}
-		body := providerSyncFacts(storageResponse(mergeMaps(row, structToMap(result))), nil)
+		body := billingActivationFacts(row, providerSyncFacts(storageResponse(mergeMaps(row, structToMap(result))), nil), now)
 		if err := app.saveStorageFact(body); err != nil {
 			return err
 		}
@@ -134,6 +153,9 @@ func providerSyncDue(row map[string]any, now time.Time) bool {
 		return false
 	}
 	status := stringValue(row["status"])
+	if (status == "provisioning" || status == "pending" || status == "creating") && stringValue(row["holdId"]) != "" {
+		return true
+	}
 	if status != "running" && status != "ready" && status != "active" && status != "available" && status != "bound" {
 		return false
 	}
