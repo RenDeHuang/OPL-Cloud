@@ -63,6 +63,8 @@ export async function verifyProductionExecutionChain({
   required(workspaceId, "workspace_id");
   const runnerId = `runner-${runId}`;
   const environmentRef = "environment-production-verifier";
+  const reviewerRef = "production-verifier";
+  const reviewerVersion = "1";
   const digest = `sha256:${createHash("sha256").update(runId).digest("hex")}`;
   const key = (stage) => `production-execution:${runId}:${stage}`;
 
@@ -147,13 +149,23 @@ export async function verifyProductionExecutionChain({
   assertFields(artifact, { ...executionIdentity, jobId: executed.jobId, digest }, "artifact");
   required(artifact.artifactId, "artifact_id");
 
+  const policy = (await requestJson({
+    fetchImpl, origin: ledger, path: "/ledger/review-policies", method: "POST", serviceToken: internalServiceToken, idempotencyKey: key("review-policy"),
+    body: { ...executionIdentity, jobId: executed.jobId, version: "1", requiredReviewers: [{ reviewerRef, reviewerVersion }] }
+  })).payload;
+  assertFields(policy, { ...executionIdentity, jobId: executed.jobId, version: "1", status: "active" }, "review_policy");
+  required(policy.policyId, "review_policy_id");
+  if (policy.requiredReviewers?.length !== 1 || policy.requiredReviewers[0]?.reviewerRef !== reviewerRef || policy.requiredReviewers[0]?.reviewerVersion !== reviewerVersion) {
+    throw new Error("review_policy_required_reviewers_mismatch");
+  }
+
   const review = (await requestJson({
     fetchImpl, origin: ledger, path: "/ledger/reviews", method: "POST", serviceToken: internalServiceToken, idempotencyKey: key("review"),
     body: {
       ...executionIdentity,
       jobId: executed.jobId,
-      reviewerRef: "production-verifier",
-      reviewerVersion: "1",
+      reviewerRef,
+      reviewerVersion,
       inputArtifactDigests: [digest],
       checks: { productionExecutionChain: "passed" },
       decision: "accepted"
