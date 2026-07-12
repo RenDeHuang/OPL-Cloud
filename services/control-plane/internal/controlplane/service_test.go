@@ -50,6 +50,9 @@ func TestCreateWorkspaceOrchestratesLedgerAndFabric(t *testing.T) {
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
 	}
+	if len(ledger.receipts) != 1 || len(ledger.receipts[0].Continuation) != 0 {
+		t.Fatalf("workspace lifecycle receipt must not claim an execution continuation: %#v", ledger.receipts)
+	}
 }
 
 func TestComputeActivationWaitsForRunningProviderEvidence(t *testing.T) {
@@ -226,7 +229,7 @@ func TestResumeWorkspaceReusesIdentityStorageAndRecordsReceipt(t *testing.T) {
 	if workspace.ComputeID != "compute-replacement" || workspace.AttachmentID != "attachment-replacement" || workspace.Status != "running" {
 		t.Fatalf("resume did not project replacement runtime resources: %#v", workspace)
 	}
-	if len(ledger.receipts) != 1 || ledger.receipts[0].Type != "workspace.compute_restarted" || ledger.receipts[0].WorkspaceID != "workspace-alpha" || ledger.receipts[0].JobID != "runtime-alpha" {
+	if len(ledger.receipts) != 1 || ledger.receipts[0].Type != "workspace.compute_restarted" || ledger.receipts[0].WorkspaceID != "workspace-alpha" || ledger.receipts[0].JobID != "runtime-alpha" || len(ledger.receipts[0].Continuation) != 0 {
 		t.Fatalf("unexpected resume receipt: %#v", ledger.receipts)
 	}
 	wantCalls := []string{"fabric.runtime", "ledger.receipt"}

@@ -1337,7 +1337,7 @@ function verificationResourceIds({ compute, storage, attachment, workspace, repl
   });
 }
 
-async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeAllocationId, storageId, attachmentId, expectedComputeHoldId = "", expectedStorageHoldId = "", checks = null, auth = null }) {
+async function cleanupVerificationResources({ fetchImpl, origin, accountId, computeAllocationId, storageId, attachmentId, expectedComputeHoldId = "", expectedStorageHoldId = "", checks = null, auth = null, attempts = DEFAULT_WORKSPACE_URL_ATTEMPTS, retryDelayMs = DEFAULT_RETRY_DELAY_MS }) {
   const cleanupErrors = [];
 
   if (attachmentId) {
@@ -1360,21 +1360,35 @@ async function cleanupVerificationResources({ fetchImpl, origin, accountId, comp
 
   if (computeAllocationId) {
     try {
-      const destroyed = await requestJson({
-        fetchImpl,
-        origin,
-        path: `/api/compute-allocations/${encodeURIComponent(computeAllocationId)}/destroy`,
-        method: "POST",
-        auth,
-        body: { accountId, computeAllocationId, confirm: true }
-      });
-      if (checks) {
-        addCheck(checks, "verification_compute_destroyed", Boolean(
+      let destroyed = null;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        destroyed = await requestJson({
+          fetchImpl,
+          origin,
+          path: `/api/compute-allocations/${encodeURIComponent(computeAllocationId)}/destroy`,
+          method: "POST",
+          auth,
+          idempotencyKey: `production_verification_cleanup:compute:${computeAllocationId}`,
+          body: { accountId, computeAllocationId, confirm: true }
+        });
+        if (
           destroyed?.status === "destroyed" &&
           destroyed?.billingStatus === "stopped" &&
-          (!expectedComputeHoldId || (destroyed?.holdId === expectedComputeHoldId && Boolean(destroyed?.holdReleaseId)))
-        ));
+          Boolean(destroyed?.holdReleaseId) &&
+          (!expectedComputeHoldId || destroyed?.holdId === expectedComputeHoldId)
+        ) break;
+        if (attempt < attempts) await sleep(retryDelayMs);
       }
+      const cleanupComplete = Boolean(
+        destroyed?.status === "destroyed" &&
+        destroyed?.billingStatus === "stopped" &&
+        destroyed?.holdReleaseId &&
+        (!expectedComputeHoldId || destroyed?.holdId === expectedComputeHoldId)
+      );
+      if (checks) {
+        addCheck(checks, "verification_compute_destroyed", cleanupComplete);
+      }
+      if (!cleanupComplete) throw new Error("verification_compute_destroyed_failed");
     } catch (error) {
       cleanupErrors.push(`destroy_compute:${error.message}`);
     }
@@ -1641,7 +1655,7 @@ export async function verifyProductionChain({
 	addCheck(checks, "workspace_backup_destroyed", destroyedBackup?.status === "destroyed", { backupId: backup.backupId });
 	backupDestroyed = true;
 	for (const recoveryStorage of [recoveredStorage, clonedStorage]) {
-		const recoveryCleanupErrors = await cleanupVerificationResources({ fetchImpl, origin: normalizedOrigin, accountId, storageId: recoveryStorage.id, auth });
+		const recoveryCleanupErrors = await cleanupVerificationResources({ fetchImpl, origin: normalizedOrigin, accountId, storageId: recoveryStorage.id, auth, attempts: workspaceUrlAttempts, retryDelayMs });
 		if (recoveryCleanupErrors.length > 0) {
 			const error = new Error(`production_verification_cleanup_failed:${recoveryCleanupErrors.join("|")}`);
 			error.cleanupErrors = recoveryCleanupErrors;
@@ -1659,7 +1673,9 @@ export async function verifyProductionChain({
       attachmentId: attachment.id,
       expectedComputeHoldId: compute.holdId,
       checks,
-      auth
+      auth,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs
     });
     if (firstCleanupErrors.length > 0) {
       const error = new Error(`production_verification_cleanup_failed:${firstCleanupErrors.join("|")}`);
@@ -1826,7 +1842,9 @@ export async function verifyProductionChain({
       expectedComputeHoldId: replacementCompute.holdId,
       expectedStorageHoldId: storage.holdId,
       checks,
-      auth
+      auth,
+      attempts: workspaceUrlAttempts,
+      retryDelayMs
     });
     if (cleanupErrors.length > 0) {
       const error = new Error(`production_verification_cleanup_failed:${cleanupErrors.join("|")}`);
@@ -1879,7 +1897,7 @@ export async function verifyProductionChain({
 		}
 	}
 	for (const recoveryStorage of [recoveredStorage, clonedStorage].filter((item) => item?.id)) {
-		const recoveryCleanupErrors = await cleanupVerificationResources({ fetchImpl, origin: normalizedOrigin, accountId, storageId: recoveryStorage.id, auth });
+		const recoveryCleanupErrors = await cleanupVerificationResources({ fetchImpl, origin: normalizedOrigin, accountId, storageId: recoveryStorage.id, auth, attempts: workspaceUrlAttempts, retryDelayMs });
 		cleanupErrors.push(...recoveryCleanupErrors);
 	}
     if (replacementCompute?.id || replacementAttachment?.id) {
@@ -1889,7 +1907,10 @@ export async function verifyProductionChain({
         accountId,
         computeAllocationId: replacementCompute?.id,
         attachmentId: replacementAttachment?.id,
-        auth
+        expectedComputeHoldId: replacementCompute?.holdId,
+        auth,
+        attempts: workspaceUrlAttempts,
+        retryDelayMs
       });
       cleanupErrors.push(...replacementCleanupErrors);
     }
@@ -1900,7 +1921,10 @@ export async function verifyProductionChain({
         accountId,
         computeAllocationId: compute?.id,
         attachmentId: attachment?.id,
-        auth
+        expectedComputeHoldId: compute?.holdId,
+        auth,
+        attempts: workspaceUrlAttempts,
+        retryDelayMs
       });
       cleanupErrors.push(...primaryCleanupErrors);
     }
@@ -1910,7 +1934,9 @@ export async function verifyProductionChain({
         origin: normalizedOrigin,
         accountId,
         storageId: storage.id,
-        auth
+        auth,
+        attempts: workspaceUrlAttempts,
+        retryDelayMs
       });
       cleanupErrors.push(...storageCleanupErrors);
     }

@@ -29,6 +29,24 @@ func TestTKENodeSelectorUsesTencentInstanceLabel(t *testing.T) {
 	}
 }
 
+func TestSyncComputeAllocationRestoresClaimedMachineSelector(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		return provisionerResponse{
+			OK: true, Status: "running", InstanceID: "np-basic-2", NodeName: "10.0.0.8",
+			ProviderData: map[string]string{"machineName": "np-basic-2"},
+		}, nil
+	}
+
+	allocation, err := provider.SyncComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", PackageID: "basic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocation.NodeSelector["cloud.tencent.com/node-instance-id"] != "np-basic-2" {
+		t.Fatalf("synced selector = %#v", allocation.NodeSelector)
+	}
+}
+
 func TestTencentTagComputeMachineWritesProviderIdentityBeforeNodeLabel(t *testing.T) {
 	provider := NewTencentProvider()
 	var events []string

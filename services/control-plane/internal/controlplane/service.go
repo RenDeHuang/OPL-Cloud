@@ -712,7 +712,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInpu
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
 	}
-	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: workspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID}, OutputRefs: map[string]any{"redactedUrl": runtime.URL}, Continuation: map[string]any{"action": "open_workspace_url", "tokenVersion": "v1", "redactedUrl": runtime.URL}}, idempotencyKey+":receipt")
+	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: workspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID}, OutputRefs: map[string]any{"redactedUrl": runtime.URL}}, idempotencyKey+":receipt")
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workspaceCompensationTimeout)
 		defer cancel()
@@ -751,7 +751,7 @@ func (s *Service) ResumeWorkspace(ctx context.Context, input ResumeWorkspaceInpu
 	if url == "" {
 		url = runtime.URL
 	}
-	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.compute_restarted", Status: "completed", Surface: "workspace", WorkspaceID: input.WorkspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID, "computeAllocationId": input.ComputeID, "storageAttachmentId": input.AttachmentID}, OutputRefs: map[string]any{"redactedUrl": url}, Continuation: map[string]any{"action": "open_workspace_url", "tokenVersion": "v1", "redactedUrl": url}}, idempotencyKey+":receipt")
+	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.compute_restarted", Status: "completed", Surface: "workspace", WorkspaceID: input.WorkspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID, "computeAllocationId": input.ComputeID, "storageAttachmentId": input.AttachmentID}, OutputRefs: map[string]any{"redactedUrl": url}}, idempotencyKey+":receipt")
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
 	}

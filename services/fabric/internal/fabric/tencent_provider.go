@@ -189,6 +189,7 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 	for key, value := range response.ProviderData {
 		allocation.ProviderData[key] = value
 	}
+	allocation.NodeSelector = tkeNodeSelector(allocation.ProviderData, allocation.NodeName)
 	return allocation, nil
 }
 

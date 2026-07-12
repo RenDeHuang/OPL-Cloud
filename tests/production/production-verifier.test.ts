@@ -306,9 +306,10 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
         "POST /api/billing/resource-settlements",
 		"POST /api/storage-attachments/detach",
 		"POST /api/storage-volumes/destroy"
-      ].includes(key) ||
-      key.startsWith("GET /api/compute-allocations/")
-    ) {
+	      ].includes(key) ||
+	      key.startsWith("POST /api/compute-allocations/") && key.endsWith("/destroy") ||
+	      key.startsWith("GET /api/compute-allocations/")
+	    ) {
       const count = (requestCounts.get(key) || 0) + 1;
       requestCounts.set(key, count);
       key = count === 1 ? key : `${key}#${count}`;
@@ -1209,10 +1210,33 @@ test("production verifier rejects paid resource cleanup without Hold release evi
 			origin: "https://console.oplcloud.cn",
 			accountId: "pi-prod",
 			runId: "prod-run",
+			retryDelayMs: 0,
 			fetchImpl: keyedFetch({ responses })
 		}),
 		/verification_compute_destroyed/
 	);
+});
+
+test("production verifier waits for async compute destroy before requiring Hold release", async () => {
+	const chain = tkeChain();
+	const responses = chainResponses(chain);
+	const path = `POST /api/compute-allocations/${chain.compute.id}/destroy`;
+	responses[path] = { ...chain.compute, status: "destroying", billingStatus: "stopping" };
+	responses[`${path}#2`] = { ...chain.compute, status: "destroyed", billingStatus: "stopped", holdReleaseId: "release-compute-prod001" };
+	const requests = [];
+
+	await verifyProductionChain({
+		origin: "https://console.oplcloud.cn",
+		accountId: "pi-prod",
+		runId: "prod-run",
+		retryDelayMs: 0,
+		fetchImpl: keyedFetch({ responses, requests })
+	});
+
+	const destroyRequests = requests.filter((request) => request.key.startsWith(path));
+	assert.equal(destroyRequests.length, 2);
+	assert.ok(destroyRequests[0].idempotencyKey);
+	assert.equal(destroyRequests[0].idempotencyKey, destroyRequests[1].idempotencyKey);
 });
 
 test("production verifier preserves Workspace gateway cookies after token cleanup redirects", async () => {
