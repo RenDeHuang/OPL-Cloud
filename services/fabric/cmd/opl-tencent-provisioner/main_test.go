@@ -416,6 +416,8 @@ type fakeNativeTkeAPI struct {
 	machinePoolIds           []string
 	nodeType                 string
 	omitInstanceNodePool     bool
+	omitMachineLanIP         bool
+	machineInstanceIDsMatch  bool
 	calls                    []string
 }
 
@@ -587,8 +589,12 @@ func (api *fakeNativeTkeAPI) DescribeClusterInstances(request *tke2022.DescribeC
 		if api.omitInstanceNodePool {
 			instanceNodePoolId = ""
 		}
+		instanceID := fmt.Sprintf("np-native-%d", index)
+		if api.machineInstanceIDsMatch {
+			instanceID = fmt.Sprintf("node-basic-%d", index)
+		}
 		instances = append(instances, &tke2022.Instance{
-			InstanceId:    common.StringPtr(fmt.Sprintf("np-native-%d", index)),
+			InstanceId:    common.StringPtr(instanceID),
 			InstanceState: common.StringPtr("running"),
 			LanIP:         common.StringPtr(lanIp),
 			NodePoolId:    common.StringPtr(instanceNodePoolId),
@@ -612,10 +618,14 @@ func (api *fakeNativeTkeAPI) DescribeClusterMachines(request *tke2022.DescribeCl
 	}
 	machines := []*tke2022.Machine{}
 	for index := int64(1); index <= api.replicas; index++ {
+		lanIP := fmt.Sprintf("10.0.0.%d", index+10)
+		if api.omitMachineLanIP {
+			lanIP = ""
+		}
 		machines = append(machines, &tke2022.Machine{
 			MachineName:  common.StringPtr(fmt.Sprintf("node-basic-%d", index)),
 			MachineState: common.StringPtr("Running"),
-			LanIP:        common.StringPtr(fmt.Sprintf("10.0.0.%d", index+10)),
+			LanIP:        common.StringPtr(lanIP),
 			InstanceType: common.StringPtr("SA5.LARGE4"),
 		})
 	}
@@ -897,6 +907,25 @@ func TestTencentSDKClientReconcileUsesNativeTKEIdentityWhenCVMIsAbsent(t *testin
 	machine := response.Machines[0]
 	if !machine.Ready || machine.InstanceId != "np-native-1" || machine.MachineId != "node-basic-1" || machine.NodeName != "10.0.0.11" {
 		t.Fatalf("native machine identity = %#v", machine)
+	}
+}
+
+func TestTencentSDKClientReconcileCompletesNativeIdentityWhenMachineLanIPIsMissing(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, omitMachineLanIP: true, machineInstanceIDsMatch: true}
+	client := newFakeTencentSDKClient(tkeAPI)
+	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
+
+	response := client.ReconcileComputePool(Request{
+		PackageId: "basic",
+		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
+	}, map[string]string{})
+
+	if !response.Ok || len(response.Machines) != 1 {
+		t.Fatalf("native pool reconcile = %#v", response)
+	}
+	machine := response.Machines[0]
+	if !machine.Ready || machine.InstanceId != "node-basic-1" || machine.MachineId != "node-basic-1" || machine.NodeName != "10.0.0.11" || machine.PrivateIp != "10.0.0.11" {
+		t.Fatalf("completed native machine identity = %#v", machine)
 	}
 }
 
