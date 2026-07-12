@@ -1119,8 +1119,7 @@ function assertWorkspaceShape(checks, workspace, { compute, storage, attachment 
     workspace?.url &&
     workspace?.access?.tokenStatus === "active" &&
     workspace?.access?.credentialStatus === "configured" &&
-    workspace?.access?.account &&
-    workspace?.access?.password
+    workspace?.access?.account
   ), { workspaceId: workspace?.id });
 }
 

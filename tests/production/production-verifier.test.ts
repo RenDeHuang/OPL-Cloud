@@ -125,7 +125,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     disk: { id: storage.providerResourceId, status: "attached_retained", billingStatus: "active", sizeGb: 10, mountPath: "/data", storageClass: "cbs" },
     slug: "production-verification-lab",
     url: workspaceUrl,
-    access: { tokenStatus: "active", credentialStatus: "configured", requiresLogin: false, account: "admin", password: "runtime-password-from-console" }
+    access: { tokenStatus: "active", credentialStatus: "configured", requiresLogin: false, account: "admin" }
   };
   const replacementCompute = {
     ...compute,
