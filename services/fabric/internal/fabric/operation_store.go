@@ -54,6 +54,11 @@ func (s *MemoryOperationStore) ClaimRuntime(_ context.Context, operation FabricO
 	for index := len(s.operation) - 1; index >= 0; index-- {
 		existing := s.operation[index]
 		if existing.Action == operation.Action && existing.IdempotencyKey == operation.IdempotencyKey && existing.Status != "rejected" {
+			if existing.Action == "destroy_workspace_runtime" && existing.Status == "failed" {
+				operation.ID = existing.ID
+				s.operation[index] = operation
+				return operation, true, nil
+			}
 			return existing, false, nil
 		}
 	}
@@ -283,6 +288,27 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 		Where(fabricoperation.Action(operation.Action), fabricoperation.IdempotencyKey(operation.IdempotencyKey), fabricoperation.StatusNEQ("rejected")).
 		Order(fabricent.Desc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).First(ctx)
 	if err == nil {
+		if existing.Action == "destroy_workspace_runtime" && existing.Status == "failed" {
+			updated, updateErr := s.client.FabricOperation.Update().
+				Where(fabricoperation.ID(existing.ID), fabricoperation.Status("failed")).
+				SetStatus("started").
+				SetErrorCode("").
+				SetRetryable(false).
+				SetStartedAt(operation.StartedAt).
+				ClearFinishedAt().
+				Save(ctx)
+			if updateErr != nil {
+				return FabricOperation{}, false, updateErr
+			}
+			if updated == 1 {
+				operation.ID = existing.ID
+				return operation, true, nil
+			}
+			existing, err = s.client.FabricOperation.Get(ctx, existing.ID)
+			if err != nil {
+				return FabricOperation{}, false, err
+			}
+		}
 		return fabricOperationFromEnt(existing), false, nil
 	}
 	if !fabricent.IsNotFound(err) {

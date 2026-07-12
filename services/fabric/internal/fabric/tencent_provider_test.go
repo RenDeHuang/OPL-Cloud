@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -265,6 +266,56 @@ func TestRuntimeStatusRecoversWorkspaceResourcesFromKubernetesLabels(t *testing.
 	}
 	if status.Access.Password != "secret-password" || status.Access.Username != webuiUsername || status.Access.CredentialStatus != "configured" || status.Access.SecretRef != "opl-compute-alpha-env" {
 		t.Fatalf("runtime access must come transiently from Workspace Secret: %#v", status.Access)
+	}
+}
+
+func TestDestroyWorkspaceRuntimeDeletesOnlyWorkspaceResources(t *testing.T) {
+	provider := NewTencentProvider()
+	var calls [][]string
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if args[0] == "get" {
+			return []byte(`{"items":[{"kind":"Deployment","metadata":{"name":"opl-compute-alpha","labels":{"oplcloud.cn/workspace-id":"ws-alpha"}},"spec":{"template":{"spec":{"volumes":[{"persistentVolumeClaim":{"claimName":"opl-storage-alpha-data"}}]}}}},{"kind":"Service","metadata":{"name":"opl-compute-alpha","labels":{"oplcloud.cn/workspace-id":"ws-alpha"}}}]}`), nil
+		}
+		return nil, nil
+	}
+
+	runtime, err := provider.DestroyWorkspaceRuntime(context.Background(), "ws-alpha")
+	if err != nil || runtime.Status != "destroyed" || runtime.WorkspaceID != "ws-alpha" || runtime.Access.Password != "" {
+		t.Fatalf("destroy runtime = %#v err=%v", runtime, err)
+	}
+	if len(calls) != 2 || calls[1][0] != "delete" || !slices.Contains(calls[1], "deployment/opl-compute-alpha") || !slices.Contains(calls[1], "service/opl-compute-alpha") || !slices.Contains(calls[1], "secret/opl-compute-alpha-env") || slices.Contains(calls[1], "ingress/opl-cloud") {
+		t.Fatalf("kubectl calls = %#v", calls)
+	}
+}
+
+func TestDestroyWorkspaceRuntimeReturnsDiscoveryFailure(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.kubectl = func(context.Context, []string, []byte) ([]byte, error) {
+		return nil, errors.New("cluster unavailable")
+	}
+
+	if _, err := provider.DestroyWorkspaceRuntime(context.Background(), "ws-alpha"); err == nil || !strings.Contains(err.Error(), "cluster unavailable") {
+		t.Fatalf("destroy error = %v", err)
+	}
+}
+
+func TestDestroyWorkspaceRuntimeDeletesSecretOnlyRemnant(t *testing.T) {
+	provider := NewTencentProvider()
+	var calls [][]string
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		if args[0] == "get" {
+			return []byte(`{"items":[{"kind":"Secret","metadata":{"name":"opl-compute-alpha-env","labels":{"oplcloud.cn/workspace-id":"ws-alpha"}}}]}`), nil
+		}
+		return nil, nil
+	}
+
+	if _, err := provider.DestroyWorkspaceRuntime(context.Background(), "ws-alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[0][1] != "deployment,service,secret" || !slices.Contains(calls[1], "secret/opl-compute-alpha-env") || slices.Contains(calls[1], "ingress/opl-cloud") {
+		t.Fatalf("kubectl calls = %#v", calls)
 	}
 }
 

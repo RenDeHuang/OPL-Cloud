@@ -54,6 +54,20 @@ func testRequest(method, path string, body io.Reader) *http.Request {
 	return req
 }
 
+func TestServerDestroysWorkspaceRuntime(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	req := httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes/workspace-alpha/destroy", nil)
+	req.Header.Set("Authorization", "Bearer internal-secret")
+	req.Header.Set("Idempotency-Key", "runtime-destroy-once")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"status":"destroyed"`) || !strings.Contains(rec.Body.String(), `"workspaceId":"workspace-alpha"`) {
+		t.Fatalf("destroy status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestTransferServiceFailureIsLogged(t *testing.T) {
 	var output bytes.Buffer
 	previous := log.Writer()
@@ -540,6 +554,10 @@ func (testProvider) DetachStorageAttachment(_ context.Context, attachment fabric
 
 func (testProvider) CreateWorkspaceRuntime(_ context.Context, input fabric.WorkspaceRuntimeInput, _ fabric.ComputeAllocation, _ fabric.StorageVolume) (fabric.WorkspaceRuntime, error) {
 	return fabric.WorkspaceRuntime{ID: "rt-test", WorkspaceID: input.WorkspaceID, Status: "running", ProviderRequestID: "runtime-test"}, nil
+}
+
+func (testProvider) DestroyWorkspaceRuntime(_ context.Context, workspaceID string) (fabric.WorkspaceRuntime, error) {
+	return fabric.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "destroyed"}, nil
 }
 
 func (testProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (fabric.WorkspaceRuntime, error) {

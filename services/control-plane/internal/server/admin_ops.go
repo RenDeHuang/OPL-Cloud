@@ -215,8 +215,7 @@ func (app *controlPlaneServer) rememberRuntimeOperationResource(operation map[st
 		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
 		if id := stringValue(row["id"]); id != "" {
 			if existing, ok := app.getCompute(id); ok {
-				row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]))
-				row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(existing["workspaceId"]))
+				row = computeResponse(mergeMaps(existing, row))
 			}
 			if stringValue(row["accountId"]) == "" {
 				return nil
@@ -231,8 +230,7 @@ func (app *controlPlaneServer) rememberRuntimeOperationResource(operation map[st
 		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
 		if id := stringValue(row["id"]); id != "" {
 			if existing, ok := app.getStorage(id); ok {
-				row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]))
-				row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(existing["workspaceId"]))
+				row = storageResponse(mergeMaps(existing, row))
 			}
 			if stringValue(row["accountId"]) == "" {
 				return nil
@@ -246,6 +244,9 @@ func (app *controlPlaneServer) rememberRuntimeOperationResource(operation map[st
 		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
 		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
 		if id := stringValue(row["id"]); id != "" {
+			if existing, ok := app.getAttachment(id); ok {
+				row = attachmentResponse(mergeMaps(existing, row), nil)
+			}
 			row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), app.attachmentAccountID(row))
 			if stringValue(row["accountId"]) == "" {
 				return nil

@@ -62,7 +62,7 @@ Control Plane 提供一个内部资源冻结释放操作，包装现有 Ledger `
 
 ## Workspace Runtime 补偿
 
-Fabric 增加内部、幂等的 Workspace Runtime 删除操作。它清理该 Workspace 对应的 Deployment、Service、Secret 和路由资源；资源已不存在视为成功，并记录 Fabric operation 证据。
+Fabric 增加内部、幂等的 Workspace Runtime 删除操作。它清理该 Workspace 对应的 Deployment、Service 和 Secret；共享 Ingress 由 Control Plane 网关按 Workspace 路由，不属于单个 Runtime，补偿不得修改它。资源已不存在视为成功，并记录 Fabric operation 证据。
 
 Control Plane 的 Workspace 创建顺序保持：
 

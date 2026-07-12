@@ -278,6 +278,15 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		runtime, err := service.CreateWorkspaceRuntime(r.Context(), input)
 		writeResult(w, runtime, err)
 	})
+	mux.HandleFunc("POST /fabric/workspace-runtimes/{workspaceId}/destroy", func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		runtime, err := service.DestroyWorkspaceRuntime(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")), key)
+		writeResult(w, runtime, err)
+	})
 	mux.HandleFunc("GET /fabric/workspace-runtimes/{workspaceId}/status", func(w http.ResponseWriter, r *http.Request) {
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeResult(w, runtime, err)

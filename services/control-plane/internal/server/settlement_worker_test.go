@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ type settlementWorkerLedger struct {
 	fakeLedgerClient
 	settlements []clients.ResourceSettlementInput
 	keys        []string
+	releases    []clients.HoldReleaseInput
 }
 
 func (l *settlementWorkerLedger) SettleResource(_ context.Context, input clients.ResourceSettlementInput, idempotencyKey string) (clients.ResourceSettlementResult, error) {
@@ -39,6 +42,15 @@ func (l *settlementWorkerLedger) SettleResource(_ context.Context, input clients
 	}, nil
 }
 
+func (l *settlementWorkerLedger) ReleaseHold(_ context.Context, input clients.HoldReleaseInput, _ string) (clients.HoldReleaseResult, error) {
+	l.releases = append(l.releases, input)
+	return clients.HoldReleaseResult{
+		ID: "release-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID,
+		ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: input.AmountCents,
+		Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 10000, AvailableCents: 10000, Currency: "CNY"},
+	}, nil
+}
+
 func TestPeriodicSettlementWorkerSettlesActiveResources(t *testing.T) {
 	app := newControlPlaneAppEmpty()
 	mustStore(t, app.tables.SaveCompute(context.Background(), freshBillableResource(map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "packageId": "basic", "status": "running"})))
@@ -62,6 +74,38 @@ func TestPeriodicSettlementWorkerSettlesActiveResources(t *testing.T) {
 	if ledger.keys[0] == ledger.keys[1] || ledger.keys[0] == "" || ledger.settlements[0].UsagePeriodEnd != "2026-07-09T12:00:00Z" {
 		t.Fatalf("settlements must use stable per-period idempotency: keys=%#v settlements=%#v", ledger.keys, ledger.settlements)
 	}
+}
+
+func TestPeriodicSettlementContinuesAfterResourceFailure(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveCompute(context.Background(), freshBillableResource(map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "packageId": "basic", "status": "running"})))
+	mustStore(t, app.tables.SaveStorage(context.Background(), freshBillableResource(map[string]any{"id": "storage-alpha", "accountId": "acct-beta", "packageId": "basic", "status": "available", "sizeGb": 10})))
+	ledger := &failFirstSettlementLedger{}
+	service := controlPlaneServiceForTest(ledger)
+
+	err := app.runPeriodicSettlementOnce(context.Background(), service, time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "insufficient balance") || len(ledger.keys) != 2 {
+		t.Fatalf("worker stopped early: keys=%#v err=%v", ledger.keys, err)
+	}
+	rows, listErr := app.tables.ListLedger(context.Background(), "")
+	if listErr != nil || len(rows) != 1 {
+		t.Fatalf("successful later settlement was not projected: rows=%#v err=%v", rows, listErr)
+	}
+}
+
+type failFirstSettlementLedger struct {
+	settlementWorkerLedger
+	failed bool
+}
+
+func (l *failFirstSettlementLedger) SettleResource(ctx context.Context, input clients.ResourceSettlementInput, key string) (clients.ResourceSettlementResult, error) {
+	if !l.failed {
+		l.failed = true
+		l.settlements = append(l.settlements, input)
+		l.keys = append(l.keys, key)
+		return clients.ResourceSettlementResult{}, errors.New("insufficient balance")
+	}
+	return l.settlementWorkerLedger.SettleResource(ctx, input, key)
 }
 
 func TestPeriodicSettlementWorkerDoesNotDuplicateControlPlaneProjectionsOnReplay(t *testing.T) {
@@ -160,6 +204,43 @@ func TestProviderReconcileWorkerPersistsExternalDeleteAndRelease(t *testing.T) {
 	if compute["holdReleaseId"] != "release-compute-compute-alpha" || compute["externalDeletedAt"] == "" || compute["lastProviderSyncAt"] == "" {
 		t.Fatalf("provider reconcile missing release/sync evidence: %#v", compute)
 	}
+}
+
+func TestProviderReconcileReleasesFailedComputeHold(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-failed", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "packageId": "basic",
+		"status": "provisioning", "billingStatus": "pending", "holdId": "hold-compute-failed", "holdAmountCents": int64(7862),
+	}))
+	ledger := &settlementWorkerLedger{}
+	fabric := &failedComputeOperationFabric{fakeFabricClient: fakeFabricClient{}, operations: []clients.FabricOperation{{
+		ID: "fabric-failed", OperationID: "operation-failed", Action: "create_compute_allocation", ResourceKind: "compute_allocation",
+		ResourceID: "compute-failed", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "failed",
+		RedactedProviderPayload: map[string]any{"resource": map[string]any{
+			"id": "compute-failed", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "failed",
+		}},
+	}}}
+	service := controlplane.NewService(ledger, fabric)
+
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("first provider reconcile: %v", err)
+	}
+	if err := app.runProviderReconcileOnce(context.Background(), service, time.Now().UTC()); err != nil {
+		t.Fatalf("second provider reconcile: %v", err)
+	}
+	compute, _ := app.getCompute("compute-failed")
+	if len(ledger.releases) != 1 || ledger.releases[0].HoldID != "hold-compute-failed" || ledger.releases[0].AmountCents != 7862 || compute["holdReleaseId"] != "release-compute-compute-failed" || compute["billingStatus"] != "stopped" {
+		t.Fatalf("failed compute hold was not released once: releases=%#v compute=%#v", ledger.releases, compute)
+	}
+}
+
+type failedComputeOperationFabric struct {
+	fakeFabricClient
+	operations []clients.FabricOperation
+}
+
+func (f *failedComputeOperationFabric) ListOperations(context.Context) ([]clients.FabricOperation, error) {
+	return f.operations, nil
 }
 
 func freshBillableResource(row map[string]any) map[string]any {

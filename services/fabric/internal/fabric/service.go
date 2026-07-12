@@ -28,6 +28,7 @@ type Provider interface {
 	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error)
 	DetachStorageAttachment(ctx context.Context, attachment StorageAttachment) (StorageAttachment, error)
 	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) (WorkspaceRuntime, error)
+	DestroyWorkspaceRuntime(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
 	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
 	Readiness(ctx context.Context) (map[string]any, error)
 }
@@ -541,6 +542,38 @@ func (s *Service) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRun
 	}
 	runtime, err := s.provider.CreateWorkspaceRuntime(ctx, input, compute, volume)
 	runtime.Access.Password = ""
+	if err != nil {
+		_ = s.saveRuntimeOperation(ctx, stored, "failed", runtime, err)
+		return runtime, err
+	}
+	if err := s.saveRuntimeOperation(ctx, stored, "succeeded", runtime, nil); err != nil {
+		return runtime, err
+	}
+	return runtime, nil
+}
+
+func (s *Service) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
+	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(idempotencyKey) == "" {
+		return WorkspaceRuntime{}, fmt.Errorf("runtime_destroy_identity_required")
+	}
+	requestHash := hashInput(map[string]string{"workspaceId": workspaceID})
+	now := s.now()
+	operation := newOperation("destroy_workspace_runtime", "workspace_runtime", workspaceID, "", workspaceID, idempotencyKey, requestHash, now)
+	operation.ID = "fop_runtime_destroy_claim_" + stableSuffix("destroy_workspace_runtime", idempotencyKey)
+	operation.Status = "started"
+	operation.CreatedAt = now
+	fillOperationResource(&operation, WorkspaceRuntime{WorkspaceID: workspaceID, ProviderRequestID: providerRequestID("runtime-destroy", idempotencyKey)})
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
+	if err != nil {
+		return WorkspaceRuntime{}, err
+	}
+	if !claimed {
+		return replayRuntimeOperation(stored, requestHash)
+	}
+	runtime, err := s.provider.DestroyWorkspaceRuntime(ctx, workspaceID)
+	runtime.Access.Password = ""
+	runtime.WorkspaceID = firstNonEmpty(runtime.WorkspaceID, workspaceID)
+	runtime.ProviderRequestID = firstNonEmpty(runtime.ProviderRequestID, providerRequestID("runtime-destroy", idempotencyKey))
 	if err != nil {
 		_ = s.saveRuntimeOperation(ctx, stored, "failed", runtime, err)
 		return runtime, err

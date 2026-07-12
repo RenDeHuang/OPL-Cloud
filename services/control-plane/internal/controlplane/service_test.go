@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -49,6 +50,90 @@ func TestCreateWorkspaceOrchestratesLedgerAndFabric(t *testing.T) {
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
 	}
+}
+
+func TestCreateWorkspaceCompensatesReceiptFailure(t *testing.T) {
+	calls := []string{}
+	ledger := &failingReceiptLedger{fakeLedgerClient: fakeLedgerClient{calls: &calls}, err: errReceiptWrite}
+	fabric := &compensatingFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}}
+	service := NewService(ledger, fabric)
+
+	workspace, err := service.CreateWorkspace(context.Background(), CreateWorkspaceInput{
+		AccountID: "acct-alpha", OwnerID: "user-alpha", Name: "Alpha", PackageID: "basic",
+		AttachmentID: "attachment-alpha", ComputeID: "compute-alpha", VolumeID: "volume-alpha",
+	}, "workspace-once")
+	if !errors.Is(err, errReceiptWrite) || workspace.ID != "" || fabric.destroyedWorkspaceID == "" {
+		t.Fatalf("receipt failure was not compensated: workspace=%#v err=%v fabric=%#v", workspace, err, fabric)
+	}
+	if calls[len(calls)-1] != "fabric.runtime-destroy" {
+		t.Fatalf("calls = %#v, want runtime destroy last", calls)
+	}
+}
+
+func TestCreateWorkspaceJoinsReceiptAndCleanupFailures(t *testing.T) {
+	calls := []string{}
+	ledger := &failingReceiptLedger{fakeLedgerClient: fakeLedgerClient{calls: &calls}, err: errReceiptWrite}
+	fabric := &compensatingFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}, destroyErr: errRuntimeCleanup}
+	service := NewService(ledger, fabric)
+
+	_, err := service.CreateWorkspace(context.Background(), CreateWorkspaceInput{
+		AccountID: "acct-alpha", OwnerID: "user-alpha", Name: "Alpha", PackageID: "basic",
+		AttachmentID: "attachment-alpha", ComputeID: "compute-alpha", VolumeID: "volume-alpha",
+	}, "workspace-once")
+	if !errors.Is(err, errReceiptWrite) || !errors.Is(err, errRuntimeCleanup) {
+		t.Fatalf("joined error = %v", err)
+	}
+}
+
+func TestCreateWorkspaceCompensatesAfterRequestCancellation(t *testing.T) {
+	calls := []string{}
+	ctx, cancel := context.WithCancel(context.Background())
+	ledger := &failingReceiptLedger{fakeLedgerClient: fakeLedgerClient{calls: &calls}, err: errReceiptWrite, beforeReturn: cancel}
+	fabric := &compensatingFabricClient{fakeFabricClient: fakeFabricClient{calls: &calls}}
+	service := NewService(ledger, fabric)
+
+	_, err := service.CreateWorkspace(ctx, CreateWorkspaceInput{
+		AccountID: "acct-alpha", OwnerID: "user-alpha", Name: "Alpha", PackageID: "basic",
+		AttachmentID: "attachment-alpha", ComputeID: "compute-alpha", VolumeID: "volume-alpha",
+	}, "workspace-once")
+	if !errors.Is(err, errReceiptWrite) || fabric.destroyCtxErr != nil || !fabric.destroyHasDeadline {
+		t.Fatalf("canceled receipt cleanup: err=%v cleanupCtxErr=%v hasDeadline=%t", err, fabric.destroyCtxErr, fabric.destroyHasDeadline)
+	}
+}
+
+var (
+	errReceiptWrite   = errors.New("receipt write failed")
+	errRuntimeCleanup = errors.New("runtime cleanup failed")
+)
+
+type failingReceiptLedger struct {
+	fakeLedgerClient
+	err          error
+	beforeReturn func()
+}
+
+func (l *failingReceiptLedger) RecordReceipt(context.Context, clients.ReceiptInput, string) (clients.Receipt, error) {
+	*l.calls = append(*l.calls, "ledger.receipt")
+	if l.beforeReturn != nil {
+		l.beforeReturn()
+	}
+	return clients.Receipt{}, l.err
+}
+
+type compensatingFabricClient struct {
+	fakeFabricClient
+	destroyedWorkspaceID string
+	destroyErr           error
+	destroyCtxErr        error
+	destroyHasDeadline   bool
+}
+
+func (f *compensatingFabricClient) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, _ string) (clients.WorkspaceRuntime, error) {
+	*f.calls = append(*f.calls, "fabric.runtime-destroy")
+	f.destroyedWorkspaceID = workspaceID
+	f.destroyCtxErr = ctx.Err()
+	_, f.destroyHasDeadline = ctx.Deadline()
+	return clients.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "destroyed"}, f.destroyErr
 }
 
 func TestResumeWorkspaceReusesIdentityStorageAndRecordsReceipt(t *testing.T) {
@@ -439,6 +524,11 @@ func (f *fakeFabricClient) CreateWorkspaceRuntime(ctx context.Context, input cli
 		return f.runtime, nil
 	}
 	return clients.WorkspaceRuntime{ID: "runtime-alpha", WorkspaceID: input.WorkspaceID, URL: "https://workspace.medopl.cn/w/" + input.WorkspaceID + "/", Status: "running", ServiceName: "opl-compute-alpha", Access: clients.WorkspaceRuntimeAccess{Username: "admin", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-alpha-env"}, Ready: true}, nil
+}
+
+func (f *fakeFabricClient) DestroyWorkspaceRuntime(_ context.Context, workspaceID, _ string) (clients.WorkspaceRuntime, error) {
+	*f.calls = append(*f.calls, "fabric.runtime-destroy")
+	return clients.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "destroyed"}, nil
 }
 
 func (f *fakeFabricClient) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {

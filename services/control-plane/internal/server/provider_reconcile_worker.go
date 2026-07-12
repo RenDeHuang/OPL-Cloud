@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -65,11 +66,35 @@ func (app *controlPlaneServer) startProviderReconcileWorker(ctx context.Context,
 }
 
 func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
+	var errs []error
+	operations, err := service.FabricOperations(ctx)
+	if err != nil {
+		errs = append(errs, err)
+	} else if err := app.rememberRuntimeOperations(operations); err != nil {
+		errs = append(errs, err)
+	}
 	computes, storages, err := app.settlementResourceRows(ctx)
 	if err != nil {
 		return err
 	}
 	for id, row := range computes {
+		if stringValue(row["status"]) == "failed" && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
+			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "compute", "compute_create_failed", "provider-reconcile:compute:"+id)
+			if releaseErr != nil {
+				errs = append(errs, releaseErr)
+				continue
+			}
+			body := cloneMap(row)
+			body["holdReleaseId"] = release.ID
+			body["ledgerEntryId"] = release.LedgerEntryID
+			body["walletTransactionId"] = release.WalletTransactionID
+			body["wallet"] = structToMap(release.Wallet)
+			body["billingStatus"] = "stopped"
+			if saveErr := app.saveComputeFact(body); saveErr != nil {
+				errs = append(errs, saveErr)
+			}
+			continue
+		}
 		if !providerSyncDue(row, now) {
 			continue
 		}
@@ -101,7 +126,7 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 			return err
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func providerSyncDue(row map[string]any, now time.Time) bool {

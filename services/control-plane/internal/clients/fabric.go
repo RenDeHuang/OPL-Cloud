@@ -22,6 +22,7 @@ type FabricClient interface {
 	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error)
 	DetachStorageAttachment(ctx context.Context, id string, idempotencyKey string) (StorageAttachment, error)
 	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error)
+	DestroyWorkspaceRuntime(ctx context.Context, workspaceID string, idempotencyKey string) (WorkspaceRuntime, error)
 	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
 	Readiness(ctx context.Context) (map[string]any, error)
 	ListOperations(ctx context.Context) ([]FabricOperation, error)
@@ -397,6 +398,12 @@ func (c *fabricHTTPClient) DetachStorageAttachment(ctx context.Context, id strin
 func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error) {
 	var result WorkspaceRuntime
 	err := c.post(ctx, "/fabric/workspace-runtimes", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *fabricHTTPClient) DestroyWorkspaceRuntime(ctx context.Context, workspaceID, idempotencyKey string) (WorkspaceRuntime, error) {
+	var result WorkspaceRuntime
+	err := c.post(ctx, "/fabric/workspace-runtimes/"+url.PathEscape(workspaceID)+"/destroy", map[string]any{}, idempotencyKey, &result)
 	return result, err
 }
 

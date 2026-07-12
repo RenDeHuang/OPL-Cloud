@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -64,21 +66,24 @@ func (app *controlPlaneServer) runPeriodicSettlementOnce(ctx context.Context, se
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, input := range inputs {
 		key := periodicSettlementKey(input)
 		result, err := service.SettleResource(ctx, input, key)
 		if err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("settle %s: %w", input.ResourceID, err))
+			continue
 		}
 		result = completeSettlementResult(result, input)
 		if err := app.saveResourceSettlementProjection(result); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("save settlement %s: %w", input.ResourceID, err))
+			continue
 		}
 		if err := app.markResourceSettlement(result); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("mark settlement %s: %w", input.ResourceID, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 type settlementResourceStore interface {
