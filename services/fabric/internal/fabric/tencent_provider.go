@@ -195,7 +195,7 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 	if allocation.ID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_id_required")
 	}
-	if allocation.NodePoolID == "" && firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"]) == "" && allocation.NodeName == "" && firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
+	if firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"]) == "" && allocation.NodeName == "" && firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
 		allocation.Status = "destroyed"
 		allocation.Provider = "tencent-tke"
 		return allocation, nil

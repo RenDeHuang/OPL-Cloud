@@ -60,7 +60,7 @@ func TestDestroyComputeAllocationWithoutClaimedMachineSkipsProviderMutation(t *t
 		return provisionerResponse{}, nil
 	}
 
-	allocation, err := provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", ProviderRequestID: "local-request-only", Status: "provisioning"})
+	allocation, err := provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", NodePoolID: "np-basic", ProviderRequestID: "local-request-only", Status: "provisioning"})
 	if err != nil || allocation.Status != "destroyed" {
 		t.Fatalf("destroy unclaimed compute = %#v err=%v", allocation, err)
 	}
