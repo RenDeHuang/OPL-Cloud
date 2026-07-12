@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const storageProvisionTimeout = 10 * time.Minute
+
 type Provider interface {
 	ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error)
 	TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error
@@ -131,6 +133,9 @@ func (s *Service) SyncComputeAllocation(ctx context.Context, allocationID string
 		_ = s.recordOperation(ctx, operation, "rejected", ComputeAllocation{ID: allocationID}, err)
 		return ComputeAllocation{}, err
 	}
+	if existing.Status == "failed" && existing.NodePoolID == "" && existing.MachineName == "" && existing.InstanceID == "" {
+		return existing, nil
+	}
 	operation := newOperation("sync_compute_allocation", "compute_allocation", allocationID, existing.AccountID, existing.WorkspaceID, "", hashInput(existing), time.Now().UTC())
 	if err := s.recordOperation(ctx, operation, "started", existing, nil); err != nil {
 		return ComputeAllocation{}, err
@@ -184,12 +189,23 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 		_ = s.recordOperation(ctx, operation, "failed", allocation, err)
 		return allocation, err
 	}
+	if ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocationID); ownershipErr == nil {
+		now := s.now()
+		ownership.Status = "released"
+		ownership.ReleasedAt = &now
+		if err := s.operations.SaveMachineOwnership(ctx, ownership); err != nil {
+			return allocation, err
+		}
+	} else if ownershipErr != ErrMachineOwnershipNotFound {
+		return allocation, ownershipErr
+	}
 	if err := s.recordOperation(ctx, operation, "succeeded", allocation, nil); err != nil {
 		return allocation, err
 	}
 	s.mu.Lock()
 	s.computes[allocationID] = allocation
 	s.mu.Unlock()
+	go s.reconcileComputePool(firstNonEmpty(existing.PackageID, "basic"), false)
 	return allocation, nil
 }
 
@@ -422,6 +438,21 @@ func (s *Service) SyncStorageVolume(ctx context.Context, volumeID string) (Stora
 	}
 	if volume.Provider == "" {
 		volume.Provider = firstNonEmpty(existing.Provider, "tencent-tke")
+	}
+	if volume.Status == "pending" && !existing.CreatedAt.IsZero() && s.now().Sub(existing.CreatedAt) >= storageProvisionTimeout {
+		cleaned, cleanupErr := s.provider.DestroyStorageVolume(ctx, volume)
+		if cleanupErr != nil {
+			volume.Status = "quarantined"
+			if recordErr := s.recordOperation(ctx, operation, "failed", volume, cleanupErr); recordErr != nil {
+				return volume, recordErr
+			}
+			s.mu.Lock()
+			s.volumes[volumeID] = volume
+			s.mu.Unlock()
+			return volume, nil
+		}
+		volume = cleaned
+		volume.Status = "failed"
 	}
 	if err := s.recordOperation(ctx, operation, "succeeded", volume, nil); err != nil {
 		return volume, err

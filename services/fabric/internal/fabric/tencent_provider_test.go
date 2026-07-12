@@ -29,6 +29,43 @@ func TestTKENodeSelectorUsesTencentInstanceLabel(t *testing.T) {
 	}
 }
 
+func TestTencentTagComputeMachineWritesProviderIdentityBeforeNodeLabel(t *testing.T) {
+	provider := NewTencentProvider()
+	var events []string
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		events = append(events, "provider")
+		if request.Action != "tag_compute_machine" || request.Allocation.InstanceID != "ins-alpha" || request.Tags["opl_resource_id"] != "compute-alpha" {
+			t.Fatalf("provider request = %#v", request)
+		}
+		return provisionerResponse{OK: true, Status: "tagged"}, nil
+	}
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		events = append(events, "node")
+		if !slices.Equal(args, []string{"label", "node/node-alpha", "oplcloud.cn/resource-id=compute-alpha", "oplcloud.cn/account-id=acct-alpha", "oplcloud.cn/workspace-id=ws-alpha", "--overwrite"}) {
+			t.Fatalf("kubectl args = %#v", args)
+		}
+		return nil, nil
+	}
+
+	err := provider.TagComputeMachine(context.Background(), ProviderMachine{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha"}, MachineOwnership{ResourceID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha"})
+	if err != nil || !slices.Equal(events, []string{"provider", "node"}) {
+		t.Fatalf("tag machine err=%v events=%#v", err, events)
+	}
+}
+
+func TestDestroyComputeAllocationWithoutClaimedMachineSkipsProviderMutation(t *testing.T) {
+	provider := NewTencentProvider()
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		t.Fatalf("unexpected provider mutation: %#v", request)
+		return provisionerResponse{}, nil
+	}
+
+	allocation, err := provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", ProviderRequestID: "local-request-only", Status: "provisioning"})
+	if err != nil || allocation.Status != "destroyed" {
+		t.Fatalf("destroy unclaimed compute = %#v err=%v", allocation, err)
+	}
+}
+
 func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
 	t.Setenv("OPL_IMAGE_PULL_SECRET_NAME", "pull-secret")

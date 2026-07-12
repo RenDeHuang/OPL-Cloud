@@ -102,54 +102,6 @@ type plan struct {
 	NodePoolID   string
 }
 
-func (p *TencentProvider) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
-	now := time.Now().UTC()
-	packageID := firstNonEmpty(input.PackageID, "basic")
-	id := firstNonEmpty(input.ID, fabricID("ca", input.WorkspaceID, now))
-	tags := oplCostTags(input.AccountID, input.WorkspaceID, id, input.OperationID)
-	plan := packagePlan(packageID)
-	pool := provisionerPool{
-		ID:           "pool-" + packageID,
-		PackageID:    packageID,
-		InstanceType: plan.InstanceType,
-		NodePoolID:   plan.NodePoolID,
-		Labels:       mergeStringMaps(map[string]string{"oplcloud.cn/package-id": packageID, "oplcloud.cn/instance-type": plan.InstanceType}, k8sCostLabels(tags)),
-	}
-	response, err := p.provision(ctx, provisionerRequest{Action: "create_compute_allocation", DryRun: input.DryRun, AccountID: input.AccountID, PackageID: packageID, Tags: tags, Pool: pool, Allocation: provisionerAllocation{ID: id}})
-	if err != nil {
-		return ComputeAllocation{}, err
-	}
-	if !response.OK {
-		return ComputeAllocation{}, provisionerError(response)
-	}
-	nodeName := firstNonEmpty(response.NodeName, response.ProviderData["nodeName"])
-	machineName := response.ProviderData["machineName"]
-	serviceName := k8sName(id)
-	return ComputeAllocation{
-		ID:                 id,
-		AccountID:          input.AccountID,
-		WorkspaceID:        input.WorkspaceID,
-		PackageID:          packageID,
-		Status:             firstNonEmpty(response.Status, "running"),
-		Provider:           "tencent-tke",
-		ProviderResourceID: "node/" + nodeName,
-		ProviderRequestID:  response.ProviderRequestID,
-		PoolID:             firstNonEmpty(response.PoolID, pool.ID),
-		NodePoolID:         firstNonEmpty(response.NodePoolID, pool.NodePoolID),
-		InstanceID:         response.InstanceID,
-		CVMInstanceID:      response.InstanceID,
-		NodeName:           nodeName,
-		MachineName:        machineName,
-		PrivateIP:          response.PrivateIP,
-		PublicIP:           response.PublicIP,
-		ServiceName:        serviceName,
-		NodeSelector:       tkeNodeSelector(response.ProviderData, nodeName),
-		ProviderData:       response.ProviderData,
-		CostTags:           tags,
-		CreatedAt:          now,
-	}, nil
-}
-
 func (p *TencentProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
 	response, err := p.provision(ctx, provisionerRequest{Action: "reconcile_compute_pool", DryRun: input.DryRun, PackageID: input.PackageID, Pool: provisionerPool{ID: input.PoolID, PackageID: input.PackageID, InstanceType: input.InstanceType, NodePoolID: input.NodePoolID, DesiredReplicas: input.DesiredReplicas}})
 	if err != nil {
@@ -166,10 +118,23 @@ func (p *TencentProvider) ReconcileComputePool(ctx context.Context, input Comput
 }
 
 func (p *TencentProvider) TagComputeMachine(ctx context.Context, machine ProviderMachine, ownership MachineOwnership) error {
-	if machine.NodeName == "" {
-		return fmt.Errorf("compute_node_identity_required")
+	if machine.InstanceID == "" || machine.NodeName == "" {
+		return fmt.Errorf("compute_machine_identity_required")
 	}
-	_, err := p.kubectl(ctx, []string{"label", "node/" + machine.NodeName, "oplcloud.cn/resource-id=" + ownership.ResourceID, "oplcloud.cn/account-id=" + ownership.AccountID, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID, "--overwrite"}, nil)
+	response, err := p.provision(ctx, provisionerRequest{
+		Action: "tag_compute_machine",
+		Tags:   oplCostTags(ownership.AccountID, ownership.WorkspaceID, ownership.ResourceID, ownership.ID),
+		Allocation: provisionerAllocation{
+			ID: ownership.ResourceID, InstanceID: machine.InstanceID, MachineName: machine.MachineID, NodeName: machine.NodeName,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if !response.OK {
+		return provisionerError(response)
+	}
+	_, err = p.kubectl(ctx, []string{"label", "node/" + machine.NodeName, "oplcloud.cn/resource-id=" + ownership.ResourceID, "oplcloud.cn/account-id=" + ownership.AccountID, "oplcloud.cn/workspace-id=" + ownership.WorkspaceID, "--overwrite"}, nil)
 	return err
 }
 
@@ -224,7 +189,7 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 	if allocation.ID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_id_required")
 	}
-	if allocation.ProviderRequestID == "" && allocation.NodePoolID == "" && allocation.MachineName == "" && allocation.NodeName == "" {
+	if allocation.NodePoolID == "" && firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"]) == "" && allocation.NodeName == "" && firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
 		allocation.Status = "destroyed"
 		allocation.Provider = "tencent-tke"
 		return allocation, nil
@@ -248,7 +213,9 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 		return ComputeAllocation{}, provisionerError(response)
 	}
 	if allocation.ServiceName != "" {
-		_, _ = p.kubectl(ctx, []string{"delete", "deployment/" + allocation.ServiceName, "service/" + allocation.ServiceName, "secret/" + allocation.ServiceName + "-env", "--ignore-not-found=true"}, nil)
+		if _, err := p.kubectl(ctx, []string{"delete", "deployment/" + allocation.ServiceName, "service/" + allocation.ServiceName, "secret/" + allocation.ServiceName + "-env", "--ignore-not-found=true", "--wait=true"}, nil); err != nil {
+			return ComputeAllocation{}, err
+		}
 	}
 	allocation.Status = "destroyed"
 	allocation.ProviderRequestID = response.ProviderRequestID
@@ -267,7 +234,7 @@ func (p *TencentProvider) CreateStorageVolume(ctx context.Context, input Storage
 	if _, err := p.kubectl(ctx, []string{"apply", "-f", "-"}, pvcManifest(name, id, input.AccountID, sizeGB, tags)); err != nil {
 		return StorageVolume{}, err
 	}
-	return StorageVolume{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "ready", Provider: "tencent-tke", ProviderResourceID: "pvc/" + name + "-data", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey), SizeGB: sizeGB, StorageClass: os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), CostTags: tags, CreatedAt: now}, nil
+	return StorageVolume{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "pending", Provider: "tencent-tke", ProviderResourceID: "pvc/" + name + "-data", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey), SizeGB: sizeGB, StorageClass: os.Getenv("OPL_WORKSPACE_STORAGE_CLASS"), CostTags: tags, CreatedAt: now}, nil
 }
 
 func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageVolume) (StorageVolume, error) {
@@ -309,7 +276,9 @@ func (p *TencentProvider) DestroyStorageVolume(ctx context.Context, volume Stora
 	}
 	pvc := resourceName(volume.ProviderResourceID)
 	if pvc != "" {
-		_, _ = p.kubectl(ctx, []string{"delete", "pvc/" + pvc, "--ignore-not-found=true"}, nil)
+		if _, err := p.kubectl(ctx, []string{"delete", "pvc/" + pvc, "--ignore-not-found=true", "--wait=true"}, nil); err != nil {
+			return StorageVolume{}, err
+		}
 	}
 	volume.Status = "destroyed"
 	volume.ProviderRequestID = providerRequestID("storage-destroy", volume.ID)

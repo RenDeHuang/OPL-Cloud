@@ -66,6 +66,16 @@ func (s *MemoryOperationStore) ClaimMachine(_ context.Context, ownership Machine
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.machineOwnerships[ownership.ResourceID]; ok {
+		if existing.Status == "released" {
+			for resourceID, candidate := range s.machineOwnerships {
+				if resourceID != ownership.ResourceID && (candidate.MachineID == ownership.MachineID || (ownership.InstanceID != "" && candidate.InstanceID == ownership.InstanceID)) {
+					return MachineOwnership{}, false, ErrMachineOwnershipConflict
+				}
+			}
+			ownership.ID = existing.ID
+			s.machineOwnerships[ownership.ResourceID] = ownership
+			return ownership, true, nil
+		}
 		if existing.MachineID != ownership.MachineID || existing.InstanceID != ownership.InstanceID {
 			return MachineOwnership{}, false, ErrMachineOwnershipConflict
 		}
@@ -356,6 +366,13 @@ func (s *PostgresOperationStore) ClaimMachine(ctx context.Context, ownership Mac
 	existing, err := s.client.MachineOwnership.Query().Where(machineownership.ResourceID(ownership.ResourceID)).Only(ctx)
 	if err == nil {
 		result := machineOwnershipFromEnt(existing)
+		if result.Status == "released" {
+			ownership.ID = result.ID
+			if err := s.SaveMachineOwnership(ctx, ownership); err != nil {
+				return MachineOwnership{}, false, err
+			}
+			return ownership, true, nil
+		}
 		if result.MachineID != ownership.MachineID || result.InstanceID != ownership.InstanceID {
 			return MachineOwnership{}, false, ErrMachineOwnershipConflict
 		}

@@ -85,6 +85,7 @@ type MachineOutput struct {
 type TencentClient interface {
 	CreateComputeAllocation(request Request, env map[string]string) Response
 	ReconcileComputePool(request Request, env map[string]string) Response
+	TagComputeMachine(request Request, env map[string]string) Response
 	SyncComputeAllocation(request Request, env map[string]string) Response
 	DestroyComputeAllocation(request Request, env map[string]string) Response
 }
@@ -110,6 +111,7 @@ type tkeNativeAPI interface {
 
 type cvmNativeAPI interface {
 	DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error)
+	ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error)
 }
 
 func (unimplementedTencentClient) CreateComputeAllocation(_ Request, _ map[string]string) Response {
@@ -123,6 +125,10 @@ func (unimplementedTencentClient) CreateComputeAllocation(_ Request, _ map[strin
 
 func (unimplementedTencentClient) ReconcileComputePool(_ Request, _ map[string]string) Response {
 	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live compute pool reconciliation is not implemented in this build.", Retryable: false}
+}
+
+func (unimplementedTencentClient) TagComputeMachine(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live compute machine tagging is not implemented in this build.", Retryable: false}
 }
 
 func (unimplementedTencentClient) DestroyComputeAllocation(_ Request, _ map[string]string) Response {
@@ -466,7 +472,39 @@ func (client *tencentSDKClient) ReconcileComputePool(request Request, env map[st
 	return Response{Ok: true, OperationId: "op-reconcile-pool-" + stableSuffix(nodePoolId, fmt.Sprintf("%d", request.Pool.DesiredReplicas))[:12], PoolId: request.Pool.Id, NodePoolId: nodePoolId, Status: "reconciling", ProviderRequestId: firstNonEmpty(describeRequestId, requestId), Machines: output, ProviderData: map[string]string{"currentReplicas": fmt.Sprintf("%d", len(machines)), "desiredReplicas": fmt.Sprintf("%d", request.Pool.DesiredReplicas)}}
 }
 
-func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[string]string) Response {
+func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]string) Response {
+	if client == nil || client.nativeCvmClient == nil {
+		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent CVM SDK client is missing.", Retryable: false}
+	}
+	instanceID := strings.TrimSpace(request.Allocation.InstanceId)
+	resourceID := strings.TrimSpace(request.Tags["opl_resource_id"])
+	if instanceID == "" || resourceID == "" || len(resourceID) > 60 {
+		return Response{Ok: false, ErrorCode: "compute_machine_identity_required", Message: "CVM instance id and a resource id of at most 60 characters are required.", Retryable: false}
+	}
+	modify := cvm2017.NewModifyInstancesAttributeRequest()
+	modify.InstanceIds = []*string{common.StringPtr(instanceID)}
+	modify.InstanceName = common.StringPtr(resourceID)
+	modified, err := client.nativeCvmClient.ModifyInstancesAttribute(modify)
+	if err != nil {
+		return sdkErrorResponse("tencent_tag_compute_machine_failed", err)
+	}
+	describe := cvm2017.NewDescribeInstancesRequest()
+	describe.InstanceIds = []*string{common.StringPtr(instanceID)}
+	described, err := client.nativeCvmClient.DescribeInstances(describe)
+	if err != nil {
+		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", err)
+	}
+	if described.Response == nil || len(described.Response.InstanceSet) != 1 || stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID || stringValue(described.Response.InstanceSet[0].InstanceName) != resourceID {
+		return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM instance name did not match the resource id after update.", Retryable: true}
+	}
+	modifyRequestID := ""
+	if modified.Response != nil {
+		modifyRequestID = stringValue(modified.Response.RequestId)
+	}
+	return Response{Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: firstNonEmpty(stringValue(described.Response.RequestId), modifyRequestID)}
+}
+
+func (client *tencentSDKClient) DestroyComputeAllocation(request Request, env map[string]string) Response {
 	if client == nil || client.nativeTkeClient == nil {
 		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE SDK client is missing.", Retryable: false}
 	}
@@ -536,6 +574,40 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 		return response
 	}
 	providerRequestId = stringValue(deleteResponse.Response.RequestId)
+	deleteAttempts := intFromEnv(env, "TENCENT_TKE_NODE_DELETE_ATTEMPTS", 30)
+	if deleteAttempts < 1 {
+		deleteAttempts = 1
+	}
+	deleteDelayMs := intFromEnv(env, "TENCENT_TKE_NODE_DELETE_DELAY_MS", 10000)
+	if deleteDelayMs < 0 {
+		deleteDelayMs = 0
+	}
+	deleteVerifiedRequestID := ""
+	for attempt := 1; attempt <= deleteAttempts; attempt++ {
+		machines, verifyRequestID, verifyErr := client.describeClusterMachines(request.Pool.NodePoolId)
+		deleteVerifiedRequestID = verifyRequestID
+		if verifyErr != nil {
+			response := sdkErrorResponse("tencent_verify_compute_machine_delete_failed", verifyErr)
+			response.ProviderRequestId = providerRequestId
+			return response
+		}
+		found := false
+		for _, machine := range machines {
+			if stringValue(machine.MachineName) == request.Allocation.MachineName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+		if attempt == deleteAttempts {
+			return Response{Ok: false, ErrorCode: "compute_machine_delete_unverified", Message: "Tencent TKE still reports the deleted Machine.", ProviderRequestId: providerRequestId, Retryable: true}
+		}
+		if deleteDelayMs > 0 {
+			time.Sleep(time.Duration(deleteDelayMs) * time.Millisecond)
+		}
+	}
 	return Response{
 		Ok:                true,
 		OperationId:       "op-destroy-compute-" + stableSuffix(request.AccountId, request.Allocation.Id, request.Pool.NodePoolId, request.Allocation.NodeName)[:12],
@@ -552,6 +624,7 @@ func (client *tencentSDKClient) DestroyComputeAllocation(request Request, _ map[
 			"deleteMode":                  "terminate",
 			"describeNodePoolRequestId":   describeRequestId,
 			"modifySelfProvisioningReqId": modifySelfProvisioningRequestId,
+			"verifyMachineDeletedReqId":   deleteVerifiedRequestID,
 		},
 	}
 }
@@ -1059,6 +1132,11 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 			return dryRunCreateComputeAllocation(request, env)
 		}
 		return client.CreateComputeAllocation(request, env)
+	case "tag_compute_machine":
+		if request.DryRun {
+			return Response{Ok: true, InstanceId: request.Allocation.InstanceId, Status: "tagged", ProviderRequestId: "dryrun-tag-" + request.Allocation.InstanceId}
+		}
+		return client.TagComputeMachine(request, env)
 	case "sync_compute_allocation":
 		if request.DryRun {
 			return dryRunSyncComputeAllocation(request)
@@ -1083,7 +1161,7 @@ func isLiveMutation(request Request) bool {
 	if request.DryRun {
 		return false
 	}
-	return request.Action == "reconcile_compute_pool" || request.Action == "create_compute_allocation" || request.Action == "destroy_compute_allocation"
+	return request.Action == "reconcile_compute_pool" || request.Action == "create_compute_allocation" || request.Action == "tag_compute_machine" || request.Action == "destroy_compute_allocation"
 }
 
 func missingEnv(env map[string]string) []string {

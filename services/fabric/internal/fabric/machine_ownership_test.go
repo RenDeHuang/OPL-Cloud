@@ -57,3 +57,21 @@ func TestMachineOwnershipRejectsDuplicateMachineOrResource(t *testing.T) {
 		t.Fatalf("duplicate resource error = %v", err)
 	}
 }
+
+func TestReleasedMachineOwnershipCanClaimReplacement(t *testing.T) {
+	store := NewMemoryOperationStore()
+	first := MachineOwnership{ID: "owner-first", ResourceID: "resource-alpha", AccountID: "acct-alpha", PackageID: "basic", NodePoolID: "np-basic", MachineID: "machine-first", InstanceID: "ins-first", Status: "claimed", ClaimedAt: time.Now().UTC()}
+	claimed, _, err := store.ClaimMachine(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed.Status = "released"
+	if err := store.SaveMachineOwnership(context.Background(), claimed); err != nil {
+		t.Fatal(err)
+	}
+	replacement := MachineOwnership{ID: "owner-second", ResourceID: first.ResourceID, AccountID: first.AccountID, PackageID: "basic", NodePoolID: "np-basic", MachineID: "machine-second", InstanceID: "ins-second", Status: "claimed", ClaimedAt: time.Now().UTC()}
+	got, created, err := store.ClaimMachine(context.Background(), replacement)
+	if err != nil || !created || got.MachineID != "machine-second" {
+		t.Fatalf("replacement claim = %#v created=%v err=%v", got, created, err)
+	}
+}

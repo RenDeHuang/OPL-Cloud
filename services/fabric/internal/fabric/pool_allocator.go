@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const (
+var (
 	poolReconcileAttempts = 30
 	poolReconcileDelay    = 10 * time.Second
 )
@@ -19,17 +19,57 @@ func (s *Service) reconcileComputePool(packageID string, dryRun bool) {
 	plan := packagePlan(packageID)
 	poolKey := plan.ID + ":" + plan.InstanceType
 	_ = s.operations.WithPoolLock(context.Background(), poolKey, func(ctx context.Context) error {
+		var lastErr error
 		for attempt := 0; attempt < poolReconcileAttempts; attempt++ {
 			complete, progressed, err := s.reconcileComputePoolOnce(ctx, packageID, dryRun)
 			if err == nil && complete {
 				return nil
 			}
+			if err != nil {
+				lastErr = err
+			} else if !progressed {
+				lastErr = fmt.Errorf("compute_machine_unavailable")
+			}
 			if !progressed && attempt+1 < poolReconcileAttempts {
 				time.Sleep(poolReconcileDelay)
 			}
 		}
-		return nil
+		return s.failPendingComputeOperations(ctx, packageID, lastErr)
 	})
+}
+
+func (s *Service) failPendingComputeOperations(ctx context.Context, packageID string, cause error) error {
+	pending, err := s.pendingComputeOperations(ctx, packageID)
+	if err != nil {
+		return err
+	}
+	if cause == nil {
+		cause = fmt.Errorf("compute_machine_unavailable")
+	}
+	for _, operation := range pending {
+		var resource ComputeAllocation
+		if !decodeOperationResource(operation, &resource) {
+			continue
+		}
+		resource.Status = "failed"
+		if ownership, ownershipErr := s.operations.MachineOwnership(ctx, resource.ID); ownershipErr == nil && ownership.Status == "quarantined" {
+			resource.Status = "quarantined"
+			resource.Provider = "tencent-tke"
+			resource.ProviderResourceID = "machine/" + ownership.MachineID
+			resource.NodePoolID = ownership.NodePoolID
+			resource.MachineName = ownership.MachineID
+			resource.InstanceID = ownership.InstanceID
+			resource.CVMInstanceID = ownership.InstanceID
+			resource.NodeName = ownership.NodeName
+		}
+		if err := s.recordOperation(ctx, operation, "failed", resource, cause); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		s.computes[resource.ID] = resource
+		s.mu.Unlock()
+	}
+	return nil
 }
 
 func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string, dryRun bool) (bool, bool, error) {
@@ -86,7 +126,13 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 			continue
 		}
 		if err := s.provider.TagComputeMachine(ctx, machine, claimed); err != nil {
-			claimed.Status = "quarantined"
+			if deleteErr := s.provider.DeleteComputeMachine(ctx, machine); deleteErr == nil {
+				now := s.now()
+				claimed.Status = "released"
+				claimed.ReleasedAt = &now
+			} else {
+				claimed.Status = "quarantined"
+			}
 			_ = s.operations.SaveMachineOwnership(ctx, claimed)
 			continue
 		}
