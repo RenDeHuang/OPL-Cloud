@@ -352,8 +352,8 @@ function terminalEvidenceError(details) {
 }
 
 function terminalRow(rows, id, accountId, field, runId) {
-  const matches = (rows || []).filter((row) => row?.id === id && resourceAccountId(row) === accountId);
-  if (matches.length !== 1) throw terminalEvidenceError([{ field, id, runId }]);
+  const matches = (rows || []).filter((row) => row?.id === id);
+  if (matches.length !== 1 || resourceAccountId(matches[0]) !== accountId) throw terminalEvidenceError([{ field, id, runId }]);
   return matches[0];
 }
 

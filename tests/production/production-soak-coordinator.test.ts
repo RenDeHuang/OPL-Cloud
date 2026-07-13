@@ -402,6 +402,10 @@ test("final evidence accepts exact persisted terminal projections and rejects ba
     (copy) => { copy.billingLedger[0].id = "wrong-release"; },
     (copy) => { copy.billingLedger.push({ ...copy.billingLedger[0] }); },
     (copy) => { copy.billingLedger.push({ ...copy.billingLedger[0], id: "extra-wrong-release" }); },
+    (copy) => { copy.computeAllocations.push({ ...copy.computeAllocations[0], accountId: "account-other" }); },
+    (copy) => { copy.storageVolumes.push({ ...copy.storageVolumes[0], accountId: "account-other" }); },
+    (copy) => { copy.storageAttachments.push({ ...copy.storageAttachments[0], accountId: "account-other" }); },
+    (copy) => { copy.workspaces.push({ ...copy.workspaces[0], accountId: "account-other" }); },
     (copy) => { copy.workspaces[0].access.tokenStatus = "active"; }
   ]) {
     const invalid = structuredClone(state);
