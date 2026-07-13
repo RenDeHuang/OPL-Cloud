@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -1674,6 +1674,7 @@ export async function verifyProductionChain({
   screenshotDir = "",
   modelAccessKey = "",
   cleanupOnFailure = true,
+  faultReadyOnly = false,
   fetchImpl = globalThis.fetch
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("fetch_required");
@@ -1682,6 +1683,7 @@ export async function verifyProductionChain({
     if (!readyFile || !releaseFile) throw new Error("production_verification_barrier_files_required");
     assertBarrierTimeout(barrierTimeoutMs);
   }
+  if (faultReadyOnly && (!readyFile || !releaseFile)) throw new Error("production_verification_fault_barrier_required");
   const checks = [];
   const normalizedOrigin = normalizeOrigin(origin);
   assertConsoleOrigin(normalizedOrigin, { allowPrivateConsoleOrigin });
@@ -1721,7 +1723,8 @@ export async function verifyProductionChain({
     manifest.machineIdentities[value.id] = compactObject({
       machineId: value.machineId || value.machineName,
       instanceId: value.instanceId || value.cvmInstanceId,
-      nodeName: value.nodeName
+      nodeName: value.nodeName,
+      privateIp: value.privateIp
     });
     Object.assign(manifest, manifest.machineIdentities[value.id]);
     await persistManifest();
@@ -1892,6 +1895,10 @@ export async function verifyProductionChain({
       runId,
       workspaceAuth: workspaceApiAuth
     });
+    manifest.fileProof = {
+      filePath: fileProof.filePath,
+      sha256: createHash("sha256").update(fileProof.content).digest("hex")
+    };
     await verifyWorkspaceContentTransfer({
       fetchImpl,
       checks,
@@ -1919,6 +1926,66 @@ export async function verifyProductionChain({
         checks: checks.map(({ name, ok }) => ({ name, ok }))
       }
     });
+
+    if (faultReadyOnly) {
+      let cleanupManifest = manifest;
+      if (manifestPath) {
+        const persisted = JSON.parse(await readFile(manifestPath, "utf8"));
+        if (
+          persisted?.runId !== runId || persisted?.slot !== slot || persisted?.accountId !== accountId ||
+          persisted?.ids?.computeAllocationId !== compute.id || persisted?.ids?.storageId !== storage.id
+        ) throw new Error("verification_resource_ownership_mismatch");
+        Object.assign(manifest, persisted);
+        cleanupManifest = manifest;
+      }
+      const primaryCleanupErrors = await cleanupVerificationResources({
+        fetchImpl,
+        origin: normalizedOrigin,
+        accountId,
+        manifest: cleanupManifest,
+        computeAllocationId: compute.id,
+        attachmentId: cleanupManifest.ids.attachmentId,
+        expectedComputeHoldId: compute.holdId,
+        checks,
+        auth,
+        attempts: workspaceUrlAttempts,
+        retryDelayMs,
+        cleanupStage: "first-cleanup"
+      });
+      if (!primaryCleanupErrors.length) {
+        compute = null;
+        attachment = null;
+      }
+      const storageCleanupErrors = await cleanupVerificationResources({
+        fetchImpl,
+        origin: normalizedOrigin,
+        accountId,
+        manifest: cleanupManifest,
+        storageId: storage.id,
+        expectedStorageHoldId: storage.holdId,
+        checks,
+        auth,
+        attempts: workspaceUrlAttempts,
+        retryDelayMs,
+        cleanupStage: "final-cleanup"
+      });
+      if (!storageCleanupErrors.length) storage = null;
+      const cleanupErrors = [...primaryCleanupErrors, ...storageCleanupErrors];
+      if (cleanupErrors.length) {
+        const error = new Error(`production_verification_cleanup_failed:${cleanupErrors.join("|")}`);
+        error.cleanupErrors = cleanupErrors;
+        throw error;
+      }
+      return {
+        ok: true,
+        accountId,
+        runId,
+        workspaceId: workspace.id,
+        workspaceName: effectiveWorkspaceName,
+        url: workspace.url,
+        checks
+      };
+    }
 
     const firstCleanupErrors = await cleanupVerificationResources({
       fetchImpl,
@@ -2247,6 +2314,7 @@ function verifierOptionsFromArgs({ argv, env = process.env, fetchImpl = globalTh
     screenshotDir: args["screenshot-dir"] || env.OPL_VERIFY_SCREENSHOT_DIR || "",
     modelAccessKey: args["model-access-key"] || env.OPL_VERIFY_MODEL_ACCESS_KEY || env.OPL_CODEX_API_KEY || "",
     cleanupOnFailure: !["0", "false", "no"].includes(String(args["cleanup-on-failure"] || env.OPL_VERIFY_CLEANUP_ON_FAILURE || "true").toLowerCase()),
+    faultReadyOnly: ["1", "true", "yes"].includes(String(args["fault-ready-only"] || env.OPL_VERIFY_FAULT_READY_ONLY || "").toLowerCase()),
     fetchImpl
   };
 }
@@ -2295,7 +2363,7 @@ export async function runProductionVerifierCli({
   fetchImpl = globalThis.fetch
 } = {}) {
 	if (argv.includes("--help") || argv.includes("-h")) {
-		stdout.write("Usage: npm run verify:production -- --origin <https-url> [--account <id>] [--run-id <id>] [--slot <id>] [--manifest-path <path>] [--ready-file <path> --release-file <path> --barrier-timeout-ms <ms>] [--package <id>] [--browser-e2e]\n");
+		stdout.write("Usage: npm run verify:production -- --origin <https-url> [--account <id>] [--run-id <id>] [--slot <id>] [--manifest-path <path>] [--ready-file <path> --release-file <path> --barrier-timeout-ms <ms>] [--package <id>] [--browser-e2e] [--fault-ready-only]\n");
 		return 0;
 	}
   try {

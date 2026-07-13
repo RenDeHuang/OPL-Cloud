@@ -2545,12 +2545,18 @@ test("production verifier writes a secret-free manifest with exact resource evid
   assert.deepEqual(manifest.machineIdentities[chain.compute.id], {
     machineId: chain.compute.machineName,
     instanceId: chain.compute.instanceId,
-    nodeName: chain.compute.nodeName
+    nodeName: chain.compute.nodeName,
+    privateIp: chain.compute.privateIp
   });
   assert.deepEqual(manifest.machineIdentities[chain.replacementCompute.id], {
     machineId: chain.replacementCompute.machineName,
     instanceId: chain.replacementCompute.instanceId,
-    nodeName: chain.replacementCompute.nodeName
+    nodeName: chain.replacementCompute.nodeName,
+    privateIp: chain.replacementCompute.privateIp
+  });
+  assert.deepEqual(manifest.fileProof, {
+    filePath: "/data/opl-e2e-prod-run.txt",
+    sha256: createHash("sha256").update("opl persistence prod-run").digest("hex")
   });
   assert.equal(manifest.machineId, chain.replacementCompute.machineName);
   assert.equal(manifest.instanceId, chain.replacementCompute.instanceId);
@@ -2845,3 +2851,102 @@ test("production verifier barrier timeout publishes ready evidence and runs exac
     "POST /api/storage-volumes/destroy"
   ]);
 });
+
+test("fault-ready verifier publishes exact proof then cleans primary resources without replacement billing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-verifier-fault-ready-"));
+  const manifestPath = join(root, "manifest.json");
+  const readyFile = join(root, "ready.json");
+  const releaseFile = join(root, "release");
+  const chain = tkeChain();
+  const requests = [];
+  const responses = chainResponses(chain);
+  await writeFile(releaseFile, "release\n");
+
+  const result = await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    manifestPath,
+    readyFile,
+    releaseFile,
+    faultReadyOnly: true,
+    retryDelayMs: 0,
+    fetchImpl: keyedFetch({ responses, requests })
+  });
+
+  const writes = requests.filter((request) => request.key.startsWith("POST /api/"));
+  assert.ok(!writes.some((request) => request.key === "POST /api/compute-allocations#2"));
+  assert.ok(!writes.some((request) => request.key.startsWith("POST /api/billing/resource-settlements")));
+  assert.deepEqual(writes.filter((request) => request.key.includes("/detach") || request.key.includes("/destroy")).map((request) => request.key), [
+    "POST /api/storage-attachments/detach",
+    `POST /api/compute-allocations/${chain.compute.id}/destroy`,
+    "POST /api/storage-volumes/destroy"
+  ]);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  assert.equal(manifest.machineIdentities[chain.compute.id].privateIp, chain.compute.privateIp);
+  assert.deepEqual(manifest.fileProof, {
+    filePath: "/data/opl-e2e-prod-run.txt",
+    sha256: createHash("sha256").update("opl persistence prod-run").digest("hex")
+  });
+  assert.equal(JSON.parse(await readFile(readyFile, "utf8")).workspaceUrl, scrubbedWorkspaceUrl(chain.workspace.url));
+  assert.equal(result.url, chain.workspace.url);
+});
+
+test("fault-ready verifier requires the release barrier before any production request", async () => {
+  let fetches = 0;
+  await assert.rejects(verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    runId: "fault-ready-input",
+    faultReadyOnly: true,
+    fetchImpl: async () => { fetches += 1; throw new Error("unexpected_fetch"); }
+  }), /production_verification_fault_barrier_required/);
+  assert.equal(fetches, 0);
+});
+
+test("fault-ready verifier retries exact primary cleanup after a transient detach failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-verifier-fault-cleanup-retry-"));
+  const chain = tkeChain();
+  const responses = chainResponses(chain);
+  const requests = [];
+  responses["POST /api/storage-attachments/detach"] = { error: "detach_transient" };
+  responses["POST /api/storage-attachments/detach#2"] = { ...chain.attachment, status: "detached" };
+  const releaseFile = join(root, "release");
+  await writeFile(releaseFile, "release\n");
+
+  await assert.rejects(verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    manifestPath: join(root, "manifest.json"),
+    readyFile: join(root, "ready.json"),
+    releaseFile,
+    faultReadyOnly: true,
+    retryDelayMs: 0,
+    fetchImpl: keyedFetch({
+      responses,
+      requests,
+      statusByKey: { "POST /api/storage-attachments/detach": 500 }
+    })
+  }), /production_verification_cleanup_failed/);
+  assert.equal(requests.filter((request) => request.key.startsWith("POST /api/storage-attachments/detach")).length, 2);
+});
+
+for (const [name, argv, env] of [
+  ["CLI flag", ["--origin", "https://console.oplcloud.cn", "--run-id", "fault-cli", "--fault-ready-only"], {}],
+  ["environment", ["--origin", "https://console.oplcloud.cn", "--run-id", "fault-env"], { OPL_VERIFY_FAULT_READY_ONLY: "true" }]
+]) {
+  test(`production verifier enables fault-ready-only from ${name}`, async () => {
+    let stderr = "";
+    let fetches = 0;
+    const code = await runProductionVerifierCli({
+      argv,
+      env,
+      stdout: { write() {} },
+      stderr: { write(value) { stderr += value; } },
+      fetchImpl: async () => { fetches += 1; throw new Error("unexpected_fetch"); }
+    });
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(stderr).error, "production_verification_fault_barrier_required");
+    assert.equal(fetches, 0);
+  });
+}
