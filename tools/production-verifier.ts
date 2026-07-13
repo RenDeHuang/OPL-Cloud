@@ -1150,6 +1150,7 @@ async function waitForStorageReady({
   storage,
   attempts,
   retryDelayMs,
+  idempotencyKey,
   auth = null,
   checks
 }) {
@@ -1178,6 +1179,7 @@ async function waitForStorageReady({
       path: `/api/storage-volumes/${encodeURIComponent(current.id)}/sync`,
       method: "POST",
       auth,
+      idempotencyKey,
       body: { accountId, storageId: current.id }
     });
   }
@@ -1446,21 +1448,32 @@ function assertVerificationResourceOwnership(state, manifest) {
     const replacement = id === ids.replacementComputeAllocationId;
     const expectedName = replacement ? names.replacementCompute : names.compute;
     const expectedHold = replacement ? holds.replacementCompute : holds.compute;
-    if (!expectedName?.includes(manifest.runId) || compute.name !== expectedName || (expectedHold && compute.holdId !== expectedHold)) {
+    if (!expectedHold || !expectedName?.includes(manifest.runId) || compute.name !== expectedName || compute.holdId !== expectedHold) {
       throw new Error("verification_resource_ownership_mismatch");
     }
-    const identity = manifest.machineIdentities?.[id] || (computeIds.length === 1 ? manifest : {});
-    const machineFields = ["machineId", "instanceId", "nodeName"].filter((field) => identity[field]);
-    if (machineFields.length > 0) {
-      const matches = (state.computeAllocations || []).filter((row) => machineFields.every((field) => row?.[field] === identity[field]));
-      if (matches.length !== 1 || !machineFields.every((field) => compute?.[field] === identity[field])) {
-        throw new Error("verification_resource_ownership_mismatch");
-      }
+    const identity = manifest.machineIdentities?.[id] || {};
+    const stateIdentity = {
+      machineId: compute.machineName,
+      instanceId: compute.instanceId || compute.cvmInstanceId,
+      nodeName: compute.nodeName
+    };
+    if (["running", "ready"].includes(compute.status) && (
+      !identity.machineId || !identity.instanceId || !identity.nodeName ||
+      identity.machineId !== stateIdentity.machineId ||
+      identity.instanceId !== stateIdentity.instanceId ||
+      identity.nodeName !== stateIdentity.nodeName ||
+      (state.computeAllocations || []).filter((row) => (
+        row.machineName === identity.machineId &&
+        (row.instanceId || row.cvmInstanceId) === identity.instanceId &&
+        row.nodeName === identity.nodeName
+      )).length !== 1
+    )) {
+      throw new Error("verification_resource_ownership_mismatch");
     }
   }
   if (ids.storageId) {
     const storage = exactResource(state.storageVolumes, ids.storageId, accountId);
-    if (!names.storage?.includes(manifest.runId) || storage.name !== names.storage || (holds.storage && storage.holdId !== holds.storage)) {
+    if (!holds.storage || !names.storage?.includes(manifest.runId) || storage.name !== names.storage || storage.holdId !== holds.storage) {
       throw new Error("verification_resource_ownership_mismatch");
     }
   }
@@ -1491,6 +1504,15 @@ function assertVerificationResourceOwnership(state, manifest) {
 
 export async function cleanupVerificationResources({ fetchImpl, origin, accountId, manifest, computeAllocationId, storageId, attachmentId, expectedComputeHoldId = "", expectedStorageHoldId = "", checks = null, auth = null, attempts = DEFAULT_WORKSPACE_URL_ATTEMPTS, retryDelayMs = DEFAULT_RETRY_DELAY_MS, cleanupStage = "final-cleanup" }) {
   const cleanupErrors = [];
+  const ids = manifest?.ids || {};
+  const expectedComputeId = cleanupStage === "first-cleanup" ? ids.computeAllocationId : ids.replacementComputeAllocationId;
+  const expectedAttachmentId = cleanupStage === "first-cleanup" ? ids.attachmentId : ids.replacementAttachmentId;
+  if (
+    accountId !== manifest?.accountId ||
+    (computeAllocationId && computeAllocationId !== expectedComputeId) ||
+    (storageId && storageId !== ids.storageId) ||
+    (attachmentId && attachmentId !== expectedAttachmentId)
+  ) return ["verification_resource_ownership_mismatch"];
   const explicitResources = Boolean(computeAllocationId || storageId || attachmentId);
   const effectiveComputeId = computeAllocationId || (!explicitResources && (manifest?.ids?.replacementComputeAllocationId || manifest?.ids?.computeAllocationId));
   const effectiveStorageId = storageId || (!explicitResources && manifest?.ids?.storageId);
@@ -1625,7 +1647,7 @@ export async function verifyProductionChain({
   const storageName = `${effectiveWorkspaceName} storage ${runId}`;
   const replacementComputeName = `${effectiveWorkspaceName} replacement compute ${runId}`;
   const mutationKeys = Object.fromEntries([
-    "topup", "create-compute", "create-storage", "create-attachment", "create-workspace",
+    "topup", "create-compute", "create-storage", "create-storage-sync", "create-attachment", "create-workspace",
     "create-project", "create-transfer", "first-cleanup-detach", "first-cleanup-compute",
     "replacement-compute", "replacement-attachment", "replacement-workspace",
     "settlement-compute", "settlement-storage", "final-cleanup-detach", "final-cleanup-compute", "final-cleanup-storage"
@@ -1702,6 +1724,7 @@ export async function verifyProductionChain({
       idempotencyKey: mutationKeys["create-compute"],
       body: { accountId, packageId, name: computeName }
     });
+    await rememberCompute("computeAllocationId", compute);
     compute = await waitForComputeReady({
       fetchImpl,
       origin: normalizedOrigin,
@@ -1723,6 +1746,9 @@ export async function verifyProductionChain({
       idempotencyKey: mutationKeys["create-storage"],
       body: { accountId, packageId, name: storageName }
     });
+    manifest.ids.storageId = storage.id;
+    manifest.holdIds.storage = storage.holdId;
+    await persistManifest();
     storage = await waitForStorageReady({
       fetchImpl,
       origin: normalizedOrigin,
@@ -1730,6 +1756,7 @@ export async function verifyProductionChain({
       storage,
       attempts: workspaceUrlAttempts,
       retryDelayMs,
+      idempotencyKey: mutationKeys["create-storage-sync"],
       auth,
       checks
     });
@@ -1751,9 +1778,9 @@ export async function verifyProductionChain({
         mountPath: DEFAULT_MOUNT_PATH
       }
     });
-    assertAttachmentShape(checks, attachment, { compute, storage });
     manifest.ids.attachmentId = attachment.id;
     await persistManifest();
+    assertAttachmentShape(checks, attachment, { compute, storage });
 
     workspace = await requestJson({
       fetchImpl,
@@ -1764,10 +1791,10 @@ export async function verifyProductionChain({
       idempotencyKey: mutationKeys["create-workspace"],
       body: { accountId, workspaceName: effectiveWorkspaceName, attachmentId: attachment.id }
     });
-    assertWorkspaceShape(checks, workspace, { compute, storage, attachment });
     manifest.ids.workspaceId = workspace.id;
     manifest.workspaceId = workspace.id;
     await persistManifest();
+    assertWorkspaceShape(checks, workspace, { compute, storage, attachment });
 
     const runtimeStatus = await requestRuntimeStatus({
       fetchImpl,
@@ -1879,6 +1906,7 @@ export async function verifyProductionChain({
       idempotencyKey: mutationKeys["replacement-compute"],
       body: { accountId, packageId, name: replacementComputeName }
     });
+    await rememberCompute("replacementComputeAllocationId", replacementCompute);
     replacementCompute = await waitForComputeReady({
       fetchImpl,
       origin: normalizedOrigin,
@@ -1906,9 +1934,9 @@ export async function verifyProductionChain({
         mountPath: DEFAULT_MOUNT_PATH
       }
     });
-    assertAttachmentShape(checks, replacementAttachment, { compute: replacementCompute, storage }, "replacement_storage_attached");
     manifest.ids.replacementAttachmentId = replacementAttachment.id;
     await persistManifest();
+    assertAttachmentShape(checks, replacementAttachment, { compute: replacementCompute, storage }, "replacement_storage_attached");
 
     replacementWorkspace = await requestJson({
       fetchImpl,
@@ -1919,13 +1947,13 @@ export async function verifyProductionChain({
       idempotencyKey: mutationKeys["replacement-workspace"],
       body: { accountId, workspaceName: effectiveWorkspaceName, attachmentId: replacementAttachment.id }
     });
+    manifest.ids.replacementWorkspaceId = replacementWorkspace.id;
+    await persistManifest();
     assertWorkspaceShape(checks, replacementWorkspace, {
       compute: replacementCompute,
       storage,
       attachment: replacementAttachment
     }, "replacement_workspace_created");
-    manifest.ids.replacementWorkspaceId = replacementWorkspace.id;
-    await persistManifest();
 
     const replacementRuntimeStatus = await requestRuntimeStatus({
       fetchImpl,

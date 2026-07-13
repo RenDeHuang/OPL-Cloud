@@ -12,8 +12,7 @@ import {
   verificationOwnerFromSeed,
   verifyProductionChain,
   verifyWorkspaceBrowserUi,
-  waitForReleaseBarrier,
-  writeVerificationManifest
+  waitForReleaseBarrier
 } from "../../tools/production-verifier.ts";
 
 test("production verifier resolves only one unambiguous owner account from the auth seed", () => {
@@ -84,6 +83,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     packageId: "basic",
     provider: "tencent-tke",
     providerResourceId: "node/opl-node-prod001",
+    machineName: "machine-prod001",
     instanceId: "ins-prod001",
     nodeName: "opl-node-prod001",
     privateIp: "10.0.0.21",
@@ -138,6 +138,7 @@ function tkeChain({ workspaceUrl = "https://workspace.medopl.cn/w/ws-tke-prod001
     id: "compute-prod002",
     holdId: "hold-compute-prod002",
     providerResourceId: "node/opl-node-prod002",
+    machineName: "machine-prod002",
     instanceId: "ins-prod002",
     nodeName: "opl-node-prod002",
     privateIp: "10.0.0.22",
@@ -353,7 +354,9 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
         return { ...createdCompute, ...readyCompute, accountId, name: request.body.name };
       });
       const storageRequest = requests.find((request) => request.key === "POST /api/storage-volumes");
-      const storages = storageRequest ? [{ ...(responses["POST /api/storage-volumes"] || {}), accountId, name: storageRequest.body.name }] : [];
+      const createdStorage = responses["POST /api/storage-volumes"] || {};
+      const readyStorage = responses[`POST /api/storage-volumes/${createdStorage.id}/sync`] || {};
+      const storages = storageRequest ? [{ ...createdStorage, ...readyStorage, accountId, name: storageRequest.body.name }] : [];
       const attachments = attachmentRequests.map((request, index) => ({
         ...(responses[index ? "POST /api/storage-attachments#2" : "POST /api/storage-attachments"] || {}),
         ownerAccountId: accountId,
@@ -2352,18 +2355,36 @@ test("production verifier mutation keys are stable and slot-scoped", () => {
 
 test("production verifier reuses the same mutation key after a lost create response", async () => {
   const chain = tkeChain();
+  const resourcesByKey = new Map();
+  const delivered = [];
+  let createCount = 0;
+  let holdCount = 0;
+  let activationCount = 0;
+  let debitCount = 0;
+  const statefulFetch = (baseFetch, loseResponse = false) => async (url, options = {}) => {
+    const response = await baseFetch(url, options);
+    if (new URL(String(url)).pathname !== "/api/compute-allocations") return response;
+    const key = options.headers?.["Idempotency-Key"] || "";
+    if (!key.endsWith(":create-compute")) return response;
+    if (!resourcesByKey.has(key)) {
+      resourcesByKey.set(key, chain.compute);
+      createCount += 1;
+      holdCount += 1;
+      activationCount += 1;
+      debitCount += 1;
+    }
+    const resource = resourcesByKey.get(key);
+    delivered.push(resource);
+    if (loseResponse) throw new Error("response_lost");
+    return jsonResponse(resource);
+  };
   const firstRequests = [];
-  const firstFetch = keyedFetch({ responses: chainResponses(chain), requests: firstRequests });
   await assert.rejects(verifyProductionChain({
     origin: "https://console.oplcloud.cn",
     accountId: "pi-prod",
     runId: "prod-run",
     slot: "04",
-    fetchImpl: async (url, options = {}) => {
-      const response = await firstFetch(url, options);
-      if (new URL(String(url)).pathname === "/api/compute-allocations") throw new Error("response_lost");
-      return response;
-    }
+    fetchImpl: statefulFetch(keyedFetch({ responses: chainResponses(chain), requests: firstRequests }), true)
   }), /response_lost/);
 
   const replayRequests = [];
@@ -2372,41 +2393,126 @@ test("production verifier reuses the same mutation key after a lost create respo
     accountId: "pi-prod",
     runId: "prod-run",
     slot: "04",
-    fetchImpl: keyedFetch({ responses: chainResponses(chain), requests: replayRequests })
+    fetchImpl: statefulFetch(keyedFetch({ responses: chainResponses(chain), requests: replayRequests }))
   });
   const firstKey = firstRequests.find((request) => request.key === "POST /api/compute-allocations").idempotencyKey;
   const replayKey = replayRequests.find((request) => request.key === "POST /api/compute-allocations").idempotencyKey;
   assert.equal(firstKey, "production-verification:prod-run:04:create-compute");
   assert.equal(replayKey, firstKey);
+  assert.equal(createCount, 1);
+  assert.equal(holdCount, 1);
+  assert.equal(activationCount, 1);
+  assert.equal(debitCount, 1);
+  assert.equal(delivered[0], delivered[1]);
+  assert.deepEqual(delivered.map(({ id, holdId }) => ({ id, holdId })), [
+    { id: chain.compute.id, holdId: chain.compute.holdId },
+    { id: chain.compute.id, holdId: chain.compute.holdId }
+  ]);
 });
 
 test("production verifier writes a secret-free manifest with exact resource evidence", async () => {
   const root = await mkdtemp(join(tmpdir(), "opl-verifier-manifest-"));
   const path = join(root, "run.json");
-  await writeVerificationManifest(path, {
-    runId: "run-7",
-    slot: "03",
+  const chain = tkeChain();
+  await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
     accountId: "pi-prod",
-    resourceNames: { compute: "Production Verification Lab run-7 compute run-7" },
-    ids: { computeAllocationId: "compute-prod001", workspaceId: "ws-prod001" },
-    holdIds: { compute: "hold-compute-prod001" },
-    operationEvidence: { operationId: "op-prod001", providerRequestId: "req-prod001" },
-    instanceId: "ins-prod001",
-    nodeName: "opl-node-prod001",
-    workspaceId: "ws-prod001",
-    workspaceUrl: "https://workspace.medopl.cn/w/ws-prod001/",
-    mutationKeys: { createCompute: "production-verification:run-7:03:create-compute" },
-    cookie: "must-not-be-written",
-    token: "must-not-be-written",
-    password: "must-not-be-written",
-    secret: "must-not-be-written"
+    runId: "prod-run",
+    slot: "03",
+    manifestPath: path,
+    operatorToken: "operator-secret",
+    ownerEmail: "owner@example.com",
+    ownerPassword: "owner-secret",
+    fetchImpl: keyedFetch({
+      responses: {
+        ...chainResponses(chain),
+        "POST /api/auth/operator-login": { accountId: "operator", role: "operator" },
+        "POST /api/auth/login": { accountId: "pi-prod", role: "owner" }
+      },
+      responseHeaders: new Headers({ "content-type": "application/json" })
+    })
   });
   const serialized = await readFile(path, "utf8");
   const manifest = JSON.parse(serialized);
-  assert.equal(manifest.workspaceUrl, "https://workspace.medopl.cn/w/ws-prod001/");
-  assert.equal(manifest.ids.computeAllocationId, "compute-prod001");
-  assert.equal(manifest.operationEvidence.operationId, "op-prod001");
-  assert.doesNotMatch(serialized, /must-not-be-written|cookie|token|password|secret/i);
+  assert.equal(manifest.workspaceUrl, scrubbedWorkspaceUrl(chain.workspace.url));
+  assert.deepEqual(manifest.ids, {
+    computeAllocationId: chain.compute.id,
+    storageId: chain.storage.id,
+    attachmentId: chain.attachment.id,
+    workspaceId: chain.workspace.id,
+    replacementComputeAllocationId: chain.replacementCompute.id,
+    replacementAttachmentId: chain.replacementAttachment.id,
+    replacementWorkspaceId: chain.replacementWorkspace.id
+  });
+  assert.deepEqual(manifest.machineIdentities[chain.compute.id], {
+    machineId: chain.compute.machineName,
+    instanceId: chain.compute.instanceId,
+    nodeName: chain.compute.nodeName
+  });
+  assert.deepEqual(manifest.machineIdentities[chain.replacementCompute.id], {
+    machineId: chain.replacementCompute.machineName,
+    instanceId: chain.replacementCompute.instanceId,
+    nodeName: chain.replacementCompute.nodeName
+  });
+  assert.equal(manifest.machineId, chain.replacementCompute.machineName);
+  assert.equal(manifest.instanceId, chain.replacementCompute.instanceId);
+  assert.equal(manifest.nodeName, chain.replacementCompute.nodeName);
+  assert.doesNotMatch(serialized, /operator-secret|owner-secret|cookie|token|password|secret/i);
+});
+
+test("production verifier persists a returned compute identity before readiness assertion fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-verifier-early-manifest-"));
+  const manifestPath = join(root, "run.json");
+  const compute = {
+    id: "compute-early",
+    ownerAccountId: "pi-prod",
+    holdId: "hold-compute-early",
+    machineName: "machine-early",
+    instanceId: "ins-early",
+    nodeName: "node-early",
+    provider: "tencent-tke",
+    status: "provisioning",
+    billingStatus: "pending"
+  };
+  await assert.rejects(verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "early-run",
+    manifestPath,
+    workspaceUrlAttempts: 0,
+    cleanupOnFailure: false,
+    fetchImpl: keyedFetch({ responses: {
+      "GET /api/production/readiness": { ready: true },
+      "GET /api/runtime/readiness": { ready: true },
+      "POST /api/billing/topups": { id: "pi-prod" },
+      "POST /api/compute-allocations": compute
+    } })
+  }), /compute_created_failed/);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  assert.equal(manifest.ids.computeAllocationId, compute.id);
+  assert.deepEqual(manifest.machineIdentities[compute.id], {
+    machineId: compute.machineName,
+    instanceId: compute.instanceId,
+    nodeName: compute.nodeName
+  });
+});
+
+test("production verifier uses a stable key while syncing initial storage readiness", async () => {
+  const chain = tkeChain();
+  const responses = chainResponses(chain);
+  responses["POST /api/storage-volumes"] = { ...chain.storage, providerResourceId: "", status: "provisioning", billingStatus: "pending" };
+  responses[`POST /api/storage-volumes/${chain.storage.id}/sync`] = chain.storage;
+  const requests = [];
+  await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    slot: "05",
+    retryDelayMs: 0,
+    fetchImpl: keyedFetch({ responses, requests })
+  });
+  const sync = requests.find((request) => request.key === `POST /api/storage-volumes/${chain.storage.id}/sync`);
+  assert.equal(sync.idempotencyKey, "production-verification:prod-run:05:create-storage-sync");
 });
 
 function ownedCleanupFixture() {
@@ -2426,8 +2532,9 @@ function ownedCleanupFixture() {
       workspaceId: "ws-prod001"
     },
     holdIds: { compute: "hold-compute-prod001", storage: "hold-storage-prod001" },
-    instanceId: "ins-prod001",
-    nodeName: "opl-node-prod001",
+    machineIdentities: {
+      "compute-prod001": { machineId: "machine-prod001", instanceId: "ins-prod001", nodeName: "opl-node-prod001" }
+    },
     mutationKeys: {
       cleanupDetach: "production-verification:run-7:03:final-cleanup-detach",
       cleanupCompute: "production-verification:run-7:03:final-cleanup-compute",
@@ -2438,7 +2545,7 @@ function ownedCleanupFixture() {
     account: { accountId: "pi-prod" },
     computeAllocations: [{
       id: "compute-prod001", accountId: "pi-prod", name: manifest.resourceNames.compute,
-      holdId: "hold-compute-prod001", instanceId: "ins-prod001", nodeName: "opl-node-prod001"
+      holdId: "hold-compute-prod001", machineName: "machine-prod001", instanceId: "ins-prod001", nodeName: "opl-node-prod001", status: "running"
     }],
     storageVolumes: [{ id: "storage-prod001", accountId: "pi-prod", name: manifest.resourceNames.storage, holdId: "hold-storage-prod001" }],
     storageAttachments: [{ id: "attach-prod001", ownerAccountId: "pi-prod", computeAllocationId: "compute-prod001", storageId: "storage-prod001" }],
@@ -2452,11 +2559,13 @@ for (const [name, mutate] of [
   ["wrong name", (state) => { state.computeAllocations[0].name = "unowned"; }],
   ["wrong id", (state) => { state.computeAllocations[0].id = "compute-other"; }],
   ["wrong hold", (state) => { state.computeAllocations[0].holdId = "hold-other"; }],
+  ["missing machine triple", (state, manifest) => { delete manifest.machineIdentities["compute-prod001"].machineId; }],
+  ["missing projected machine triple", (state) => { delete state.computeAllocations[0].machineName; }],
   ["duplicate machine ownership", (state) => { state.computeAllocations.push({ ...state.computeAllocations[0], id: "compute-duplicate" }); }]
 ]) {
   test(`production verifier sends no cleanup writes for ${name}`, async () => {
     const { manifest, state } = ownedCleanupFixture();
-    mutate(state);
+    mutate(state, manifest);
     const writes = [];
     const errors = await cleanupVerificationResources({
       origin: "https://console.oplcloud.cn",
@@ -2466,6 +2575,50 @@ for (const [name, mutate] of [
         if ((options.method || "GET") === "GET") return jsonResponse(state);
         writes.push([url, options]);
         throw new Error("unexpected_cleanup_write");
+      }
+    });
+    assert.deepEqual(errors, ["verification_resource_ownership_mismatch"]);
+    assert.equal(writes.length, 0);
+  });
+}
+
+for (const [name, update] of [
+  ["account", (options) => { options.accountId = "pi-victim"; }],
+  ["compute", (options) => { options.computeAllocationId = "compute-victim"; options.cleanupStage = "first-cleanup"; }],
+  ["storage", (options) => { options.storageId = "storage-victim"; }],
+  ["attachment", (options) => { options.attachmentId = "attach-victim"; options.cleanupStage = "first-cleanup"; }]
+]) {
+  test(`production verifier rejects explicit victim ${name} before state read or cleanup write`, async () => {
+    const { manifest } = ownedCleanupFixture();
+    const requests = [];
+    const options = {
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      manifest,
+      fetchImpl: async (...args) => { requests.push(args); throw new Error("unexpected_request"); }
+    };
+    update(options);
+    assert.deepEqual(await cleanupVerificationResources(options), ["verification_resource_ownership_mismatch"]);
+    assert.equal(requests.length, 0);
+  });
+}
+
+for (const [name, update] of [
+  ["compute", (manifest) => { delete manifest.holdIds.compute; }],
+  ["storage", (manifest) => { delete manifest.holdIds.storage; }]
+]) {
+  test(`production verifier fails closed when ${name} manifest Hold is missing`, async () => {
+    const { manifest, state } = ownedCleanupFixture();
+    update(manifest);
+    const writes = [];
+    const errors = await cleanupVerificationResources({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      manifest,
+      fetchImpl: async (_url, options = {}) => {
+        if ((options.method || "GET") === "GET") return jsonResponse(state);
+        writes.push(options);
+        return jsonResponse({});
       }
     });
     assert.deepEqual(errors, ["verification_resource_ownership_mismatch"]);
