@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
+  cleanupVerificationResources,
+  productionVerificationMutationKey,
   runProductionVerifierCli,
   verificationOwnerFromSeed,
   verifyProductionChain,
-  verifyWorkspaceBrowserUi
+  verifyWorkspaceBrowserUi,
+  waitForReleaseBarrier,
+  writeVerificationManifest
 } from "../../tools/production-verifier.ts";
 
 test("production verifier resolves only one unambiguous owner account from the auth seed", () => {
@@ -334,8 +340,44 @@ function keyedFetch({ responses, requests = [], responseHeaders = null, statusBy
         responseKey = `${method} ${lookup.toString()}${key.match(/#\d+$/)?.[0] || ""}`;
       }
     }
-    const payload = responses[responseKey] ?? responses[responseKey.replace(/#\d+$/, "")] ?? responses[key] ?? responses[key.replace(/#\d+$/, "")];
-    if (typeof payload === "string") return htmlResponse(payload);
+    let payload = responses[responseKey] ?? responses[responseKey.replace(/#\d+$/, "")] ?? responses[key] ?? responses[key.replace(/#\d+$/, "")];
+    if (key.startsWith("GET /api/state?accountId=")) {
+      const accountId = parsed.searchParams.get("accountId");
+      const created = (prefix) => requests.filter((request) => request.key === prefix || request.key.startsWith(`${prefix}#`));
+      const computeRequests = created("POST /api/compute-allocations");
+      const attachmentRequests = created("POST /api/storage-attachments");
+      const workspaceRequests = created("POST /api/workspaces");
+      const computes = computeRequests.map((request, index) => {
+        const createdCompute = responses[index ? "POST /api/compute-allocations#2" : "POST /api/compute-allocations"] || {};
+        const readyCompute = Object.entries(responses).find(([responseKey, value]) => responseKey.startsWith(`GET /api/compute-allocations/${createdCompute.id}?`) && value?.status === "running")?.[1];
+        return { ...createdCompute, ...readyCompute, accountId, name: request.body.name };
+      });
+      const storageRequest = requests.find((request) => request.key === "POST /api/storage-volumes");
+      const storages = storageRequest ? [{ ...(responses["POST /api/storage-volumes"] || {}), accountId, name: storageRequest.body.name }] : [];
+      const attachments = attachmentRequests.map((request, index) => ({
+        ...(responses[index ? "POST /api/storage-attachments#2" : "POST /api/storage-attachments"] || {}),
+        ownerAccountId: accountId,
+        computeAllocationId: request.body.computeAllocationId,
+        storageId: request.body.storageId
+      }));
+      const workspaceRows = workspaceRequests.map((request, index) => ({
+        ...(responses[index ? "POST /api/workspaces#2" : "POST /api/workspaces"] || {}),
+        ownerAccountId: accountId,
+        name: request.body.workspaceName,
+        computeAllocationId: attachments[index]?.computeAllocationId,
+        storageId: attachments[index]?.storageId,
+        attachmentId: attachments[index]?.id
+      }));
+      payload = {
+        ...payload,
+        account: { accountId },
+        computeAllocations: computes,
+        storageVolumes: storages,
+        storageAttachments: attachments,
+        workspaces: [...new Map(workspaceRows.map((row) => [row.id, row])).values()]
+      };
+    }
+    if (typeof payload === "string") return htmlResponse(payload, statusByKey[key] || statusByKey[key.replace(/#\d+$/, "")] || 200);
     if (payload) {
       if (typeof payload.binaryBody === "string") {
         return binaryResponse(payload.binaryBody, {
@@ -1208,6 +1250,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
     `PUT /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/chunks/1`,
     `POST /api/workspaces/${chain.workspace.id}/transfers/transfer-prod-run/complete`,
     `GET /api/workspaces/${chain.workspace.id}/contents/${createHash("sha256").update(`${"x".repeat(4 << 20)}opl transfer prod-run`).digest("hex")}`,
+    "GET /api/state?accountId=pi-prod",
     "POST /api/storage-attachments/detach",
     `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/compute-allocations#2",
@@ -1221,14 +1264,18 @@ test("production verifier exercises the public TKE resource provisioning chain",
     "POST /api/billing/resource-settlements",
     "POST /api/billing/resource-settlements#2",
     "GET /api/state?accountId=pi-prod",
+    "GET /api/state?accountId=pi-prod",
     "POST /api/storage-attachments/detach#2",
     `POST /api/compute-allocations/${chain.replacementCompute.id}/destroy`,
     "POST /api/storage-volumes/destroy"
   ]);
-  assert.equal(requests.find((request) => request.key === "POST /api/billing/topups").idempotencyKey, "production_verification_credit:prod-run");
+  assert.equal(requests.find((request) => request.key === "POST /api/billing/topups").idempotencyKey, "production-verification:prod-run:01:topup");
+  const resourceWrites = requests.filter((request) => request.key.startsWith("POST /api/") && !request.key.includes("runtime-status"));
+  assert.ok(resourceWrites.every((request) => request.idempotencyKey.startsWith("production-verification:prod-run:01:")));
+  assert.equal(new Set(resourceWrites.map((request) => request.idempotencyKey)).size, resourceWrites.length);
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces").body, {
     accountId: "pi-prod",
-    workspaceName: "Production Verification Lab",
+    workspaceName: "Production Verification Lab prod-run",
     attachmentId: chain.attachment.id
   });
   assert.equal(requests.find((request) => request.key === "POST /api/storage-attachments").body.computeAllocationId, chain.compute.id);
@@ -1248,7 +1295,7 @@ test("production verifier exercises the public TKE resource provisioning chain",
   assert.equal(requests.filter((request) => request.key.startsWith("POST /api/storage-volumes/destroy")).length, 1);
   assert.deepEqual(requests.find((request) => request.key === "POST /api/workspaces#2").body, {
     accountId: "pi-prod",
-    workspaceName: "Production Verification Lab",
+    workspaceName: "Production Verification Lab prod-run",
     attachmentId: chain.replacementAttachment.id
   });
   assert.equal(chain.replacementWorkspace.id, chain.workspace.id);
@@ -1335,7 +1382,7 @@ test("production verifier rejects ambiguous owner organization memberships", asy
     /verification_organization_membership_required/
   );
   assert.ok(!requests.some((request) => request.key === "POST /api/projects" || request.key.includes("/transfers")));
-  assert.deepEqual(requests.map((request) => request.key).slice(-3), [
+  assert.deepEqual(requests.filter((request) => request.key.includes("/detach") || request.key.includes("/destroy")).map((request) => request.key), [
     "POST /api/storage-attachments/detach",
     `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/storage-volumes/destroy"
@@ -1897,7 +1944,7 @@ test("production verifier reports browser failure stage with resources, checks, 
     "workspace_browser_reply_seen:false"
   ]);
   assert.ok(actions.some((action) => action[0] === "screenshot" && action[1].endsWith("workspace-browser-e2e-prod-run-failure.png")));
-  assert.deepEqual(requests.map((request) => request.key).slice(-3), [
+  assert.deepEqual(requests.filter((request) => request.key.includes("/detach") || request.key.includes("/destroy")).map((request) => request.key), [
     "POST /api/storage-attachments/detach",
     `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/storage-volumes/destroy"
@@ -2117,7 +2164,7 @@ test("production verifier rejects localhost Workspace URLs and still cleans up r
     /public_workspace_url_required/
   );
 
-  assert.deepEqual(requests.map((request) => request.key).slice(-3), [
+  assert.deepEqual(requests.filter((request) => request.key.includes("/detach") || request.key.includes("/destroy")).map((request) => request.key), [
     "POST /api/storage-attachments/detach",
     `POST /api/compute-allocations/${chain.compute.id}/destroy`,
     "POST /api/storage-volumes/destroy"
@@ -2139,20 +2186,16 @@ test("production verifier reports cleanup failures without hiding the original v
     await verifyProductionChain({
       origin: "https://console.oplcloud.cn",
       accountId: "pi-prod",
+      runId: "prod-run",
       workspaceUrlAttempts: 1,
       retryDelayMs: 0,
-      fetchImpl: async (url, options = {}) => {
-        const parsed = new URL(String(url));
-        const method = options.method || "GET";
-        const key = parsed.origin === "https://console.oplcloud.cn" ? `${method} ${parsed.pathname}` : `${method} ${String(url)}`;
-        if (key === "POST /api/storage-attachments/detach") return jsonResponse(responses[key], 500);
-        if (key === `POST /api/compute-allocations/${chain.compute.id}/destroy`) return jsonResponse(responses[key], 500);
-        if (key === "POST /api/storage-volumes/destroy") return jsonResponse(responses[key], 500);
-        const payload = responses[key];
-        if (typeof payload === "string") return htmlResponse(payload, key.startsWith("GET https://") ? 502 : 200);
-        if (payload) return jsonResponse(payload);
-        throw new Error(`unexpected_request:${key}`);
-      }
+      fetchImpl: keyedFetch({ responses, statusByKey: {
+        [`GET ${chain.workspace.url}`]: 502,
+        [`GET ${scrubbedWorkspaceUrl(chain.workspace.url)}`]: 502,
+        "POST /api/storage-attachments/detach": 500,
+        [`POST /api/compute-allocations/${chain.compute.id}/destroy`]: 500,
+        "POST /api/storage-volumes/destroy": 500
+      } })
     });
   } catch (error) {
     caught = error;
@@ -2216,18 +2259,13 @@ test("production verifier CLI writes structured failure JSON with cleanup errors
     argv: ["--origin", "https://console.oplcloud.cn", "--account", "pi-prod", "--run-id", "cli-fail", "--url-attempts", "1", "--retry-delay-ms", "0"],
     stdout: { write: (chunk) => { stdout += chunk; } },
     stderr: { write: (chunk) => { stderr += chunk; } },
-    fetchImpl: async (url, options = {}) => {
-      const parsed = new URL(String(url));
-      const method = options.method || "GET";
-      const key = parsed.origin === "https://console.oplcloud.cn" ? `${method} ${parsed.pathname}` : `${method} ${String(url)}`;
-      if (key === "POST /api/storage-attachments/detach") return jsonResponse(responses[key], 500);
-      if (key === `POST /api/compute-allocations/${chain.compute.id}/destroy`) return jsonResponse(responses[key], 500);
-      if (key === "POST /api/storage-volumes/destroy") return jsonResponse(responses[key], 500);
-      const payload = responses[key];
-      if (typeof payload === "string") return htmlResponse(payload, key.startsWith("GET https://") ? 502 : 200);
-      if (payload) return jsonResponse(payload);
-      throw new Error(`unexpected_request:${key}`);
-    }
+    fetchImpl: keyedFetch({ responses, statusByKey: {
+      [`GET ${chain.workspace.url}`]: 502,
+      [`GET ${scrubbedWorkspaceUrl(chain.workspace.url)}`]: 502,
+      "POST /api/storage-attachments/detach": 500,
+      [`POST /api/compute-allocations/${chain.compute.id}/destroy`]: 500,
+      "POST /api/storage-volumes/destroy": 500
+    } })
   });
 
   assert.equal(code, 1);
@@ -2304,4 +2342,171 @@ test("production verifier CLI preserves safe provider failure details", async ()
     providerRequestId: "req-describe",
     retryable: false
   });
+});
+
+test("production verifier mutation keys are stable and slot-scoped", () => {
+  assert.equal(productionVerificationMutationKey("run-7", "03", "create-compute"), "production-verification:run-7:03:create-compute");
+  assert.equal(productionVerificationMutationKey("run-7", "03", "create-compute"), productionVerificationMutationKey("run-7", "03", "create-compute"));
+  assert.notEqual(productionVerificationMutationKey("run-7", "03", "create-compute"), productionVerificationMutationKey("run-7", "03", "create-storage"));
+});
+
+test("production verifier reuses the same mutation key after a lost create response", async () => {
+  const chain = tkeChain();
+  const firstRequests = [];
+  const firstFetch = keyedFetch({ responses: chainResponses(chain), requests: firstRequests });
+  await assert.rejects(verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    slot: "04",
+    fetchImpl: async (url, options = {}) => {
+      const response = await firstFetch(url, options);
+      if (new URL(String(url)).pathname === "/api/compute-allocations") throw new Error("response_lost");
+      return response;
+    }
+  }), /response_lost/);
+
+  const replayRequests = [];
+  await verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    slot: "04",
+    fetchImpl: keyedFetch({ responses: chainResponses(chain), requests: replayRequests })
+  });
+  const firstKey = firstRequests.find((request) => request.key === "POST /api/compute-allocations").idempotencyKey;
+  const replayKey = replayRequests.find((request) => request.key === "POST /api/compute-allocations").idempotencyKey;
+  assert.equal(firstKey, "production-verification:prod-run:04:create-compute");
+  assert.equal(replayKey, firstKey);
+});
+
+test("production verifier writes a secret-free manifest with exact resource evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-verifier-manifest-"));
+  const path = join(root, "run.json");
+  await writeVerificationManifest(path, {
+    runId: "run-7",
+    slot: "03",
+    accountId: "pi-prod",
+    resourceNames: { compute: "Production Verification Lab run-7 compute run-7" },
+    ids: { computeAllocationId: "compute-prod001", workspaceId: "ws-prod001" },
+    holdIds: { compute: "hold-compute-prod001" },
+    operationEvidence: { operationId: "op-prod001", providerRequestId: "req-prod001" },
+    instanceId: "ins-prod001",
+    nodeName: "opl-node-prod001",
+    workspaceId: "ws-prod001",
+    workspaceUrl: "https://workspace.medopl.cn/w/ws-prod001/",
+    mutationKeys: { createCompute: "production-verification:run-7:03:create-compute" },
+    cookie: "must-not-be-written",
+    token: "must-not-be-written",
+    password: "must-not-be-written",
+    secret: "must-not-be-written"
+  });
+  const serialized = await readFile(path, "utf8");
+  const manifest = JSON.parse(serialized);
+  assert.equal(manifest.workspaceUrl, "https://workspace.medopl.cn/w/ws-prod001/");
+  assert.equal(manifest.ids.computeAllocationId, "compute-prod001");
+  assert.equal(manifest.operationEvidence.operationId, "op-prod001");
+  assert.doesNotMatch(serialized, /must-not-be-written|cookie|token|password|secret/i);
+});
+
+function ownedCleanupFixture() {
+  const manifest = {
+    runId: "run-7",
+    slot: "03",
+    accountId: "pi-prod",
+    resourceNames: {
+      compute: "Production Verification Lab run-7 compute run-7",
+      storage: "Production Verification Lab run-7 storage run-7",
+      workspace: "Production Verification Lab run-7"
+    },
+    ids: {
+      computeAllocationId: "compute-prod001",
+      storageId: "storage-prod001",
+      attachmentId: "attach-prod001",
+      workspaceId: "ws-prod001"
+    },
+    holdIds: { compute: "hold-compute-prod001", storage: "hold-storage-prod001" },
+    instanceId: "ins-prod001",
+    nodeName: "opl-node-prod001",
+    mutationKeys: {
+      cleanupDetach: "production-verification:run-7:03:final-cleanup-detach",
+      cleanupCompute: "production-verification:run-7:03:final-cleanup-compute",
+      cleanupStorage: "production-verification:run-7:03:final-cleanup-storage"
+    }
+  };
+  const state = {
+    account: { accountId: "pi-prod" },
+    computeAllocations: [{
+      id: "compute-prod001", accountId: "pi-prod", name: manifest.resourceNames.compute,
+      holdId: "hold-compute-prod001", instanceId: "ins-prod001", nodeName: "opl-node-prod001"
+    }],
+    storageVolumes: [{ id: "storage-prod001", accountId: "pi-prod", name: manifest.resourceNames.storage, holdId: "hold-storage-prod001" }],
+    storageAttachments: [{ id: "attach-prod001", ownerAccountId: "pi-prod", computeAllocationId: "compute-prod001", storageId: "storage-prod001" }],
+    workspaces: [{ id: "ws-prod001", ownerAccountId: "pi-prod", name: manifest.resourceNames.workspace, computeAllocationId: "compute-prod001", storageId: "storage-prod001", attachmentId: "attach-prod001" }]
+  };
+  return { manifest, state };
+}
+
+for (const [name, mutate] of [
+  ["wrong account", (state) => { state.account.accountId = "pi-other"; }],
+  ["wrong name", (state) => { state.computeAllocations[0].name = "unowned"; }],
+  ["wrong id", (state) => { state.computeAllocations[0].id = "compute-other"; }],
+  ["wrong hold", (state) => { state.computeAllocations[0].holdId = "hold-other"; }],
+  ["duplicate machine ownership", (state) => { state.computeAllocations.push({ ...state.computeAllocations[0], id: "compute-duplicate" }); }]
+]) {
+  test(`production verifier sends no cleanup writes for ${name}`, async () => {
+    const { manifest, state } = ownedCleanupFixture();
+    mutate(state);
+    const writes = [];
+    const errors = await cleanupVerificationResources({
+      origin: "https://console.oplcloud.cn",
+      accountId: "pi-prod",
+      manifest,
+      fetchImpl: async (url, options = {}) => {
+        if ((options.method || "GET") === "GET") return jsonResponse(state);
+        writes.push([url, options]);
+        throw new Error("unexpected_cleanup_write");
+      }
+    });
+    assert.deepEqual(errors, ["verification_resource_ownership_mismatch"]);
+    assert.equal(writes.length, 0);
+  });
+}
+
+test("production verifier barrier atomically publishes ready evidence and observes release", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-verifier-barrier-"));
+  const readyFile = join(root, "ready.json");
+  const releaseFile = join(root, "release");
+  setTimeout(() => writeFile(releaseFile, "release\n"), 10);
+  await waitForReleaseBarrier({
+    readyFile,
+    releaseFile,
+    barrierTimeoutMs: 500,
+    retryDelayMs: 1,
+    evidence: { runId: "run-7", slot: "03", workspaceUrl: "https://workspace.medopl.cn/w/ws-prod001/" }
+  });
+  assert.equal(JSON.parse(await readFile(readyFile, "utf8")).workspaceUrl, "https://workspace.medopl.cn/w/ws-prod001/");
+});
+
+test("production verifier barrier timeout publishes ready evidence and runs exact cleanup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-verifier-barrier-timeout-"));
+  const readyFile = join(root, "ready.json");
+  const chain = tkeChain();
+  const requests = [];
+  await assert.rejects(verifyProductionChain({
+    origin: "https://console.oplcloud.cn",
+    accountId: "pi-prod",
+    runId: "prod-run",
+    readyFile,
+    releaseFile: join(root, "missing-release"),
+    barrierTimeoutMs: 5,
+    retryDelayMs: 1,
+    fetchImpl: keyedFetch({ responses: chainResponses(chain), requests })
+  }), /production_verification_barrier_timeout/);
+  assert.equal(JSON.parse(await readFile(readyFile, "utf8")).workspaceUrl, scrubbedWorkspaceUrl(chain.workspace.url));
+  assert.deepEqual(requests.filter((request) => request.key.includes("/detach") || request.key.includes("/destroy")).map((request) => request.key), [
+    "POST /api/storage-attachments/detach",
+    `POST /api/compute-allocations/${chain.compute.id}/destroy`,
+    "POST /api/storage-volumes/destroy"
+  ]);
 });
