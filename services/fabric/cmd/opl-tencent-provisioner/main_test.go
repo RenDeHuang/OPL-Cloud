@@ -10,6 +10,7 @@ import (
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
+	vpc2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc/v20170312"
 )
 
 func TestReadinessRequiresTencentEnv(t *testing.T) {
@@ -123,6 +124,10 @@ type fakeTencentClient struct {
 	syncedRequest    Request
 	destroyedRequest Request
 	taggedRequest    Request
+}
+
+func (client *fakeTencentClient) Capacity(request Request, _ map[string]string) Response {
+	return Response{Ok: true, Status: "ready", InstanceType: request.Pool.InstanceType, RequiredCapacity: request.Pool.DesiredReplicas}
 }
 
 func (client *fakeTencentClient) ReconcileComputePool(request Request, _ map[string]string) Response {
@@ -367,6 +372,9 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if createRequest.Native == nil {
 		t.Fatalf("expected native config")
 	}
+	if stringValue(createRequest.Native.MachineType) != "NativeCVM" {
+		t.Fatalf("Fabric package pools must provision CVMs, not CXM native machines: %#v", createRequest.Native.MachineType)
+	}
 	if createRequest.Native.Replicas == nil || *createRequest.Native.Replicas != 0 {
 		t.Fatalf("node pool creation must not allocate a CVM immediately: %#v", createRequest.Native.Replicas)
 	}
@@ -409,7 +417,23 @@ type fakeNativeTkeAPI struct {
 	deleteMachinesRequest    *tke2022.DeleteClusterMachinesRequest
 	nodePoolId               string
 	discoverNodePoolId       string
+	ambiguousDiscovery       bool
+	truncatedDiscovery       bool
 	replicas                 int64
+	maxReplicas              int64
+	readyReplicas            *int64
+	omitNative               bool
+	omitScaling              bool
+	omitReplicas             bool
+	omitReadyReplicas        bool
+	lifeState                string
+	poolType                 string
+	machineType              string
+	instanceChargeType       string
+	labelPoolId              string
+	labelPackageId           string
+	labelInstanceType        string
+	instanceTypes            []string
 	enableAutoscaling        bool
 	autoRepair               bool
 	rejectMachinePoolFilter  bool
@@ -422,16 +446,76 @@ type fakeNativeTkeAPI struct {
 }
 
 type fakeNativeCvmAPI struct {
-	describeInstancesRequest []*cvm2017.DescribeInstancesRequest
-	modifyInstancesRequest   []*cvm2017.ModifyInstancesAttributeRequest
-	instanceName             string
-	empty                    bool
-	err                      error
-	nilResponse              bool
-	nilEnvelope              bool
-	nilResponseCall          int
-	nilEnvelopeCall          int
-	nilInstanceCall          int
+	describeAccountQuotaRequests []*cvm2017.DescribeAccountQuotaRequest
+	describeZoneConfigRequests   []*cvm2017.DescribeZoneInstanceConfigInfosRequest
+	quotaRemaining               uint64
+	omitQuotaRemaining           bool
+	omitZoneConfig               bool
+	zoneConfigStatus             string
+	zoneConfigChargeType         string
+	describeInstancesRequest     []*cvm2017.DescribeInstancesRequest
+	modifyInstancesRequest       []*cvm2017.ModifyInstancesAttributeRequest
+	instanceName                 string
+	empty                        bool
+	err                          error
+	nilResponse                  bool
+	nilEnvelope                  bool
+	nilResponseCall              int
+	nilEnvelopeCall              int
+	nilInstanceCall              int
+}
+
+type fakeNativeVpcAPI struct {
+	describeSubnetsRequests []*vpc2017.DescribeSubnetsRequest
+	omitSubnet              bool
+	omitSubnetZone          bool
+	availableIpCount        uint64
+	zone                    string
+}
+
+func (api *fakeNativeVpcAPI) DescribeSubnets(request *vpc2017.DescribeSubnetsRequest) (*vpc2017.DescribeSubnetsResponse, error) {
+	api.describeSubnetsRequests = append(api.describeSubnetsRequests, request)
+	zone := common.StringPtr(firstNonEmpty(api.zone, "na-siliconvalley-1"))
+	if api.omitSubnetZone {
+		zone = nil
+	}
+	subnets := []*vpc2017.Subnet{{
+		SubnetId: common.StringPtr("subnet-basic"), Zone: zone, AvailableIpAddressCount: common.Uint64Ptr(firstNonZeroUint(api.availableIpCount, 8)),
+	}}
+	if api.omitSubnet {
+		subnets = nil
+	}
+	return &vpc2017.DescribeSubnetsResponse{Response: &vpc2017.DescribeSubnetsResponseParams{
+		SubnetSet: subnets, TotalCount: common.Uint64Ptr(uint64(len(subnets))), RequestId: common.StringPtr("req-describe-subnets"),
+	}}, nil
+}
+
+func (api *fakeNativeCvmAPI) DescribeAccountQuota(request *cvm2017.DescribeAccountQuotaRequest) (*cvm2017.DescribeAccountQuotaResponse, error) {
+	api.describeAccountQuotaRequests = append(api.describeAccountQuotaRequests, request)
+	remaining := common.Uint64Ptr(firstNonZeroUint(api.quotaRemaining, 8))
+	if api.omitQuotaRemaining {
+		remaining = nil
+	}
+	return &cvm2017.DescribeAccountQuotaResponse{Response: &cvm2017.DescribeAccountQuotaResponseParams{
+		AccountQuotaOverview: &cvm2017.AccountQuotaOverview{AccountQuota: &cvm2017.AccountQuota{PostPaidQuotaSet: []*cvm2017.PostPaidQuota{{
+			Zone: common.StringPtr("na-siliconvalley-1"), RemainingQuota: remaining, TotalQuota: common.Uint64Ptr(10), UsedQuota: common.Uint64Ptr(2),
+		}}}},
+		RequestId: common.StringPtr("req-account-quota"),
+	}}, nil
+}
+
+func (api *fakeNativeCvmAPI) DescribeZoneInstanceConfigInfos(request *cvm2017.DescribeZoneInstanceConfigInfosRequest) (*cvm2017.DescribeZoneInstanceConfigInfosResponse, error) {
+	api.describeZoneConfigRequests = append(api.describeZoneConfigRequests, request)
+	items := []*cvm2017.InstanceTypeQuotaItem{{
+		Zone: common.StringPtr("na-siliconvalley-1"), InstanceType: common.StringPtr("SA5.LARGE4"), InstanceChargeType: common.StringPtr(firstNonEmpty(api.zoneConfigChargeType, "POSTPAID_BY_HOUR")), Status: common.StringPtr(firstNonEmpty(api.zoneConfigStatus, "SELL")),
+	}}
+	if api.omitZoneConfig {
+		items = nil
+	}
+	return &cvm2017.DescribeZoneInstanceConfigInfosResponse{Response: &cvm2017.DescribeZoneInstanceConfigInfosResponseParams{
+		InstanceTypeQuotaSet: items,
+		RequestId:            common.StringPtr("req-zone-capacity"),
+	}}, nil
 }
 
 func (api *fakeNativeCvmAPI) ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error) {
@@ -540,28 +624,180 @@ func (api *fakeNativeTkeAPI) DescribeNodePools(request *tke2022.DescribeNodePool
 		}
 		nodePoolId = api.discoverNodePoolId
 	}
+	pools := []*tke2022.NodePool{{
+		NodePoolId: common.StringPtr(nodePoolId),
+		Name:       common.StringPtr("pool-basic-2c4g"),
+		Type:       common.StringPtr(firstNonEmpty(api.poolType, "Native")),
+		LifeState:  common.StringPtr(firstNonEmpty(api.lifeState, "Running")),
+		Labels: []*tke2022.Label{
+			{Name: common.StringPtr("oplcloud.cn/pool-id"), Value: common.StringPtr(firstNonEmpty(api.labelPoolId, "pool-basic-2c4g"))},
+			{Name: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr(firstNonEmpty(api.labelPackageId, "basic"))},
+			{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr(firstNonEmpty(api.labelInstanceType, "SA5.LARGE4"))},
+		},
+		Native: fakeNativeNodePoolInfo(api),
+	}}
+	if api.ambiguousDiscovery && nodePoolIdFilterValue(request) == "" {
+		duplicate := *pools[0]
+		duplicate.NodePoolId = common.StringPtr("np-basic-duplicate")
+		pools = append(pools, &duplicate)
+	}
+	totalCount := int64(len(pools))
+	if api.truncatedDiscovery && nodePoolIdFilterValue(request) == "" {
+		totalCount++
+	}
 	return &tke2022.DescribeNodePoolsResponse{
 		Response: &tke2022.DescribeNodePoolsResponseParams{
-			NodePools: []*tke2022.NodePool{{
-				NodePoolId: common.StringPtr(nodePoolId),
-				Name:       common.StringPtr("pool-basic-2c4g"),
-				Type:       common.StringPtr("Native"),
-				LifeState:  common.StringPtr("Running"),
-				Labels: []*tke2022.Label{
-					{Name: common.StringPtr("oplcloud.cn/pool-id"), Value: common.StringPtr("pool-basic-2c4g")},
-					{Name: common.StringPtr("oplcloud.cn/package-id"), Value: common.StringPtr("basic")},
-					{Name: common.StringPtr("oplcloud.cn/instance-type"), Value: common.StringPtr("SA5.LARGE4")},
-				},
-				Native: &tke2022.NativeNodePoolInfo{
-					Replicas:          common.Int64Ptr(api.replicas),
-					EnableAutoscaling: common.BoolPtr(api.enableAutoscaling),
-					AutoRepair:        common.BoolPtr(api.autoRepair),
-				},
-			}},
-			TotalCount: common.Int64Ptr(1),
+			NodePools:  pools,
+			TotalCount: common.Int64Ptr(totalCount),
 			RequestId:  common.StringPtr("req-describe-pool"),
 		},
 	}, nil
+}
+
+func firstNonZero(value int64, fallback int64) int64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func firstNonZeroUint(value uint64, fallback uint64) uint64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func fakeNativeNodePoolInfo(api *fakeNativeTkeAPI) *tke2022.NativeNodePoolInfo {
+	if api.omitNative {
+		return nil
+	}
+	scaling := &tke2022.MachineSetScaling{MinReplicas: common.Int64Ptr(0), MaxReplicas: common.Int64Ptr(firstNonZero(api.maxReplicas, 10))}
+	if api.omitScaling {
+		scaling = nil
+	}
+	replicas := common.Int64Ptr(api.replicas)
+	if api.omitReplicas {
+		replicas = nil
+	}
+	readyReplicas := api.readyReplicas
+	if readyReplicas == nil && !api.omitReplicas {
+		readyReplicas = common.Int64Ptr(api.replicas)
+	}
+	if api.omitReadyReplicas {
+		readyReplicas = nil
+	}
+	instanceTypes := api.instanceTypes
+	if len(instanceTypes) == 0 {
+		instanceTypes = []string{"SA5.LARGE4"}
+	}
+	return &tke2022.NativeNodePoolInfo{
+		Scaling: scaling, SubnetIds: []*string{common.StringPtr("subnet-basic")}, InstanceTypes: stringsToPtrs(instanceTypes), Replicas: replicas, ReadyReplicas: readyReplicas,
+		EnableAutoscaling: common.BoolPtr(api.enableAutoscaling), AutoRepair: common.BoolPtr(api.autoRepair),
+		MachineType: common.StringPtr(firstNonEmpty(api.machineType, "NativeCVM")), InstanceChargeType: common.StringPtr(firstNonEmpty(api.instanceChargeType, "POSTPAID_BY_HOUR")),
+	}
+}
+
+func TestTencentSDKCapacityIsReadOnlyAndFailsClosedAcrossAllThreeSignals(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", discoverNodePoolId: "np-basic", replicas: 2, maxReplicas: 10}
+	cvmAPI := &fakeNativeCvmAPI{}
+	vpcAPI := &fakeNativeVpcAPI{}
+	client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI, nativeVpcClient: vpcAPI}
+
+	response := client.Capacity(Request{
+		Action:    "capacity_preflight",
+		PackageId: "basic",
+		Pool:      ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", DesiredReplicas: 5},
+	}, map[string]string{})
+
+	if !response.Ok || response.Status != "ready" || !response.InstanceAvailable || response.RemainingQuota != 8 || response.RequiredCapacity != 5 {
+		t.Fatalf("unexpected capacity response: %#v", response)
+	}
+	if response.NodePoolId != "np-basic" || response.CurrentReplicas != 2 || response.MaxReplicas != 10 || response.MachineType != "NativeCVM" || response.TargetReplicas != 7 {
+		t.Fatalf("unexpected node pool capacity: %#v", response)
+	}
+	if len(cvmAPI.describeAccountQuotaRequests) != 1 || len(cvmAPI.describeZoneConfigRequests) != 1 {
+		t.Fatalf("capacity must query CVM quota and availability exactly once: %#v", cvmAPI)
+	}
+	if len(vpcAPI.describeSubnetsRequests) != 1 {
+		t.Fatalf("capacity must resolve the exact node pool subnets once: %#v", vpcAPI)
+	}
+	if got := tkeAPI.calls; len(got) != 1 || got[0] != "DescribeNodePools" {
+		t.Fatalf("capacity must only describe the exact node pool: %#v", got)
+	}
+	if tkeAPI.scaleNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil || tkeAPI.modifyNodePoolRequest != nil {
+		t.Fatalf("capacity probe must never mutate Tencent resources: %#v", tkeAPI)
+	}
+}
+
+func TestTencentSDKCapacityDiscoveryRequiresOneUntruncatedMatchingPool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tke  *fakeNativeTkeAPI
+	}{
+		{name: "missing", tke: &fakeNativeTkeAPI{}},
+		{name: "ambiguous", tke: &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", ambiguousDiscovery: true}},
+		{name: "truncated", tke: &fakeNativeTkeAPI{discoverNodePoolId: "np-basic", truncatedDiscovery: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: &fakeNativeCvmAPI{}, nativeVpcClient: &fakeNativeVpcAPI{}}
+			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
+				Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", DesiredReplicas: 5,
+			}}, map[string]string{})
+			if response.Ok || tc.tke.scaleNodePoolRequest != nil || tc.tke.createNodePoolRequest != nil || tc.tke.modifyNodePoolRequest != nil {
+				t.Fatalf("discovery must fail closed without mutation: %#v", response)
+			}
+		})
+	}
+}
+
+func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
+	ready := int64(2)
+	cases := []struct {
+		name string
+		tke  *fakeNativeTkeAPI
+		cvm  *fakeNativeCvmAPI
+		vpc  *fakeNativeVpcAPI
+	}{
+		{name: "sold out", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{zoneConfigStatus: "SOLD_OUT"}},
+		{name: "missing exact zone type charge", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{zoneConfigChargeType: "PREPAID"}},
+		{name: "quota below five", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{quotaRemaining: 4}},
+		{name: "quota missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{omitQuotaRemaining: true}},
+		{name: "node pool missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-other", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}},
+		{name: "autoscaling enabled", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, enableAutoscaling: true}, cvm: &fakeNativeCvmAPI{}},
+		{name: "auto repair enabled", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, autoRepair: true}, cvm: &fakeNativeCvmAPI{}},
+		{name: "max below current plus five", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 6, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}},
+		{name: "replicas missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, omitReplicas: true}, cvm: &fakeNativeCvmAPI{}},
+		{name: "ready replicas missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, omitReadyReplicas: true}, cvm: &fakeNativeCvmAPI{}},
+		{name: "scaling missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, omitScaling: true, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}},
+		{name: "wrong instance type", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, instanceTypes: []string{"SA5.2XLARGE16"}}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool not running", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, lifeState: "Creating"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool type is not native", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, poolType: "Managed"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool machine type is CXM native", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, machineType: "Native"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool is prepaid", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, instanceChargeType: "PREPAID"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool ownership labels mismatch", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, labelPackageId: "pro"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool subnet missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}, vpc: &fakeNativeVpcAPI{omitSubnet: true}},
+		{name: "pool subnet lacks five ips", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}, vpc: &fakeNativeVpcAPI{availableIpCount: 4}},
+		{name: "pool subnet zone missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}, vpc: &fakeNativeVpcAPI{omitSubnetZone: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vpcAPI := tc.vpc
+			if vpcAPI == nil {
+				vpcAPI = &fakeNativeVpcAPI{}
+			}
+			client := &tencentSDKClient{region: "na-siliconvalley", clusterId: "cls-123", nativeTkeClient: tc.tke, nativeCvmClient: tc.cvm, nativeVpcClient: vpcAPI}
+			response := client.Capacity(Request{Action: "capacity_preflight", PackageId: "basic", Pool: ComputePoolInput{
+				Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 5,
+			}}, map[string]string{})
+			if response.Ok {
+				t.Fatalf("capacity preflight must fail closed: %#v", response)
+			}
+			if tc.tke.scaleNodePoolRequest != nil || tc.tke.createNodePoolRequest != nil || tc.tke.modifyNodePoolRequest != nil {
+				t.Fatalf("failed preflight must remain read-only: %#v", tc.tke)
+			}
+		})
+	}
 }
 
 func (api *fakeNativeTkeAPI) DescribeClusterInstances(request *tke2022.DescribeClusterInstancesRequest) (*tke2022.DescribeClusterInstancesResponse, error) {
@@ -802,7 +1038,7 @@ func TestTencentSDKClientCreateAllocationScalesExistingPackageNodePool(t *testin
 	}
 }
 
-func TestTencentSDKClientCreateAllocationUsesTkeInstanceWhenCvmPrivateIpLookupIsEmpty(t *testing.T) {
+func TestTencentSDKClientCreateAllocationRequiresCvmIdentityWithoutTkeFallback(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
 	client := newFakeTencentSDKClient(tkeAPI)
 	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
@@ -819,23 +1055,8 @@ func TestTencentSDKClientCreateAllocationUsesTkeInstanceWhenCvmPrivateIpLookupIs
 		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
 	}, map[string]string{})
 
-	if !response.Ok {
-		t.Fatalf("native TKE allocation should not fail only because CVM private IP lookup is empty: %#v", response)
-	}
-	if response.InstanceId != "" {
-		t.Fatalf("TKE cluster instance id must not be reported as a CVM instance id: %#v", response)
-	}
-	if response.NodeName != "10.0.0.12" {
-		t.Fatalf("expected Kubernetes node hostname from LanIP: %#v", response)
-	}
-	if response.ProviderData["machineName"] != "node-basic-2" {
-		t.Fatalf("expected machineName deletion handle: %#v", response.ProviderData)
-	}
-	if response.ProviderData["instanceIdentitySource"] != "tke_cluster_instance" {
-		t.Fatalf("expected identity source evidence: %#v", response.ProviderData)
-	}
-	if response.ProviderData["tkeClusterInstanceId"] != "np-native-2" {
-		t.Fatalf("expected TKE cluster instance evidence: %#v", response.ProviderData)
+	if response.Ok || response.ErrorCode != "compute_cvm_identity_required" || len(tkeAPI.describeInstancesRequest) != 0 {
+		t.Fatalf("CVM allocation must fail without a real CVM identity and must not fall back to TKE instance IDs: %#v", response)
 	}
 }
 
@@ -891,7 +1112,7 @@ func TestTencentSDKClientPoolFallbackExcludesMachinesFromOtherPools(t *testing.T
 	}
 }
 
-func TestTencentSDKClientReconcileUsesNativeTKEIdentityWhenCVMIsAbsent(t *testing.T) {
+func TestTencentSDKClientReconcileRequiresCvmIdentityWhenCVMIsAbsent(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1}
 	client := newFakeTencentSDKClient(tkeAPI)
 	client.nativeCvmClient = &fakeNativeCvmAPI{empty: true}
@@ -901,12 +1122,8 @@ func TestTencentSDKClientReconcileUsesNativeTKEIdentityWhenCVMIsAbsent(t *testin
 		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
 	}, map[string]string{})
 
-	if !response.Ok || len(response.Machines) != 1 {
-		t.Fatalf("native pool reconcile = %#v", response)
-	}
-	machine := response.Machines[0]
-	if !machine.Ready || machine.InstanceId != "np-native-1" || machine.MachineId != "node-basic-1" || machine.NodeName != "10.0.0.11" {
-		t.Fatalf("native machine identity = %#v", machine)
+	if response.Ok || response.ErrorCode != "compute_cvm_identity_required" || len(tkeAPI.describeInstancesRequest) != 0 {
+		t.Fatalf("CVM pool reconcile must fail instead of using TKE-native identity: %#v", response)
 	}
 }
 
@@ -920,12 +1137,8 @@ func TestTencentSDKClientReconcileCompletesNativeIdentityWhenMachineLanIPIsMissi
 		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
 	}, map[string]string{})
 
-	if !response.Ok || len(response.Machines) != 1 {
-		t.Fatalf("native pool reconcile = %#v", response)
-	}
-	machine := response.Machines[0]
-	if !machine.Ready || machine.InstanceId != "node-basic-1" || machine.MachineId != "node-basic-1" || machine.NodeName != "10.0.0.11" || machine.PrivateIp != "10.0.0.11" {
-		t.Fatalf("completed native machine identity = %#v", machine)
+	if response.Ok || response.ErrorCode != "compute_cvm_identity_required" {
+		t.Fatalf("TKE-discovered private IP still requires a real CVM identity: %#v", response)
 	}
 }
 
@@ -944,6 +1157,22 @@ func TestTencentSDKTagComputeMachineVerifiesNativeTKEIdentityWithoutCVMRename(t 
 
 	if !response.Ok || response.InstanceId != "np-native-1" || len(cvmAPI.describeInstancesRequest) != 0 || len(cvmAPI.modifyInstancesRequest) != 0 {
 		t.Fatalf("native tag response=%#v describe requests=%#v modify requests=%#v", response, cvmAPI.describeInstancesRequest, cvmAPI.modifyInstancesRequest)
+	}
+}
+
+func TestTencentSDKClientRejectsCxmPoolBeforeAnyMutation(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, machineType: "Native"}
+	client := newFakeTencentSDKClient(tkeAPI)
+	response := client.CreateComputeAllocation(Request{
+		AccountId: "pi-alpha", PackageId: "basic",
+		Pool:       ComputePoolInput{Id: "pool-basic-2c4g", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic"},
+		Allocation: ComputeAllocationInput{Id: "compute-alpha"},
+	}, map[string]string{})
+	if response.Ok || response.ErrorCode != "tencent_cvm_node_pool_required" {
+		t.Fatalf("existing CXM pool must fail closed: %#v", response)
+	}
+	if tkeAPI.modifyNodePoolRequest != nil || tkeAPI.scaleNodePoolRequest != nil || tkeAPI.createNodePoolRequest != nil {
+		t.Fatalf("CXM rejection must happen before any mutation: %#v", tkeAPI)
 	}
 }
 
@@ -987,8 +1216,8 @@ func TestTencentSDKClientRejectsRegularTKEIdentityWhenCVMIsAbsent(t *testing.T) 
 		PackageId: "basic",
 		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", NodePoolId: "np-basic", DesiredReplicas: 1},
 	}, map[string]string{})
-	if len(reconcile.Machines) != 1 || reconcile.Machines[0].Ready {
-		t.Fatalf("regular machine without CVM identity = %#v", reconcile.Machines)
+	if reconcile.Ok || reconcile.ErrorCode != "compute_cvm_identity_required" {
+		t.Fatalf("regular machine without CVM identity = %#v", reconcile)
 	}
 
 	tagged := client.TagComputeMachine(Request{

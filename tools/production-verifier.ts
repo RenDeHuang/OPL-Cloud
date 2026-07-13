@@ -1449,10 +1449,10 @@ function exactResource(rows, id, accountId) {
   return matches[0];
 }
 
-function assertVerificationResourceOwnership(state, manifest) {
+export function assertProductionVerificationResourceOwnership(state, manifest) {
   const accountId = manifest?.accountId;
   const stateAccountId = state?.account?.accountId || state?.account?.id || state?.wallet?.accountId || "";
-  if (!accountId || stateAccountId !== accountId) throw new Error("verification_resource_ownership_mismatch");
+  if (!accountId || (stateAccountId && stateAccountId !== accountId)) throw new Error("verification_resource_ownership_mismatch");
   const ids = manifest.ids || {};
   const names = manifest.resourceNames || {};
   const holds = manifest.holdIds || {};
@@ -1516,6 +1516,14 @@ function assertVerificationResourceOwnership(state, manifest) {
   }
 }
 
+export async function readProductionManagementState({ fetchImpl, origin, operatorToken }) {
+  const normalizedOrigin = normalizeOrigin(origin);
+  assertConsoleOrigin(normalizedOrigin);
+  const auth = await requestOperatorSession({ fetchImpl, origin: normalizedOrigin, operatorToken });
+  if (!auth) throw new Error("production_operator_token_required");
+  return requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/management/state", auth });
+}
+
 export async function cleanupVerificationResources({ fetchImpl, origin, accountId, manifest, computeAllocationId, storageId, attachmentId, expectedComputeHoldId = "", expectedStorageHoldId = "", checks = null, auth = null, attempts = DEFAULT_WORKSPACE_URL_ATTEMPTS, retryDelayMs = DEFAULT_RETRY_DELAY_MS, cleanupStage = "final-cleanup" }) {
   const cleanupErrors = [];
   const ids = manifest?.ids || {};
@@ -1542,7 +1550,7 @@ export async function cleanupVerificationResources({ fetchImpl, origin, accountI
       path: `/api/state?accountId=${encodeURIComponent(accountId)}`,
       auth
     });
-    assertVerificationResourceOwnership(state, manifest);
+    assertProductionVerificationResourceOwnership(state, manifest);
   } catch (error) {
     return ["verification_resource_ownership_mismatch"];
   }

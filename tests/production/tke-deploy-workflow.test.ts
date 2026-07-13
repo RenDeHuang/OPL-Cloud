@@ -104,6 +104,8 @@ test("production verifier workflow defaults run id to GitHub run id", async () =
     "${{ inputs.run_id || github.run_id }}",
     "empty optional run_id input must not disable verifier file proof ids"
   );
+  assert.equal(workflow.concurrency.group, "production-resource-verification");
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
 });
 
 test("production verifier workflow always cleans failed paid resources", async () => {
@@ -117,6 +119,41 @@ test("production verifier workflow always cleans failed paid resources", async (
   assert.ok(String(currentJob.env.OPL_VERIFY_AUTH_USERS_JSON || "").includes("secrets.OPL_CONSOLE_USERS_JSON"));
   assert.equal(workflow.on.workflow_dispatch.inputs.account_id.default, "");
   assert.equal(currentJob.env.OPL_VERIFY_PACKAGE_ID, "basic");
+});
+
+test("production soak workflow is paid, capacity-gated, non-overlapping, and cleanup-exact", async () => {
+  const workflow = await readWorkflow(new URL("../../.github/workflows/verify-production-soak.yml", import.meta.url));
+  const currentJob = job(workflow, "soak");
+  const stepMap = stepsByName(currentJob);
+  const runs = serializedRuns(currentJob);
+  const stepNames = [...stepMap.keys()];
+
+  assert.equal(workflow.on.workflow_dispatch.inputs.confirm_paid_soak.required, true);
+  assert.match(serializedStep(stepMap.get("Confirm paid five-machine soak")), /RUN_5_TENCENT_CVMS/);
+  assert.equal(currentJob.environment, "production");
+  assert.deepEqual(currentJob["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(currentJob["timeout-minutes"], 60);
+  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+  assert.equal(workflow.concurrency.group, "production-resource-verification");
+  assert.ok(stepNames.indexOf("Verify Tencent and TKE capacity") < stepNames.indexOf("Run five-machine production soak"));
+  assert.equal(stepMap.get("Set up Go").uses, "actions/setup-go@v5");
+  assert.match(serializedStep(stepMap.get("Prepare kubeconfig and evidence directory")), /get configmap opl-cloud-config/);
+  assert.match(serializedStep(stepMap.get("Prepare kubeconfig and evidence directory")), /TENCENT_DEPLOY_CLUSTER_ID/);
+  assert.match(serializedStep(stepMap.get("Prepare kubeconfig and evidence directory")), /OPL_BASIC_COMPUTE_INSTANCE_TYPE/);
+  assert.match(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /action:\s*"capacity_preflight"/);
+  assert.match(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /DescribeAccountQuota|remainingQuota/);
+  assert.match(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /DescribeZoneInstanceConfigInfos|instanceAvailable/);
+  assert.match(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /DescribeNodePools|nodePool/);
+  assert.match(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /requiredCapacity[^\n]*5/);
+  assert.match(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /machineType[^\n]*NativeCVM/);
+  assert.doesNotMatch(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /OPL_BASIC_COMPUTE_NODE_POOL_ID[^\n]*required/);
+  assert.doesNotMatch(serializedStep(stepMap.get("Verify Tencent and TKE capacity")), /ScaleNodePool|CreateNodePool|RunInstances/);
+  assert.match(serializedStep(stepMap.get("Run five-machine production soak")), /tools\/production-soak-coordinator\.ts/);
+  assert.equal(stepMap.get("Upload soak manifests, results, and evidence").if, "always()");
+  assert.equal(stepMap.get("Remove temporary credentials").if, "always()");
+  assert.match(serializedStep(stepMap.get("Verify exact zero residuals")), /production-soak-coordinator\.ts/);
+  assert.doesNotMatch(runs, /cleanup-console-resource-residual|cleanup-tke-compute-residual|cleanup-tke-nodepool-machines/);
+  assert.doesNotMatch(runs, /ScaleNodePool|kubectl[^\n]*delete|rollout restart|deployment[^\n]*restart/);
 });
 
 test("production execution verifier runs inside TKE and matches the deployment contract", async () => {

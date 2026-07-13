@@ -119,6 +119,8 @@ github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.127 h1:a+M7TkR
 github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.127/go.mod h1:oV1tJKeIY7R+KYf6vnkn1SGXXgirvdNMc7/ly4vJ5r0=
 github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.3.123 h1:P1W4T1zuzdG0AGPyIlqO4kkbKrL9f0iqubf21YKtHWk=
 github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.3.123/go.mod h1:tyljeRHAxj1fHLvTpiImJhEDDlw21xpfm7KYtjEun60=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.3.127 h1:Qf2jxhhj9beNDjvnc4E9/91rLAGVnISGAjPj0FaXHUc=
+github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.3.127/go.mod h1:0gz4zq1HAy+0oOVZ4NQKlQnQeImFBsZA5hguSiI4KQc=
 github.com/vmihailenco/msgpack/v4 v4.3.12/go.mod h1:gborTTJjAo/GWTqqRjrLCn9pgNN+NXzzngzBKDPIqw4=
 github.com/vmihailenco/tagparser v0.1.1/go.mod h1:OeAg3pn3UbLjkWt+rN9oFYB6u/cQgqMEUPoW2WPyhdI=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=

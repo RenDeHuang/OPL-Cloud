@@ -17,6 +17,7 @@ import (
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
+	vpc2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc/v20170312"
 )
 
 var requiredTencentEnv = []string{
@@ -74,6 +75,16 @@ type Response struct {
 	Retryable         bool              `json:"retryable,omitempty"`
 	MissingEnv        []string          `json:"missingEnv,omitempty"`
 	Machines          []MachineOutput   `json:"machines,omitempty"`
+	InstanceType      string            `json:"instanceType,omitempty"`
+	InstanceAvailable bool              `json:"instanceAvailable,omitempty"`
+	RequiredCapacity  int64             `json:"requiredCapacity,omitempty"`
+	RemainingQuota    uint64            `json:"remainingQuota,omitempty"`
+	CurrentReplicas   int64             `json:"currentReplicas,omitempty"`
+	ReadyReplicas     int64             `json:"readyReplicas,omitempty"`
+	MaxReplicas       int64             `json:"maxReplicas,omitempty"`
+	TargetReplicas    int64             `json:"targetReplicas,omitempty"`
+	MachineType       string            `json:"machineType,omitempty"`
+	Zones             []string          `json:"zones,omitempty"`
 }
 
 type MachineOutput struct {
@@ -87,6 +98,7 @@ type MachineOutput struct {
 }
 
 type TencentClient interface {
+	Capacity(request Request, env map[string]string) Response
 	CreateComputeAllocation(request Request, env map[string]string) Response
 	ReconcileComputePool(request Request, env map[string]string) Response
 	TagComputeMachine(request Request, env map[string]string) Response
@@ -101,6 +113,7 @@ type tencentSDKClient struct {
 	clusterId       string
 	nativeTkeClient tkeNativeAPI
 	nativeCvmClient cvmNativeAPI
+	nativeVpcClient vpcNativeAPI
 }
 
 type tkeNativeAPI interface {
@@ -114,8 +127,18 @@ type tkeNativeAPI interface {
 }
 
 type cvmNativeAPI interface {
+	DescribeAccountQuota(request *cvm2017.DescribeAccountQuotaRequest) (*cvm2017.DescribeAccountQuotaResponse, error)
 	DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error)
+	DescribeZoneInstanceConfigInfos(request *cvm2017.DescribeZoneInstanceConfigInfosRequest) (*cvm2017.DescribeZoneInstanceConfigInfosResponse, error)
 	ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error)
+}
+
+type vpcNativeAPI interface {
+	DescribeSubnets(request *vpc2017.DescribeSubnetsRequest) (*vpc2017.DescribeSubnetsResponse, error)
+}
+
+func (unimplementedTencentClient) Capacity(_ Request, _ map[string]string) Response {
+	return Response{Ok: false, ErrorCode: "tencent_live_not_implemented", Message: "Tencent live capacity preflight is not implemented in this build.", Retryable: false}
 }
 
 func (unimplementedTencentClient) CreateComputeAllocation(_ Request, _ map[string]string) Response {
@@ -188,13 +211,201 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 			Retryable: false,
 		}
 	}
+	vpcProfile := profile.NewClientProfile()
+	vpcProfile.HttpProfile.Endpoint = "vpc.tencentcloudapi.com"
+	vpcClient, err := vpc2017.NewClient(credential, env["TENCENTCLOUD_REGION"], vpcProfile)
+	if err != nil {
+		return nil, &Response{Ok: false, ErrorCode: "tencent_sdk_client_failed", Message: err.Error(), Retryable: false}
+	}
 
 	return &tencentSDKClient{
 		region:          env["TENCENTCLOUD_REGION"],
 		clusterId:       env["TENCENT_DEPLOY_CLUSTER_ID"],
 		nativeTkeClient: tkeClient,
 		nativeCvmClient: cvmClient,
+		nativeVpcClient: vpcClient,
 	}, nil
+}
+
+func capacityFailure(code string, err error) Response {
+	message := code
+	if err != nil {
+		message = err.Error()
+	}
+	return Response{Ok: false, ErrorCode: code, Message: message, Retryable: false}
+}
+
+func containsString(values []*string, expected string) bool {
+	for _, current := range values {
+		if stringValue(current) == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func isCVMNativeNodePool(pool *tke2022.NodePool) bool {
+	return pool != nil && stringValue(pool.Type) == "Native" && pool.Native != nil &&
+		stringValue(pool.Native.MachineType) == "NativeCVM" && stringValue(pool.Native.InstanceChargeType) == "POSTPAID_BY_HOUR"
+}
+
+func matchesCapacityNodePool(pool *tke2022.NodePool, request Request) bool {
+	labels := nodePoolLabels(pool)
+	return request.Pool.Id != "" && request.PackageId != "" && request.Pool.InstanceType != "" &&
+		labels["oplcloud.cn/pool-id"] == request.Pool.Id &&
+		labels["oplcloud.cn/package-id"] == request.PackageId &&
+		labels["oplcloud.cn/instance-type"] == request.Pool.InstanceType
+}
+
+func (client *tencentSDKClient) capacityNodePool(request Request) (*tke2022.NodePool, string, error) {
+	if strings.TrimSpace(request.Pool.NodePoolId) != "" {
+		describe := tke2022.NewDescribeNodePoolsRequest()
+		describe.ClusterId = common.StringPtr(client.clusterId)
+		describe.Limit = common.Int64Ptr(100)
+		describe.Filters = []*tke2022.Filter{{Name: common.StringPtr("NodePoolsId"), Values: []*string{common.StringPtr(request.Pool.NodePoolId)}}}
+		response, err := client.nativeTkeClient.DescribeNodePools(describe)
+		if err != nil {
+			return nil, "", err
+		}
+		if response == nil || response.Response == nil || response.Response.TotalCount == nil || *response.Response.TotalCount != 1 ||
+			len(response.Response.NodePools) != 1 || stringValue(response.Response.NodePools[0].NodePoolId) != request.Pool.NodePoolId ||
+			!matchesCapacityNodePool(response.Response.NodePools[0], request) {
+			return nil, "", fmt.Errorf("explicit node pool ownership mismatch")
+		}
+		return response.Response.NodePools[0], stringValue(response.Response.RequestId), nil
+	}
+	describe := tke2022.NewDescribeNodePoolsRequest()
+	describe.ClusterId = common.StringPtr(client.clusterId)
+	describe.Limit = common.Int64Ptr(100)
+	response, err := client.nativeTkeClient.DescribeNodePools(describe)
+	if err != nil {
+		return nil, "", err
+	}
+	if response == nil || response.Response == nil || response.Response.TotalCount == nil || *response.Response.TotalCount != int64(len(response.Response.NodePools)) {
+		return nil, "", fmt.Errorf("node pool discovery is incomplete")
+	}
+	matches := []*tke2022.NodePool{}
+	for _, pool := range response.Response.NodePools {
+		if matchesCapacityNodePool(pool, request) {
+			matches = append(matches, pool)
+		}
+	}
+	requestID := stringValue(response.Response.RequestId)
+	if len(matches) != 1 {
+		return nil, requestID, fmt.Errorf("capacity preflight requires exactly one matching node pool")
+	}
+	return matches[0], requestID, nil
+}
+
+func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) Response {
+	required := request.Pool.DesiredReplicas
+	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeVpcClient == nil {
+		return capacityFailure("tencent_capacity_client_missing", nil)
+	}
+	if required <= 0 || strings.TrimSpace(request.Pool.InstanceType) == "" ||
+		(strings.TrimSpace(request.Pool.NodePoolId) == "" && (strings.TrimSpace(request.Pool.Id) == "" || strings.TrimSpace(request.PackageId) == "")) {
+		return capacityFailure("tencent_capacity_input_invalid", nil)
+	}
+	pool, nodePoolRequestId, err := client.capacityNodePool(request)
+	if err != nil {
+		return capacityFailure("tencent_capacity_node_pool_unavailable", err)
+	}
+	native := pool.Native
+	if !isCVMNativeNodePool(pool) || strings.TrimSpace(stringValue(pool.LifeState)) != "Running" || native.Scaling == nil || native.Scaling.MaxReplicas == nil ||
+		native.Replicas == nil || native.ReadyReplicas == nil || native.EnableAutoscaling == nil || native.AutoRepair == nil ||
+		*native.EnableAutoscaling || *native.AutoRepair || *native.ReadyReplicas != *native.Replicas ||
+		*native.Scaling.MaxReplicas < *native.Replicas+required || !containsString(native.InstanceTypes, request.Pool.InstanceType) || len(native.SubnetIds) == 0 {
+		return capacityFailure("tencent_capacity_node_pool_unavailable", nil)
+	}
+	subnetIds := []string{}
+	seenSubnetIds := map[string]bool{}
+	for _, raw := range native.SubnetIds {
+		subnetId := strings.TrimSpace(stringValue(raw))
+		if subnetId == "" || seenSubnetIds[subnetId] {
+			return capacityFailure("tencent_capacity_subnet_invalid", nil)
+		}
+		seenSubnetIds[subnetId] = true
+		subnetIds = append(subnetIds, subnetId)
+	}
+	subnetRequest := vpc2017.NewDescribeSubnetsRequest()
+	subnetRequest.SubnetIds = stringsToPtrs(subnetIds)
+	subnetResponse, err := client.nativeVpcClient.DescribeSubnets(subnetRequest)
+	if err != nil || subnetResponse == nil || subnetResponse.Response == nil {
+		return capacityFailure("tencent_capacity_subnet_describe_failed", err)
+	}
+	zones := []string{}
+	seenZones := map[string]bool{}
+	foundSubnets := map[string]bool{}
+	for _, subnet := range subnetResponse.Response.SubnetSet {
+		if subnet == nil || !seenSubnetIds[stringValue(subnet.SubnetId)] || foundSubnets[stringValue(subnet.SubnetId)] || subnet.AvailableIpAddressCount == nil || int64(*subnet.AvailableIpAddressCount) < required {
+			return capacityFailure("tencent_capacity_subnet_unavailable", nil)
+		}
+		zone := strings.TrimSpace(stringValue(subnet.Zone))
+		if zone == "" {
+			return capacityFailure("tencent_capacity_subnet_unavailable", nil)
+		}
+		foundSubnets[stringValue(subnet.SubnetId)] = true
+		if !seenZones[zone] {
+			seenZones[zone] = true
+			zones = append(zones, zone)
+		}
+	}
+	if len(foundSubnets) != len(subnetIds) {
+		return capacityFailure("tencent_capacity_subnet_unavailable", nil)
+	}
+	minimumRemainingQuota := ^uint64(0)
+	for _, zone := range zones {
+		availabilityRequest := cvm2017.NewDescribeZoneInstanceConfigInfosRequest()
+		availabilityRequest.Filters = []*cvm2017.Filter{
+			{Name: common.StringPtr("zone"), Values: []*string{common.StringPtr(zone)}},
+			{Name: common.StringPtr("instance-type"), Values: []*string{common.StringPtr(request.Pool.InstanceType)}},
+			{Name: common.StringPtr("instance-charge-type"), Values: []*string{common.StringPtr("POSTPAID_BY_HOUR")}},
+		}
+		availability, err := client.nativeCvmClient.DescribeZoneInstanceConfigInfos(availabilityRequest)
+		if err != nil || availability == nil || availability.Response == nil {
+			return capacityFailure("tencent_capacity_instance_describe_failed", err)
+		}
+		exactAvailability := 0
+		sell := false
+		for _, item := range availability.Response.InstanceTypeQuotaSet {
+			if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "POSTPAID_BY_HOUR" {
+				exactAvailability++
+				sell = stringValue(item.Status) == "SELL"
+			}
+		}
+		if exactAvailability != 1 || !sell {
+			return capacityFailure("tencent_capacity_instance_unavailable", nil)
+		}
+		quotaRequest := cvm2017.NewDescribeAccountQuotaRequest()
+		quotaRequest.Filters = []*cvm2017.Filter{
+			{Name: common.StringPtr("zone"), Values: []*string{common.StringPtr(zone)}},
+			{Name: common.StringPtr("quota-type"), Values: []*string{common.StringPtr("PostPaidQuotaSet")}},
+		}
+		quota, err := client.nativeCvmClient.DescribeAccountQuota(quotaRequest)
+		if err != nil || quota == nil || quota.Response == nil || quota.Response.AccountQuotaOverview == nil || quota.Response.AccountQuotaOverview.AccountQuota == nil {
+			return capacityFailure("tencent_capacity_quota_describe_failed", err)
+		}
+		remaining := (*uint64)(nil)
+		exactQuotas := 0
+		for _, item := range quota.Response.AccountQuotaOverview.AccountQuota.PostPaidQuotaSet {
+			if item != nil && stringValue(item.Zone) == zone {
+				exactQuotas++
+				remaining = item.RemainingQuota
+			}
+		}
+		if exactQuotas != 1 || remaining == nil || *remaining < uint64(required) {
+			return capacityFailure("tencent_capacity_quota_insufficient", nil)
+		}
+		if *remaining < minimumRemainingQuota {
+			minimumRemainingQuota = *remaining
+		}
+	}
+	return Response{
+		Ok: true, Status: "ready", ProviderRequestId: nodePoolRequestId, NodePoolId: stringValue(pool.NodePoolId),
+		InstanceType: request.Pool.InstanceType, InstanceAvailable: true, RequiredCapacity: required,
+		RemainingQuota: minimumRemainingQuota, CurrentReplicas: *native.Replicas, ReadyReplicas: *native.ReadyReplicas,
+		MaxReplicas: *native.Scaling.MaxReplicas, TargetReplicas: *native.Replicas + required, MachineType: stringValue(native.MachineType), Zones: zones,
+	}
 }
 
 func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map[string]string) Response {
@@ -261,6 +472,9 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 		pool = describedPool
 		describeRequestId = requestId
 	}
+	if !isCVMNativeNodePool(pool) {
+		return Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Fabric compute allocation requires a POSTPAID NativeCVM node pool.", ProviderRequestId: describeRequestId, Retryable: false}
+	}
 	modifySelfProvisioningRequestId := ""
 	if nativeSelfProvisioningEnabled(pool) {
 		requestId, err := client.disableNativeNodePoolSelfProvisioning(nodePoolId)
@@ -320,22 +534,13 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 	instanceId := ""
 	publicIp := ""
 	instanceIdentitySource := ""
-	tkeClusterInstanceId := ""
 	cvmInstance, cvmRequestId, err := client.describeCvmInstanceByPrivateIp(privateIp)
 	if err == nil {
 		instanceId = stringValue(cvmInstance.InstanceId)
 		publicIp = firstString(cvmInstance.PublicIpAddresses)
 		instanceIdentitySource = "cvm"
 	} else if errors.Is(err, errCVMInstanceNotFound) {
-		tkeInstance, tkeInstanceRequestId, tkeErr := client.describeTkeClusterInstanceByPrivateIp(privateIp, nodePoolId)
-		if tkeErr != nil {
-			response := sdkErrorResponse("tencent_describe_cvm_instance_failed", err)
-			response.ProviderRequestId = firstNonEmpty(cvmRequestId, tkeInstanceRequestId, machineRequestId, scaleRequestId)
-			return response
-		}
-		cvmRequestId = firstNonEmpty(cvmRequestId, tkeInstanceRequestId)
-		tkeClusterInstanceId = stringValue(tkeInstance.InstanceId)
-		instanceIdentitySource = "tke_cluster_instance"
+		return Response{Ok: false, ErrorCode: "compute_cvm_identity_required", Message: "NativeCVM allocation did not resolve to a Tencent CVM instance.", ProviderRequestId: firstNonEmpty(cvmRequestId, machineRequestId, scaleRequestId), Retryable: true}
 	} else {
 		response := sdkErrorResponse("tencent_describe_cvm_instance_failed", err)
 		response.ProviderRequestId = firstNonEmpty(cvmRequestId, machineRequestId, scaleRequestId)
@@ -377,7 +582,6 @@ func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map
 			"replicasAfter":               fmt.Sprintf("%d", targetReplicas),
 			"instanceId":                  instanceId,
 			"instanceIdentitySource":      instanceIdentitySource,
-			"tkeClusterInstanceId":        tkeClusterInstanceId,
 			"machineName":                 machineName,
 			"nodeName":                    nodeName,
 			"privateIp":                   privateIp,
@@ -444,6 +648,9 @@ func (client *tencentSDKClient) ReconcileComputePool(request Request, env map[st
 		requestId = firstNonEmpty(id, requestId)
 		describeNodePoolRequestId = id
 	}
+	if !isCVMNativeNodePool(pool) {
+		return Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Fabric compute reconciliation requires a POSTPAID NativeCVM node pool.", ProviderRequestId: describeNodePoolRequestId, Retryable: false}
+	}
 	current := nativeReplicas(pool)
 	scaleRequestId := ""
 	if current != request.Pool.DesiredReplicas {
@@ -492,7 +699,6 @@ func (client *tencentSDKClient) ReconcileComputePool(request Request, env map[st
 			}
 			if tkeInstance != nil {
 				privateIp = stringValue(tkeInstance.LanIP)
-				instanceId = stringValue(tkeInstance.InstanceId)
 			}
 		}
 		if instanceId == "" && privateIp != "" {
@@ -500,9 +706,7 @@ func (client *tencentSDKClient) ReconcileComputePool(request Request, env map[st
 				instanceId = stringValue(cvmInstance.InstanceId)
 				publicIp = firstString(cvmInstance.PublicIpAddresses)
 			} else if errors.Is(resolveErr, errCVMInstanceNotFound) {
-				if tkeInstance, _, tkeErr := client.describeTkeClusterInstanceByPrivateIp(privateIp, nodePoolId); tkeErr == nil {
-					instanceId = stringValue(tkeInstance.InstanceId)
-				}
+				return Response{Ok: false, ErrorCode: "compute_cvm_identity_required", Message: "NativeCVM pool machine did not resolve to a Tencent CVM instance.", ProviderRequestId: firstNonEmpty(describeRequestId, requestId), Retryable: true}
 			} else {
 				response := sdkErrorResponse("tencent_describe_cvm_instance_failed", resolveErr)
 				response.ProviderRequestId = firstNonEmpty(describeRequestId, requestId)
@@ -1130,7 +1334,7 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		EnableAutoscaling:  common.BoolPtr(false),
 		Replicas:           common.Int64Ptr(0),
 		InternetAccessible: &tke2022.InternetAccessible{MaxBandwidthOut: common.Int64Ptr(0), ChargeType: common.StringPtr("TRAFFIC_POSTPAID_BY_HOUR")},
-		MachineType:        common.StringPtr("Native"),
+		MachineType:        common.StringPtr("NativeCVM"),
 		AutomationService:  common.BoolPtr(true),
 		RuntimeRootDir:     common.StringPtr("/var/lib/containerd"),
 	}
@@ -1250,6 +1454,8 @@ func handleWithClient(request Request, env map[string]string, client TencentClie
 	}
 
 	switch request.Action {
+	case "capacity_preflight":
+		return client.Capacity(request, env)
 	case "reconcile_compute_pool":
 		if request.DryRun {
 			machines := make([]MachineOutput, 0, request.Pool.DesiredReplicas)
