@@ -80,6 +80,26 @@ type countingComputeSyncProvider struct {
 	lastSync  ComputeAllocation
 }
 
+type externalDeletedComputeSyncProvider struct{ testProvider }
+
+func (externalDeletedComputeSyncProvider) SyncComputeAllocation(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	allocation.Status = "external_deleted"
+	return allocation, nil
+}
+
+type externalDeletedComputeDestroyProvider struct {
+	testProvider
+	destroyed chan ComputeAllocation
+}
+
+func (p *externalDeletedComputeDestroyProvider) DestroyComputeAllocation(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	p.destroyed <- allocation
+	allocation.Status = "destroyed"
+	allocation.Provider = "tencent-tke"
+	allocation.ProviderRequestID = "cleanup-alpha"
+	return allocation, nil
+}
+
 func (p *countingComputeSyncProvider) SyncComputeAllocation(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
 	p.syncCalls++
 	p.lastSync = allocation
@@ -123,6 +143,48 @@ func TestSyncComputeAllocationWaitsForMachineIdentity(t *testing.T) {
 
 	if err != nil || allocation.Status != "provisioning" || provider.syncCalls != 0 {
 		t.Fatalf("pending allocation=%#v err=%v provider sync calls=%d", allocation, err, provider.syncCalls)
+	}
+}
+
+func TestSyncComputeAllocationReleasesExternallyDeletedMachineOwnership(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(externalDeletedComputeSyncProvider{}, store)
+	resource := ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", Status: "running",
+		MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha",
+	}
+	service.computes[resource.ID] = resource
+	if _, _, err := store.ClaimMachine(context.Background(), MachineOwnership{
+		ID: "owner-alpha", ResourceID: resource.ID, AccountID: resource.AccountID, PackageID: resource.PackageID,
+		NodePoolID: "np-basic", MachineID: resource.MachineName, InstanceID: resource.InstanceID,
+		NodeName: resource.NodeName, Status: "active", ClaimedAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	allocation, err := service.SyncComputeAllocation(context.Background(), resource.ID)
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), resource.ID)
+
+	if err != nil || allocation.Status != "external_deleted" || ownershipErr != nil || ownership.Status != "released" || ownership.ReleasedAt == nil {
+		t.Fatalf("allocation=%#v err=%v ownership=%#v ownershipErr=%v", allocation, err, ownership, ownershipErr)
+	}
+}
+
+func TestDestroyComputeAllocationPreservesExternalDeletionForProviderCleanup(t *testing.T) {
+	provider := &externalDeletedComputeDestroyProvider{destroyed: make(chan ComputeAllocation, 1)}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	resource := ComputeAllocation{
+		ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", Status: "external_deleted",
+		MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha",
+	}
+	service.computes[resource.ID] = resource
+
+	started, err := service.DestroyComputeAllocation(context.Background(), resource.ID)
+	providerInput := <-provider.destroyed
+	waitForOperation(t, service, "destroy_compute_allocation", "compute_allocation", resource.ID, "succeeded")
+
+	if err != nil || started.Status != "external_deleted" || providerInput.Status != "external_deleted" {
+		t.Fatalf("started=%#v err=%v providerInput=%#v", started, err, providerInput)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	cbs2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs/v20170312"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	tcerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
@@ -31,14 +32,15 @@ var errCVMInstanceNotFound = errors.New("CVM instance not found")
 var errTKEInstanceNotFound = errors.New("TKE instance not found")
 
 type Request struct {
-	Action     string                 `json:"action"`
-	DryRun     bool                   `json:"dryRun,omitempty"`
-	AccountId  string                 `json:"accountId,omitempty"`
-	UserId     string                 `json:"userId,omitempty"`
-	PackageId  string                 `json:"packageId,omitempty"`
-	Tags       map[string]string      `json:"tags,omitempty"`
-	Pool       ComputePoolInput       `json:"pool,omitempty"`
-	Allocation ComputeAllocationInput `json:"allocation,omitempty"`
+	Action          string                 `json:"action"`
+	DryRun          bool                   `json:"dryRun,omitempty"`
+	AccountId       string                 `json:"accountId,omitempty"`
+	UserId          string                 `json:"userId,omitempty"`
+	PackageId       string                 `json:"packageId,omitempty"`
+	StorageVolumeId string                 `json:"storageVolumeId,omitempty"`
+	Tags            map[string]string      `json:"tags,omitempty"`
+	Pool            ComputePoolInput       `json:"pool,omitempty"`
+	Allocation      ComputeAllocationInput `json:"allocation,omitempty"`
 }
 
 type ComputePoolInput struct {
@@ -69,8 +71,10 @@ type Response struct {
 	NodeName          string            `json:"nodeName,omitempty"`
 	PrivateIp         string            `json:"privateIp,omitempty"`
 	MachinePresent    *bool             `json:"machinePresent,omitempty"`
+	StoragePresent    *bool             `json:"storagePresent,omitempty"`
 	CVMStatus         string            `json:"cvmStatus,omitempty"`
 	TKEStatus         string            `json:"tkeStatus,omitempty"`
+	CBSStatus         string            `json:"cbsStatus,omitempty"`
 	PublicIp          string            `json:"publicIp,omitempty"`
 	Status            string            `json:"status,omitempty"`
 	ProviderRequestId string            `json:"providerRequestId,omitempty"`
@@ -119,6 +123,7 @@ type tencentSDKClient struct {
 	clusterId       string
 	nativeTkeClient tkeNativeAPI
 	nativeCvmClient cvmNativeAPI
+	nativeCbsClient cbsNativeAPI
 	nativeVpcClient vpcNativeAPI
 }
 
@@ -137,6 +142,10 @@ type cvmNativeAPI interface {
 	DescribeInstances(request *cvm2017.DescribeInstancesRequest) (*cvm2017.DescribeInstancesResponse, error)
 	DescribeZoneInstanceConfigInfos(request *cvm2017.DescribeZoneInstanceConfigInfosRequest) (*cvm2017.DescribeZoneInstanceConfigInfosResponse, error)
 	ModifyInstancesAttribute(request *cvm2017.ModifyInstancesAttributeRequest) (*cvm2017.ModifyInstancesAttributeResponse, error)
+}
+
+type cbsNativeAPI interface {
+	DescribeDisks(request *cbs2017.DescribeDisksRequest) (*cbs2017.DescribeDisksResponse, error)
 }
 
 type vpcNativeAPI interface {
@@ -221,6 +230,12 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 			Retryable: false,
 		}
 	}
+	cbsProfile := profile.NewClientProfile()
+	cbsProfile.HttpProfile.Endpoint = "cbs.tencentcloudapi.com"
+	cbsClient, err := cbs2017.NewClient(credential, env["TENCENTCLOUD_REGION"], cbsProfile)
+	if err != nil {
+		return nil, &Response{Ok: false, ErrorCode: "tencent_sdk_client_failed", Message: err.Error(), Retryable: false}
+	}
 	vpcProfile := profile.NewClientProfile()
 	vpcProfile.HttpProfile.Endpoint = "vpc.tencentcloudapi.com"
 	vpcClient, err := vpc2017.NewClient(credential, env["TENCENTCLOUD_REGION"], vpcProfile)
@@ -233,6 +248,7 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 		clusterId:       env["TENCENT_DEPLOY_CLUSTER_ID"],
 		nativeTkeClient: tkeClient,
 		nativeCvmClient: cvmClient,
+		nativeCbsClient: cbsClient,
 		nativeVpcClient: vpcClient,
 	}, nil
 }
@@ -1019,13 +1035,13 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 }
 
 func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]string) Response {
-	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil {
-		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE and CVM SDK clients are required.", Retryable: false}
+	if client == nil || client.nativeTkeClient == nil || client.nativeCvmClient == nil || client.nativeCbsClient == nil {
+		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent TKE, CVM, and CBS SDK clients are required.", Retryable: false}
 	}
 	for field, value := range map[string]string{
 		"accountId": request.AccountId, "resourceId": request.Allocation.Id, "clusterId": request.Pool.ClusterId,
 		"nodePoolId": request.Pool.NodePoolId, "machineName": request.Allocation.MachineName,
-		"instanceId": request.Allocation.InstanceId, "privateIp": request.Allocation.PrivateIp,
+		"instanceId": request.Allocation.InstanceId, "privateIp": request.Allocation.PrivateIp, "storageVolumeId": request.StorageVolumeId,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return Response{Ok: false, ErrorCode: "provider_truth_identity_required", Message: field + " is required for exact provider truth.", Retryable: false}
@@ -1036,6 +1052,15 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	}
 	if !strings.HasPrefix(request.Allocation.InstanceId, "ins-") {
 		return Response{Ok: false, ErrorCode: "provider_truth_cvm_instance_required", Message: "A Tencent CVM ins-* instance ID is required.", Retryable: false}
+	}
+	if !strings.HasPrefix(request.StorageVolumeId, "disk-") {
+		return Response{Ok: false, ErrorCode: "provider_truth_cbs_volume_required", Message: "A Tencent CBS disk-* volume ID is required.", Retryable: false}
+	}
+	storagePresent, cbsStatus, cbsRequestID, err := client.cbsVolumeTruth(request.StorageVolumeId)
+	if err != nil {
+		response := sdkErrorResponse("tencent_provider_truth_cbs_probe_failed", err)
+		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, cbsRequestID)
+		return response
 	}
 
 	pool, poolRequestID, err := client.describeNativeNodePool(request.Pool.NodePoolId)
@@ -1084,13 +1109,15 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	providerData := map[string]string{
 		"resourceId": request.Allocation.Id, "clusterId": request.Pool.ClusterId,
 		"nodePoolId": request.Pool.NodePoolId, "machineName": request.Allocation.MachineName,
+		"storageVolumeId": request.StorageVolumeId, "storagePresent": strconv.FormatBool(storagePresent), "cbsStatus": cbsStatus,
 		"machinePresent": strconv.FormatBool(machinePresent), "describeNodePoolRequestId": poolRequestID,
 		"describeMachineRequestId": machineRequestID, "describeTkeRequestId": tkeRequestID, "describeCvmRequestId": cvmRequestID,
+		"describeCbsRequestId": cbsRequestID,
 	}
 	if !machinePresent && !tkePresent && !cvmPresent {
 		providerData["tkeStatus"] = "NOT_FOUND"
 		providerData["cvmStatus"] = "NOT_FOUND"
-		return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", Status: "absent", MachineType: "NativeCVM", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID, machineRequestID), ProviderData: providerData}
+		return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: "NOT_FOUND", TKEStatus: "NOT_FOUND", CBSStatus: cbsStatus, Status: "absent", MachineType: "NativeCVM", ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID, tkeRequestID, machineRequestID), ProviderData: providerData}
 	}
 	if !machinePresent || !tkePresent || !cvmPresent {
 		return Response{Ok: false, ErrorCode: "provider_truth_partial_identity", Message: "Tencent provider identity is only partially present.", ProviderRequestId: firstNonEmpty(cvmRequestID, tkeRequestID, machineRequestID), ProviderData: providerData, Retryable: true}
@@ -1109,7 +1136,32 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	}
 	providerData["tkeStatus"] = tkeStatus
 	providerData["cvmStatus"] = cvmStatus
-	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, Status: "present", MachineType: "NativeCVM", ProviderRequestId: cvmRequestID, ProviderData: providerData}
+	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, CBSStatus: cbsStatus, Status: "present", MachineType: "NativeCVM", ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID), ProviderData: providerData}
+}
+
+func (client *tencentSDKClient) cbsVolumeTruth(volumeID string) (bool, string, string, error) {
+	request := cbs2017.NewDescribeDisksRequest()
+	request.DiskIds = []*string{common.StringPtr(volumeID)}
+	response, err := client.nativeCbsClient.DescribeDisks(request)
+	if err != nil {
+		if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok && sdkErr.Code == cbs2017.INVALIDDISKID_NOTFOUND {
+			return false, "NOT_FOUND", sdkErr.RequestId, nil
+		}
+		return false, "", "", err
+	}
+	if response == nil || response.Response == nil || response.Response.TotalCount == nil ||
+		*response.Response.TotalCount != uint64(len(response.Response.DiskSet)) || len(response.Response.DiskSet) > 1 {
+		return false, "", "", fmt.Errorf("Tencent CBS DescribeDisks response is missing or incomplete")
+	}
+	requestID := stringValue(response.Response.RequestId)
+	if len(response.Response.DiskSet) == 0 {
+		return false, "NOT_FOUND", requestID, nil
+	}
+	disk := response.Response.DiskSet[0]
+	if disk == nil || stringValue(disk.DiskId) != volumeID || strings.TrimSpace(stringValue(disk.DiskState)) == "" {
+		return false, "", requestID, fmt.Errorf("Tencent CBS disk identity or state is missing")
+	}
+	return true, strings.ToUpper(strings.TrimSpace(stringValue(disk.DiskState))), requestID, nil
 }
 
 func (client *tencentSDKClient) describeClusterMachines(nodePoolId string) ([]*tke2022.Machine, string, error) {

@@ -84,6 +84,30 @@ func TestDestroyComputeAllocationWithoutClaimedMachineSkipsProviderMutation(t *t
 	}
 }
 
+func TestDestroyExternallyDeletedComputeSkipsProviderMutation(t *testing.T) {
+	provider := NewTencentProvider()
+	kubectlCalled := false
+	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
+		t.Fatalf("unexpected provider mutation: %#v", request)
+		return provisionerResponse{}, nil
+	}
+	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		kubectlCalled = true
+		if !slices.Equal(args, []string{"delete", "deployment/opl-compute-alpha", "service/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found=true", "--wait=true"}) {
+			t.Fatalf("unexpected runtime cleanup: %#v", args)
+		}
+		return nil, nil
+	}
+
+	allocation, err := provider.DestroyComputeAllocation(context.Background(), ComputeAllocation{
+		ID: "compute-alpha", Status: "external_deleted", NodePoolID: "np-basic",
+		MachineName: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", PrivateIP: "10.0.0.8",
+	})
+	if err != nil || allocation.Status != "destroyed" || !kubectlCalled {
+		t.Fatalf("destroy externally deleted compute = %#v err=%v", allocation, err)
+	}
+}
+
 func TestDeleteComputeMachineForwardsOwnershipAndExactMachineIdentity(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {

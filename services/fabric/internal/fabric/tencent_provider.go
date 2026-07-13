@@ -201,37 +201,47 @@ func (p *TencentProvider) DestroyComputeAllocation(ctx context.Context, allocati
 	if allocation.ID == "" {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_id_required")
 	}
-	if firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"]) == "" && allocation.NodeName == "" && firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
+	externallyDeleted := isExternallyDeletedComputeStatus(allocation.Status)
+	if !externallyDeleted && firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"]) == "" && allocation.NodeName == "" && firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID) == "" {
 		allocation.Status = "destroyed"
 		allocation.Provider = "tencent-tke"
 		return allocation, nil
 	}
-	response, err := p.provision(ctx, provisionerRequest{
-		Action:    "destroy_compute_allocation",
-		AccountID: allocation.AccountID,
-		PackageID: allocation.PackageID,
-		Pool:      provisionerPool{ID: allocation.PoolID, NodePoolID: allocation.NodePoolID},
-		Allocation: provisionerAllocation{
-			ID:          allocation.ID,
-			InstanceID:  firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID),
-			MachineName: firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"], allocation.NodeName),
-			NodeName:    allocation.NodeName,
-			PrivateIP:   allocation.PrivateIP,
-		},
-	})
-	if err != nil {
-		return ComputeAllocation{}, err
-	}
-	if !response.OK {
-		return ComputeAllocation{}, provisionerError(response)
-	}
-	if allocation.ServiceName != "" {
-		if _, err := p.kubectl(ctx, []string{"delete", "deployment/" + allocation.ServiceName, "service/" + allocation.ServiceName, "secret/" + allocation.ServiceName + "-env", "--ignore-not-found=true", "--wait=true"}, nil); err != nil {
+	response := provisionerResponse{}
+	if !externallyDeleted {
+		var err error
+		response, err = p.provision(ctx, provisionerRequest{
+			Action:    "destroy_compute_allocation",
+			AccountID: allocation.AccountID,
+			PackageID: allocation.PackageID,
+			Pool:      provisionerPool{ID: allocation.PoolID, NodePoolID: allocation.NodePoolID},
+			Allocation: provisionerAllocation{
+				ID:          allocation.ID,
+				InstanceID:  firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID),
+				MachineName: firstNonEmpty(allocation.MachineName, allocation.ProviderData["machineName"], allocation.NodeName),
+				NodeName:    allocation.NodeName,
+				PrivateIP:   allocation.PrivateIP,
+			},
+		})
+		if err != nil {
 			return ComputeAllocation{}, err
 		}
+		if !response.OK {
+			return ComputeAllocation{}, provisionerError(response)
+		}
+	}
+	serviceName := allocation.ServiceName
+	if serviceName == "" && (externallyDeleted || allocation.Status == "running" || allocation.Status == "ready" || allocation.Status == "active" || allocation.Status == "destroying") {
+		serviceName = k8sName(allocation.ID)
+	}
+	if serviceName != "" {
+		if _, err := p.kubectl(ctx, []string{"delete", "deployment/" + serviceName, "service/" + serviceName, "secret/" + serviceName + "-env", "--ignore-not-found=true", "--wait=true"}, nil); err != nil {
+			return ComputeAllocation{}, err
+		}
+		allocation.ServiceName = serviceName
 	}
 	allocation.Status = "destroyed"
-	allocation.ProviderRequestID = response.ProviderRequestID
+	allocation.ProviderRequestID = firstNonEmpty(response.ProviderRequestID, allocation.ProviderRequestID)
 	if allocation.Provider == "" {
 		allocation.Provider = "tencent-tke"
 	}

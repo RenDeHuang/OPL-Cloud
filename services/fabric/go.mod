@@ -5,6 +5,7 @@ go 1.22.0
 toolchain go1.22.2
 
 require (
+	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs v1.3.115
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.127
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm v1.3.127
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.3.123

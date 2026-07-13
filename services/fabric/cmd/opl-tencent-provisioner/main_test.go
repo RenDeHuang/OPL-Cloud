@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	cbs2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs/v20170312"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
+	tcerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
 	vpc2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc/v20170312"
@@ -346,6 +348,9 @@ func TestNewTencentSDKClientBuildsNativeTkeClient(t *testing.T) {
 	if client.nativeTkeClient == nil {
 		t.Fatalf("expected native TKE SDK client")
 	}
+	if client.nativeCbsClient == nil {
+		t.Fatalf("expected native CBS SDK client")
+	}
 }
 
 func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
@@ -491,6 +496,26 @@ type fakeNativeCvmAPI struct {
 	nilEnvelopeCall              int
 	nilInstanceCall              int
 	callLog                      *[]string
+}
+
+type fakeNativeCbsAPI struct {
+	describeDisksRequests []*cbs2017.DescribeDisksRequest
+	empty                 bool
+	err                   error
+}
+
+func (api *fakeNativeCbsAPI) DescribeDisks(request *cbs2017.DescribeDisksRequest) (*cbs2017.DescribeDisksResponse, error) {
+	api.describeDisksRequests = append(api.describeDisksRequests, request)
+	if api.err != nil {
+		return nil, api.err
+	}
+	disks := []*cbs2017.Disk{{DiskId: request.DiskIds[0], DiskState: common.StringPtr("ATTACHED")}}
+	if api.empty {
+		disks = nil
+	}
+	return &cbs2017.DescribeDisksResponse{Response: &cbs2017.DescribeDisksResponseParams{
+		DiskSet: disks, TotalCount: common.Uint64Ptr(uint64(len(disks))), RequestId: common.StringPtr("req-describe-cbs"),
+	}}, nil
 }
 
 func (api *fakeNativeTkeAPI) record(call string) {
@@ -1884,12 +1909,75 @@ func TestTencentSDKClientDestroyAllocationWithoutMachineNameFailsClosed(t *testi
 
 func providerTruthRequest() Request {
 	return Request{
-		Action:    "provider_truth",
-		AccountId: "pi-alpha",
-		Pool:      ComputePoolInput{ClusterId: "cls-123", NodePoolId: "np-basic"},
+		Action:          "provider_truth",
+		AccountId:       "pi-alpha",
+		StorageVolumeId: "disk-storage-alpha",
+		Pool:            ComputePoolInput{ClusterId: "cls-123", NodePoolId: "np-basic"},
 		Allocation: ComputeAllocationInput{
 			Id: "compute-alpha", MachineName: "node-basic-1", InstanceId: "ins-basic-1", NodeName: "10.0.0.11", PrivateIp: "10.0.0.11",
 		},
+	}
+}
+
+func newProviderTruthClient(tkeAPI *fakeNativeTkeAPI, cvmAPI *fakeNativeCvmAPI) *tencentSDKClient {
+	return &tencentSDKClient{
+		region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI,
+		nativeCvmClient: cvmAPI, nativeCbsClient: &fakeNativeCbsAPI{},
+	}
+}
+
+func TestTencentSDKProviderTruthProbesExactCBSVolume(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0}
+	cvmAPI := &fakeNativeCvmAPI{empty: true}
+	cbsAPI := &fakeNativeCbsAPI{empty: true}
+	client := &tencentSDKClient{
+		region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI,
+		nativeCvmClient: cvmAPI, nativeCbsClient: cbsAPI,
+	}
+
+	response := client.ProviderTruth(providerTruthRequest(), nil)
+
+	if !response.Ok || response.StoragePresent == nil || *response.StoragePresent || response.CBSStatus != "NOT_FOUND" {
+		t.Fatalf("unexpected CBS truth: %#v", response)
+	}
+	if len(cbsAPI.describeDisksRequests) != 1 || len(cbsAPI.describeDisksRequests[0].DiskIds) != 1 || stringValue(cbsAPI.describeDisksRequests[0].DiskIds[0]) != "disk-storage-alpha" {
+		t.Fatalf("CBS truth must query the exact supplied disk: %#v", cbsAPI.describeDisksRequests)
+	}
+}
+
+func TestTencentSDKProviderTruthTreatsExactCBSNotFoundAsAbsent(t *testing.T) {
+	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0}
+	cvmAPI := &fakeNativeCvmAPI{empty: true}
+	cbsAPI := &fakeNativeCbsAPI{err: tcerrors.NewTencentCloudSDKError(cbs2017.INVALIDDISKID_NOTFOUND, "disk was deleted", "req-cbs-not-found")}
+	client := &tencentSDKClient{
+		region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI,
+		nativeCvmClient: cvmAPI, nativeCbsClient: cbsAPI,
+	}
+
+	response := client.ProviderTruth(providerTruthRequest(), nil)
+
+	if !response.Ok || response.StoragePresent == nil || *response.StoragePresent || response.CBSStatus != "NOT_FOUND" || response.ProviderRequestId != "req-cbs-not-found" {
+		t.Fatalf("unexpected deleted CBS truth: %#v", response)
+	}
+}
+
+func TestTencentSDKProviderTruthRejectsGenericCBSNotFound(t *testing.T) {
+	for _, code := range []string{cbs2017.RESOURCENOTFOUND, cbs2017.RESOURCENOTFOUND_NOTFOUND} {
+		t.Run(code, func(t *testing.T) {
+			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0}
+			cvmAPI := &fakeNativeCvmAPI{empty: true}
+			cbsAPI := &fakeNativeCbsAPI{err: tcerrors.NewTencentCloudSDKError(code, "ambiguous resource", "req-cbs-generic")}
+			client := &tencentSDKClient{
+				region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI,
+				nativeCvmClient: cvmAPI, nativeCbsClient: cbsAPI,
+			}
+
+			response := client.ProviderTruth(providerTruthRequest(), nil)
+
+			if response.Ok || response.ErrorCode != "tencent_provider_truth_cbs_probe_failed" {
+				t.Fatalf("generic not-found must fail closed: %#v", response)
+			}
+		})
 	}
 }
 
@@ -1903,7 +1991,9 @@ func assertProviderTruthReadOnly(t *testing.T, tkeAPI *fakeNativeTkeAPI, cvmAPI 
 func TestTencentSDKProviderTruthReturnsExactPresentIdentityWithoutMutation(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, clusterInstanceID: "node-basic-1"}
 	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha"}
-	client := &tencentSDKClient{region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+	cbsAPI := &fakeNativeCbsAPI{}
+	client := newProviderTruthClient(tkeAPI, cvmAPI)
+	client.nativeCbsClient = cbsAPI
 
 	response := client.ProviderTruth(providerTruthRequest(), nil)
 
@@ -1912,6 +2002,12 @@ func TestTencentSDKProviderTruthReturnsExactPresentIdentityWithoutMutation(t *te
 	}
 	if response.ProviderData["accountId"] != "" || response.ProviderData["requestedAccountId"] != "" || response.ProviderData["resourceId"] != "compute-alpha" || response.ProviderData["machineName"] != "node-basic-1" {
 		t.Fatalf("present truth lost exact identity: %#v", response.ProviderData)
+	}
+	if response.StoragePresent == nil || !*response.StoragePresent || response.CBSStatus != "ATTACHED" || response.ProviderData["storagePresent"] != "true" || response.ProviderData["cbsStatus"] != "ATTACHED" {
+		t.Fatalf("present truth lost exact CBS state: %#v", response)
+	}
+	if len(cbsAPI.describeDisksRequests) != 1 || len(cbsAPI.describeDisksRequests[0].DiskIds) != 1 || stringValue(cbsAPI.describeDisksRequests[0].DiskIds[0]) != "disk-storage-alpha" {
+		t.Fatalf("CBS truth must query the exact supplied disk: %#v", cbsAPI.describeDisksRequests)
 	}
 	if want := []string{"DescribeNodePools", "DescribeClusterMachines", "DescribeClusterInstances"}; !reflect.DeepEqual(tkeAPI.calls, want) {
 		t.Fatalf("unexpected read path: got=%#v want=%#v", tkeAPI.calls, want)
@@ -1925,7 +2021,7 @@ func TestTencentSDKProviderTruthReturnsExactPresentIdentityWithoutMutation(t *te
 func TestTencentSDKProviderTruthReturnsAbsentOnlyWhenEveryExactIdentityIsAbsent(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 0}
 	cvmAPI := &fakeNativeCvmAPI{empty: true}
-	client := &tencentSDKClient{region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+	client := newProviderTruthClient(tkeAPI, cvmAPI)
 
 	response := client.ProviderTruth(providerTruthRequest(), nil)
 
@@ -1939,7 +2035,7 @@ func TestTencentSDKProviderTruthReturnsAbsentOnlyWhenEveryExactIdentityIsAbsent(
 func TestTencentSDKProviderTruthTreatsAccountAsCorrelationOnly(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, clusterInstanceID: "node-basic-1"}
 	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha"}
-	client := &tencentSDKClient{region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+	client := newProviderTruthClient(tkeAPI, cvmAPI)
 	request := providerTruthRequest()
 	request.AccountId = "pi-wrong"
 
@@ -1954,7 +2050,7 @@ func TestTencentSDKProviderTruthTreatsAccountAsCorrelationOnly(t *testing.T) {
 func TestTencentSDKProviderTruthDoesNotRequireOrVerifyKubernetesNodeName(t *testing.T) {
 	tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, clusterInstanceID: "node-basic-1"}
 	cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha"}
-	client := &tencentSDKClient{region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+	client := newProviderTruthClient(tkeAPI, cvmAPI)
 	request := providerTruthRequest()
 	request.Allocation.NodeName = ""
 
@@ -2008,7 +2104,7 @@ func TestTencentSDKProviderTruthFailsClosedOnMissingOrMismatchedIdentity(t *test
 			if testCase.configure != nil {
 				testCase.configure(tkeAPI, cvmAPI)
 			}
-			client := &tencentSDKClient{region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+			client := newProviderTruthClient(tkeAPI, cvmAPI)
 			response := client.ProviderTruth(testCase.request(), nil)
 			if response.Ok || response.ErrorCode == "" {
 				t.Fatalf("provider truth must fail closed: %#v", response)
@@ -2042,7 +2138,7 @@ func TestTencentSDKProviderTruthFailsClosedOnPartialAbsenceOrProbeError(t *testi
 			tkeAPI := &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 1, clusterInstanceID: "node-basic-1"}
 			cvmAPI := &fakeNativeCvmAPI{instanceName: "compute-alpha"}
 			testCase.configure(tkeAPI, cvmAPI)
-			client := &tencentSDKClient{region: "ap-guangzhou", clusterId: "cls-123", nativeTkeClient: tkeAPI, nativeCvmClient: cvmAPI}
+			client := newProviderTruthClient(tkeAPI, cvmAPI)
 			response := client.ProviderTruth(providerTruthRequest(), nil)
 			if response.Ok || response.ErrorCode == "" {
 				t.Fatalf("partial or unknown truth must fail closed: %#v", response)

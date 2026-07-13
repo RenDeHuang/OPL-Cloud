@@ -189,6 +189,12 @@ func (s *Service) SyncComputeAllocation(ctx context.Context, allocationID string
 	if allocation.Provider == "" {
 		allocation.Provider = firstNonEmpty(existing.Provider, "tencent-tke")
 	}
+	if isExternallyDeletedComputeStatus(allocation.Status) {
+		if err := s.releaseMachineOwnership(ctx, allocationID); err != nil {
+			_ = s.recordOperation(ctx, operation, "failed", allocation, err)
+			return allocation, err
+		}
+	}
 	if err := s.recordOperation(ctx, operation, "succeeded", allocation, nil); err != nil {
 		return allocation, err
 	}
@@ -230,7 +236,9 @@ func (s *Service) DestroyComputeAllocation(ctx context.Context, allocationID str
 			s.mu.Unlock()
 			return nil
 		}
-		allocation.Status = "destroying"
+		if !isExternallyDeletedComputeStatus(allocation.Status) {
+			allocation.Status = "destroying"
+		}
 		if err := s.recordOperation(lockCtx, operation, "started", allocation, nil); err != nil {
 			return err
 		}
@@ -268,15 +276,8 @@ func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, exis
 		if providerErr != nil {
 			return providerErr
 		}
-		if ownership, ownershipErr := s.operations.MachineOwnership(lockCtx, existing.ID); ownershipErr == nil {
-			now := s.now()
-			ownership.Status = "released"
-			ownership.ReleasedAt = &now
-			if err := s.operations.SaveMachineOwnership(lockCtx, ownership); err != nil {
-				return err
-			}
-		} else if ownershipErr != ErrMachineOwnershipNotFound {
-			return ownershipErr
+		if err := s.releaseMachineOwnership(lockCtx, existing.ID); err != nil {
+			return err
 		}
 		if err := s.reconcileComputePoolLocked(lockCtx, firstNonEmpty(existing.PackageID, "basic"), false); err != nil {
 			return err
@@ -298,6 +299,29 @@ func (s *Service) finishDestroyComputeAllocation(operation FabricOperation, exis
 	s.mu.Lock()
 	delete(s.destroying, existing.ID)
 	s.mu.Unlock()
+}
+
+func (s *Service) releaseMachineOwnership(ctx context.Context, resourceID string) error {
+	ownership, err := s.operations.MachineOwnership(ctx, resourceID)
+	if err == ErrMachineOwnershipNotFound {
+		return nil
+	}
+	if err != nil || ownership.Status == "released" {
+		return err
+	}
+	now := s.now()
+	ownership.Status = "released"
+	ownership.ReleasedAt = &now
+	return s.operations.SaveMachineOwnership(ctx, ownership)
+}
+
+func isExternallyDeletedComputeStatus(status string) bool {
+	switch status {
+	case "external_deleted", "deleted", "missing":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) latestComputeDestroyOperation(ctx context.Context, allocationID string) (FabricOperation, bool, error) {
