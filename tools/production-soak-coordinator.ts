@@ -61,11 +61,8 @@ function assertDistinct(values, label) {
   if (new Set(values).size !== values.length) throw new Error(`production_soak_identity_duplicate:${label}`);
 }
 
-export function validateSoakManifests(manifests, { accountId, runIds, requireAll = true }) {
-  if (
-    !Array.isArray(manifests) || runIds?.length !== SOAK_SLOT_COUNT ||
-    (requireAll ? manifests.length !== SOAK_SLOT_COUNT : manifests.length > SOAK_SLOT_COUNT)
-  ) {
+export function validateSoakManifests(manifests, { accountId, runIds }) {
+  if (!Array.isArray(manifests) || manifests.length !== SOAK_SLOT_COUNT || runIds?.length !== SOAK_SLOT_COUNT) {
     throw new Error("production_soak_manifest_invalid");
   }
   const expectedRuns = new Set(runIds);
@@ -118,6 +115,78 @@ export function validateSoakManifests(manifests, { accountId, runIds, requireAll
   assertDistinct(nodeNames, "nodeName");
   assertDistinct(workspaceIds, "workspaceId");
   assertDistinct(urls, "workspaceUrl");
+  return validated;
+}
+
+const RESOURCE_ID_KEYS = [
+  "computeAllocationId", "replacementComputeAllocationId", "storageId",
+  "attachmentId", "replacementAttachmentId", "workspaceId", "replacementWorkspaceId"
+];
+
+function optionalValue(object, key) {
+  return Object.hasOwn(object || {}, key) ? value(object[key]) : "";
+}
+
+function normalizePartialSoakManifests(manifests, { accountId, slots: expectedSlots }) {
+  if (!Array.isArray(manifests) || manifests.length > SOAK_SLOT_COUNT || expectedSlots?.length !== SOAK_SLOT_COUNT) {
+    throw new Error("production_soak_manifest_invalid");
+  }
+  const expectedByRun = new Map(expectedSlots.map((slot) => [value(slot?.runId), value(slot?.slot)]));
+  if (expectedByRun.size !== SOAK_SLOT_COUNT) throw new Error("production_soak_manifest_invalid");
+  const resources = [];
+  const holds = [];
+  const machineIds = [];
+  const instanceIds = [];
+  const nodeNames = [];
+  const validated = manifests.map((manifest) => {
+    const runId = value(manifest?.runId);
+    const slot = value(manifest?.slot);
+    if (expectedByRun.get(runId) !== slot || manifest.accountId !== accountId) throw new Error("production_soak_manifest_invalid");
+    const names = manifest.resourceNames || {};
+    for (const key of ["compute", "storage", "workspace"]) {
+      if (!value(names[key]).includes(runId)) throw new Error("production_soak_manifest_invalid");
+    }
+    for (const key of ["replacementCompute", "replacementWorkspace"]) {
+      if (Object.hasOwn(names, key) && !value(names[key]).includes(runId)) throw new Error("production_soak_manifest_invalid");
+    }
+    const ids = manifest.ids || {};
+    const knownIds = new Set();
+    for (const key of RESOURCE_ID_KEYS) {
+      const id = optionalValue(ids, key);
+      if (id) {
+        resources.push(id);
+        knownIds.add(id);
+      }
+    }
+    for (const key of ["compute", "replacementCompute", "storage"]) {
+      const hold = optionalValue(manifest.holdIds, key);
+      if (hold) holds.push(hold);
+    }
+    for (const [resourceId, identity] of Object.entries(manifest.machineIdentities || {})) {
+      if (!knownIds.has(resourceId) || ![ids.computeAllocationId, ids.replacementComputeAllocationId].includes(resourceId) || !identity || typeof identity !== "object") {
+        throw new Error("production_soak_manifest_invalid");
+      }
+      const machineId = optionalValue(identity, "machineId");
+      const instanceId = optionalValue(identity, "instanceId");
+      const nodeName = optionalValue(identity, "nodeName");
+      if (machineId) machineIds.push(machineId);
+      if (instanceId) instanceIds.push(instanceId);
+      if (nodeName) nodeNames.push(nodeName);
+    }
+    if (Object.hasOwn(manifest, "workspaceId") && manifest.workspaceId !== ids.workspaceId) throw new Error("production_soak_manifest_invalid");
+    if (Object.hasOwn(manifest, "workspaceUrl")) {
+      if (!ids.workspaceId) throw new Error("production_soak_manifest_invalid");
+      return { ...manifest, workspaceUrl: cleanWorkspaceUrl(value(manifest.workspaceUrl), ids.workspaceId) };
+    }
+    return manifest;
+  });
+  assertDistinct(validated.map((manifest) => manifest.runId), "runId");
+  assertDistinct(validated.map((manifest) => manifest.slot), "slot");
+  assertDistinct(resources, "resource");
+  assertDistinct(holds, "hold");
+  assertDistinct(machineIds, "machineId");
+  assertDistinct(instanceIds, "instanceId");
+  assertDistinct(nodeNames, "nodeName");
   return validated;
 }
 
@@ -293,18 +362,26 @@ function hasExactRunLabel(row, runId) {
     .some((candidate) => String(candidate || "").split(/[^A-Za-z0-9._-]+/).includes(runId));
 }
 
+function labelledResourceId(field, row) {
+  if (["computeAllocations", "storageVolumes", "storageAttachments", "workspaces"].includes(field)) return row?.id || "";
+  return row?.resourceId || row?.computeAllocationId || row?.storageId || row?.attachmentId || row?.workspaceId || "";
+}
+
 function assertControlPlaneTerminalEvidence(state, manifests) {
   const invalid = [];
   let terminalResources = 0;
   for (const manifest of manifests) {
-    if (manifest.missing) {
-      const fields = ["computeAllocations", "storageVolumes", "storageAttachments", "workspaces", "runtimeOperations"];
-      if (fields.some((field) => (state[field] || []).some((row) => resourceAccountId(row) === manifest.accountId && hasExactRunLabel(row, manifest.runId)))) {
-        invalid.push({ field: "runLabel", runId: manifest.runId });
-      }
-      continue;
-    }
     const ids = manifest.ids || {};
+    const knownIds = new Set(RESOURCE_ID_KEYS.map((key) => ids[key]).filter(Boolean));
+    for (const field of ["computeAllocations", "storageVolumes", "storageAttachments", "workspaces", "billingLedger", "runtimeOperations"]) {
+      for (const row of state[field] || []) {
+        if (
+          resourceAccountId(row) === manifest.accountId && hasExactRunLabel(row, manifest.runId) &&
+          !knownIds.has(labelledResourceId(field, row))
+        ) invalid.push({ field, id: labelledResourceId(field, row), runId: manifest.runId });
+      }
+    }
+    if (manifest.missing) continue;
     for (const [key, holdKey] of [
       ["computeAllocationId", "compute"],
       ["replacementComputeAllocationId", "replacementCompute"]
@@ -316,11 +393,13 @@ function assertControlPlaneTerminalEvidence(state, manifests) {
         ? (manifest.resourceNames?.replacementCompute || manifest.resourceNames?.compute)
         : manifest.resourceNames?.compute;
       const identity = manifest.machineIdentities?.[resourceId] || {};
+      const expectedHoldId = manifest.holdIds?.[holdKey];
       if (
         row.name !== expectedName || row.status !== "destroyed" || row.billingStatus !== "stopped" ||
-        row.holdId !== manifest.holdIds?.[holdKey] || !row.holdReleaseId ||
-        row.machineName !== identity.machineId || (row.instanceId || row.cvmInstanceId) !== identity.instanceId ||
-        row.nodeName !== identity.nodeName
+        !row.holdId || (expectedHoldId && row.holdId !== expectedHoldId) || !row.holdReleaseId ||
+        (identity.machineId && row.machineName !== identity.machineId) ||
+        (identity.instanceId && (row.instanceId || row.cvmInstanceId) !== identity.instanceId) ||
+        (identity.nodeName && row.nodeName !== identity.nodeName)
       ) {
         invalid.push({ field: "computeAllocations", id: resourceId, runId: manifest.runId });
       } else {
@@ -333,22 +412,25 @@ function assertControlPlaneTerminalEvidence(state, manifests) {
       }
       terminalResources += 1;
     }
-    const storage = terminalRow(state.storageVolumes, ids.storageId, manifest.accountId, "storageVolumes", manifest.runId);
-    if (
-      storage.name !== manifest.resourceNames?.storage || storage.status !== "destroyed" || storage.billingStatus !== "stopped" ||
-      storage.holdId !== manifest.holdIds?.storage || !storage.holdReleaseId
-    ) {
-      invalid.push({ field: "storageVolumes", id: ids.storageId, runId: manifest.runId });
-    } else {
-      const releases = (state.billingLedger || []).filter((entry) =>
-        entry.accountId === manifest.accountId && entry.resourceId === ids.storageId &&
-        entry.type === "storage_hold_released"
-      );
-      if (releases.length !== 1 || releases[0].id !== storage.holdReleaseId) {
-        invalid.push({ field: "billingLedger", id: ids.storageId, runId: manifest.runId });
+    if (ids.storageId) {
+      const storage = terminalRow(state.storageVolumes, ids.storageId, manifest.accountId, "storageVolumes", manifest.runId);
+      const expectedHoldId = manifest.holdIds?.storage;
+      if (
+        storage.name !== manifest.resourceNames?.storage || storage.status !== "destroyed" || storage.billingStatus !== "stopped" ||
+        !storage.holdId || (expectedHoldId && storage.holdId !== expectedHoldId) || !storage.holdReleaseId
+      ) {
+        invalid.push({ field: "storageVolumes", id: ids.storageId, runId: manifest.runId });
+      } else {
+        const releases = (state.billingLedger || []).filter((entry) =>
+          entry.accountId === manifest.accountId && entry.resourceId === ids.storageId &&
+          entry.type === "storage_hold_released"
+        );
+        if (releases.length !== 1 || releases[0].id !== storage.holdReleaseId) {
+          invalid.push({ field: "billingLedger", id: ids.storageId, runId: manifest.runId });
+        }
       }
+      terminalResources += 1;
     }
-    terminalResources += 1;
 
     for (const [attachmentKey, computeKey] of [
       ["attachmentId", "computeAllocationId"],
@@ -359,7 +441,8 @@ function assertControlPlaneTerminalEvidence(state, manifests) {
       const attachment = terminalRow(state.storageAttachments, attachmentId, manifest.accountId, "storageAttachments", manifest.runId);
       if (
         !["detached", "deleted"].includes(attachment.status) ||
-        attachment.computeAllocationId !== ids[computeKey] || attachment.storageId !== ids.storageId
+        (ids[computeKey] && attachment.computeAllocationId !== ids[computeKey]) ||
+        (ids.storageId && attachment.storageId !== ids.storageId)
       ) invalid.push({ field: "storageAttachments", id: attachmentId, runId: manifest.runId });
       terminalResources += 1;
     }
@@ -373,7 +456,7 @@ function assertControlPlaneTerminalEvidence(state, manifests) {
         : manifest.resourceNames?.workspace;
       if (
         workspace.name !== expectedName || workspace.state !== "data_deleted" || workspace.status !== "unrecoverable" ||
-        workspace.storageId !== ids.storageId || workspace.computeAllocationId || workspace.currentComputeAllocationId ||
+        (ids.storageId && workspace.storageId !== ids.storageId) || workspace.computeAllocationId || workspace.currentComputeAllocationId ||
         workspace.attachmentId || workspace.currentAttachmentId || workspace.access?.tokenStatus !== "disabled" ||
         workspace.openable !== false || workspace.accessState !== "disabled"
       ) invalid.push({ field: "workspaces", id: workspaceId, runId: manifest.runId });
@@ -491,10 +574,9 @@ export async function runProductionSoak({
       if (await exists(child.paths.manifest)) available.push(JSON.parse(await readFile(child.paths.manifest, "utf8")));
     }
     if (available.length) {
-      manifests = validateSoakManifests(available, {
+      manifests = normalizePartialSoakManifests(available, {
         accountId,
-        runIds: children.map((child) => child.runId),
-        requireAll: false
+        slots: children.map((child) => ({ slot: child.slot, runId: child.runId }))
       });
       await recordEvidence("final", nowImpl() + evidenceIntervalMs);
     }
@@ -543,11 +625,9 @@ export async function manifestsFromArtifactDir(artifactDir) {
     const path = join(artifactDir, `manifest-${slot}.json`);
     if (await exists(path)) manifests.push(JSON.parse(await readFile(path, "utf8")));
   }
-  const runIds = result.slots?.map((slot) => slot.runId);
-  const validated = validateSoakManifests(manifests, {
+  const validated = normalizePartialSoakManifests(manifests, {
     accountId: result.accountId,
-    runIds,
-    requireAll: false
+    slots: result.slots
   });
   const present = new Set(validated.map((manifest) => manifest.runId));
   return [...validated, ...result.slots

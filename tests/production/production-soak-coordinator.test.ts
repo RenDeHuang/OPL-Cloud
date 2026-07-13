@@ -58,30 +58,31 @@ function immediate() {
 }
 
 function terminalState(item) {
-  const computeIds = [item.ids.computeAllocationId, item.ids.replacementComputeAllocationId].filter(Boolean);
-  const attachmentIds = [item.ids.attachmentId, item.ids.replacementAttachmentId].filter(Boolean);
-  const workspaceIds = [item.ids.workspaceId, item.ids.replacementWorkspaceId].filter(Boolean);
+  const ids = item.ids || {};
+  const computeIds = [ids.computeAllocationId, ids.replacementComputeAllocationId].filter(Boolean);
+  const attachmentIds = [ids.attachmentId, ids.replacementAttachmentId].filter(Boolean);
+  const workspaceIds = [ids.workspaceId, ids.replacementWorkspaceId].filter(Boolean);
   const computeAllocations = computeIds.map((id) => ({
     id,
     accountId: item.accountId,
-    name: id === item.ids.replacementComputeAllocationId ? item.resourceNames.replacementCompute : item.resourceNames.compute,
+    name: id === ids.replacementComputeAllocationId ? item.resourceNames.replacementCompute : item.resourceNames.compute,
     status: "destroyed",
     billingStatus: "stopped",
-    holdId: id === item.ids.replacementComputeAllocationId ? item.holdIds.replacementCompute : item.holdIds.compute,
+    holdId: id === ids.replacementComputeAllocationId ? item.holdIds?.replacementCompute : item.holdIds?.compute,
     holdReleaseId: `release-${id}`,
-    machineName: item.machineIdentities[id].machineId,
-    instanceId: item.machineIdentities[id].instanceId,
-    nodeName: item.machineIdentities[id].nodeName
+    machineName: item.machineIdentities?.[id]?.machineId,
+    instanceId: item.machineIdentities?.[id]?.instanceId,
+    nodeName: item.machineIdentities?.[id]?.nodeName
   }));
-  const storageVolumes = [{
-    id: item.ids.storageId,
+  const storageVolumes = ids.storageId ? [{
+    id: ids.storageId,
     accountId: item.accountId,
     name: item.resourceNames.storage,
     status: "destroyed",
     billingStatus: "stopped",
-    holdId: item.holdIds.storage,
-    holdReleaseId: `release-${item.ids.storageId}`
-  }];
+    holdId: item.holdIds?.storage,
+    holdReleaseId: `release-${ids.storageId}`
+  }] : [];
   return {
     computeAllocations,
     storageVolumes,
@@ -89,20 +90,20 @@ function terminalState(item) {
       id,
       accountId: item.accountId,
       status: "detached",
-      computeAllocationId: id === item.ids.replacementAttachmentId ? item.ids.replacementComputeAllocationId : item.ids.computeAllocationId,
-      storageId: item.ids.storageId
+      computeAllocationId: id === ids.replacementAttachmentId ? ids.replacementComputeAllocationId : ids.computeAllocationId,
+      storageId: ids.storageId
     })),
     workspaces: workspaceIds.map((id) => ({
       id,
       accountId: item.accountId,
-      name: id === item.ids.replacementWorkspaceId ? item.resourceNames.replacementWorkspace : item.resourceNames.workspace,
+      name: id === ids.replacementWorkspaceId ? item.resourceNames.replacementWorkspace : item.resourceNames.workspace,
       state: "data_deleted",
       status: "unrecoverable",
       computeAllocationId: "",
       currentComputeAllocationId: "",
       attachmentId: "",
       currentAttachmentId: "",
-      storageId: item.ids.storageId,
+      storageId: ids.storageId,
       openable: false,
       accessState: "disabled",
       access: { tokenStatus: "disabled" }
@@ -112,8 +113,45 @@ function terminalState(item) {
       accountId: item.accountId,
       resourceId: row.id,
       type: `${computeIds.includes(row.id) ? "compute" : "storage"}_hold_released`
+    })),
+    runtimeOperations: []
+  };
+}
+
+function partialManifest(stage, index = 1) {
+  const full = manifest(index);
+  const partial = {
+    runId: full.runId,
+    slot: full.slot,
+    accountId: full.accountId,
+    resourceNames: full.resourceNames
+  };
+  if (stage >= 1) {
+    partial.ids = { computeAllocationId: full.ids.computeAllocationId };
+    partial.holdIds = { compute: full.holdIds.compute };
+  }
+  if (stage >= 2) {
+    partial.ids.storageId = full.ids.storageId;
+    partial.holdIds.storage = full.holdIds.storage;
+  }
+  if (stage >= 3) partial.ids.attachmentId = full.ids.attachmentId;
+  return partial;
+}
+
+function soakResult() {
+  return {
+    accountId: "account-production",
+    slots: Array.from({ length: 5 }, (_, index) => ({
+      slot: String(index + 1).padStart(2, "0"),
+      runId: `soak-run-${String(index + 1).padStart(2, "0")}`
     }))
   };
+}
+
+function managementFetch(state) {
+  return async (url) => String(url).endsWith("/api/auth/operator-login")
+    ? jsonResponse({ csrfToken: "csrf" }, { headers: { "set-cookie": "session=operator" } })
+    : jsonResponse(state);
 }
 
 function jsonResponse(payload, init = {}) {
@@ -425,6 +463,103 @@ test("residual verification loads partial manifests and checks missing slots by 
     }),
     /production_soak_terminal_evidence_invalid/
   );
+});
+
+test("residual verification accepts each atomically persisted partial manifest stage", async () => {
+  for (const [stage, expectedResources] of [[0, 0], [1, 1], [2, 2], [3, 3]]) {
+    const root = await mkdtemp(join(tmpdir(), `production-soak-stage-${stage}-`));
+    const partial = partialManifest(stage);
+    await writeFile(join(root, "result.json"), JSON.stringify(soakResult()));
+    await writeFile(join(root, "manifest-01.json"), JSON.stringify(partial));
+
+    const loaded = await manifestsFromArtifactDir(root);
+    assert.equal(loaded[0].missing, undefined, `stage ${stage} must not be treated as a missing manifest`);
+    assert.deepEqual(
+      await productionSoakEvidenceCheck({
+        phase: "final",
+        manifests: loaded,
+        origin: "https://cloud.medopl.cn",
+        operatorToken: "operator",
+        fetchImpl: managementFetch(terminalState(partial)),
+        signal: new AbortController().signal
+      }),
+      { controlPlaneTerminalResources: expectedResources, missingSlots: 4 }
+    );
+  }
+});
+
+test("partial manifest verification rejects unknown run-labelled resource, ledger, and runtime rows", async () => {
+  const root = await mkdtemp(join(tmpdir(), "production-soak-partial-unknown-"));
+  const partial = partialManifest(1);
+  await writeFile(join(root, "result.json"), JSON.stringify(soakResult()));
+  await writeFile(join(root, "manifest-01.json"), JSON.stringify(partial));
+  const loaded = await manifestsFromArtifactDir(root);
+
+  for (const mutate of [
+    (state) => state.storageVolumes.push({
+      id: "storage-unpersisted", accountId: partial.accountId, name: `Storage ${partial.runId}`, status: "destroyed", billingStatus: "stopped"
+    }),
+    (state) => state.billingLedger.push({
+      id: "ledger-unpersisted", accountId: partial.accountId, resourceId: "storage-unpersisted", sourceEventId: `verify:${partial.runId}:storage`
+    }),
+    (state) => state.runtimeOperations.push({
+      id: "operation-unpersisted", accountId: partial.accountId, resourceId: "storage-unpersisted", idempotencyKey: `verify:${partial.runId}:storage`
+    })
+  ]) {
+    const state = terminalState(partial);
+    mutate(state);
+    await assert.rejects(
+      productionSoakEvidenceCheck({
+        phase: "final",
+        manifests: loaded,
+        origin: "https://cloud.medopl.cn",
+        operatorToken: "operator",
+        fetchImpl: managementFetch(state),
+        signal: new AbortController().signal
+      }),
+      /production_soak_terminal_evidence_invalid/
+    );
+  }
+});
+
+test("partial manifest verification rejects known resource ownership conflicts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "production-soak-partial-ownership-"));
+  const partial = partialManifest(1);
+  await writeFile(join(root, "result.json"), JSON.stringify(soakResult()));
+  await writeFile(join(root, "manifest-01.json"), JSON.stringify(partial));
+  const loaded = await manifestsFromArtifactDir(root);
+
+  for (const mutate of [
+    (state) => { state.computeAllocations[0].accountId = "account-other"; },
+    (state) => { state.computeAllocations[0].name = "other-run"; },
+    (state) => { state.computeAllocations[0].holdId = "hold-other"; }
+  ]) {
+    const state = terminalState(partial);
+    mutate(state);
+    await assert.rejects(
+      productionSoakEvidenceCheck({
+        phase: "final",
+        manifests: loaded,
+        origin: "https://cloud.medopl.cn",
+        operatorToken: "operator",
+        fetchImpl: managementFetch(state),
+        signal: new AbortController().signal
+      }),
+      /production_soak_terminal_evidence_invalid/
+    );
+  }
+});
+
+test("partial manifest loader rejects duplicate known resource ids across slots", async () => {
+  const root = await mkdtemp(join(tmpdir(), "production-soak-partial-duplicate-"));
+  const first = partialManifest(1, 1);
+  const second = partialManifest(1, 2);
+  second.ids.computeAllocationId = first.ids.computeAllocationId;
+  await writeFile(join(root, "result.json"), JSON.stringify(soakResult()));
+  await writeFile(join(root, "manifest-01.json"), JSON.stringify(first));
+  await writeFile(join(root, "manifest-02.json"), JSON.stringify(second));
+
+  await assert.rejects(manifestsFromArtifactDir(root), /production_soak_identity_duplicate:resource/);
 });
 
 test("one child failure releases ready peers and waits for every verifier cleanup", async () => {
