@@ -64,6 +64,17 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, operations)
 	})
+	mux.HandleFunc("GET /fabric/machine-ownerships/{resourceId}", func(w http.ResponseWriter, r *http.Request) {
+		ownership, err := service.MachineOwnership(r.Context(), r.PathValue("resourceId"))
+		switch {
+		case errors.Is(err, fabric.ErrMachineOwnershipNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		case err != nil:
+			writeError(w, http.StatusServiceUnavailable, "machine ownership query failed")
+		default:
+			writeJSON(w, http.StatusOK, ownership)
+		}
+	})
 	mux.HandleFunc("POST /fabric/transfers", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.TransferInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {

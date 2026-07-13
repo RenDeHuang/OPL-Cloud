@@ -48,6 +48,60 @@ func TestServerAuthenticatesEverythingExceptGetHealthz(t *testing.T) {
 	}
 }
 
+func TestMachineOwnershipHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
+	store := fabric.NewMemoryOperationStore()
+	releasedAt := time.Now().UTC().Truncate(time.Second)
+	ownership := fabric.MachineOwnership{
+		ID: "owner-alpha", ResourceID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic",
+		NodePoolID: "np-basic", MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha",
+		Status: "released", ClaimedAt: releasedAt.Add(-time.Minute), ReleasedAt: &releasedAt,
+	}
+	if _, _, err := store.ClaimMachine(context.Background(), ownership); err != nil {
+		t.Fatal(err)
+	}
+	active := fabric.MachineOwnership{
+		ID: "owner-active", ResourceID: "compute-active", AccountID: "acct-alpha", PackageID: "basic",
+		NodePoolID: "np-basic", MachineID: "machine-active", InstanceID: "ins-active", NodeName: "node-active",
+		Status: "active", ClaimedAt: releasedAt,
+	}
+	if _, _, err := store.ClaimMachine(context.Background(), active); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/fabric/machine-ownerships/compute-alpha", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, testRequest(http.MethodGet, "/fabric/machine-ownerships/compute-alpha", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got fabric.MachineOwnership
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ResourceID != ownership.ResourceID || got.AccountID != ownership.AccountID || got.MachineID != ownership.MachineID ||
+		got.InstanceID != ownership.InstanceID || got.NodeName != ownership.NodeName || got.Status != "released" ||
+		got.ReleasedAt == nil || !got.ReleasedAt.Equal(releasedAt) {
+		t.Fatalf("ownership = %#v", got)
+	}
+	activeRec := httptest.NewRecorder()
+	server.ServeHTTP(activeRec, testRequest(http.MethodGet, "/fabric/machine-ownerships/compute-active", nil))
+	if activeRec.Code != http.StatusOK || !strings.Contains(activeRec.Body.String(), `"status":"active"`) || strings.Contains(activeRec.Body.String(), `"releasedAt"`) {
+		t.Fatalf("active status=%d body=%s", activeRec.Code, activeRec.Body.String())
+	}
+
+	missing := httptest.NewRecorder()
+	server.ServeHTTP(missing, testRequest(http.MethodGet, "/fabric/machine-ownerships/compute-missing", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
 func testRequest(method, path string, body io.Reader) *http.Request {
 	req := httptest.NewRequest(method, path, body)
 	req.Header.Set("Authorization", "Bearer internal-secret")

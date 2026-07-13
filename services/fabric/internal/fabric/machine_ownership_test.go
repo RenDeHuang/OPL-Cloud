@@ -75,3 +75,26 @@ func TestReleasedMachineOwnershipCanClaimReplacement(t *testing.T) {
 		t.Fatalf("replacement claim = %#v created=%v err=%v", got, created, err)
 	}
 }
+
+func TestServiceReturnsExactMachineOwnership(t *testing.T) {
+	store := NewMemoryOperationStore()
+	releasedAt := time.Now().UTC().Truncate(time.Second)
+	ownership := MachineOwnership{
+		ID: "owner-alpha", ResourceID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic",
+		NodePoolID: "np-basic", MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha",
+		Status: "released", ClaimedAt: releasedAt.Add(-time.Minute), ReleasedAt: &releasedAt,
+	}
+	if _, _, err := store.ClaimMachine(context.Background(), ownership); err != nil {
+		t.Fatal(err)
+	}
+	service := NewServiceWithOperationStore(testProvider{}, store)
+	got, err := service.MachineOwnership(context.Background(), ownership.ResourceID)
+	if err != nil || got.ResourceID != ownership.ResourceID || got.AccountID != ownership.AccountID ||
+		got.MachineID != ownership.MachineID || got.InstanceID != ownership.InstanceID || got.NodeName != ownership.NodeName ||
+		got.Status != "released" || got.ReleasedAt == nil || !got.ReleasedAt.Equal(releasedAt) {
+		t.Fatalf("ownership = %#v err=%v", got, err)
+	}
+	if _, err := service.MachineOwnership(context.Background(), "compute-missing"); err != ErrMachineOwnershipNotFound {
+		t.Fatalf("missing ownership error = %v", err)
+	}
+}

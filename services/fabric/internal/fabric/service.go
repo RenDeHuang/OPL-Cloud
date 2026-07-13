@@ -89,6 +89,10 @@ func (s *Service) Catalog(_ context.Context) Catalog {
 	}
 }
 
+func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error) {
+	return s.operations.MachineOwnership(ctx, strings.TrimSpace(resourceID))
+}
+
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
 	now := time.Now().UTC()
 	id := firstNonEmpty(input.ID, fabricID("ca", firstNonEmpty(input.WorkspaceID, input.AccountID, "compute"), now))
