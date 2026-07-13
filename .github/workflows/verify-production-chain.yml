@@ -50,6 +50,7 @@ jobs:
     environment: production
     outputs:
       workspace_id: ${{ steps.verify.outputs.workspace_id }}
+      workspace_url: ${{ steps.verify.outputs.workspace_url }}
     env:
       OPL_CONSOLE_ORIGIN: ${{ inputs.origin }}
       OPL_VERIFY_OPERATOR_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
@@ -93,7 +94,9 @@ jobs:
             const fs = require("node:fs");
             const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
             if (!/^[A-Za-z0-9._:-]{1,128}$/.test(payload.workspaceId || "")) throw new Error("workspace_id_required");
-            process.stdout.write(`workspace_id=${payload.workspaceId}\n`);
+            const url = new URL(payload.url);
+            if (url.protocol !== "https:" || !url.pathname.startsWith("/w/")) throw new Error("workspace_url_required");
+            process.stdout.write(`workspace_id=${payload.workspaceId}\nworkspace_url=${encodeURIComponent(payload.url)}\n`);
           ' "$result" >> "$GITHUB_OUTPUT"
 
       - name: Upload browser E2E screenshots

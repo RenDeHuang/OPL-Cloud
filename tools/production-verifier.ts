@@ -937,17 +937,35 @@ export async function verifyWorkspaceBrowserUi({
       screenshotDir,
       runId,
       successDetails: { marker },
-      task: () => page.waitForFunction(({ marker: expected }) => {
-        const text = document.body?.innerText || "";
-        const prompt = `请只回复：${expected}`;
-        let count = 0;
-        let index = 0;
-        while ((index = text.indexOf(expected, index)) !== -1) {
-          count += 1;
-          index += expected.length;
-        }
-        return count >= 2 || (text.includes(expected) && !text.includes(prompt));
-      }, { marker }, { timeout: 180_000 })
+      task: () => page.waitForFunction(({ marker: expected, prompt: submittedPrompt }) => {
+        const visible = (element) => {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+        };
+        const main = document.querySelector("main, [role='main']");
+        const reply = main && Array.from(main.querySelectorAll(
+          "p, pre, code, article, [role='article'], [data-message-role], [data-message-author-role], [data-testid*='message']"
+        )).some((element) =>
+          visible(element) &&
+          (element.textContent || "").trim() === expected &&
+          (element.textContent || "").trim() !== submittedPrompt &&
+          !element.closest("nav, aside, h1, h2, h3, h4, h5, h6, input, textarea, [role='textbox'], [data-message-role='user'], [data-message-author-role='user']")
+        );
+        const processing = Array.from(document.querySelectorAll("body *")).some((element) =>
+          visible(element) && /^Processing(?:\.\.\.|…)?/i.test((element.textContent || "").trim())
+        );
+        const send = document.querySelector('[data-testid="guid-send-btn"], button[type="submit"]');
+        return Boolean(
+          reply &&
+          !processing &&
+          send &&
+          visible(send) &&
+          !send.disabled &&
+          send.getAttribute("disabled") === null &&
+          send.getAttribute("aria-disabled") !== "true"
+        );
+      }, { marker, prompt }, { timeout: 180_000 })
     });
 
     await captureBrowserScreenshot({ page, screenshotDir, runId, suffix: "success" });

@@ -563,9 +563,24 @@ function fakeWorkspaceBrowserFactory(actions = [], {
         innerText: state.prompt,
         getBoundingClientRect: () => ({ width: state.prompt ? 360 : 0, height: state.prompt ? 40 : 0 })
       };
+      const assistantReplyElement = {
+        textContent: state.prompt.replace("请只回复：", ""),
+        getBoundingClientRect: () => ({ width: 360, height: 40 }),
+        getAttribute: (name) => name === "data-message-author-role" ? "assistant" : null,
+        closest: () => null
+      };
+      const main = {
+        querySelectorAll: () => assistantReplies ? [visiblePromptElement, assistantReplyElement] : [visiblePromptElement]
+      };
+      const sendButton = {
+        disabled: false,
+        getAttribute: () => null,
+        getBoundingClientRect: () => ({ width: 36, height: 36 })
+      };
       globalThis.document = {
         body: { innerText: state.bodyText },
-        querySelectorAll: () => (state.prompt ? [visiblePromptElement] : [])
+        querySelector: (selector) => selector.includes("main") ? main : selector.includes("guid-send-btn") ? sendButton : null,
+        querySelectorAll: (selector) => selector === "body *" ? main.querySelectorAll() : state.prompt ? [visiblePromptElement] : []
       };
       globalThis.window = {
         getComputedStyle: () => ({ visibility: "visible", display: "block" })
@@ -720,7 +735,11 @@ function fakeAionUiLoginBrowserFactory(actions = []) {
   };
 }
 
-function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButtonText = "Finish setup" } = {}) {
+function fakeGuidDomBrowserFactory(actions = [], {
+  firstRun = false,
+  setupButtonText = "Finish setup",
+  replyState = "complete"
+} = {}) {
   const state = {
     setup: firstRun,
     hash: "#/home",
@@ -728,7 +747,9 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButton
     accessKey: "",
     prompt: "",
     fileName: "",
-    selected: false
+    selected: false,
+    marker: "",
+    processing: false
   };
   class FakeTextArea {
     get value() {
@@ -797,7 +818,7 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButton
   };
   const sendButton = {
     get disabled() {
-      return !state.selected || !state.prompt;
+      return !state.selected || !state.prompt || state.processing;
     },
     getAttribute(name) {
       if (name === "disabled" && this.disabled) return "";
@@ -807,10 +828,41 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButton
     click() {
       actions.push(["domClick", "guid-send-btn"]);
       if (this.disabled) return;
-      state.bodyText += `\n${state.prompt}\nassistant:${state.prompt.match(/OPL_BROWSER_E2E_[\w-]+/)?.[0] || "ok"}`;
+      state.marker = state.prompt.match(/OPL_BROWSER_E2E_[\w-]+/)?.[0] || "ok";
+      state.processing = replyState === "processing";
+      state.bodyText += state.processing
+        ? `\n${state.marker}\n${state.marker}\n${state.prompt}\nProcessing`
+        : `\n${state.prompt}\n${state.marker}`;
     },
     getBoundingClientRect() {
       return { width: 36, height: 36, top: 360, bottom: 396, left: 660, right: 696 };
+    }
+  };
+  const visibleElement = (text, attributes = {}, excludedBy = "") => ({
+    textContent: text,
+    innerText: text,
+    getAttribute(name) {
+      return attributes[name] || null;
+    },
+    closest(selector) {
+      return excludedBy && selector.includes(excludedBy) ? this : null;
+    },
+    getBoundingClientRect() {
+      return { width: 240, height: 40, top: 180, bottom: 220, left: 200, right: 440 };
+    }
+  });
+  const main = {
+    getBoundingClientRect() {
+      return { width: 800, height: 600, top: 80, bottom: 680, left: 180, right: 980 };
+    },
+    querySelectorAll() {
+      return [
+        visibleElement(state.prompt, { "data-message-author-role": "user" }, "[data-message-author-role='user']"),
+        ...(state.processing ? [visibleElement("Processing")] : []),
+        ...(!state.processing && state.marker
+          ? [visibleElement(state.marker, { "data-message-author-role": "assistant" })]
+          : [])
+      ];
     }
   };
   const visibleStyle = { visibility: "visible", display: "block" };
@@ -852,6 +904,7 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButton
       querySelector(selector) {
         actions.push(["querySelector", selector]);
         if (state.setup) return null;
+        if (selector.includes("main") || selector.includes("[role='main']")) return main;
         if (selector.includes('input[type="file"]')) return { getBoundingClientRect: () => ({ width: 1, height: 1 }) };
         if (selector.includes("preset-pill-mas")) return card;
         if (selector.includes("guid-input")) return textarea;
@@ -864,6 +917,14 @@ function fakeGuidDomBrowserFactory(actions = [], { firstRun = false, setupButton
           if (selector.includes("input") || selector.includes("textarea")) return [accessInput];
           if (selector.includes("button")) return [finishButton];
           return [];
+        }
+        if (selector.includes("main") || selector.includes("[role='main']")) return [main];
+        if (selector === "body *") {
+          return [
+            visibleElement(state.marker, {}, "h1"),
+            visibleElement(state.marker, {}, "aside"),
+            ...main.querySelectorAll()
+          ];
         }
         if (selector.includes("textarea") || selector.includes("guid-input")) return [textarea];
         if (selector.includes("button") || selector.includes("guid-send-btn")) return [sendButton];
@@ -1595,6 +1656,22 @@ test("production verifier uses one-person-lab-app guid DOM contract for assistan
     "workspace_browser_message_sent:true",
     "workspace_browser_reply_seen:true"
   ]);
+});
+
+test("production verifier requires a completed visible assistant reply in the main conversation", async () => {
+  const checks = [];
+
+  await assert.rejects(
+    verifyWorkspaceBrowserUi({
+      workspaceUrl: "https://workspace.medopl.cn/w/ws-browser001/?token=share_browser",
+      runId: "browser-run",
+      checks,
+      browserFactory: fakeGuidDomBrowserFactory([], { replyState: "processing" }),
+      screenshotDir: ""
+    }),
+    /workspace_browser_reply_seen_failed/
+  );
+  assert.ok(checks.some((check) => check.name === "workspace_browser_reply_seen" && check.ok === false));
 });
 
 test("production verifier completes first-run model access before file upload", async () => {

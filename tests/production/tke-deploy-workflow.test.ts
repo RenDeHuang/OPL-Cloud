@@ -127,9 +127,14 @@ test("production execution verifier runs inside TKE and matches the deployment c
   const runs = serializedRuns(currentJob);
 
   assert.equal(liveJob.outputs.workspace_id, "${{ steps.verify.outputs.workspace_id }}");
+  assert.equal(liveJob.outputs.workspace_url, "${{ steps.verify.outputs.workspace_url }}");
   assert.match(liveRuns, /production-verifier-result\.json/);
   assert.match(liveRuns, /A-Za-z0-9/);
   assert.match(liveRuns, /workspace_id=.*payload\.workspaceId/);
+  assert.match(liveRuns, /workspace_url=.*payload\.url/);
+  assert.match(liveRuns, /protocol !== "https:"/);
+  assert.match(liveRuns, /pathname\.startsWith\("\/w\/"\)/);
+  assert.match(liveRuns, /encodeURIComponent/);
   assert.match(runs, /port-forward service\/opl-cloud-control-plane 18787:8787/);
   assert.match(runs, /port-forward service\/opl-cloud-ledger 18081:8081/);
   assert.match(runs, /port-forward service\/opl-cloud-fabric 18082:8082/);
