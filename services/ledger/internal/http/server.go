@@ -74,6 +74,18 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusCreated, result)
 	})
+	mux.HandleFunc("GET /ledger/holds/{id}", func(w http.ResponseWriter, r *http.Request) {
+		result, err := store.Hold(r.Context(), r.PathValue("id"))
+		if errors.Is(err, ledger.ErrHoldNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "hold query failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("POST /ledger/holds/release", func(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 		if idempotencyKey == "" {

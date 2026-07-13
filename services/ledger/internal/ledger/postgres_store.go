@@ -218,6 +218,21 @@ func (s *PostgresStore) CreateHold(ctx context.Context, input HoldInput) (HoldRe
 	return result, tx.Commit()
 }
 
+func (s *PostgresStore) Hold(ctx context.Context, holdID string) (HoldResult, error) {
+	row, err := s.client.Hold.Get(ctx, holdID)
+	if ledgerent.IsNotFound(err) {
+		return HoldResult{}, ErrHoldNotFound
+	}
+	if err != nil {
+		return HoldResult{}, err
+	}
+	wallet, err := s.client.Wallet.Get(ctx, row.AccountID)
+	if err != nil {
+		return HoldResult{}, err
+	}
+	return holdResultFromEnt(row, walletFromEnt(wallet)), nil
+}
+
 func (s *PostgresStore) ActivateHold(ctx context.Context, input HoldActivationInput) (HoldActivationResult, error) {
 	if input.AccountID == "" || input.ResourceType == "" || input.ResourceID == "" || input.HoldID == "" || input.Currency == "" || input.ProviderEvidenceRef == "" {
 		return HoldActivationResult{}, ErrInvalidHoldInput

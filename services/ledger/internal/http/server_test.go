@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -143,6 +144,50 @@ func TestHoldAndReceiptHTTP(t *testing.T) {
 	server.ServeHTTP(legacyRec, legacy)
 	if legacyRec.Code != http.StatusNotFound {
 		t.Fatalf("legacy evidence route status = %d, want %d", legacyRec.Code, http.StatusNotFound)
+	}
+}
+
+func TestHoldTruthHTTPIsAuthenticatedExactAndNotFound(t *testing.T) {
+	store := ledger.NewMemoryStore()
+	ctx := context.Background()
+	if _, err := store.ManualTopUp(ctx, ledger.ManualTopUpInput{AccountID: "acct-hold-truth", AmountCents: 3000, Currency: "CNY", OperatorUserID: "usr-admin", IdempotencyKey: "http-hold-truth-topup"}); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := store.CreateHold(ctx, ledger.HoldInput{AccountID: "acct-hold-truth", WorkspaceID: "ws-hold-truth", ResourceType: "compute", ResourceID: "compute-hold-truth", AmountCents: 2000, ActivationAmountCents: 100, Currency: "CNY", IdempotencyKey: "http-hold-truth-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivateHold(ctx, ledger.HoldActivationInput{AccountID: hold.AccountID, WorkspaceID: hold.WorkspaceID, ResourceType: hold.ResourceType, ResourceID: hold.ResourceID, HoldID: hold.ID, Currency: hold.Currency, ProviderEvidenceRef: "fabric:hold-truth", IdempotencyKey: "http-hold-truth-activate"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReleaseHold(ctx, ledger.HoldReleaseInput{AccountID: hold.AccountID, WorkspaceID: hold.WorkspaceID, ResourceType: hold.ResourceType, ResourceID: hold.ResourceID, HoldID: hold.ID, Currency: hold.Currency, Reason: "destroy_compute", IdempotencyKey: "http-hold-truth-release"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, "internal-secret")
+
+	unauthorized := httptest.NewRecorder()
+	server.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/ledger/holds/"+hold.ID, nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, testRequest(http.MethodGet, "/ledger/holds/"+hold.ID, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var got ledger.HoldResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != hold.ID || got.AccountID != hold.AccountID || got.WorkspaceID != hold.WorkspaceID || got.ResourceType != hold.ResourceType ||
+		got.ResourceID != hold.ResourceID || got.Status != "released" || got.OriginalCents != 2000 || got.RemainingCents != 0 ||
+		got.ConsumedCents != 100 || got.ReleasedCents != 1900 {
+		t.Fatalf("hold = %#v", got)
+	}
+	missing := httptest.NewRecorder()
+	server.ServeHTTP(missing, testRequest(http.MethodGet, "/ledger/holds/hold-missing", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing status=%d body=%s", missing.Code, missing.Body.String())
 	}
 }
 

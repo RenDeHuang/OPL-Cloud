@@ -211,6 +211,16 @@ func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult
 	return result, nil
 }
 
+func (s *MemoryStore) Hold(_ context.Context, holdID string) (HoldResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hold, ok := s.holds[holdID]
+	if !ok {
+		return HoldResult{}, ErrHoldNotFound
+	}
+	return hold, nil
+}
+
 func (s *MemoryStore) ActivateHold(_ context.Context, input HoldActivationInput) (HoldActivationResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

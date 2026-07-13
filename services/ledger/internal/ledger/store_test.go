@@ -521,6 +521,33 @@ func TestReleaseHoldReducesFrozenWithoutDebitingBalance(t *testing.T) {
 	}
 }
 
+func TestMemoryHoldReturnsExactLifecycleTruth(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	if _, err := store.ManualTopUp(ctx, ManualTopUpInput{AccountID: "acct-hold-truth", AmountCents: 3000, Currency: "CNY", OperatorUserID: "usr-admin", IdempotencyKey: "hold-truth-topup"}); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := store.CreateHold(ctx, HoldInput{AccountID: "acct-hold-truth", WorkspaceID: "ws-hold-truth", ResourceType: "compute", ResourceID: "compute-hold-truth", AmountCents: 2000, ActivationAmountCents: 100, Currency: "CNY", IdempotencyKey: "hold-truth-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivateHold(ctx, HoldActivationInput{AccountID: hold.AccountID, WorkspaceID: hold.WorkspaceID, ResourceType: hold.ResourceType, ResourceID: hold.ResourceID, HoldID: hold.ID, Currency: hold.Currency, ProviderEvidenceRef: "fabric:hold-truth", IdempotencyKey: "hold-truth-activate"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: hold.AccountID, WorkspaceID: hold.WorkspaceID, ResourceType: hold.ResourceType, ResourceID: hold.ResourceID, HoldID: hold.ID, Currency: hold.Currency, Reason: "destroy_compute", IdempotencyKey: "hold-truth-release"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Hold(ctx, hold.ID)
+	if err != nil || got.ID != hold.ID || got.AccountID != hold.AccountID || got.WorkspaceID != hold.WorkspaceID ||
+		got.ResourceType != hold.ResourceType || got.ResourceID != hold.ResourceID || got.Status != "released" ||
+		got.OriginalCents != 2000 || got.RemainingCents != 0 || got.ConsumedCents != 100 || got.ReleasedCents != 1900 {
+		t.Fatalf("hold = %#v err=%v", got, err)
+	}
+	if _, err := store.Hold(ctx, "hold-missing"); !errors.Is(err, ErrHoldNotFound) {
+		t.Fatalf("missing hold error = %v", err)
+	}
+}
+
 func TestHoldCanBeAccountResourceScopedBeforeWorkspaceExists(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()

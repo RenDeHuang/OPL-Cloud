@@ -136,6 +136,38 @@ func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var _ Store = NewPostgresStore(db)
 }
 
+func TestPostgresHoldReturnsExactLifecycleTruth(t *testing.T) {
+	db := openLedgerTestPostgres(t)
+	store := NewPostgresStore(db)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := store.Install(ctx); err != nil {
+		t.Fatal(err)
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	accountID := "acct-hold-truth-" + suffix
+	workspaceID := "ws-hold-truth-" + suffix
+	resourceID := "compute-hold-truth-" + suffix
+	if _, err := store.ManualTopUp(ctx, ManualTopUpInput{AccountID: accountID, AmountCents: 3000, Currency: "CNY", OperatorUserID: "usr-admin", IdempotencyKey: suffix + "-topup"}); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := store.CreateHold(ctx, HoldInput{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: resourceID, AmountCents: 2000, ActivationAmountCents: 100, Currency: "CNY", IdempotencyKey: suffix + "-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ActivateHold(ctx, HoldActivationInput{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: resourceID, HoldID: hold.ID, Currency: "CNY", ProviderEvidenceRef: "fabric:hold-truth", IdempotencyKey: suffix + "-activate"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: resourceID, HoldID: hold.ID, Currency: "CNY", Reason: "destroy_compute", IdempotencyKey: suffix + "-release"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Hold(ctx, hold.ID)
+	if err != nil || got.AccountID != accountID || got.WorkspaceID != workspaceID || got.ResourceType != "compute" || got.ResourceID != resourceID ||
+		got.Status != "released" || got.OriginalCents != 2000 || got.RemainingCents != 0 || got.ConsumedCents != 100 || got.ReleasedCents != 1900 {
+		t.Fatalf("hold = %#v err=%v", got, err)
+	}
+}
+
 func TestPostgresConcurrentReviewPolicyIdempotency(t *testing.T) {
 	db := openLedgerTestPostgres(t)
 	store := NewPostgresStore(db)
