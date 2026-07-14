@@ -25,10 +25,11 @@ function json(payload, status = 200, headers = {}) {
   });
 }
 
-function monthlyChainFixture({ failWorkspaceUrl = false } = {}) {
+function monthlyChainFixture({ failWorkspaceUrl = false, runtimeReadyAfter = 1 } = {}) {
   const initialBalance = 500_000_000;
   const calls = [];
   const keys = new Map();
+  let runtimeStatusCalls = 0;
   const state = {
     compute: null,
     storage: null,
@@ -101,7 +102,11 @@ function monthlyChainFixture({ failWorkspaceUrl = false } = {}) {
       state.workspace ||= { id: "workspace-alpha", accountId: "acct-alpha", currentComputeAllocationId: "compute-alpha", currentAttachmentId: "attachment-alpha", storageId: "storage-alpha", state: "running", url: "https://workspace.medopl.cn/w/workspace-alpha/?token=share-secret" };
       return json(state.workspace, 201);
     }
-    if (url.pathname === "/api/workspaces/runtime-status") return json({ workspaceId: "workspace-alpha", status: "running", ready: true, checks: [{ name: "runtime", ok: true }] });
+    if (url.pathname === "/api/workspaces/runtime-status") {
+      runtimeStatusCalls += 1;
+      const ready = runtimeStatusCalls >= runtimeReadyAfter;
+      return json({ workspaceId: "workspace-alpha", status: ready ? "running" : "unready", ready, checks: [{ name: "runtime", ok: ready }] });
+    }
     if (url.pathname === "/api/billing/receipts/receipt-compute") {
       return json({ receiptId: "receipt-compute", type: "billing.resource_purchased.v1", status: "completed", accountId: "acct-alpha", cost: { chargeUsdMicros: 50_000_000, sub2apiRedeemCode: "opl:production:compute-charge:v1" } });
     }
@@ -153,7 +158,7 @@ test("production verifier refuses all requests without explicit paid confirmatio
 });
 
 test("production verifier proves exact monthly charges, receipts, workspace access and cleanup", async () => {
-  const fixture = monthlyChainFixture();
+  const fixture = monthlyChainFixture({ runtimeReadyAfter: 2 });
   const result = await verifyProductionChain({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
@@ -162,7 +167,7 @@ test("production verifier proves exact monthly charges, receipts, workspace acce
     slot: "01",
     packageId: "basic",
     paidConfirmation: PAID_CONFIRMATION,
-    workspaceUrlAttempts: 1,
+    workspaceUrlAttempts: 2,
     retryDelayMs: 0,
     fetchImpl: fixture.fetchImpl
   });
@@ -185,6 +190,7 @@ test("production verifier proves exact monthly charges, receipts, workspace acce
   assert.ok(storageCreates.length >= 2);
   assert.equal(new Set(computeCreates.map((call) => call.key)).size, 1);
   assert.equal(new Set(storageCreates.map((call) => call.key)).size, 1);
+  assert.equal(fixture.calls.filter((call) => call.path === "/api/workspaces/runtime-status").length, 2);
 });
 
 test("production verifier cleans only resources created by a failed run", async () => {

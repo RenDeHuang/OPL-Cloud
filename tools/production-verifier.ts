@@ -151,6 +151,10 @@ function activeStorage(row) {
   return row?.billingStatus === "active" && ["available", "ready"].includes(row?.status) && row?.id;
 }
 
+function activeRuntime(row) {
+  return row?.ready === true && ["running", "ready", "available", "active"].includes(row?.status);
+}
+
 async function waitForResource({ attempts, retryDelayMs, current, ready, refresh }) {
   let resource = current;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -388,11 +392,12 @@ export async function verifyProductionChain({
     manifest.workspaceUrl = workspace.url;
     await persist();
 
-    const runtime = (await requestJson({
+    const runtimeStatus = async () => (await requestJson({
       fetchImpl, origin: normalizedOrigin, auth, path: "/api/workspaces/runtime-status", method: "POST",
       idempotencyKey: productionVerificationMutationKey(effectiveRunId, slot, "runtime-status"), body: { workspaceId: workspace.id }
     })).payload;
-    addCheck(checks, "workspace_runtime_ready", runtime?.ready === true && ["running", "ready", "available", "active"].includes(runtime?.status));
+    const runtime = await waitForResource({ attempts: workspaceUrlAttempts, retryDelayMs, current: await runtimeStatus(), ready: activeRuntime, refresh: runtimeStatus });
+    addCheck(checks, "workspace_runtime_ready", activeRuntime(runtime));
     const workspaceAccess = await requestWorkspaceUrl({ fetchImpl, url: workspace.url, attempts: workspaceUrlAttempts, retryDelayMs });
     addCheck(checks, "workspace_url_ready", workspaceAccess.status >= 200 && workspaceAccess.status < 300, { attempts: workspaceAccess.attempts });
     if (browserE2E) {
