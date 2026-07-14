@@ -9,7 +9,8 @@ OPL Console is the commercial control plane. The current resource model is:
 - `StorageVolume`: account-owned retained PVC/cloud storage.
 - `StorageAttachment`: a storage volume mounted to a ComputeAllocation at a mount path such as `/data`.
 - `Workspace`: URL token and WebUI entry composed from an attached compute allocation/storage pair.
-- `Wallet` and `Ledger`: billing records reference `computeAllocationId`, `computePoolId`, `storageVolumeId`, `storageAttachmentId`, and `workspaceId`.
+- `Sub2API`: the external owner of spendable USD balance, API keys, routing, and request usage.
+- `Ledger`: append-only receipts and reconciliation evidence; it does not own spendable balance.
 
 Workspace is not the only resource body. It is the access entry.
 
@@ -20,7 +21,7 @@ OPL Console has two supported operator modes:
 - `local-to-staging`: local Console API/UI connected to staging PostgreSQL and staging TKE; can create real Tencent resources after explicit operator confirmation.
 - `cloud-staging`: deployed Console in TKE using the same staging PostgreSQL and resource pool; validates rollout, ingress, TLS, image, and secret wiring.
 
-The code path is shared. The difference is environment and ingress. `local-to-staging` and `cloud-staging` must use the same `DATABASE_URL` so accounts, balances, resources, ledger rows, and Workspace URLs are one system.
+The code path is shared. The difference is environment and ingress. `local-to-staging` and `cloud-staging` use the same durable service databases and Sub2API account mapping so accounts, monthly entitlements, resources, receipt references, and Workspace URLs describe one system.
 
 ## Local To Staging
 
@@ -48,16 +49,15 @@ After rollout, run the public verifier against the deployed Console. Both Consol
 Expected chain:
 
 1. Login.
-2. Verify or top up wallet balance.
-3. Create compute allocation from the selected package pool.
-4. Create storage.
-5. Attach storage to compute.
-6. Create Workspace URL.
-7. Poll runtime status for the dedicated CVM node, Deployment, PVC, Service, Ingress, and Endpoints.
+2. Read the mapped user's live Sub2API USD balance.
+3. Purchase Basic compute and verify the exact `50000000` USD-micro charge.
+4. Purchase 10 GB storage and verify the exact `2571429` USD-micro charge.
+5. Verify both monthly entitlements and Ledger receipts.
+6. Attach storage to compute.
+7. Create the Workspace URL and poll runtime readiness.
 8. Open the public Workspace URL and receive HTTP 200 from one-person-lab-app.
-9. Record sub2api/request usage.
-10. Verify wallet, ledger, usage logs, and runtime evidence.
-11. Detach and destroy resources.
+9. Verify the exact total balance delta, stable redeem codes, and provider facts.
+10. Detach and destroy only the resources created by the run; verify exact cleanup.
 
 Run after staging is configured:
 
@@ -89,6 +89,10 @@ unit/contract tests pass
 - `TENCENT_DEPLOY_KUBECONFIG_REF`: kubeconfig path.
 - `OPL_TENCENT_PROVISIONER_BIN`: local Go SDK provisioner binary used for Tencent Cloud mutations.
 - `DATABASE_URL`: required for durable shared staging state.
+- `OPL_SUB2API_BASE_URL`: Sub2API management origin.
+- `OPL_SUB2API_ADMIN_EMAIL` and `OPL_SUB2API_ADMIN_PASSWORD`: secret-backed management credentials.
+- `OPL_SUB2API_SUPPORTED_VERSIONS`: versions approved by the Gateway update gate.
+- `OPL_MONTHLY_BILLING_WORKER_ENABLED`: enables renewal and expiration processing.
 
 ## Route Contract Rules
 
@@ -100,11 +104,13 @@ unit/contract tests pass
 
 ## Compute Storage Billing Semantics
 
-- Creating a ComputeAllocation starts compute billing and reserves a compute hold.
-- Creating storage starts storage billing and reserves a storage hold.
-- Attaching storage does not create a new priced resource; it records the mount relationship.
-- Workspace entry creates a URL token for an existing attachment.
-- Stopping compute is not a commercial owner action in the current model. A dedicated CVM remains billable until the ComputeAllocation is destroyed.
+- Creating a ComputeAllocation prepares Fabric capacity, charges one calendar month through Sub2API, then activates the entitlement.
+- Creating storage follows the same prepare-charge-activate order and accepts only positive 10 GB blocks.
+- Attaching storage does not create a priced resource; it records the mount relationship.
+- Workspace entry creates a URL token for an existing active attachment.
+- Renewal extends from `paidThrough` with the original integer price snapshot and stable redeem code.
+- Expired compute is destroyed. Expired storage is retained and inaccessible until explicitly reactivated.
+- Fabric owns provider state, Control Plane owns entitlement, Sub2API owns balance, and Ledger owns receipts.
 
 ## Pre-Commit Checklist
 

@@ -1,14 +1,14 @@
 {
   "schemaVersion": 5,
   "owner": "OPL Ledger",
-  "purpose": "General execution evidence receipts and current control-plane lifecycle receipts.",
+  "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
   "state": "current",
   "machineBoundary": "General receipt states, identity, provenance, artifact, review result, review policy and gate, continuation, idempotency, and current receipt API shape.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "currentScope": "general execution receipt v1, Artifact Manifests, Review Results, versioned Review Policies and gates, continuation, and current Workspace lifecycle receipts",
+  "currentScope": "general execution receipt v1, monthly resource billing receipts, Artifact Manifests, Review Results, versioned Review Policies and gates, continuation, and current Workspace lifecycle receipts",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
@@ -20,6 +20,11 @@
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
     "workspace.access_token_deleted",
+    "billing.resource_purchased.v1",
+    "billing.resource_renewed.v1",
+    "billing.resource_expired.v1",
+    "billing.charge_review_required.v1",
+    "billing.reconciliation.v1",
     "artifact.manifest.v1",
     "review.result.v1",
     "execution.receipt.v1"
@@ -203,6 +208,34 @@
       "kubeconfig"
     ]
   },
+  "monthlyBillingReceiptV1": {
+    "types": [
+      "billing.resource_purchased.v1",
+      "billing.resource_renewed.v1",
+      "billing.resource_expired.v1",
+      "billing.charge_review_required.v1",
+      "billing.reconciliation.v1"
+    ],
+    "requiredCostFields": [
+      "pricingVersion",
+      "monthlyPriceCnyCents",
+      "chargeUsdMicros",
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "periodStart",
+      "paidThrough",
+      "resourceType",
+      "resourceId"
+    ],
+    "writeProtocol": "append_first_with_idempotency",
+    "correctionProtocol": "append_superseding_receipt",
+    "forbiddenContent": [
+      "apiKey",
+      "adminToken",
+      "password",
+      "rawSub2apiResponse"
+    ]
+  },
   "workspaceCreateReceipt": {
     "plan": [
       "workspaceName",
@@ -224,10 +257,9 @@
       "tokenStatus"
     ],
     "billingRefs": [
-      "compute_hold",
-      "storage_hold",
-      "compute_debit",
-      "storage_debit"
+      "billing.resource_purchased.v1",
+      "sub2apiRedeemCode",
+      "paidThrough"
     ],
     "continuation": {
       "action": "open_workspace_url",

@@ -24,6 +24,7 @@ func baseFields() []ent.Field {
 func accountFields() []ent.Field {
 	return append(baseFields(),
 		field.String("owner_user_id").Default(""),
+		field.Int64("sub2api_user_id").Default(0),
 		field.String("name").Default(""),
 		field.String("status").Default("active"),
 	)
@@ -81,33 +82,6 @@ func authAttemptFields() []ent.Field {
 	)
 }
 
-func pricingCatalogFields() []ent.Field {
-	return append(baseFields(),
-		field.String("version").NotEmpty().Unique(),
-		field.String("currency").Default("CNY"),
-		field.Int("hold_days").Default(7),
-		field.String("effective_from").Default(""),
-		field.String("status").Default("current"),
-	)
-}
-
-func pricingItemFields() []ent.Field {
-	return append(baseFields(),
-		field.String("catalog_version").NotEmpty(),
-		field.String("package_id").NotEmpty(),
-		field.String("resource_type").NotEmpty(),
-		field.String("unit").NotEmpty(),
-		field.Float("unit_price").Default(0),
-		field.Int64("unit_price_cents").Default(0),
-		field.Bool("available").Default(true),
-		field.String("name").Default(""),
-		field.String("server").Default(""),
-		field.Float("cpu").Default(0),
-		field.Float("memory_gb").Default(0),
-		field.Float("disk_gb").Default(0),
-	)
-}
-
 func computeAllocationFields() []ent.Field {
 	return append(baseFields(),
 		field.String("account_id").NotEmpty(),
@@ -126,30 +100,17 @@ func computeAllocationFields() []ent.Field {
 		field.String("last_provider_sync_error").Default(""),
 		field.String("external_deleted_at").Default(""),
 		field.String("billing_status").Default(""),
-		field.String("hold_id").Default(""),
-		field.String("hold_release_id").Default(""),
-		field.String("settlement_id").Default(""),
-		field.String("ledger_entry_id").Default(""),
-		field.String("wallet_transaction_id").Default(""),
 		field.String("pricing_version").Default(""),
-		field.String("usage_period_end").Default(""),
+		field.String("billing_operation_id").Default(""),
+		field.String("billing_state_json").Default("{}"),
 		field.String("evidence_id").Default(""),
 		field.String("cvm_instance_id").Default(""),
 		field.String("instance_id").Default(""),
 		field.String("node_name").Default(""),
 		field.String("machine_name").Default(""),
-		field.Int64("hold_amount_cents").Default(0),
-		field.Float("hold_amount").Default(0),
 		field.Float("cpu").Default(0),
 		field.Float("memory_gb").Default(0),
 		field.Float("disk_gb").Default(0),
-		field.String("price_snapshot_package_id").Default(""),
-		field.String("price_snapshot_resource_type").Default(""),
-		field.String("price_snapshot_currency").Default(""),
-		field.String("price_snapshot_source").Default(""),
-		field.String("price_snapshot_sku").Default(""),
-		field.Int64("price_snapshot_unit_price_cents").Default(0),
-		field.Float("price_snapshot_compute_hourly").Default(0),
 	)
 }
 
@@ -171,23 +132,11 @@ func storageVolumeFields() []ent.Field {
 		field.String("last_provider_sync_error").Default(""),
 		field.String("external_deleted_at").Default(""),
 		field.String("billing_status").Default(""),
-		field.String("hold_id").Default(""),
-		field.String("hold_release_id").Default(""),
-		field.String("settlement_id").Default(""),
-		field.String("ledger_entry_id").Default(""),
-		field.String("wallet_transaction_id").Default(""),
 		field.String("pricing_version").Default(""),
-		field.String("usage_period_end").Default(""),
+		field.String("billing_operation_id").Default(""),
+		field.String("billing_state_json").Default("{}"),
 		field.String("mount_path").Default(""),
-		field.Int64("hold_amount_cents").Default(0),
-		field.Float("hold_amount").Default(0),
 		field.Float("size_gb").Default(0),
-		field.String("price_snapshot_resource_type").Default(""),
-		field.String("price_snapshot_currency").Default(""),
-		field.String("price_snapshot_source").Default(""),
-		field.Int64("price_snapshot_unit_price_cents").Default(0),
-		field.Float("price_snapshot_storage_gb_month").Default(0),
-		field.Float("price_snapshot_size_gb").Default(0),
 	)
 }
 
@@ -244,89 +193,6 @@ func workspaceBackupFields() []ent.Field {
 		field.String("request_hash").NotEmpty(),
 		field.String("manifest_json").Default("{}"),
 		field.String("restored_storage_id").Default(""),
-	)
-}
-
-func walletProjectionFields() []ent.Field {
-	return append(baseFields(),
-		field.String("account_id").NotEmpty(),
-		field.String("currency").Default("CNY"),
-		field.Int64("balance_cents").Default(0),
-		field.Int64("frozen_cents").Default(0),
-		field.Int64("available_cents").Default(0),
-		field.Int64("total_spent_cents").Default(0),
-		field.Float("balance").Default(0),
-		field.Float("frozen").Default(0),
-		field.Float("available").Default(0),
-		field.Float("total_spent").Default(0),
-		field.Float("total_recharged").Default(0),
-	)
-}
-
-func ledgerProjectionFields() []ent.Field {
-	return append(baseFields(),
-		field.String("account_id").NotEmpty(),
-		field.String("type").Default(""),
-		field.String("resource_id").Default(""),
-		field.String("resource_kind").Default(""),
-		field.String("workspace_id").Default(""),
-		field.String("compute_allocation_id").Default(""),
-		field.String("storage_id").Default(""),
-		field.String("settlement_id").Default(""),
-		field.String("pricing_version").Default(""),
-		field.String("usage_period_start").Default(""),
-		field.String("usage_period_end").Default(""),
-		field.String("unit").Default(""),
-		field.String("provider_cost_evidence_ref").Default(""),
-		field.String("currency").Default("CNY"),
-		field.Int64("amount_cents").Default(0),
-		field.Float("quantity").Default(0),
-		field.String("direction").Default(""),
-		field.String("price_snapshot_package_id").Default(""),
-		field.String("price_snapshot_resource_type").Default(""),
-		field.String("price_snapshot_currency").Default(""),
-		field.String("price_snapshot_source").Default(""),
-		field.String("price_snapshot_sku").Default(""),
-		field.Int64("price_snapshot_unit_price_cents").Default(0),
-		field.Float("price_snapshot_compute_hourly").Default(0),
-		field.Float("price_snapshot_storage_gb_month").Default(0),
-		field.Float("price_snapshot_size_gb").Default(0),
-	)
-}
-
-func walletTransactionProjectionFields() []ent.Field {
-	return append(baseFields(),
-		field.String("account_id").NotEmpty(),
-		field.String("type").Default(""),
-		field.String("ledger_entry_id").Default(""),
-		field.String("resource_id").Default(""),
-		field.String("workspace_id").Default(""),
-		field.String("compute_allocation_id").Default(""),
-		field.String("storage_id").Default(""),
-		field.String("settlement_id").Default(""),
-		field.String("currency").Default("CNY"),
-		field.Int64("amount_cents").Default(0),
-		field.Int64("balance_cents").Default(0),
-		field.Int64("frozen_cents").Default(0),
-		field.Int64("available_cents").Default(0),
-		field.Int64("total_spent_cents").Default(0),
-		field.String("metadata_workspace_id").Default(""),
-		field.String("metadata_resource_id").Default(""),
-		field.String("metadata_settlement_id").Default(""),
-		field.String("metadata_ledger_entry_id").Default(""),
-		field.String("metadata_compute_allocation_id").Default(""),
-		field.String("metadata_storage_id").Default(""),
-	)
-}
-
-func manualTopupProjectionFields() []ent.Field {
-	return append(baseFields(),
-		field.String("account_id").NotEmpty(),
-		field.String("operator_user_id").Default(""),
-		field.String("currency").Default("CNY"),
-		field.String("source").Default("manual"),
-		field.String("reason").Default(""),
-		field.Int64("amount_cents").Default(0),
 	)
 }
 
@@ -497,10 +363,6 @@ func (User) Annotations() []schema.Annotation         { return table("control_pl
 func (Membership) Annotations() []schema.Annotation   { return table("control_plane_memberships") }
 func (Session) Annotations() []schema.Annotation      { return table("control_plane_sessions") }
 func (AuthAttempt) Annotations() []schema.Annotation  { return table("control_plane_auth_attempts") }
-func (PricingCatalog) Annotations() []schema.Annotation {
-	return table("control_plane_pricing_catalogs")
-}
-func (PricingItem) Annotations() []schema.Annotation { return table("control_plane_pricing_items") }
 func (ComputeAllocation) Annotations() []schema.Annotation {
 	return table("control_plane_compute_allocations")
 }
@@ -509,18 +371,6 @@ func (StorageAttachment) Annotations() []schema.Annotation {
 	return table("control_plane_storage_attachments")
 }
 func (Workspace) Annotations() []schema.Annotation { return table("control_plane_workspaces") }
-func (WalletProjection) Annotations() []schema.Annotation {
-	return table("control_plane_wallet_projections")
-}
-func (LedgerProjection) Annotations() []schema.Annotation {
-	return table("control_plane_ledger_projections")
-}
-func (WalletTransactionProjection) Annotations() []schema.Annotation {
-	return table("control_plane_wallet_transaction_projections")
-}
-func (ManualTopupProjection) Annotations() []schema.Annotation {
-	return table("control_plane_manual_topup_projections")
-}
 func (BillingReconciliation) Annotations() []schema.Annotation {
 	return table("control_plane_billing_reconciliation")
 }

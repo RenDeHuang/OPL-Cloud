@@ -3,11 +3,14 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 )
+
+const maxJSONSafeInteger = float64(1<<53 - 1)
 
 func (app *controlPlaneServer) createUser(input map[string]any) (map[string]any, error) {
 	role := stringField(input, "role", "owner")
@@ -34,11 +37,39 @@ func (app *controlPlaneServer) createUser(input map[string]any) (map[string]any,
 		return nil, err
 	}
 	accountID := stringField(input, "accountId", "acct-admin")
-	if err := app.ensureAccount(context.Background(), accountID); err != nil {
+	sub2APIUserID, ok := positiveIntegerField(input, "sub2apiUserId")
+	if !ok {
+		return nil, errMonthlyAccountUnmapped
+	}
+	if err := app.ensureMappedAccount(context.Background(), accountID, sub2APIUserID); err != nil {
 		return nil, err
 	}
 	user := map[string]any{"id": id, "email": email, "accountId": accountID, "role": role, "status": "active", "passwordHash": passwordHash}
 	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
+}
+
+func positiveIntegerField(input map[string]any, key string) (int64, bool) {
+	value := numberField(input, key, 0)
+	return int64(value), value > 0 && value <= maxJSONSafeInteger && value == math.Trunc(value)
+}
+
+func (app *controlPlaneServer) ensureMappedAccount(ctx context.Context, accountID string, sub2APIUserID int64) error {
+	accounts, err := app.tables.ListAccounts(ctx)
+	if err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		if stringValue(account["id"]) != accountID {
+			continue
+		}
+		existing := int64(numberField(account, "sub2apiUserId", 0))
+		if existing != 0 && existing != sub2APIUserID {
+			return errors.New("sub2api_account_mapping_conflict")
+		}
+		account["sub2apiUserId"] = sub2APIUserID
+		return app.tables.SaveAccount(ctx, account)
+	}
+	return app.tables.SaveAccount(ctx, map[string]any{"id": accountID, "status": "active", "sub2apiUserId": sub2APIUserID})
 }
 
 func (app *controlPlaneServer) ensureAccount(ctx context.Context, accountID string) error {
@@ -155,9 +186,14 @@ func (app *controlPlaneServer) dropLegacyOwnerUser() error {
 }
 
 func (app *controlPlaneServer) upsertBootstrapUser(seed map[string]any) (map[string]any, error) {
-	if err := app.ensureAccount(context.Background(), stringValue(seed["accountId"])); err != nil {
+	sub2APIUserID, ok := positiveIntegerField(seed, "sub2apiUserId")
+	if !ok {
+		return nil, errMonthlyAccountUnmapped
+	}
+	if err := app.ensureMappedAccount(context.Background(), stringValue(seed["accountId"]), sub2APIUserID); err != nil {
 		return nil, err
 	}
+	delete(seed, "sub2apiUserId")
 	id := stringValue(seed["id"])
 	users, err := app.tables.ListUsers(context.Background(), true)
 	if err != nil {

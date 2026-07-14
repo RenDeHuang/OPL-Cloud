@@ -9,35 +9,11 @@ import (
 // EvidenceReceipt is the predicate function for evidencereceipt builders.
 type EvidenceReceipt func(*sql.Selector)
 
-// Hold is the predicate function for hold builders.
-type Hold func(*sql.Selector)
-
-// HoldActivation is the predicate function for holdactivation builders.
-type HoldActivation func(*sql.Selector)
-
-// HoldRelease is the predicate function for holdrelease builders.
-type HoldRelease func(*sql.Selector)
-
 // IdempotencyKey is the predicate function for idempotencykey builders.
 type IdempotencyKey func(*sql.Selector)
-
-// LedgerEntry is the predicate function for ledgerentry builders.
-type LedgerEntry func(*sql.Selector)
-
-// ManualTopup is the predicate function for manualtopup builders.
-type ManualTopup func(*sql.Selector)
 
 // ReconciliationReport is the predicate function for reconciliationreport builders.
 type ReconciliationReport func(*sql.Selector)
 
-// ResourceSettlement is the predicate function for resourcesettlement builders.
-type ResourceSettlement func(*sql.Selector)
-
 // ReviewPolicy is the predicate function for reviewpolicy builders.
 type ReviewPolicy func(*sql.Selector)
-
-// Wallet is the predicate function for wallet builders.
-type Wallet func(*sql.Selector)
-
-// WalletTransaction is the predicate function for wallettransaction builders.
-type WalletTransaction func(*sql.Selector)

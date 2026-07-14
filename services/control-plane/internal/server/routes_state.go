@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -15,7 +16,8 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if !app.syncRuntimeOperations(w, r, service) {
 			return
 		}
-		if !app.syncLedgerFacts(w, r, service, accountID) {
+		balance, ok := app.liveBalance(w, r, service, accountID)
+		if !ok {
 			return
 		}
 		computePools, ok := fabricComputePools(w, r, service)
@@ -23,6 +25,7 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			return
 		}
 		state := app.state(accountID, computePools)
+		state["balance"] = balance
 		if user, ok := app.sessionUserContext(r); ok {
 			state["user"] = sanitizeUser(user)
 		}
@@ -41,27 +44,19 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			return
 		}
 		input := decodeJSON(r)
-		accountID, ok := app.scopedAccountID(w, r, input)
+		_, ok := app.scopedAccountID(w, r, input)
 		if !ok {
 			return
 		}
-		wallet, err := service.Wallet(r.Context(), accountID)
+		preview, err := app.pricingPreviewResponse(r.Context(), input)
 		if err != nil {
-			writeUpstreamError(w)
-			return
-		}
-		preview, err := app.pricingPreviewResponse(r.Context(), input, walletProjection(wallet))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "pricing_catalog_unavailable")
+			writePricingError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, preview)
 	}))
 	mux.HandleFunc("GET /api/management/state", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		if !app.syncRuntimeOperations(w, r, service) {
-			return
-		}
-		if !app.syncLedgerFacts(w, r, service, "") {
 			return
 		}
 		computePools, ok := fabricComputePools(w, r, service)
@@ -74,9 +69,28 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if !app.syncRuntimeOperations(w, r, service) {
 			return
 		}
-		if !app.syncLedgerFacts(w, r, service, "") {
-			return
-		}
 		writeJSON(w, http.StatusOK, app.operatorSummary())
 	}))
+}
+
+func (app *controlPlaneServer) liveBalance(w http.ResponseWriter, r *http.Request, service *controlplane.Service, accountID string) (map[string]any, bool) {
+	userID, err := app.sub2APIUserID(r.Context(), accountID)
+	if err != nil {
+		writeError(w, http.StatusConflict, errMonthlyAccountUnmapped.Error())
+		return nil, false
+	}
+	balance, err := service.Sub2APIBalance(r.Context(), userID)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return nil, false
+	}
+	return map[string]any{"source": "sub2api", "currency": "USD", "userId": balance.UserID, "usdMicros": balance.USDMicros}, true
+}
+
+func writePricingError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errInvalidPricingInput) {
+		writeError(w, http.StatusBadRequest, "invalid_pricing_input")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "pricing_catalog_unavailable")
 }

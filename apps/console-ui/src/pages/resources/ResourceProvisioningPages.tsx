@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Button, Empty, Form, Input, InputNumber, Select } from "antd";
+import { Alert, Button, Empty, Form, Input, InputNumber, Select, Switch } from "antd";
 import { Cable, Database, Plus, RefreshCw, Server, Trash2 } from "lucide-react";
 import {
   attachStorage,
@@ -8,6 +8,8 @@ import {
   destroyComputeAllocation,
   destroyStorageVolume,
   detachStorage,
+  reactivateStorageVolume,
+  setResourceAutoRenew,
   syncComputeAllocation,
   syncStorageVolume
 } from "../../api/resources-api.ts";
@@ -15,6 +17,7 @@ import { previewPricing } from "../../api/pricing-api.ts";
 import { navigate, routeTo } from "../../consoleRoutes.ts";
 import {
   ActionGroup,
+  BalanceChargePanel,
   ConsoleSurface,
   FailureRecoveryPanel,
   InsightPanel,
@@ -26,16 +29,15 @@ import {
   PriceImpactPanel,
   ResourceRelationshipGraph,
   ResourceSplit,
-  StatusPill,
-  WalletRiskPanel
+  StatusPill
 } from "../shared/commercial-console.tsx";
-import { customerSafeMessage, money, moneyCents } from "../shared/formatters.ts";
+import { customerSafeMessage, moneyCents, paidThrough, usdMicros } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
 
-const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
-const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
-const storageDestroyStages = Object.freeze(["已提交", "停止计费", "销毁存储", "释放冻结", "已删除"]);
+const computeAllocationStages = Object.freeze(["已提交", "云资源准备中", "余额扣款中", "月度权益已激活", "Runtime 部署中", "URL 可用"]);
+const storageCreateStages = Object.freeze(["已提交", "存储准备中", "余额扣款中", "月度权益已激活", "可挂载"]);
+const storageDestroyStages = Object.freeze(["已提交", "停止续费", "销毁存储", "已删除"]);
 const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
 const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
 
@@ -53,15 +55,7 @@ function selectedResource(path, items) {
 }
 
 function previewAccountId(state: AnyRecord) {
-  return state.account?.accountId || state.wallet?.accountId || state.user?.accountId || "";
-}
-
-function previewHoldAmount(pricingPreview: AnyRecord) {
-  return Number(pricingPreview?.holdAmountCents || 0) / 100;
-}
-
-function previewAvailableAmount(pricingPreview: AnyRecord) {
-  return Number(pricingPreview?.walletAfterPreview?.availableCents || 0) / 100;
+  return state.account?.accountId || state.account?.id || state.user?.accountId || "";
 }
 
 function workspaceForResource(state: AnyRecord, resource: AnyRecord = {}) {
@@ -74,12 +68,24 @@ function workspaceForResource(state: AnyRecord, resource: AnyRecord = {}) {
 
 function billingStatusLabel(value) {
   return {
-    active: "计费中",
-    released: "已释放",
+    preparing: "创建资源",
+    charge_pending: "等待扣款",
+    active: "已付费",
+    failed: "开通失败",
+    renewal_pending: "续费中",
+    past_due: "续费失败",
+    manual_review: "人工复核",
+    retained: "已保留",
     stopped: "已停止",
     stopping: "停止中",
     pending: "等待中"
   }[value] || value || "等待中";
+}
+
+function billingStatusTone(value) {
+  if (value === "active") return "good";
+  if (["past_due", "manual_review", "failed"].includes(value)) return "danger";
+  return "warn";
 }
 
 function supportContextPath(resource: AnyRecord = {}, resourceType = "resource") {
@@ -140,7 +146,8 @@ export function ComputeAllocationsPage({ state }: any) {
             { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("compute-allocations.detail", { id: row.id }))}>{row.name || row.id}</Button> },
             { title: "规格", dataIndex: "spec" },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
-            { title: "计费状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={value === "active" ? "good" : "warn"} /> }
+            { title: "月度权益", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={billingStatusTone(value)} /> },
+            { title: "有效期至", dataIndex: "paidThrough", render: (value) => paidThrough(value) }
           ]}
         />
       </InsightPanel>
@@ -182,6 +189,7 @@ export function ResourceRelationshipPage({ state }: any) {
 
 export function CreateComputeAllocationPage({ state, session, runAction }: any) {
   const { operationPending, operationResult, runOperation } = useOperationFeedback();
+  const purchaseKey = React.useRef(crypto.randomUUID());
   const availablePackages = (state.packages || []).filter((plan) => plan.available);
   const initialPackageId = availablePackages[0]?.id || "basic";
   const [form] = Form.useForm();
@@ -201,12 +209,10 @@ export function CreateComputeAllocationPage({ state, session, runAction }: any) 
         if (active) setPricingPreview(payload);
       })
       .catch((error) => {
-        if (active) setPricingPreview({ safeMessage: error.message, holdAmountCents: 0, walletAfterPreview: {} });
+        if (active) setPricingPreview({ safeMessage: error.message });
       });
     return () => { active = false; };
   }, [selectedPackageId, session.csrfToken, state]);
-  const selectedComputeHold = previewHoldAmount(pricingPreview || {});
-  const walletAfterPreview = pricingPreview?.walletAfterPreview || {};
   return (
     <ConsoleSurface title="开通计算资源" eyebrow="资源" subtitle="选择规格后提交开通" compact>
       <InsightPanel title="开通计算" eyebrow="计算">
@@ -217,14 +223,14 @@ export function CreateComputeAllocationPage({ state, session, runAction }: any) 
           onFinish={async (values) => {
             await runOperation(async () => {
               const created = await runAction(
-                () => createComputeAllocation(values, session.csrfToken),
+                () => createComputeAllocation(values, session.csrfToken, purchaseKey.current),
                 "计算资源开通请求已提交",
                 { returnFailure: true }
               );
               return created && {
                 ...created,
                 status: created.status || "submitted",
-                nextStepMessage: "计算资源开通请求已提交，正在冻结余额并分发 Docker，通常需要 3-5 分钟。"
+                nextStepMessage: "计算资源开通请求已提交，正在创建云资源、完成月费扣款并分发 Docker，通常需要 3-5 分钟。"
               };
             });
           }}
@@ -244,20 +250,20 @@ export function CreateComputeAllocationPage({ state, session, runAction }: any) 
             items={availablePackages.map((plan) => ({
               label: plan.name,
               value: `${plan.server} · ${plan.cpu} CPU / ${plan.memoryGb}GB`,
-              meta: plan.id === selectedPackageId ? `后端预览冻结 ${moneyCents(pricingPreview?.holdAmountCents)}` : "选择后返回价格预览",
+              meta: plan.id === selectedPackageId ? `${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月` : `${moneyCents(plan.price?.monthlyPriceCnyCents)}/月`,
               status: "可用",
               tone: "good"
             }))}
           />
           <PriceImpactPanel
             items={[
-              { label: "每小时价格", value: `${money(pricingPreview?.unitPrice)}/小时`, meta: selectedPlan?.server || "-", status: "计费", tone: "info" },
-              { label: "预冻结", value: moneyCents(pricingPreview?.holdAmountCents), meta: `${pricingPreview?.holdDays || 7} 天`, status: "冻结", tone: "warn" },
-              { label: "冻结后可用", value: money(previewAvailableAmount(pricingPreview || {})), meta: walletAfterPreview.currency || "CNY", status: "余额", tone: previewAvailableAmount(pricingPreview || {}) > 0 ? "good" : "warn" },
+              { label: "套餐月价", value: `${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月`, meta: selectedPlan?.server || "-", status: "固定价", tone: "info" },
+              { label: "钱包扣款", value: usdMicros(pricingPreview?.chargeUsdMicros), meta: "Sub2API USD", status: "月付", tone: "warn" },
+              { label: "计费周期", value: "1 个日历月", meta: "自动续费可关闭", status: "预付", tone: "info" },
               { label: "预计等待", value: "3-5 分钟", meta: "扩容节点并部署 Runtime", status: "冷启动", tone: "info" }
             ]}
           />
-          <WalletRiskPanel wallet={state.wallet} requiredHold={selectedComputeHold} resourceLabel="计算资源" />
+          <BalanceChargePanel balance={state.balance} chargeUsdMicros={pricingPreview?.chargeUsdMicros} resourceLabel="计算资源" />
           <OperationResultPanel pending={operationPending} result={operationResult} />
           {operationResult && operationResult.ok !== false && (
             <ActionGroup actions={[
@@ -269,7 +275,7 @@ export function CreateComputeAllocationPage({ state, session, runAction }: any) 
             <OperationConfirmButton
               label="开通计算"
               title="确认开通计算资源"
-              description={`将按 ${money(pricingPreview?.unitPrice)}/小时计费，并预冻结 ${moneyCents(pricingPreview?.holdAmountCents)}。`}
+              description={`将从 Sub2API 余额扣除 ${usdMicros(pricingPreview?.chargeUsdMicros)}，开通一个日历月；参考价 ${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月。`}
               type="primary"
               icon={<Server size={15} />}
               disabled={!availablePackages.length || !pricingPreview || Boolean(pricingPreview.safeMessage)}
@@ -297,7 +303,8 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction }:
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "云端状态", value: resource.providerStatus || "-", meta: resource.lastProviderSyncAt || "尚未同步", status: resource.providerStatus || "unknown", tone: resource.providerStatus === "missing" ? "danger" : "info" },
             { label: "规格", value: resource.spec || "-", meta: resource.packageId },
-            { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyPrice)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
+            { label: "月度权益", value: billingStatusLabel(resource.billingStatus), meta: `${moneyCents(resource.monthlyPriceCnyCents)}/月`, status: resource.billingStatus || "pending", tone: billingStatusTone(resource.billingStatus) },
+            { label: "有效期至", value: paidThrough(resource.paidThrough), meta: resource.autoRenew ? "自动续费已开启" : "自动续费已关闭", status: resource.autoRenew ? "autoRenew" : "到期停止", tone: resource.autoRenew ? "good" : "warn" },
             { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
             { label: "同步错误", value: resource.lastProviderSyncError ? customerSafeMessage(resource.lastProviderSyncError) : "-", meta: "来自后端同步任务", status: resource.lastProviderSyncError ? "异常" : "正常", tone: resource.lastProviderSyncError ? "danger" : "neutral" },
             { label: "失败原因", value: resource.safeMessage ? customerSafeMessage(resource.safeMessage) : "-", meta: "如需帮助可提交工单", status: resource.safeMessage ? "异常" : "正常", tone: resource.safeMessage ? "danger" : "neutral" }
@@ -305,6 +312,19 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction }:
         />
         <ActionGroup
           actions={[
+            <Switch
+              key="auto-renew-compute"
+              checked={resource.autoRenew !== false}
+              checkedChildren="自动续费"
+              unCheckedChildren="到期停止"
+              loading={operationPending}
+              disabled={resource.status === "destroyed"}
+              onChange={(checked) => runOperation(() => runAction(
+                () => setResourceAutoRenew({ resourceId: resource.id, autoRenew: checked }, session.csrfToken, `resource-auto-renew:${resource.id}:${checked}`),
+                checked ? "自动续费已开启" : "自动续费已关闭",
+                { returnFailure: true }
+              ))}
+            />,
             <Button
               key="sync-compute"
               icon={<RefreshCw size={15} />}
@@ -321,7 +341,7 @@ export function ComputeAllocationDetailPage({ state, path, session, runAction }:
               key="destroy-compute"
               label="销毁计算资源"
               title="确认销毁计算资源"
-              description="销毁后停止后续计算计费；已保留的存储资源不会删除。"
+              description="销毁后不再续费且不退还当前月费用；已保留的存储资源不会删除。"
               danger
               icon={<Trash2 size={15} />}
               disabled={resource.status === "destroyed"}
@@ -371,7 +391,8 @@ export function StorageVolumesPage({ state }: any) {
             { title: "名称", dataIndex: "name", render: (_, row) => <Button type="link" onClick={() => navigate(routeTo("storage.detail", { id: row.id }))}>{row.name || row.id}</Button> },
             { title: "容量", dataIndex: "sizeGb", render: (value) => `${value || 0}GB` },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "pending"} tone={resourceStatus(value)} /> },
-            { title: "计费状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={value === "active" ? "good" : "warn"} /> }
+            { title: "月度权益", dataIndex: "billingStatus", render: (value) => <StatusPill label={billingStatusLabel(value)} tone={billingStatusTone(value)} /> },
+            { title: "有效期至", dataIndex: "paidThrough", render: (value) => paidThrough(value) }
           ]}
         />
       </InsightPanel>
@@ -381,6 +402,7 @@ export function StorageVolumesPage({ state }: any) {
 
 export function CreateStorageVolumePage({ state, session, runAction }: any) {
   const { operationPending, operationResult, runOperation } = useOperationFeedback();
+  const purchaseKey = React.useRef(crypto.randomUUID());
   const availablePackages = (state.packages || []).filter((plan) => plan.available);
   const initialPackageId = availablePackages[0]?.id || "basic";
   const [form] = Form.useForm();
@@ -402,12 +424,10 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
         if (active) setPricingPreview(payload);
       })
       .catch((error) => {
-        if (active) setPricingPreview({ safeMessage: error.message, holdAmountCents: 0, walletAfterPreview: {} });
+        if (active) setPricingPreview({ safeMessage: error.message });
       });
     return () => { active = false; };
   }, [selectedPackageId, selectedSizeGb, session.csrfToken, state]);
-  const selectedStorageHold = previewHoldAmount(pricingPreview || {});
-  const walletAfterPreview = pricingPreview?.walletAfterPreview || {};
   return (
     <ConsoleSurface title="开通存储资源" eyebrow="资源" subtitle="创建可独立保留的数据盘" compact>
       <InsightPanel title="开通存储" eyebrow="存储">
@@ -418,7 +438,7 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
           onFinish={async (values) => {
             await runOperation(async () => {
               const created = await runAction(
-                () => createStorageVolume(values, session.csrfToken),
+                () => createStorageVolume(values, session.csrfToken, purchaseKey.current),
                 "云硬盘开通请求已提交",
                 { returnFailure: true }
               );
@@ -442,17 +462,17 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
             />
           </Form.Item>
           <Form.Item name="sizeGb" label="容量 GB" rules={[{ required: true, message: "请输入容量" }]}>
-            <InputNumber min={1} max={4096} style={{ width: "100%" }} />
+            <InputNumber min={10} max={4090} step={10} precision={0} style={{ width: "100%" }} />
           </Form.Item>
           <PriceImpactPanel
             items={[
-              { label: "存储单价", value: `${money(pricingPreview?.unitPrice)}/GB月`, meta: "后端价格单", status: "计费", tone: "info" },
+              { label: "存储月价", value: `${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月`, meta: "每 10GB ¥18/月", status: "固定价", tone: "info" },
               { label: "容量", value: `${selectedSizeGb}GB`, meta: selectedPlan?.name || selectedPackageId, status: "当前容量", tone: "info" },
-              { label: "预冻结", value: moneyCents(pricingPreview?.holdAmountCents), meta: `${pricingPreview?.holdDays || 7} 天`, status: "冻结", tone: "warn" },
-              { label: "冻结后可用", value: money(previewAvailableAmount(pricingPreview || {})), meta: walletAfterPreview.currency || "CNY", status: "余额", tone: previewAvailableAmount(pricingPreview || {}) > 0 ? "good" : "warn" }
+              { label: "钱包扣款", value: usdMicros(pricingPreview?.chargeUsdMicros), meta: "Sub2API USD", status: "月付", tone: "warn" },
+              { label: "计费周期", value: "1 个日历月", meta: "到期存储保留但不可挂载", status: "预付", tone: "info" }
             ]}
           />
-          <WalletRiskPanel wallet={state.wallet} requiredHold={selectedStorageHold} resourceLabel="存储资源" />
+          <BalanceChargePanel balance={state.balance} chargeUsdMicros={pricingPreview?.chargeUsdMicros} resourceLabel="存储资源" />
           <ResourceSplit items={[{ label: "数据目录", value: "/data", meta: "用户文件保存位置", status: "可挂载", tone: "info" }]} />
           <OperationTimeline operations={[]} stages={storageCreateStages} emptyText="提交后开始创建存储" />
           <OperationResultPanel pending={operationPending} result={operationResult} />
@@ -466,7 +486,7 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
             <OperationConfirmButton
               label="开通存储"
               title="确认开通存储资源"
-              description={`将按容量计费，并预冻结 ${moneyCents(pricingPreview?.holdAmountCents)}。`}
+              description={`将从 Sub2API 余额扣除 ${usdMicros(pricingPreview?.chargeUsdMicros)}，开通一个日历月；参考价 ${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月。`}
               type="primary"
               icon={<Database size={15} />}
               disabled={!availablePackages.length || !pricingPreview || Boolean(pricingPreview.safeMessage)}
@@ -482,6 +502,7 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
 
 export function StorageVolumeDetailPage({ state, path, session, runAction }: any) {
   const { operationPending, operationResult, runOperation } = useOperationFeedback();
+  const reactivationKey = React.useRef(crypto.randomUUID());
   const resource = selectedResource(path, state.storageVolumes || []);
   if (!resource) return <ConsoleSurface title="存储资源" eyebrow="资源"><Empty description="未找到存储资源" /></ConsoleSurface>;
   const workspace = workspaceForResource(state, resource);
@@ -494,7 +515,8 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }: any
             { label: "状态", value: resource.status || "-", status: resource.status || "pending", tone: resourceStatus(resource.status) },
             { label: "云端状态", value: resource.providerStatus || "-", meta: resource.lastProviderSyncAt || "尚未同步", status: resource.providerStatus || "unknown", tone: resource.providerStatus === "missing" ? "danger" : "info" },
             { label: "容量", value: `${resource.sizeGb || 0}GB`, meta: "当前存储容量" },
-            { label: "计费状态", value: billingStatusLabel(resource.billingStatus), meta: `${money(resource.hourlyEstimate)}/小时`, status: resource.billingStatus || "pending", tone: resource.billingStatus === "active" ? "good" : "warn" },
+            { label: "月度权益", value: billingStatusLabel(resource.billingStatus), meta: `${moneyCents(resource.monthlyPriceCnyCents)}/月`, status: resource.billingStatus || "pending", tone: billingStatusTone(resource.billingStatus) },
+            { label: "有效期至", value: paidThrough(resource.paidThrough), meta: resource.autoRenew ? "自动续费已开启" : "自动续费已关闭", status: resource.autoRenew ? "autoRenew" : "到期保留", tone: resource.autoRenew ? "good" : "warn" },
             { label: "绑定入口", value: workspace?.name || workspaceId || "-", meta: workspaceId || "尚未创建工作区入口" },
             { label: "同步错误", value: resource.lastProviderSyncError ? customerSafeMessage(resource.lastProviderSyncError) : "-", meta: "来自后端同步任务", status: resource.lastProviderSyncError ? "异常" : "正常", tone: resource.lastProviderSyncError ? "danger" : "neutral" },
             { label: "失败原因", value: resource.safeMessage ? customerSafeMessage(resource.safeMessage) : "-", meta: "如需帮助可提交工单", status: resource.safeMessage ? "异常" : "正常", tone: resource.safeMessage ? "danger" : "neutral" }
@@ -502,6 +524,39 @@ export function StorageVolumeDetailPage({ state, path, session, runAction }: any
         />
         <ActionGroup
           actions={[
+            resource.billingStatus === "retained" && <OperationConfirmButton
+              key="reactivate-storage"
+              label="重新激活存储"
+              title="确认重新激活存储"
+              description={`将从 Sub2API 余额扣除 ${usdMicros(resource.chargeUsdMicros)}，恢复一个日历月的存储权益。`}
+              type="primary"
+              icon={<Database size={15} />}
+              loading={operationPending}
+              onConfirm={() => runOperation(() => runAction(
+                () => reactivateStorageVolume({
+                  id: resource.id,
+                  name: resource.name,
+                  packageId: resource.packageId || "basic",
+                  sizeGb: resource.sizeGb,
+                  workspaceId
+                }, session.csrfToken, reactivationKey.current),
+                "存储权益重新激活",
+                { returnFailure: true }
+              ))}
+            />,
+            <Switch
+              key="auto-renew-storage"
+              checked={resource.autoRenew !== false}
+              checkedChildren="自动续费"
+              unCheckedChildren="到期保留"
+              loading={operationPending}
+              disabled={resource.status === "destroyed" || resource.billingStatus === "retained"}
+              onChange={(checked) => runOperation(() => runAction(
+                () => setResourceAutoRenew({ resourceId: resource.id, autoRenew: checked }, session.csrfToken, `resource-auto-renew:${resource.id}:${checked}`),
+                checked ? "自动续费已开启" : "自动续费已关闭",
+                { returnFailure: true }
+              ))}
+            />,
             <Button
               key="sync-storage"
               icon={<RefreshCw size={15} />}

@@ -2,80 +2,95 @@
 
 ## Readiness
 
-Runtime readiness:
-
 ```text
 GET /api/runtime/readiness
-```
-
-Production readiness:
-
-```text
 GET /api/production/readiness
 ```
 
-Manifest validation:
+Validate deployment secret references:
 
 ```bash
-npm run validate:production-manifest -- --manifest deploy/production-manifest.example.json
+npm run validate:production-manifest -- \
+  --manifest deploy/production-manifest.example.json
 ```
 
-## Required Production Inputs
+## Required Inputs
 
-Production must provide:
+- PostgreSQL `DATABASE_URL`;
+- Console auth users with positive integer `sub2apiUserId` values;
+- `OPL_SUB2API_BASE_URL`, supported version list, timeout, and admin credentials;
+- TKE kubeconfig, namespace, domains, TLS, storage class, and image-pull secret;
+- OPL Cloud and Workspace image references;
+- Tencent mutation credentials, region, cluster, subnet, and security groups;
+- internal service token and AionUI password seed.
 
-- `DATABASE_URL`
-- `OPL_RUNTIME_PROVIDER=tencent-tke`
-- `OPL_CLOUD_IMAGE`
-- `OPL_WORKSPACE_IMAGE`
-- `OPL_PUBLIC_URL`
-- `OPL_CONSOLE_DOMAIN`
-- `OPL_WORKSPACE_DOMAIN`
-- `OPL_WORKSPACE_STORAGE_CLASS`
-- Tencent Kubernetes credentials through secret files or secret refs
-- production auth seed or persisted users
+Secrets must be GitHub/Kubernetes secrets. Never place credentials in the
+manifest, command arguments, logs, or verifier artifacts.
 
-## Human Gates
+## Deploy
 
-The following actions require explicit human approval:
+Use the `Deploy TKE Production` workflow with immutable image references. It
+installs secrets, renders the manifest, applies it, restarts all ConfigMap
+consumers, and waits for each rollout.
 
-- running real production verification;
-- creating real ComputeAllocation, StorageVolume, and StorageAttachment resources;
-- injecting or confirming production secrets;
-- changing production domain, TLS, registry, or kubeconfig inputs;
-- destroying production StorageVolume data.
+Manual bounded rollout checks:
 
-## Verification
+```bash
+kubectl -n opl-cloud rollout status deployment/opl-cloud-control-plane --timeout=5m
+kubectl -n opl-cloud rollout status deployment/opl-cloud-fabric --timeout=5m
+kubectl -n opl-cloud rollout status deployment/opl-cloud-ledger --timeout=5m
+```
 
-Use `npm run staging:e2e` from a local operator shell before rollout when the local Console is connected to staging PostgreSQL and staging TKE. This command requires `OPL_CONFIRM_REAL_CLOUD_E2E=1`, may use a local Console origin, and still requires a public HTTPS Workspace URL.
+Then check health and readiness through the production endpoints. An old image
+digest or timeout is a failed rollout.
 
-Use `npm run verify:production` only after cloud staging rollout from an approved operator environment. This command requires public HTTPS Console and Workspace URLs.
+## Paid E2E
 
-Both verifiers create a real ComputeAllocation, StorageVolume, and StorageAttachment, create a Workspace URL entry, open the public URL, verify wallet, Ledger facts, Fabric/provider evidence, and attempt cleanup. Paid resource cleanup passes only when the destroy response is `billingStatus=stopped` and returns a `holdReleaseId` for the same `holdId` created during provisioning.
+Use a dedicated mapped account with enough Sub2API balance. The exact guard is
+mandatory:
 
-Resource billing must follow this order:
+```bash
+OPL_CONSOLE_ORIGIN=https://cloud.medopl.cn \
+OPL_VERIFY_AUTH_USERS_JSON='<secret auth seed>' \
+OPL_VERIFY_PAID_CONFIRMATION=I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE \
+OPL_VERIFY_RUN_ID=<unique-run-id> \
+npm run verify:production -- --browser-e2e
+```
 
-1. Reserve seven days plus the first hour in the resource Hold.
-2. Activate the Hold only after Fabric verifies the claimed CVM/PVC identity; activation charges the first hour.
-3. Start periodic settlement after that prepaid hour. Settlement uses available balance first, then only the resource's own Hold.
-4. Persist `billingStatus=stopping` before cloud deletion. After deletion is confirmed, stop future settlement and release the Hold remainder without another debit.
-5. If provisioning exhausts its retries without a Machine, persist `failed`; reconciliation releases the unactivated Hold.
+The verifier must prove:
 
-Verification output belongs in runtime evidence or `docs/history/**`, not active docs.
+1. one mapped account and live starting balance;
+2. Basic compute charge of `50000000` USD micros;
+3. 10 GB storage charge of `2571429` USD micros;
+4. exact total balance delta of `52571429` USD micros;
+5. stable redeem code per resource operation;
+6. active monthly entitlements and two Ledger receipts;
+7. compute, storage, attachment, and public Workspace URL readiness;
+8. exact cleanup of only the run's resources.
 
-## Recovery
+Keep the run failed until cleanup is confirmed. Do not substitute broad cloud
+cleanup commands for resource IDs recorded by the verifier.
 
-For Workspace action failures:
+## Billing Recovery
 
-1. Check runtime operations.
-2. Check audit events.
-3. Check billing ledger and wallet transactions.
-4. Check Fabric provider evidence.
-5. Detach storage before destroying compute or storage resources.
-6. Destroy storage only after explicit owner/admin confirmation.
+- `preparing`: inspect the Fabric operation; no charge is expected yet.
+- `charge_pending`: replay the same persisted redeem code; never create a new code.
+- `manual_review`: compare the exact Sub2API adjustment and balance snapshots
+  before changing entitlement state.
+- `active` with missing receipt: retry only the Ledger receipt write.
+- expired compute: confirm provider deletion.
+- expired storage: preserve data and block attachment until reactivation.
 
-For billing failures:
+## Sub2API Updates
 
-1. Stop new Workspace openings if reconciliation fails closed.
-2. Preserve existing storage unless explicit destruction is confirmed.
-3. Use manual top-up audit for operator-funded corrections.
+Sub2API stays on official images. Run the config repository's guarded updater:
+
+```bash
+cd /home/ubuntu/sub2api
+bash tests/safe-update.test.sh
+bash scripts/safe-update.sh
+```
+
+The updater accepts only an approved version/revision, probes login, version,
+balance-read, and adjustment-route availability without changing a real balance,
+and restores the previous digest on failure.

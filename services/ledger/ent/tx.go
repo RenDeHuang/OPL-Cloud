@@ -14,28 +14,12 @@ type Tx struct {
 	config
 	// EvidenceReceipt is the client for interacting with the EvidenceReceipt builders.
 	EvidenceReceipt *EvidenceReceiptClient
-	// Hold is the client for interacting with the Hold builders.
-	Hold *HoldClient
-	// HoldActivation is the client for interacting with the HoldActivation builders.
-	HoldActivation *HoldActivationClient
-	// HoldRelease is the client for interacting with the HoldRelease builders.
-	HoldRelease *HoldReleaseClient
 	// IdempotencyKey is the client for interacting with the IdempotencyKey builders.
 	IdempotencyKey *IdempotencyKeyClient
-	// LedgerEntry is the client for interacting with the LedgerEntry builders.
-	LedgerEntry *LedgerEntryClient
-	// ManualTopup is the client for interacting with the ManualTopup builders.
-	ManualTopup *ManualTopupClient
 	// ReconciliationReport is the client for interacting with the ReconciliationReport builders.
 	ReconciliationReport *ReconciliationReportClient
-	// ResourceSettlement is the client for interacting with the ResourceSettlement builders.
-	ResourceSettlement *ResourceSettlementClient
 	// ReviewPolicy is the client for interacting with the ReviewPolicy builders.
 	ReviewPolicy *ReviewPolicyClient
-	// Wallet is the client for interacting with the Wallet builders.
-	Wallet *WalletClient
-	// WalletTransaction is the client for interacting with the WalletTransaction builders.
-	WalletTransaction *WalletTransactionClient
 
 	// lazily loaded.
 	client     *Client
@@ -168,17 +152,9 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.EvidenceReceipt = NewEvidenceReceiptClient(tx.config)
-	tx.Hold = NewHoldClient(tx.config)
-	tx.HoldActivation = NewHoldActivationClient(tx.config)
-	tx.HoldRelease = NewHoldReleaseClient(tx.config)
 	tx.IdempotencyKey = NewIdempotencyKeyClient(tx.config)
-	tx.LedgerEntry = NewLedgerEntryClient(tx.config)
-	tx.ManualTopup = NewManualTopupClient(tx.config)
 	tx.ReconciliationReport = NewReconciliationReportClient(tx.config)
-	tx.ResourceSettlement = NewResourceSettlementClient(tx.config)
 	tx.ReviewPolicy = NewReviewPolicyClient(tx.config)
-	tx.Wallet = NewWalletClient(tx.config)
-	tx.WalletTransaction = NewWalletTransactionClient(tx.config)
 }
 
 // txDriver wraps the given dialect.Tx with a nop dialect.Driver implementation.

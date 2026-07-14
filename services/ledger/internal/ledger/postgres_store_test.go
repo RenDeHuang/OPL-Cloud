@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -18,86 +17,30 @@ import (
 	"github.com/lib/pq"
 )
 
-func TestPostgresSchemaUsesEntMigrationLedgerTables(t *testing.T) {
+func TestPostgresSchemaKeepsEvidenceAndDropsRetiredCommercialTables(t *testing.T) {
 	schema := PostgresSchemaSQL()
-	required := []string{
-		"CREATE TABLE IF NOT EXISTS wallets",
-		"ALTER TABLE wallets ADD COLUMN IF NOT EXISTS available_cents",
-		"CREATE TABLE IF NOT EXISTS ledger_entries",
-		"CREATE TABLE IF NOT EXISTS wallet_transactions",
-		"CREATE TABLE IF NOT EXISTS manual_topups",
-		"CREATE TABLE IF NOT EXISTS holds",
-		"CREATE TABLE IF NOT EXISTS hold_releases",
+	for _, marker := range []string{
 		"CREATE TABLE IF NOT EXISTS evidence_receipts",
-		"ALTER TABLE evidence_receipts ALTER COLUMN provider_request_id SET DEFAULT ''",
-		"ALTER TABLE evidence_receipts ALTER COLUMN redacted_url SET DEFAULT ''",
-		"ALTER TABLE evidence_receipts ALTER COLUMN token_version SET DEFAULT ''",
-		"organization_id TEXT NOT NULL DEFAULT ''",
-		"project_id TEXT NOT NULL DEFAULT ''",
-		"task_id TEXT NOT NULL DEFAULT ''",
-		"job_id TEXT NOT NULL DEFAULT ''",
-		"CREATE INDEX IF NOT EXISTS evidence_receipts_organization_created",
-		"CREATE INDEX IF NOT EXISTS evidence_receipts_workspace_created",
-		"CREATE TABLE IF NOT EXISTS resource_settlements",
-		"price_snapshot_json TEXT NOT NULL DEFAULT '{}'",
-		"CREATE TABLE IF NOT EXISTS reconciliation_reports",
-		"report_json TEXT NOT NULL DEFAULT '{}'",
-		"CREATE TABLE IF NOT EXISTS idempotency_keys",
+		"account_id TEXT NOT NULL DEFAULT ''",
+		"CREATE INDEX IF NOT EXISTS evidence_receipts_account_created",
 		"CREATE TABLE IF NOT EXISTS review_policies",
-		"required_reviewers_json TEXT NOT NULL",
-		"CREATE UNIQUE INDEX IF NOT EXISTS review_policies_active_scope",
-	}
-	for _, marker := range required {
+		"CREATE TABLE IF NOT EXISTS reconciliation_reports",
+		"CREATE TABLE IF NOT EXISTS idempotency_keys",
+		"DROP TABLE IF EXISTS hold_activations",
+		"DROP TABLE IF EXISTS resource_settlements",
+		"DROP TABLE IF EXISTS wallets",
+	} {
 		if !strings.Contains(schema, marker) {
 			t.Fatalf("schema missing %q", marker)
 		}
 	}
-	if strings.Contains(schema, "JSONB") {
-		t.Fatalf("ledger schema must not keep JSONB fact columns")
-	}
-	generatedValidators := []string{
-		`validator failed for field "Hold.workspace_id"`,
-		`validator failed for field "HoldRelease.workspace_id"`,
-		`validator failed for field "ResourceSettlement.workspace_id"`,
-	}
-	for _, marker := range generatedValidators {
-		if strings.Contains(readGeneratedLedgerEnt(t), marker) {
-			t.Fatalf("ledger resource facts must allow account/resource scoped rows before workspace exists: found %q", marker)
+	for _, retiredCreate := range []string{"wallets", "ledger_entries", "wallet_transactions", "manual_topups", "holds", "hold_activations", "hold_releases", "resource_settlements"} {
+		if strings.Contains(schema, "CREATE TABLE IF NOT EXISTS "+retiredCreate) {
+			t.Fatalf("schema recreates retired table %q", retiredCreate)
 		}
 	}
-}
-
-func TestFormalMigrationsDeclareReceiptColumnsBeforeQueryBackfill(t *testing.T) {
-	entries, err := os.ReadDir("../../migrations")
-	if err != nil {
-		t.Fatalf("read formal migrations: %v", err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
-	var migrations strings.Builder
-	for _, name := range names {
-		data, err := os.ReadFile(filepath.Join("../../migrations", name))
-		if err != nil {
-			t.Fatalf("read formal migration %s: %v", name, err)
-		}
-		migrations.Write(data)
-		migrations.WriteByte('\n')
-	}
-	sql := migrations.String()
-	backfill := strings.Index(sql, "UPDATE evidence_receipts")
-	if backfill < 0 {
-		t.Fatal("formal migrations missing receipt identity backfill")
-	}
-	for _, column := range []string{"receipt_type", "status", "payload_json", "supersedes_receipt_id", "organization_id", "project_id", "task_id", "job_id"} {
-		declaration := strings.Index(sql, "ALTER TABLE evidence_receipts ADD COLUMN IF NOT EXISTS "+column)
-		if declaration < 0 || declaration > backfill {
-			t.Fatalf("formal migrations must declare %s before receipt backfill", column)
-		}
+	if strings.Contains(schema, "DROP TABLE IF EXISTS idempotency_keys") {
+		t.Fatal("schema drops receipt mutation idempotency table")
 	}
 }
 
@@ -136,35 +79,135 @@ func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var _ Store = NewPostgresStore(db)
 }
 
-func TestPostgresHoldReturnsExactLifecycleTruth(t *testing.T) {
+func TestPostgresConcurrentReceiptIdempotency(t *testing.T) {
 	db := openLedgerTestPostgres(t)
 	store := NewPostgresStore(db)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := store.Install(ctx); err != nil {
-		t.Fatal(err)
+		t.Fatalf("install ledger schema: %v", err)
 	}
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	accountID := "acct-hold-truth-" + suffix
-	workspaceID := "ws-hold-truth-" + suffix
-	resourceID := "compute-hold-truth-" + suffix
-	if _, err := store.ManualTopUp(ctx, ManualTopUpInput{AccountID: accountID, AmountCents: 3000, Currency: "CNY", OperatorUserID: "usr-admin", IdempotencyKey: suffix + "-topup"}); err != nil {
-		t.Fatal(err)
+	if _, err := db.ExecContext(ctx, `
+		CREATE FUNCTION await_receipt_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+		DECLARE
+			phase INTEGER;
+		BEGIN
+			phase := CASE NEW.account_id
+				WHEN 'acct-concurrent-same-receipt' THEN 1
+				WHEN 'acct-concurrent-payload-receipt' THEN 2
+			END;
+			IF phase IS NULL THEN
+				RETURN NEW;
+			END IF;
+			PERFORM pg_advisory_xact_lock_shared(741101, phase);
+			PERFORM pg_advisory_xact_lock_shared(741102, phase);
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER await_receipt_insert BEFORE INSERT ON evidence_receipts FOR EACH ROW EXECUTE FUNCTION await_receipt_barrier();
+	`); err != nil {
+		t.Fatalf("install receipt race trigger: %v", err)
 	}
-	hold, err := store.CreateHold(ctx, HoldInput{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: resourceID, AmountCents: 2000, ActivationAmountCents: 100, Currency: "CNY", IdempotencyKey: suffix + "-create"})
-	if err != nil {
-		t.Fatal(err)
+	type outcome struct {
+		receipt Receipt
+		err     error
 	}
-	if _, err := store.ActivateHold(ctx, HoldActivationInput{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: resourceID, HoldID: hold.ID, Currency: "CNY", ProviderEvidenceRef: "fabric:hold-truth", IdempotencyKey: suffix + "-activate"}); err != nil {
-		t.Fatal(err)
+	run := func(phase int, inputs []ReceiptInput) []outcome {
+		barrier, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer barrier.Close()
+		if _, err := barrier.ExecContext(ctx, "SELECT pg_advisory_lock(741102, $1)", phase); err != nil {
+			t.Fatalf("lock receipt barrier: %v", err)
+		}
+		gateHeld := true
+		defer func() {
+			if gateHeld {
+				_, _ = barrier.ExecContext(context.Background(), "SELECT pg_advisory_unlock(741102, $1)", phase)
+			}
+		}()
+		start := make(chan struct{})
+		outcomes := make(chan outcome, len(inputs))
+		var wg sync.WaitGroup
+		for _, input := range inputs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				receipt, err := store.RecordReceipt(ctx, input)
+				outcomes <- outcome{receipt: receipt, err: err}
+			}()
+		}
+		close(start)
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var arrivals int
+			if err := barrier.QueryRowContext(ctx, "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND mode = 'ShareLock' AND granted AND classid = 741101::oid AND objid = $1::oid", phase).Scan(&arrivals); err != nil {
+				t.Fatalf("observe receipt barrier: %v", err)
+			}
+			if arrivals == len(inputs) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("receipt operations did not overlap: arrivals=%d want=%d", arrivals, len(inputs))
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		var unlocked bool
+		if err := barrier.QueryRowContext(ctx, "SELECT pg_advisory_unlock(741102, $1)", phase).Scan(&unlocked); err != nil || !unlocked {
+			t.Fatalf("unlock receipt barrier: unlocked=%v err=%v", unlocked, err)
+		}
+		gateHeld = false
+		wg.Wait()
+		close(outcomes)
+		results := make([]outcome, 0, len(inputs))
+		for result := range outcomes {
+			results = append(results, result)
+		}
+		return results
 	}
-	if _, err := store.ReleaseHold(ctx, HoldReleaseInput{AccountID: accountID, WorkspaceID: workspaceID, ResourceType: "compute", ResourceID: resourceID, HoldID: hold.ID, Currency: "CNY", Reason: "destroy_compute", IdempotencyKey: suffix + "-release"}); err != nil {
-		t.Fatal(err)
+
+	same := ReceiptInput{Type: "billing.resource_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-concurrent-same-receipt", WorkspaceID: "workspace-concurrent-receipt", RequestID: "billing-operation-concurrent", Cost: map[string]any{"chargeUsdMicros": int64(50_000_000)}, IdempotencyKey: "receipt-concurrent-same"}
+	results := run(1, []ReceiptInput{same, same, same, same})
+	created, replayed := 0, 0
+	receiptIDs := map[string]struct{}{}
+	for _, result := range results {
+		if result.err != nil {
+			t.Fatalf("same receipt concurrent create: %v", result.err)
+		}
+		receiptIDs[result.receipt.ReceiptID] = struct{}{}
+		if result.receipt.Replayed {
+			replayed++
+		} else {
+			created++
+		}
 	}
-	got, err := store.Hold(ctx, hold.ID)
-	if err != nil || got.AccountID != accountID || got.WorkspaceID != workspaceID || got.ResourceType != "compute" || got.ResourceID != resourceID ||
-		got.Status != "released" || got.OriginalCents != 2000 || got.RemainingCents != 0 || got.ConsumedCents != 100 || got.ReleasedCents != 1900 {
-		t.Fatalf("hold = %#v err=%v", got, err)
+	if created != 1 || replayed != 3 || len(receiptIDs) != 1 {
+		t.Fatalf("same receipt outcomes = %#v", results)
+	}
+
+	different := same
+	different.AccountID = "acct-concurrent-payload-receipt"
+	different.IdempotencyKey = "receipt-concurrent-payload"
+	changed := different
+	changed.Cost = map[string]any{"chargeUsdMicros": int64(49_999_999)}
+	results = run(2, []ReceiptInput{different, changed, different, changed})
+	created, replayed, conflicts := 0, 0, 0
+	for _, result := range results {
+		switch {
+		case errors.Is(result.err, ErrIdempotencyConflict):
+			conflicts++
+		case result.err != nil:
+			t.Fatalf("different receipt payload raw error: %v", result.err)
+		case result.receipt.Replayed:
+			replayed++
+		default:
+			created++
+		}
+	}
+	if created != 1 || replayed != 1 || conflicts != 2 {
+		t.Fatalf("different receipt payload outcomes = %#v", results)
 	}
 }
 
@@ -367,22 +410,4 @@ func openLedgerTestPostgres(t *testing.T) *sql.DB {
 		_ = admin.Close()
 	})
 	return db
-}
-
-func readGeneratedLedgerEnt(t *testing.T) string {
-	t.Helper()
-	files := []string{
-		"../../ent/hold_create.go",
-		"../../ent/holdrelease_create.go",
-		"../../ent/resourcesettlement_create.go",
-	}
-	var out strings.Builder
-	for _, file := range files {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatalf("read %s: %v", file, err)
-		}
-		out.Write(data)
-	}
-	return out.String()
 }

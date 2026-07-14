@@ -53,41 +53,17 @@ type StorageVolume struct {
 	ExternalDeletedAt string `json:"external_deleted_at,omitempty"`
 	// BillingStatus holds the value of the "billing_status" field.
 	BillingStatus string `json:"billing_status,omitempty"`
-	// HoldID holds the value of the "hold_id" field.
-	HoldID string `json:"hold_id,omitempty"`
-	// HoldReleaseID holds the value of the "hold_release_id" field.
-	HoldReleaseID string `json:"hold_release_id,omitempty"`
-	// SettlementID holds the value of the "settlement_id" field.
-	SettlementID string `json:"settlement_id,omitempty"`
-	// LedgerEntryID holds the value of the "ledger_entry_id" field.
-	LedgerEntryID string `json:"ledger_entry_id,omitempty"`
-	// WalletTransactionID holds the value of the "wallet_transaction_id" field.
-	WalletTransactionID string `json:"wallet_transaction_id,omitempty"`
 	// PricingVersion holds the value of the "pricing_version" field.
 	PricingVersion string `json:"pricing_version,omitempty"`
-	// UsagePeriodEnd holds the value of the "usage_period_end" field.
-	UsagePeriodEnd string `json:"usage_period_end,omitempty"`
+	// BillingOperationID holds the value of the "billing_operation_id" field.
+	BillingOperationID string `json:"billing_operation_id,omitempty"`
+	// BillingStateJSON holds the value of the "billing_state_json" field.
+	BillingStateJSON string `json:"billing_state_json,omitempty"`
 	// MountPath holds the value of the "mount_path" field.
 	MountPath string `json:"mount_path,omitempty"`
-	// HoldAmountCents holds the value of the "hold_amount_cents" field.
-	HoldAmountCents int64 `json:"hold_amount_cents,omitempty"`
-	// HoldAmount holds the value of the "hold_amount" field.
-	HoldAmount float64 `json:"hold_amount,omitempty"`
 	// SizeGB holds the value of the "size_gb" field.
-	SizeGB float64 `json:"size_gb,omitempty"`
-	// PriceSnapshotResourceType holds the value of the "price_snapshot_resource_type" field.
-	PriceSnapshotResourceType string `json:"price_snapshot_resource_type,omitempty"`
-	// PriceSnapshotCurrency holds the value of the "price_snapshot_currency" field.
-	PriceSnapshotCurrency string `json:"price_snapshot_currency,omitempty"`
-	// PriceSnapshotSource holds the value of the "price_snapshot_source" field.
-	PriceSnapshotSource string `json:"price_snapshot_source,omitempty"`
-	// PriceSnapshotUnitPriceCents holds the value of the "price_snapshot_unit_price_cents" field.
-	PriceSnapshotUnitPriceCents int64 `json:"price_snapshot_unit_price_cents,omitempty"`
-	// PriceSnapshotStorageGBMonth holds the value of the "price_snapshot_storage_gb_month" field.
-	PriceSnapshotStorageGBMonth float64 `json:"price_snapshot_storage_gb_month,omitempty"`
-	// PriceSnapshotSizeGB holds the value of the "price_snapshot_size_gb" field.
-	PriceSnapshotSizeGB float64 `json:"price_snapshot_size_gb,omitempty"`
-	selectValues        sql.SelectValues
+	SizeGB       float64 `json:"size_gb,omitempty"`
+	selectValues sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -95,11 +71,9 @@ func (*StorageVolume) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case storagevolume.FieldHoldAmount, storagevolume.FieldSizeGB, storagevolume.FieldPriceSnapshotStorageGBMonth, storagevolume.FieldPriceSnapshotSizeGB:
+		case storagevolume.FieldSizeGB:
 			values[i] = new(sql.NullFloat64)
-		case storagevolume.FieldHoldAmountCents, storagevolume.FieldPriceSnapshotUnitPriceCents:
-			values[i] = new(sql.NullInt64)
-		case storagevolume.FieldID, storagevolume.FieldAccountID, storagevolume.FieldOwnerUserID, storagevolume.FieldWorkspaceID, storagevolume.FieldName, storagevolume.FieldPackageID, storagevolume.FieldProvider, storagevolume.FieldProviderResourceID, storagevolume.FieldProviderRequestID, storagevolume.FieldOperationID, storagevolume.FieldStatus, storagevolume.FieldDesiredStatus, storagevolume.FieldProviderStatus, storagevolume.FieldLastProviderSyncAt, storagevolume.FieldLastProviderSyncError, storagevolume.FieldExternalDeletedAt, storagevolume.FieldBillingStatus, storagevolume.FieldHoldID, storagevolume.FieldHoldReleaseID, storagevolume.FieldSettlementID, storagevolume.FieldLedgerEntryID, storagevolume.FieldWalletTransactionID, storagevolume.FieldPricingVersion, storagevolume.FieldUsagePeriodEnd, storagevolume.FieldMountPath, storagevolume.FieldPriceSnapshotResourceType, storagevolume.FieldPriceSnapshotCurrency, storagevolume.FieldPriceSnapshotSource:
+		case storagevolume.FieldID, storagevolume.FieldAccountID, storagevolume.FieldOwnerUserID, storagevolume.FieldWorkspaceID, storagevolume.FieldName, storagevolume.FieldPackageID, storagevolume.FieldProvider, storagevolume.FieldProviderResourceID, storagevolume.FieldProviderRequestID, storagevolume.FieldOperationID, storagevolume.FieldStatus, storagevolume.FieldDesiredStatus, storagevolume.FieldProviderStatus, storagevolume.FieldLastProviderSyncAt, storagevolume.FieldLastProviderSyncError, storagevolume.FieldExternalDeletedAt, storagevolume.FieldBillingStatus, storagevolume.FieldPricingVersion, storagevolume.FieldBillingOperationID, storagevolume.FieldBillingStateJSON, storagevolume.FieldMountPath:
 			values[i] = new(sql.NullString)
 		case storagevolume.FieldCreatedAt, storagevolume.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -232,47 +206,23 @@ func (sv *StorageVolume) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				sv.BillingStatus = value.String
 			}
-		case storagevolume.FieldHoldID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_id", values[i])
-			} else if value.Valid {
-				sv.HoldID = value.String
-			}
-		case storagevolume.FieldHoldReleaseID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_release_id", values[i])
-			} else if value.Valid {
-				sv.HoldReleaseID = value.String
-			}
-		case storagevolume.FieldSettlementID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field settlement_id", values[i])
-			} else if value.Valid {
-				sv.SettlementID = value.String
-			}
-		case storagevolume.FieldLedgerEntryID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field ledger_entry_id", values[i])
-			} else if value.Valid {
-				sv.LedgerEntryID = value.String
-			}
-		case storagevolume.FieldWalletTransactionID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field wallet_transaction_id", values[i])
-			} else if value.Valid {
-				sv.WalletTransactionID = value.String
-			}
 		case storagevolume.FieldPricingVersion:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field pricing_version", values[i])
 			} else if value.Valid {
 				sv.PricingVersion = value.String
 			}
-		case storagevolume.FieldUsagePeriodEnd:
+		case storagevolume.FieldBillingOperationID:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field usage_period_end", values[i])
+				return fmt.Errorf("unexpected type %T for field billing_operation_id", values[i])
 			} else if value.Valid {
-				sv.UsagePeriodEnd = value.String
+				sv.BillingOperationID = value.String
+			}
+		case storagevolume.FieldBillingStateJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field billing_state_json", values[i])
+			} else if value.Valid {
+				sv.BillingStateJSON = value.String
 			}
 		case storagevolume.FieldMountPath:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -280,59 +230,11 @@ func (sv *StorageVolume) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				sv.MountPath = value.String
 			}
-		case storagevolume.FieldHoldAmountCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_amount_cents", values[i])
-			} else if value.Valid {
-				sv.HoldAmountCents = value.Int64
-			}
-		case storagevolume.FieldHoldAmount:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_amount", values[i])
-			} else if value.Valid {
-				sv.HoldAmount = value.Float64
-			}
 		case storagevolume.FieldSizeGB:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
 				return fmt.Errorf("unexpected type %T for field size_gb", values[i])
 			} else if value.Valid {
 				sv.SizeGB = value.Float64
-			}
-		case storagevolume.FieldPriceSnapshotResourceType:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_resource_type", values[i])
-			} else if value.Valid {
-				sv.PriceSnapshotResourceType = value.String
-			}
-		case storagevolume.FieldPriceSnapshotCurrency:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_currency", values[i])
-			} else if value.Valid {
-				sv.PriceSnapshotCurrency = value.String
-			}
-		case storagevolume.FieldPriceSnapshotSource:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_source", values[i])
-			} else if value.Valid {
-				sv.PriceSnapshotSource = value.String
-			}
-		case storagevolume.FieldPriceSnapshotUnitPriceCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_unit_price_cents", values[i])
-			} else if value.Valid {
-				sv.PriceSnapshotUnitPriceCents = value.Int64
-			}
-		case storagevolume.FieldPriceSnapshotStorageGBMonth:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_storage_gb_month", values[i])
-			} else if value.Valid {
-				sv.PriceSnapshotStorageGBMonth = value.Float64
-			}
-		case storagevolume.FieldPriceSnapshotSizeGB:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_size_gb", values[i])
-			} else if value.Valid {
-				sv.PriceSnapshotSizeGB = value.Float64
 			}
 		default:
 			sv.selectValues.Set(columns[i], values[i])
@@ -424,56 +326,20 @@ func (sv *StorageVolume) String() string {
 	builder.WriteString("billing_status=")
 	builder.WriteString(sv.BillingStatus)
 	builder.WriteString(", ")
-	builder.WriteString("hold_id=")
-	builder.WriteString(sv.HoldID)
-	builder.WriteString(", ")
-	builder.WriteString("hold_release_id=")
-	builder.WriteString(sv.HoldReleaseID)
-	builder.WriteString(", ")
-	builder.WriteString("settlement_id=")
-	builder.WriteString(sv.SettlementID)
-	builder.WriteString(", ")
-	builder.WriteString("ledger_entry_id=")
-	builder.WriteString(sv.LedgerEntryID)
-	builder.WriteString(", ")
-	builder.WriteString("wallet_transaction_id=")
-	builder.WriteString(sv.WalletTransactionID)
-	builder.WriteString(", ")
 	builder.WriteString("pricing_version=")
 	builder.WriteString(sv.PricingVersion)
 	builder.WriteString(", ")
-	builder.WriteString("usage_period_end=")
-	builder.WriteString(sv.UsagePeriodEnd)
+	builder.WriteString("billing_operation_id=")
+	builder.WriteString(sv.BillingOperationID)
+	builder.WriteString(", ")
+	builder.WriteString("billing_state_json=")
+	builder.WriteString(sv.BillingStateJSON)
 	builder.WriteString(", ")
 	builder.WriteString("mount_path=")
 	builder.WriteString(sv.MountPath)
 	builder.WriteString(", ")
-	builder.WriteString("hold_amount_cents=")
-	builder.WriteString(fmt.Sprintf("%v", sv.HoldAmountCents))
-	builder.WriteString(", ")
-	builder.WriteString("hold_amount=")
-	builder.WriteString(fmt.Sprintf("%v", sv.HoldAmount))
-	builder.WriteString(", ")
 	builder.WriteString("size_gb=")
 	builder.WriteString(fmt.Sprintf("%v", sv.SizeGB))
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_resource_type=")
-	builder.WriteString(sv.PriceSnapshotResourceType)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_currency=")
-	builder.WriteString(sv.PriceSnapshotCurrency)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_source=")
-	builder.WriteString(sv.PriceSnapshotSource)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_unit_price_cents=")
-	builder.WriteString(fmt.Sprintf("%v", sv.PriceSnapshotUnitPriceCents))
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_storage_gb_month=")
-	builder.WriteString(fmt.Sprintf("%v", sv.PriceSnapshotStorageGBMonth))
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_size_gb=")
-	builder.WriteString(fmt.Sprintf("%v", sv.PriceSnapshotSizeGB))
 	builder.WriteByte(')')
 	return builder.String()
 }

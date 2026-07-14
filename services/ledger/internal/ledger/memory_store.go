@@ -14,17 +14,10 @@ import (
 
 type MemoryStore struct {
 	mu                      sync.Mutex
-	wallets                 map[string]Wallet
 	idempotency             map[string]idempotencyRecord
 	reviewPolicyIdempotency map[string]idempotencyRecord
 	receipts                map[string]Receipt
 	reviewPolicies          map[string]ReviewPolicy
-	entries                 []LedgerEntry
-	walletTx                []WalletTransaction
-	topups                  []ManualTopUp
-	settlements             []ResourceSettlementResult
-	holds                   map[string]HoldResult
-	holdReleases            map[string]HoldReleaseResult
 	nextID                  int64
 }
 
@@ -42,338 +35,11 @@ func cloneMemoryValue[T any](value T) T {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		wallets:                 map[string]Wallet{},
 		idempotency:             map[string]idempotencyRecord{},
 		reviewPolicyIdempotency: map[string]idempotencyRecord{},
 		receipts:                map[string]Receipt{},
 		reviewPolicies:          map[string]ReviewPolicy{},
-		holds:                   map[string]HoldResult{},
-		holdReleases:            map[string]HoldReleaseResult{},
 	}
-}
-
-func (s *MemoryStore) ManualTopUp(_ context.Context, input ManualTopUpInput) (ManualTopUpResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	payloadHash, err := hashManualTopUp(input)
-	if err != nil {
-		return ManualTopUpResult{}, err
-	}
-	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
-		if existing.payloadHash != payloadHash {
-			return ManualTopUpResult{}, ErrIdempotencyConflict
-		}
-		result := existing.result.(ManualTopUpResult)
-		result.Replayed = true
-		return result, nil
-	}
-
-	now := time.Now().UTC()
-	wallet := s.wallets[input.AccountID]
-	if wallet.AccountID == "" {
-		wallet = Wallet{AccountID: input.AccountID, Currency: input.Currency}
-	}
-	wallet.BalanceCents += input.AmountCents
-	wallet.Currency = input.Currency
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	wallet.UpdatedAt = now
-
-	entry := LedgerEntry{
-		ID:             s.newID("le"),
-		AccountID:      input.AccountID,
-		AmountCents:    input.AmountCents,
-		Currency:       input.Currency,
-		Direction:      "credit",
-		Source:         "manual_topup",
-		OperatorUserID: input.OperatorUserID,
-		Reason:         input.Reason,
-		CreatedAt:      now,
-	}
-	tx := WalletTransaction{
-		ID:              s.newID("wtx"),
-		AccountID:       input.AccountID,
-		LedgerEntryID:   entry.ID,
-		AmountCents:     input.AmountCents,
-		BalanceCents:    wallet.BalanceCents,
-		FrozenCents:     wallet.FrozenCents,
-		AvailableCents:  wallet.AvailableCents,
-		TotalSpentCents: wallet.TotalSpentCents,
-		Currency:        input.Currency,
-		CreatedAt:       now,
-	}
-	topup := ManualTopUp{
-		ID:             s.newID("mtu"),
-		AccountID:      input.AccountID,
-		AmountCents:    input.AmountCents,
-		Currency:       input.Currency,
-		OperatorUserID: input.OperatorUserID,
-		LedgerEntryID:  entry.ID,
-		Reason:         input.Reason,
-		CreatedAt:      now,
-	}
-
-	result := ManualTopUpResult{TopUp: topup, LedgerEntry: entry, WalletTransaction: tx, Wallet: wallet}
-	s.wallets[input.AccountID] = wallet
-	s.entries = append(s.entries, entry)
-	s.walletTx = append(s.walletTx, tx)
-	s.topups = append(s.topups, topup)
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
-	return result, nil
-}
-
-func (s *MemoryStore) CreateHold(_ context.Context, input HoldInput) (HoldResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if input.ResourceType == "" || input.ResourceID == "" || input.AmountCents <= 0 || input.ActivationAmountCents < 0 || input.ActivationAmountCents > input.AmountCents {
-		return HoldResult{}, ErrInvalidHoldInput
-	}
-	payloadHash, err := hashJSON(struct {
-		AccountID             string `json:"accountId"`
-		WorkspaceID           string `json:"workspaceId"`
-		ResourceType          string `json:"resourceType"`
-		ResourceID            string `json:"resourceId"`
-		AmountCents           int64  `json:"amountCents"`
-		ActivationAmountCents int64  `json:"activationAmountCents"`
-		Currency              string `json:"currency"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.AmountCents, input.ActivationAmountCents, input.Currency})
-	if err != nil {
-		return HoldResult{}, err
-	}
-	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
-		if existing.payloadHash != payloadHash {
-			return HoldResult{}, ErrIdempotencyConflict
-		}
-		result := existing.result.(HoldResult)
-		result.Replayed = true
-		return result, nil
-	}
-
-	now := time.Now().UTC()
-	wallet := s.wallets[input.AccountID]
-	if wallet.AccountID == "" {
-		wallet = Wallet{AccountID: input.AccountID, Currency: input.Currency}
-	}
-	wallet.Currency = input.Currency
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	if wallet.AvailableCents < input.AmountCents {
-		return HoldResult{}, ErrInsufficientBalance
-	}
-	wallet.FrozenCents += input.AmountCents
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	wallet.UpdatedAt = now
-
-	entry := LedgerEntry{
-		ID:          s.newID("le"),
-		AccountID:   input.AccountID,
-		AmountCents: input.AmountCents,
-		Currency:    input.Currency,
-		Direction:   "hold",
-		Source:      input.ResourceType + "_hold",
-		Reason:      input.ResourceID,
-		CreatedAt:   now,
-	}
-	tx := WalletTransaction{
-		ID:              s.newID("wtx"),
-		AccountID:       input.AccountID,
-		LedgerEntryID:   entry.ID,
-		AmountCents:     input.AmountCents,
-		BalanceCents:    wallet.BalanceCents,
-		FrozenCents:     wallet.FrozenCents,
-		AvailableCents:  wallet.AvailableCents,
-		TotalSpentCents: wallet.TotalSpentCents,
-		Currency:        input.Currency,
-		CreatedAt:       now,
-	}
-	result := HoldResult{
-		ID:                    s.newID("hold"),
-		AccountID:             input.AccountID,
-		WorkspaceID:           input.WorkspaceID,
-		ResourceType:          input.ResourceType,
-		ResourceID:            input.ResourceID,
-		AmountCents:           input.AmountCents,
-		ActivationAmountCents: input.ActivationAmountCents,
-		OriginalCents:         input.AmountCents,
-		RemainingCents:        input.AmountCents,
-		Currency:              input.Currency,
-		Status:                "reserved",
-		LedgerEntryID:         entry.ID,
-		WalletTransactionID:   tx.ID,
-		Wallet:                wallet,
-		CreatedAt:             now,
-	}
-	s.wallets[input.AccountID] = wallet
-	s.holds[result.ID] = result
-	s.entries = append(s.entries, entry)
-	s.walletTx = append(s.walletTx, tx)
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
-	return result, nil
-}
-
-func (s *MemoryStore) Hold(_ context.Context, holdID string) (HoldResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	hold, ok := s.holds[holdID]
-	if !ok {
-		return HoldResult{}, ErrHoldNotFound
-	}
-	return hold, nil
-}
-
-func (s *MemoryStore) ActivateHold(_ context.Context, input HoldActivationInput) (HoldActivationResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if input.AccountID == "" || input.ResourceType == "" || input.ResourceID == "" || input.HoldID == "" || input.Currency == "" || input.ProviderEvidenceRef == "" {
-		return HoldActivationResult{}, ErrInvalidHoldInput
-	}
-
-	payloadHash, err := hashJSON(input)
-	if err != nil {
-		return HoldActivationResult{}, err
-	}
-	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
-		if existing.payloadHash != payloadHash {
-			return HoldActivationResult{}, ErrIdempotencyConflict
-		}
-		result := existing.result.(HoldActivationResult)
-		result.Replayed = true
-		return result, nil
-	}
-	hold, ok := s.holds[input.HoldID]
-	if !ok {
-		return HoldActivationResult{}, ErrHoldNotFound
-	}
-	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
-		return HoldActivationResult{}, ErrHoldIdentityMismatch
-	}
-	if hold.Status != "reserved" || hold.ActivationAmountCents <= 0 || hold.RemainingCents < hold.ActivationAmountCents {
-		return HoldActivationResult{}, ErrInvalidHoldState
-	}
-	wallet := s.wallets[input.AccountID]
-	if wallet.BalanceCents < hold.ActivationAmountCents || wallet.FrozenCents < hold.ActivationAmountCents {
-		return HoldActivationResult{}, ErrInsufficientBalance
-	}
-	now := time.Now().UTC()
-	amount := hold.ActivationAmountCents
-	wallet.BalanceCents -= amount
-	wallet.FrozenCents -= amount
-	wallet.TotalSpentCents += amount
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	wallet.UpdatedAt = now
-	hold.RemainingCents -= amount
-	hold.ConsumedCents += amount
-	hold.ProviderEvidenceRef = input.ProviderEvidenceRef
-	hold.Status = "active"
-	hold.Wallet = wallet
-	entry := LedgerEntry{ID: s.newID("le"), AccountID: input.AccountID, AmountCents: amount, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_activation", Reason: input.ResourceID, CreatedAt: now}
-	tx := WalletTransaction{ID: s.newID("wtx"), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -amount, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
-	result := HoldActivationResult{HoldResult: hold, ActivationLedgerEntryID: entry.ID, ActivationWalletTransactionID: tx.ID}
-	s.wallets[input.AccountID] = wallet
-	s.holds[hold.ID] = hold
-	s.entries = append(s.entries, entry)
-	s.walletTx = append(s.walletTx, tx)
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
-	return result, nil
-}
-
-func (s *MemoryStore) ReleaseHold(_ context.Context, input HoldReleaseInput) (HoldReleaseResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	payloadHash, err := hashHoldRelease(input)
-	if err != nil {
-		return HoldReleaseResult{}, err
-	}
-	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
-		if existing.payloadHash != payloadHash {
-			return HoldReleaseResult{}, ErrIdempotencyConflict
-		}
-		result := existing.result.(HoldReleaseResult)
-		result.Replayed = true
-		return result, nil
-	}
-
-	hold, ok := s.holds[input.HoldID]
-	if !ok {
-		return HoldReleaseResult{}, ErrHoldNotFound
-	}
-	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
-		return HoldReleaseResult{}, ErrHoldIdentityMismatch
-	}
-	if hold.Status == "released" {
-		result, ok := s.holdReleases[hold.ID]
-		if !ok {
-			return HoldReleaseResult{}, ErrInvalidHoldState
-		}
-		result.Replayed = true
-		return result, nil
-	}
-	if hold.RemainingCents < 0 {
-		return HoldReleaseResult{}, ErrInvalidHoldState
-	}
-	amount := hold.RemainingCents
-	now := time.Now().UTC()
-	wallet := s.wallets[input.AccountID]
-	if wallet.AccountID == "" {
-		wallet = Wallet{AccountID: input.AccountID, Currency: input.Currency}
-	}
-	if wallet.FrozenCents < amount {
-		return HoldReleaseResult{}, ErrInsufficientFrozen
-	}
-	wallet.FrozenCents -= amount
-	wallet.Currency = input.Currency
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	wallet.UpdatedAt = now
-
-	entry := LedgerEntry{
-		ID:          s.newID("le"),
-		AccountID:   input.AccountID,
-		AmountCents: amount,
-		Currency:    input.Currency,
-		Direction:   "release",
-		Source:      input.ResourceType + "_hold_released",
-		Reason:      input.Reason,
-		CreatedAt:   now,
-	}
-	tx := WalletTransaction{
-		ID:              s.newID("wtx"),
-		AccountID:       input.AccountID,
-		LedgerEntryID:   entry.ID,
-		AmountCents:     0,
-		BalanceCents:    wallet.BalanceCents,
-		FrozenCents:     wallet.FrozenCents,
-		AvailableCents:  wallet.AvailableCents,
-		TotalSpentCents: wallet.TotalSpentCents,
-		Currency:        input.Currency,
-		CreatedAt:       now,
-	}
-	result := HoldReleaseResult{
-		ID:                  s.newID("hrel"),
-		AccountID:           input.AccountID,
-		WorkspaceID:         input.WorkspaceID,
-		ResourceType:        input.ResourceType,
-		ResourceID:          input.ResourceID,
-		HoldID:              input.HoldID,
-		AmountCents:         amount,
-		Currency:            input.Currency,
-		Status:              "released",
-		LedgerEntryID:       entry.ID,
-		WalletTransactionID: tx.ID,
-		Wallet:              wallet,
-		CreatedAt:           now,
-	}
-	s.wallets[input.AccountID] = wallet
-	hold.RemainingCents = 0
-	hold.ReleasedCents += amount
-	hold.Status = "released"
-	hold.Wallet = wallet
-	s.holds[hold.ID] = hold
-	s.holdReleases[hold.ID] = result
-	s.entries = append(s.entries, entry)
-	s.walletTx = append(s.walletTx, tx)
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
-	return result, nil
 }
 
 func (s *MemoryStore) RecordReceipt(_ context.Context, input ReceiptInput) (Receipt, error) {
@@ -518,7 +184,8 @@ func (s *MemoryStore) ListReceipts(_ context.Context, query ReceiptQuery) (Recei
 	defer s.mu.Unlock()
 	receipts := make([]Receipt, 0, query.Limit+1)
 	for _, receipt := range s.receipts {
-		if (query.OrganizationID != "" && receipt.OrganizationID != query.OrganizationID) ||
+		if (query.AccountID != "" && receipt.AccountID != query.AccountID) ||
+			(query.OrganizationID != "" && receipt.OrganizationID != query.OrganizationID) ||
 			(query.WorkspaceID != "" && receipt.WorkspaceID != query.WorkspaceID) ||
 			(query.ProjectID != "" && receipt.ProjectID != query.ProjectID) ||
 			(query.TaskID != "" && receipt.TaskID != query.TaskID) ||
@@ -748,87 +415,6 @@ func (s *MemoryStore) evaluateReviewGateLocked(input ReviewGateInput) (ReviewGat
 	return evaluateReviewGate(active, reviews), nil
 }
 
-func (s *MemoryStore) SettleResource(_ context.Context, input ResourceSettlementInput) (ResourceSettlementResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	payloadHash, err := hashJSON(struct {
-		AccountID               string         `json:"accountId"`
-		WorkspaceID             string         `json:"workspaceId"`
-		ResourceType            string         `json:"resourceType"`
-		ResourceID              string         `json:"resourceId"`
-		HoldID                  string         `json:"holdId"`
-		AmountCents             int64          `json:"amountCents"`
-		Currency                string         `json:"currency"`
-		PricingVersion          string         `json:"pricingVersion"`
-		PriceSnapshot           map[string]any `json:"priceSnapshot"`
-		UsagePeriodStart        string         `json:"usagePeriodStart"`
-		UsagePeriodEnd          string         `json:"usagePeriodEnd"`
-		Quantity                float64        `json:"quantity"`
-		Unit                    string         `json:"unit"`
-		ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
-	}{input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.HoldID, input.AmountCents, input.Currency, input.PricingVersion, input.PriceSnapshot, input.UsagePeriodStart, input.UsagePeriodEnd, input.Quantity, input.Unit, input.ProviderCostEvidenceRef})
-	if err != nil {
-		return ResourceSettlementResult{}, err
-	}
-	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
-		if existing.payloadHash != payloadHash {
-			return ResourceSettlementResult{}, ErrIdempotencyConflict
-		}
-		result := existing.result.(ResourceSettlementResult)
-		result.Replayed = true
-		return result, nil
-	}
-
-	now := time.Now().UTC()
-	hold, ok := s.holds[input.HoldID]
-	if !ok {
-		return ResourceSettlementResult{}, ErrHoldNotFound
-	}
-	if !holdMatches(hold, input.AccountID, input.WorkspaceID, input.ResourceType, input.ResourceID, input.Currency) {
-		return ResourceSettlementResult{}, ErrHoldIdentityMismatch
-	}
-	if hold.Status != "active" && hold.Status != "exhausted" {
-		return ResourceSettlementResult{}, ErrInvalidHoldState
-	}
-	wallet := s.wallets[input.AccountID]
-	if wallet.AccountID == "" {
-		wallet = Wallet{AccountID: input.AccountID, Currency: input.Currency}
-	}
-	availablePart := minInt64(input.AmountCents, wallet.AvailableCents)
-	holdPart := input.AmountCents - availablePart
-	if holdPart > hold.RemainingCents {
-		return ResourceSettlementResult{}, ErrInsufficientResourceHold
-	}
-	wallet.BalanceCents -= input.AmountCents
-	wallet.FrozenCents -= holdPart
-	wallet.TotalSpentCents += input.AmountCents
-	wallet.Currency = input.Currency
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	wallet.UpdatedAt = now
-
-	entry := LedgerEntry{ID: s.newID("le"), AccountID: input.AccountID, AmountCents: input.AmountCents, Currency: input.Currency, Direction: "debit", Source: input.ResourceType + "_settlement", Reason: input.WorkspaceID, CreatedAt: now}
-	tx := WalletTransaction{ID: s.newID("wtx"), AccountID: input.AccountID, LedgerEntryID: entry.ID, AmountCents: -input.AmountCents, BalanceCents: wallet.BalanceCents, FrozenCents: wallet.FrozenCents, AvailableCents: wallet.AvailableCents, TotalSpentCents: wallet.TotalSpentCents, Currency: input.Currency, CreatedAt: now}
-	hold.RemainingCents -= holdPart
-	hold.ConsumedCents += holdPart
-	if hold.RemainingCents == 0 {
-		hold.Status = "exhausted"
-	}
-	hold.Wallet = wallet
-	result := ResourceSettlementResult{ID: s.newID("settle"), AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, HoldRemainingCents: hold.RemainingCents, AmountCents: input.AmountCents, Currency: input.Currency, Status: "settled", LedgerEntryID: entry.ID, WalletTransactionID: tx.ID, PricingVersion: input.PricingVersion, PriceSnapshot: cloneAnyMap(input.PriceSnapshot), UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: wallet, CreatedAt: now}
-	s.wallets[input.AccountID] = wallet
-	s.holds[hold.ID] = hold
-	s.entries = append(s.entries, entry)
-	s.walletTx = append(s.walletTx, tx)
-	s.settlements = append(s.settlements, result)
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
-	return result, nil
-}
-
-func holdMatches(hold HoldResult, accountID, workspaceID, resourceType, resourceID, currency string) bool {
-	return hold.AccountID == accountID && hold.WorkspaceID == workspaceID && hold.ResourceType == resourceType && hold.ResourceID == resourceID && hold.Currency == currency
-}
-
 func (s *MemoryStore) RecordReconciliation(_ context.Context, input ReconciliationInput) (ReconciliationResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -859,66 +445,6 @@ func (s *MemoryStore) RecordReconciliation(_ context.Context, input Reconciliati
 	return result, nil
 }
 
-func (s *MemoryStore) Wallet(_ context.Context, accountID string) (Wallet, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	wallet := s.wallets[accountID]
-	if wallet.AccountID == "" {
-		wallet = Wallet{AccountID: accountID, Currency: "CNY"}
-	}
-	wallet.AvailableCents = wallet.BalanceCents - wallet.FrozenCents
-	return wallet, nil
-}
-
-func (s *MemoryStore) ListLedgerEntries(_ context.Context, accountID string) ([]LedgerEntry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	output := []LedgerEntry{}
-	for _, entry := range s.entries {
-		if accountID == "" || entry.AccountID == accountID {
-			output = append(output, entry)
-		}
-	}
-	return output, nil
-}
-
-func (s *MemoryStore) ListWalletTransactions(_ context.Context, accountID string) ([]WalletTransaction, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	output := []WalletTransaction{}
-	for _, tx := range s.walletTx {
-		if accountID == "" || tx.AccountID == accountID {
-			output = append(output, tx)
-		}
-	}
-	return output, nil
-}
-
-func (s *MemoryStore) ListManualTopUps(_ context.Context, accountID string) ([]ManualTopUp, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	output := []ManualTopUp{}
-	for _, topup := range s.topups {
-		if accountID == "" || topup.AccountID == accountID {
-			output = append(output, topup)
-		}
-	}
-	return output, nil
-}
-
-func (s *MemoryStore) ListResourceSettlements(_ context.Context, accountID string) ([]ResourceSettlementResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	output := []ResourceSettlementResult{}
-	for _, settlement := range s.settlements {
-		if accountID == "" || settlement.AccountID == accountID {
-			output = append(output, settlement)
-		}
-	}
-	return output, nil
-}
-
 func (s *MemoryStore) newID(prefix string) string {
 	s.nextID++
 	return fmt.Sprintf("%s_%06d", prefix, s.nextID)
@@ -935,43 +461,6 @@ func cloneAnyMap(input map[string]any) map[string]any {
 	return output
 }
 
-func hashManualTopUp(input ManualTopUpInput) (string, error) {
-	payload := struct {
-		AccountID      string `json:"accountId"`
-		AmountCents    int64  `json:"amountCents"`
-		Currency       string `json:"currency"`
-		OperatorUserID string `json:"operatorUserId"`
-		Reason         string `json:"reason,omitempty"`
-	}{
-		AccountID:      input.AccountID,
-		AmountCents:    input.AmountCents,
-		Currency:       input.Currency,
-		OperatorUserID: input.OperatorUserID,
-		Reason:         input.Reason,
-	}
-	return hashJSON(payload)
-}
-
-func hashHoldRelease(input HoldReleaseInput) (string, error) {
-	return hashJSON(struct {
-		AccountID    string `json:"accountId"`
-		WorkspaceID  string `json:"workspaceId"`
-		ResourceType string `json:"resourceType"`
-		ResourceID   string `json:"resourceId"`
-		HoldID       string `json:"holdId"`
-		Currency     string `json:"currency"`
-		Reason       string `json:"reason,omitempty"`
-	}{
-		AccountID:    input.AccountID,
-		WorkspaceID:  input.WorkspaceID,
-		ResourceType: input.ResourceType,
-		ResourceID:   input.ResourceID,
-		HoldID:       input.HoldID,
-		Currency:     input.Currency,
-		Reason:       input.Reason,
-	})
-}
-
 func hashJSON(payload any) (string, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -979,13 +468,6 @@ func hashJSON(payload any) (string, error) {
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-func minInt64(a int64, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func stringFromAny(value any) string {

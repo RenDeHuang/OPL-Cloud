@@ -17,6 +17,8 @@ const (
 	FieldReceiptType = "receipt_type"
 	// FieldStatus holds the string denoting the status field in the database.
 	FieldStatus = "status"
+	// FieldAccountID holds the string denoting the account_id field in the database.
+	FieldAccountID = "account_id"
 	// FieldOrganizationID holds the string denoting the organization_id field in the database.
 	FieldOrganizationID = "organization_id"
 	// FieldWorkspaceID holds the string denoting the workspace_id field in the database.
@@ -52,6 +54,7 @@ var Columns = []string{
 	FieldID,
 	FieldReceiptType,
 	FieldStatus,
+	FieldAccountID,
 	FieldOrganizationID,
 	FieldWorkspaceID,
 	FieldProjectID,
@@ -82,6 +85,8 @@ var (
 	DefaultReceiptType string
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
+	// DefaultAccountID holds the default value on creation for the "account_id" field.
+	DefaultAccountID string
 	// DefaultOrganizationID holds the default value on creation for the "organization_id" field.
 	DefaultOrganizationID string
 	// DefaultWorkspaceID holds the default value on creation for the "workspace_id" field.
@@ -128,6 +133,11 @@ func ByReceiptType(opts ...sql.OrderTermOption) OrderOption {
 // ByStatus orders the results by the status field.
 func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStatus, opts...).ToFunc()
+}
+
+// ByAccountID orders the results by the account_id field.
+func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
 }
 
 // ByOrganizationID orders the results by the organization_id field.

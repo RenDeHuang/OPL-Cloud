@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -55,6 +56,29 @@ func TestMachineOwnershipRejectsDuplicateMachineOrResource(t *testing.T) {
 	duplicateResource.InstanceID = "ins-b"
 	if _, _, err := store.ClaimMachine(ctx, duplicateResource); err != ErrMachineOwnershipConflict {
 		t.Fatalf("duplicate resource error = %v", err)
+	}
+}
+
+func TestMachineOwnershipReplayRequiresExactResourceIdentity(t *testing.T) {
+	base := MachineOwnership{ID: "owner-a", ResourceID: "resource-a", AccountID: "acct-a", WorkspaceID: "workspace-a", PackageID: "basic", NodePoolID: "pool-basic", MachineID: "machine-a", InstanceID: "ins-a", Status: "claimed", ClaimedAt: time.Now().UTC()}
+	for name, mutate := range map[string]func(*MachineOwnership){
+		"account":   func(value *MachineOwnership) { value.AccountID = "acct-b" },
+		"workspace": func(value *MachineOwnership) { value.WorkspaceID = "workspace-b" },
+		"package":   func(value *MachineOwnership) { value.PackageID = "pro" },
+		"machine":   func(value *MachineOwnership) { value.MachineID = "machine-b" },
+		"instance":  func(value *MachineOwnership) { value.InstanceID = "ins-b" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := NewMemoryOperationStore()
+			if _, _, err := store.ClaimMachine(context.Background(), base); err != nil {
+				t.Fatal(err)
+			}
+			replay := base
+			mutate(&replay)
+			if _, _, err := store.ClaimMachine(context.Background(), replay); !errors.Is(err, ErrMachineOwnershipConflict) {
+				t.Fatalf("mismatched %s replay err=%v", name, err)
+			}
+		})
 	}
 }
 

@@ -1,68 +1,49 @@
 # Invariants
 
-## Workspace Resource Mapping
+## Ownership
 
-```text
-1 ComputePool = package-level Tencent TKE node pool for one fixed compute specification
-1 ComputeAllocation = account-owned dedicated CVM node inside one ComputePool
-1 StorageVolume = account-owned persistent storage
-1 StorageAttachment = one storage volume mounted to one ComputeAllocation runtime
-1 OPL Workspace = stable URL token entry backed by one StorageVolume and the current ComputeAllocation/StorageAttachment runtime pointer
-1 RuntimeTemplate = deployable application image for the Workspace runtime; the default image is one-person-lab-app
-```
+- Console calls only Control Plane product APIs.
+- Sub2API owns spendable balance, API keys, routing, and request usage.
+- Control Plane owns account mapping, monthly entitlement, and billing operation.
+- Fabric owns cloud resources and provider facts, never billing state.
+- Ledger owns append-only evidence, never spendable balance.
+- No service writes another service's database.
 
-One Lab Owner can own multiple compute allocations, storage volumes, attachments, and OPL Workspace URL entries.
+## Pricing
 
-Fabric-managed ComputePools are explicit placement pools, not user resource identities. TKE autoscaling and node-pool auto repair must stay disabled; every billable CVM is created, owned, billed, and destroyed as a Console ComputeAllocation.
+- Basic compute: `35000` CNY cents and `50000000` USD micros per calendar month.
+- Pro compute: `150000` CNY cents and `214285715` USD micros per calendar month.
+- Each 10 GB storage block: `1800` CNY cents and `2571429` USD micros per calendar month.
+- Storage size is a positive multiple of 10 GB.
+- Money decisions use integers; runtime price lookup and float conversion are forbidden.
 
-RuntimeTemplate/ImageRef is not a billing object. Replacing the default app image must not change resource ownership, storage ownership, Workspace URL identity, or Ledger semantics.
+## Purchase And Recovery
 
-## Access
+- Validate before any provider or money call.
+- Persist resource, billing operation, and stable redeem code before side effects.
+- Fabric prepares before charge; entitlement activates only after exact charge confirmation.
+- A retry reuses the same operation and redeem code.
+- Ambiguous charge state enters `manual_review`; it is never treated as success or failure by inference.
+- Ledger receipt retry never repeats or reverses a confirmed charge.
 
-Workspace URLs are long-lived token URLs:
+## Lifecycle
 
-```text
-https://workspace.medopl.cn/w/<workspaceId>/?token=<share-token>
-```
+- Renewal extends from the current `paidThrough`.
+- Expired compute is destroyed.
+- Expired storage is retained and inaccessible until reactivated.
+- Attachment and Workspace runtime mutations require active entitlement.
+- Destroying compute never destroys storage.
+- Storage destruction requires an explicit confirmation.
 
-Opening a Workspace URL does not require member login. The token remains valid until the owner resets or deletes it.
+## Access And Secrets
 
-Workspace summaries, readiness reports, and public API responses must not leak the share token unless the route is explicitly authenticated and scoped to the owner/admin.
+- Workspace share URLs remain valid until reset or deletion and do not require Console login.
+- Public and evidence responses never expose raw credentials or share tokens.
+- Production manifests contain secret references only.
+- Every production Console account has one positive integer `sub2apiUserId`.
 
-## Compute And Storage
+## Verification
 
-Compute pools, compute allocations, and persistent storage have separate lifecycles.
-
-Destroying a compute allocation must not destroy persistent storage.
-
-Storage destruction requires explicit confirmation and is the only action that stops storage billing.
-
-## Billing
-
-Billing is hourly.
-
-Before opening a compute allocation, OPL Cloud freezes enough balance for 7 days of compute. Before opening storage, it freezes enough balance for 7 days of storage.
-
-Debits charge available balance first, then the relevant frozen hold.
-
-If compute or storage holds are exhausted, OPL Console records account and runtime notifications and blocks new resource actions until top-up or admin recovery.
-
-If storage hold is exhausted, storage is preserved until top-up or explicit storage destruction.
-
-Manual top-ups must create both a wallet transaction and a manual top-up audit record.
-
-Usage debits must be idempotent by source event or request fingerprint.
-
-## Permissions
-
-Lab Owner sees Workspace distribution, URL actions, package, state, balance, bill explanation, usage, support, alerts, and human-readable receipts.
-
-Admin sees users, roles, manual recharge, audit, runtime readiness, production readiness, raw Ledger evidence, Fabric internals, and external support ticket mappings.
-
-Lab Owner must not see request fingerprints, dedup rows, runtime evidence, production readiness, manual settlement, or raw Ledger event internals.
-
-## Runtime
-
-Production readiness fails closed until runtime provider, registry image, workspace domain, PostgreSQL, Tencent configuration, Go provisioner boundary, required host tools, and auth seed/persistence requirements are satisfied.
-
-Production manifests must not inline secrets. Sensitive values must use secret references or mounted secret files.
+- Production E2E requires explicit confirmation that it spends real balance.
+- It verifies exact balance delta, redeem-code identity, receipts, Workspace access, and exact resource cleanup.
+- It deletes only resources created by its own run.

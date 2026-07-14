@@ -7,17 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"opl-cloud/services/ledger/ent/evidencereceipt"
-	"opl-cloud/services/ledger/ent/hold"
-	"opl-cloud/services/ledger/ent/holdactivation"
-	"opl-cloud/services/ledger/ent/holdrelease"
 	"opl-cloud/services/ledger/ent/idempotencykey"
-	"opl-cloud/services/ledger/ent/ledgerentry"
-	"opl-cloud/services/ledger/ent/manualtopup"
 	"opl-cloud/services/ledger/ent/reconciliationreport"
-	"opl-cloud/services/ledger/ent/resourcesettlement"
 	"opl-cloud/services/ledger/ent/reviewpolicy"
-	"opl-cloud/services/ledger/ent/wallet"
-	"opl-cloud/services/ledger/ent/wallettransaction"
 	"reflect"
 	"sync"
 
@@ -85,17 +77,9 @@ func checkColumn(table, column string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			evidencereceipt.Table:      evidencereceipt.ValidColumn,
-			hold.Table:                 hold.ValidColumn,
-			holdactivation.Table:       holdactivation.ValidColumn,
-			holdrelease.Table:          holdrelease.ValidColumn,
 			idempotencykey.Table:       idempotencykey.ValidColumn,
-			ledgerentry.Table:          ledgerentry.ValidColumn,
-			manualtopup.Table:          manualtopup.ValidColumn,
 			reconciliationreport.Table: reconciliationreport.ValidColumn,
-			resourcesettlement.Table:   resourcesettlement.ValidColumn,
 			reviewpolicy.Table:         reviewpolicy.ValidColumn,
-			wallet.Table:               wallet.ValidColumn,
-			wallettransaction.Table:    wallettransaction.ValidColumn,
 		})
 	})
 	return columnCheck(table, column)

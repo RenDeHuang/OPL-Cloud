@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -19,10 +20,6 @@ type memoryTableStore struct {
 	attachments    controlPlaneRecordSet
 	workspaces     controlPlaneRecordSet
 	backups        controlPlaneRecordSet
-	wallets        controlPlaneRecordSet
-	ledger         []map[string]any
-	walletTx       []map[string]any
-	topups         []map[string]any
 	auditEvents    []map[string]any
 	support        controlPlaneRecordSet
 	runtimeOps     []map[string]any
@@ -44,7 +41,6 @@ func newMemoryTableStore() *memoryTableStore {
 		attachments:   controlPlaneRecordSet{},
 		workspaces:    controlPlaneRecordSet{},
 		backups:       controlPlaneRecordSet{},
-		wallets:       controlPlaneRecordSet{},
 		support:       controlPlaneRecordSet{},
 		projectTasks:  controlPlaneRecordSet{},
 		executionReqs: controlPlaneRecordSet{},
@@ -283,6 +279,41 @@ func (s *memoryTableStore) SaveStorage(_ context.Context, row map[string]any) er
 	return nil
 }
 
+func (s *memoryTableStore) ClaimResourceBillingOperation(_ context.Context, resourceType string, row map[string]any) (map[string]any, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var records controlPlaneRecordSet
+	switch resourceType {
+	case "compute":
+		records = s.computes
+	case "storage":
+		records = s.storages
+	default:
+		return nil, false, errors.New("invalid_billing_resource_type")
+	}
+	id, operationID := stringValue(row["id"]), stringValue(row["billingOperationId"])
+	if id == "" || operationID == "" {
+		return nil, false, errors.New("billing_operation_identity_required")
+	}
+	existing := records[id]
+	if existing == nil {
+		records[id] = cloneMap(row)
+		return cloneMap(row), true, nil
+	}
+	if stringValue(existing["billingOperationId"]) == operationID {
+		if !billingOperationIdentityMatches(existing, row) {
+			return nil, false, errIdempotencyConflict
+		}
+		return cloneMap(existing), false, nil
+	}
+	if billingOperationInProgress(stringValue(existing["billingStatus"])) {
+		return cloneMap(existing), false, errBillingOperationInProgress
+	}
+	claimed := mergeMaps(existing, row)
+	records[id] = claimed
+	return cloneMap(claimed), true, nil
+}
+
 func (s *memoryTableStore) DeleteStorage(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -419,58 +450,6 @@ func (s *memoryTableStore) DeleteWorkspace(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.workspaces, id)
-	return nil
-}
-
-func (s *memoryTableStore) ListWallets(_ context.Context, accountID string) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredRecords(s.wallets, accountID)
-}
-
-func (s *memoryTableStore) SaveWallet(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.wallets[firstNonEmpty(stringValue(row["id"]), stringValue(row["accountId"]))] = cloneMap(row)
-	return nil
-}
-
-func (s *memoryTableStore) ListLedger(_ context.Context, accountID string) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredEvents(s.ledger, accountID), nil
-}
-
-func (s *memoryTableStore) SaveLedgerEntry(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ledger = upsertProjectionByID(s.ledger, cloneMap(row))
-	return nil
-}
-
-func (s *memoryTableStore) ListWalletTransactions(_ context.Context, accountID string) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredEvents(s.walletTx, accountID), nil
-}
-
-func (s *memoryTableStore) SaveWalletTransaction(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.walletTx = upsertProjectionByID(s.walletTx, cloneMap(row))
-	return nil
-}
-
-func (s *memoryTableStore) ListManualTopups(_ context.Context, accountID string) ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return filteredEvents(s.topups, accountID), nil
-}
-
-func (s *memoryTableStore) SaveManualTopup(_ context.Context, row map[string]any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.topups = upsertProjectionByID(s.topups, cloneMap(row))
 	return nil
 }
 

@@ -94,6 +94,9 @@ func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (Mach
 }
 
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
+	if input.PackageID != "basic" && input.PackageID != "pro" {
+		return ComputeAllocation{}, ErrUnsupportedComputePackage
+	}
 	now := time.Now().UTC()
 	id := firstNonEmpty(input.ID, fabricID("ca", firstNonEmpty(input.WorkspaceID, input.AccountID, "compute"), now))
 	input.ID = id
@@ -355,6 +358,9 @@ func (s *Service) cancelPendingComputeCreation(ctx context.Context, allocationID
 }
 
 func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	if input.SizeGB < 10 || input.SizeGB%10 != 0 {
+		return StorageVolume{}, ErrInvalidStorageSize
+	}
 	operation := newOperation("create_storage_volume", "storage_volume", firstNonEmpty(input.ID, "pending"), input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now().UTC())
 	input.OperationID = operation.OperationID
 	if err := s.recordOperation(ctx, operation, "started", StorageVolume{ID: operation.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage", input.IdempotencyKey)}, nil); err != nil {

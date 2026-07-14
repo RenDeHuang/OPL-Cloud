@@ -11,13 +11,6 @@ import (
 )
 
 var ErrIdempotencyConflict = errors.New("idempotency key already used with different payload")
-var ErrInsufficientBalance = errors.New("insufficient available balance")
-var ErrInsufficientFrozen = errors.New("insufficient frozen balance")
-var ErrInvalidHoldInput = errors.New("hold resource identity required")
-var ErrHoldNotFound = errors.New("resource hold not found")
-var ErrHoldIdentityMismatch = errors.New("resource hold identity mismatch")
-var ErrInvalidHoldState = errors.New("invalid resource hold state")
-var ErrInsufficientResourceHold = errors.New("insufficient resource hold")
 var ErrReceiptNotFound = errors.New("receipt not found")
 var ErrContinuationNotFound = errors.New("continuation not found")
 var ErrContinuationIneligible = errors.New("continuation is not eligible")
@@ -38,152 +31,11 @@ var ErrReceiptLegalHold = errors.New("receipt is under legal hold")
 const artifactReceiptType = "artifact.manifest.v1"
 const reviewReceiptType = "review.result.v1"
 
-type ManualTopUpInput struct {
-	AccountID      string `json:"accountId"`
-	AmountCents    int64  `json:"amountCents"`
-	Currency       string `json:"currency"`
-	OperatorUserID string `json:"operatorUserId"`
-	IdempotencyKey string `json:"-"`
-	Reason         string `json:"reason,omitempty"`
-}
-
-type Wallet struct {
-	AccountID       string    `json:"accountId"`
-	BalanceCents    int64     `json:"balanceCents"`
-	FrozenCents     int64     `json:"frozenCents"`
-	AvailableCents  int64     `json:"availableCents"`
-	TotalSpentCents int64     `json:"totalSpentCents"`
-	Currency        string    `json:"currency"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-}
-
-type LedgerEntry struct {
-	ID             string    `json:"id"`
-	AccountID      string    `json:"accountId"`
-	AmountCents    int64     `json:"amountCents"`
-	Currency       string    `json:"currency"`
-	Direction      string    `json:"direction"`
-	Source         string    `json:"source"`
-	OperatorUserID string    `json:"operatorUserId"`
-	Reason         string    `json:"reason,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-}
-
-type WalletTransaction struct {
-	ID              string    `json:"id"`
-	AccountID       string    `json:"accountId"`
-	LedgerEntryID   string    `json:"ledgerEntryId"`
-	AmountCents     int64     `json:"amountCents"`
-	BalanceCents    int64     `json:"balanceCents"`
-	FrozenCents     int64     `json:"frozenCents"`
-	AvailableCents  int64     `json:"availableCents"`
-	TotalSpentCents int64     `json:"totalSpentCents"`
-	Currency        string    `json:"currency"`
-	CreatedAt       time.Time `json:"createdAt"`
-}
-
-type ManualTopUp struct {
-	ID             string    `json:"id"`
-	AccountID      string    `json:"accountId"`
-	AmountCents    int64     `json:"amountCents"`
-	Currency       string    `json:"currency"`
-	OperatorUserID string    `json:"operatorUserId"`
-	LedgerEntryID  string    `json:"ledgerEntryId"`
-	Reason         string    `json:"reason,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-}
-
-type ManualTopUpResult struct {
-	TopUp             ManualTopUp       `json:"topUp"`
-	LedgerEntry       LedgerEntry       `json:"ledgerEntry"`
-	WalletTransaction WalletTransaction `json:"walletTransaction"`
-	Wallet            Wallet            `json:"wallet"`
-	Replayed          bool              `json:"replayed"`
-}
-
-type HoldInput struct {
-	AccountID             string `json:"accountId"`
-	WorkspaceID           string `json:"workspaceId"`
-	ResourceType          string `json:"resourceType"`
-	ResourceID            string `json:"resourceId"`
-	AmountCents           int64  `json:"amountCents"`
-	ActivationAmountCents int64  `json:"activationAmountCents,omitempty"`
-	Currency              string `json:"currency"`
-	IdempotencyKey        string `json:"-"`
-}
-
-type HoldResult struct {
-	ID                    string    `json:"id"`
-	AccountID             string    `json:"accountId"`
-	WorkspaceID           string    `json:"workspaceId"`
-	ResourceType          string    `json:"resourceType"`
-	ResourceID            string    `json:"resourceId"`
-	AmountCents           int64     `json:"amountCents"`
-	ActivationAmountCents int64     `json:"activationAmountCents"`
-	OriginalCents         int64     `json:"originalCents"`
-	RemainingCents        int64     `json:"remainingCents"`
-	ConsumedCents         int64     `json:"consumedCents"`
-	ReleasedCents         int64     `json:"releasedCents"`
-	ProviderEvidenceRef   string    `json:"providerEvidenceRef,omitempty"`
-	Currency              string    `json:"currency"`
-	Status                string    `json:"status"`
-	LedgerEntryID         string    `json:"ledgerEntryId"`
-	WalletTransactionID   string    `json:"walletTransactionId"`
-	Wallet                Wallet    `json:"wallet"`
-	CreatedAt             time.Time `json:"createdAt"`
-	Replayed              bool      `json:"replayed"`
-}
-
-type HoldActivationInput struct {
-	AccountID           string `json:"accountId"`
-	WorkspaceID         string `json:"workspaceId"`
-	ResourceType        string `json:"resourceType"`
-	ResourceID          string `json:"resourceId"`
-	HoldID              string `json:"holdId"`
-	Currency            string `json:"currency"`
-	ProviderEvidenceRef string `json:"providerEvidenceRef"`
-	IdempotencyKey      string `json:"-"`
-}
-
-type HoldActivationResult struct {
-	HoldResult
-	ActivationLedgerEntryID       string `json:"activationLedgerEntryId"`
-	ActivationWalletTransactionID string `json:"activationWalletTransactionId"`
-}
-
-type HoldReleaseInput struct {
-	AccountID      string `json:"accountId"`
-	WorkspaceID    string `json:"workspaceId"`
-	ResourceType   string `json:"resourceType"`
-	ResourceID     string `json:"resourceId"`
-	HoldID         string `json:"holdId"`
-	AmountCents    int64  `json:"amountCents"`
-	Currency       string `json:"currency"`
-	Reason         string `json:"reason,omitempty"`
-	IdempotencyKey string `json:"-"`
-}
-
-type HoldReleaseResult struct {
-	ID                  string    `json:"id"`
-	AccountID           string    `json:"accountId"`
-	WorkspaceID         string    `json:"workspaceId"`
-	ResourceType        string    `json:"resourceType"`
-	ResourceID          string    `json:"resourceId"`
-	HoldID              string    `json:"holdId"`
-	AmountCents         int64     `json:"amountCents"`
-	Currency            string    `json:"currency"`
-	Status              string    `json:"status"`
-	LedgerEntryID       string    `json:"ledgerEntryId"`
-	WalletTransactionID string    `json:"walletTransactionId"`
-	Wallet              Wallet    `json:"wallet"`
-	CreatedAt           time.Time `json:"createdAt"`
-	Replayed            bool      `json:"replayed"`
-}
-
 type ReceiptInput struct {
 	Type                string         `json:"type"`
 	Status              string         `json:"status"`
 	Surface             string         `json:"surface"`
+	AccountID           string         `json:"accountId,omitempty"`
 	OrganizationID      string         `json:"organizationId"`
 	WorkspaceID         string         `json:"workspaceId"`
 	ProjectID           string         `json:"projectId"`
@@ -267,6 +119,7 @@ const (
 )
 
 type ReceiptQuery struct {
+	AccountID      string
 	OrganizationID string
 	WorkspaceID    string
 	ProjectID      string
@@ -712,49 +565,6 @@ func containsForbiddenReceiptKey(value any) bool {
 		}
 	}
 	return false
-}
-
-type ResourceSettlementInput struct {
-	AccountID               string         `json:"accountId"`
-	WorkspaceID             string         `json:"workspaceId"`
-	ResourceType            string         `json:"resourceType"`
-	ResourceID              string         `json:"resourceId"`
-	HoldID                  string         `json:"holdId"`
-	AmountCents             int64          `json:"amountCents"`
-	Currency                string         `json:"currency"`
-	PricingVersion          string         `json:"pricingVersion"`
-	PriceSnapshot           map[string]any `json:"priceSnapshot"`
-	UsagePeriodStart        string         `json:"usagePeriodStart"`
-	UsagePeriodEnd          string         `json:"usagePeriodEnd"`
-	Quantity                float64        `json:"quantity"`
-	Unit                    string         `json:"unit"`
-	ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
-	IdempotencyKey          string         `json:"-"`
-}
-
-type ResourceSettlementResult struct {
-	ID                      string         `json:"id"`
-	AccountID               string         `json:"accountId"`
-	WorkspaceID             string         `json:"workspaceId"`
-	ResourceType            string         `json:"resourceType"`
-	ResourceID              string         `json:"resourceId"`
-	HoldID                  string         `json:"holdId"`
-	HoldRemainingCents      int64          `json:"holdRemainingCents"`
-	AmountCents             int64          `json:"amountCents"`
-	Currency                string         `json:"currency"`
-	Status                  string         `json:"status"`
-	LedgerEntryID           string         `json:"ledgerEntryId"`
-	WalletTransactionID     string         `json:"walletTransactionId"`
-	PricingVersion          string         `json:"pricingVersion"`
-	PriceSnapshot           map[string]any `json:"priceSnapshot"`
-	UsagePeriodStart        string         `json:"usagePeriodStart"`
-	UsagePeriodEnd          string         `json:"usagePeriodEnd"`
-	Quantity                float64        `json:"quantity"`
-	Unit                    string         `json:"unit"`
-	ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef"`
-	Wallet                  Wallet         `json:"wallet"`
-	CreatedAt               time.Time      `json:"createdAt"`
-	Replayed                bool           `json:"replayed"`
 }
 
 type ReconciliationInput struct {

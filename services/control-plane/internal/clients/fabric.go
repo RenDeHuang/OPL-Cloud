@@ -145,13 +145,6 @@ type ComputeAllocation struct {
 	MachineName         string `json:"machineName,omitempty"`
 	PrivateIP           string `json:"privateIp,omitempty"`
 	PublicIP            string `json:"publicIp,omitempty"`
-	BillingStatus       string `json:"billingStatus,omitempty"`
-	HoldID              string `json:"holdId,omitempty"`
-	HoldAmountCents     int64  `json:"holdAmountCents,omitempty"`
-	HoldReleaseID       string `json:"holdReleaseId,omitempty"`
-	LedgerEntryID       string `json:"ledgerEntryId,omitempty"`
-	WalletTransactionID string `json:"walletTransactionId,omitempty"`
-	Wallet              Wallet `json:"wallet,omitempty"`
 }
 
 type StorageVolumeInput struct {
@@ -171,13 +164,6 @@ type StorageVolume struct {
 	Status              string `json:"status"`
 	SizeGB              int    `json:"sizeGb,omitempty"`
 	StorageClass        string `json:"storageClass,omitempty"`
-	BillingStatus       string `json:"billingStatus,omitempty"`
-	HoldID              string `json:"holdId,omitempty"`
-	HoldAmountCents     int64  `json:"holdAmountCents,omitempty"`
-	HoldReleaseID       string `json:"holdReleaseId,omitempty"`
-	LedgerEntryID       string `json:"ledgerEntryId,omitempty"`
-	WalletTransactionID string `json:"walletTransactionId,omitempty"`
-	Wallet              Wallet `json:"wallet,omitempty"`
 }
 
 type StorageSnapshotInput struct {

@@ -58,12 +58,9 @@
         "TENCENT_TCR_NAMESPACE": "opl",
         "TENCENT_TCR_REGION": "ap-guangzhou",
         "TENCENT_DEPLOY_KUBECONFIG_REF": "/var/run/opl-cloud/kubeconfig/kubeconfig",
-        "OPL_BASIC_COMPUTE_HOURLY_CNY": "0.468",
-        "OPL_PRO_COMPUTE_HOURLY_CNY": "1.38",
-        "OPL_STORAGE_GB_MONTH_CNY": "0.432",
-        "OPL_RESOURCE_BILLING_WORKER_ENABLED": "1",
+        "OPL_MONTHLY_BILLING_WORKER_ENABLED": "1",
+        "OPL_MONTHLY_BILLING_INTERVAL_MS": "3600000",
         "OPL_PROVIDER_RECONCILE_WORKER_ENABLED": "1",
-        "OPL_RESOURCE_BILLING_INTERVAL_MS": "3600000",
         "OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
         "OPL_BASIC_COMPUTE_NODE_POOL_ID": "",
         "OPL_PRO_COMPUTE_INSTANCE_TYPE": "SA5.2XLARGE16",
@@ -71,6 +68,9 @@
         "OPL_CODEX_MODEL": "gpt-5.5",
         "OPL_CODEX_REASONING_EFFORT": "xhigh",
         "OPL_CODEX_BASE_URL": "https://gflabtoken.cn/v1",
+        "OPL_SUB2API_BASE_URL": "https://gflabtoken.cn",
+        "OPL_SUB2API_SUPPORTED_VERSIONS": "0.1.153",
+        "OPL_SUB2API_REQUEST_TIMEOUT_MS": "5000",
         "OPL_TENCENT_PROVISIONER_BIN": "/usr/local/bin/opl-tencent-provisioner",
         "TENCENTCLOUD_REGION": "ap-guangzhou",
         "TENCENT_CVM_SUBNET_ID": "subnet-xxxxxxxx",
@@ -95,6 +95,9 @@
       },
       "spec": {
         "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
         "selector": {
           "matchLabels": {
             "app.kubernetes.io/name": "opl-cloud"
@@ -200,6 +203,24 @@
                         "name": "opl-cloud-workspace-codex",
                         "key": "OPL_CODEX_API_KEY",
                         "optional": true
+                      }
+                    }
+                  },
+                  {
+                    "name": "OPL_SUB2API_ADMIN_EMAIL",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-sub2api",
+                        "key": "OPL_SUB2API_ADMIN_EMAIL"
+                      }
+                    }
+                  },
+                  {
+                    "name": "OPL_SUB2API_ADMIN_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-sub2api",
+                        "key": "OPL_SUB2API_ADMIN_PASSWORD"
                       }
                     }
                   }
@@ -363,54 +384,6 @@
                 "type": "RuntimeDefault"
               }
             },
-            "initContainers": [
-              {
-                "name": "ledger-schema-migration",
-                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
-                "imagePullPolicy": "IfNotPresent",
-                "command": [
-                  "node"
-                ],
-                "args": [
-                  "-e",
-                  "const { Client } = require('pg'); const tables = { manual_topups: ['reason'], holds: [], evidence_receipts: [], resource_settlements: [], reconciliation_reports: [] }; (async () => { const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: false }); await client.connect(); const tableExists = async (name) => (await client.query('SELECT to_regclass($1) AS name', ['public.' + name])).rows[0].name; const columnExists = async (table, column) => (await client.query('SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3', ['public', table, column])).rowCount > 0; try { const ledgerEntries = await client.query('SELECT to_regclass($1) AS name', ['public.ledger_entries']); if (ledgerEntries.rows[0].name) await client.query('ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS reason TEXT'); if (await tableExists('wallet_transactions')) { await client.query('ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT'); await client.query('ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS amount_cents BIGINT'); await client.query('ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS balance_cents BIGINT'); await client.query('ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS currency TEXT'); await client.query('UPDATE wallet_transactions SET ledger_entry_id = id WHERE ledger_entry_id IS NULL'); await client.query('UPDATE wallet_transactions SET amount_cents = 0 WHERE amount_cents IS NULL'); await client.query('UPDATE wallet_transactions SET balance_cents = 0 WHERE balance_cents IS NULL'); await client.query(`UPDATE wallet_transactions SET currency = 'CNY' WHERE currency IS NULL`); await client.query('ALTER TABLE wallet_transactions ALTER COLUMN ledger_entry_id SET NOT NULL'); await client.query('ALTER TABLE wallet_transactions ALTER COLUMN amount_cents SET NOT NULL'); await client.query('ALTER TABLE wallet_transactions ALTER COLUMN balance_cents SET NOT NULL'); await client.query('ALTER TABLE wallet_transactions ALTER COLUMN currency SET NOT NULL'); await client.query('ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS user_id'); await client.query('ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS workspace_id'); await client.query('ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS transaction_type'); await client.query('ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS source_event_id'); await client.query('ALTER TABLE wallet_transactions DROP COLUMN IF EXISTS state'); } if (await tableExists('manual_topups')) { await client.query('ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS account_id TEXT'); await client.query('ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS amount_cents BIGINT'); await client.query('ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS currency TEXT'); await client.query('ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS operator_user_id TEXT'); await client.query('ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS ledger_entry_id TEXT'); await client.query('ALTER TABLE manual_topups ADD COLUMN IF NOT EXISTS wallet_transaction_id TEXT'); if (await columnExists('manual_topups', 'target_account_id')) await client.query('UPDATE manual_topups SET account_id = target_account_id WHERE account_id IS NULL'); await client.query('UPDATE manual_topups SET account_id = id WHERE account_id IS NULL'); await client.query('UPDATE manual_topups SET amount_cents = 0 WHERE amount_cents IS NULL'); await client.query(`UPDATE manual_topups SET currency = 'CNY' WHERE currency IS NULL`); await client.query(`UPDATE manual_topups SET operator_user_id = '' WHERE operator_user_id IS NULL`); await client.query('UPDATE manual_topups SET ledger_entry_id = id WHERE ledger_entry_id IS NULL'); await client.query('UPDATE manual_topups SET wallet_transaction_id = id WHERE wallet_transaction_id IS NULL'); await client.query('ALTER TABLE manual_topups ALTER COLUMN account_id SET NOT NULL'); await client.query('ALTER TABLE manual_topups ALTER COLUMN amount_cents SET NOT NULL'); await client.query('ALTER TABLE manual_topups ALTER COLUMN currency SET NOT NULL'); await client.query('ALTER TABLE manual_topups ALTER COLUMN operator_user_id SET NOT NULL'); await client.query('ALTER TABLE manual_topups ALTER COLUMN ledger_entry_id SET NOT NULL'); await client.query('ALTER TABLE manual_topups ALTER COLUMN wallet_transaction_id SET NOT NULL'); await client.query('ALTER TABLE manual_topups DROP COLUMN IF EXISTS target_user_id'); await client.query('ALTER TABLE manual_topups DROP COLUMN IF EXISTS target_account_id'); await client.query('ALTER TABLE manual_topups DROP COLUMN IF EXISTS state'); } for (const [name, extra] of Object.entries(tables)) { const exists = await tableExists(name); if (!exists) continue; await client.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS idempotency_key TEXT`); await client.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS request_hash TEXT`); if (extra.includes('reason')) await client.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS reason TEXT`); await client.query(`UPDATE ${name} SET idempotency_key = 'migrated:' || ctid::text WHERE idempotency_key IS NULL`); await client.query(`UPDATE ${name} SET request_hash = 'migrated:' || ctid::text WHERE request_hash IS NULL`); await client.query(`ALTER TABLE ${name} ALTER COLUMN idempotency_key SET NOT NULL`); await client.query(`ALTER TABLE ${name} ALTER COLUMN request_hash SET NOT NULL`); } } finally { await client.end(); } })().catch((error) => { console.error(error.message); process.exit(1); });"
-                ],
-                "env": [
-                  {
-                    "name": "PGSSLMODE",
-                    "value": "disable"
-                  },
-                  {
-                    "name": "DATABASE_URL",
-                    "valueFrom": {
-                      "secretKeyRef": {
-                        "name": "opl-cloud-database",
-                        "key": "DATABASE_URL"
-                      }
-                    }
-                  }
-                ],
-                "resources": {
-                  "requests": {
-                    "cpu": "50m",
-                    "memory": "128Mi"
-                  },
-                  "limits": {
-                    "cpu": "250m",
-                    "memory": "256Mi"
-                  }
-                },
-                "securityContext": {
-                  "allowPrivilegeEscalation": false,
-                  "readOnlyRootFilesystem": true,
-                  "capabilities": {
-                    "drop": [
-                      "ALL"
-                    ]
-                  }
-                }
-              }
-            ],
             "containers": [
               {
                 "name": "ledger",

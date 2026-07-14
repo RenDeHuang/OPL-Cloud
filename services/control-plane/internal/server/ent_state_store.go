@@ -18,19 +18,15 @@ import (
 	"opl-cloud/services/control-plane/ent/adminauditevent"
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
-	"opl-cloud/services/control-plane/ent/ledgerprojection"
-	"opl-cloud/services/control-plane/ent/manualtopupprojection"
-	"opl-cloud/services/control-plane/ent/pricingcatalog"
-	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
 	"opl-cloud/services/control-plane/ent/storageattachment"
 	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
-	"opl-cloud/services/control-plane/ent/wallettransactionprojection"
 	"opl-cloud/services/control-plane/ent/workspace"
 	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
+	controlplanemigrations "opl-cloud/services/control-plane/migrations"
 )
 
 const singletonFactID = "default"
@@ -60,6 +56,10 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := controlplanemigrations.Apply(context.Background(), driver); err != nil {
+		_ = driver.Close()
+		return nil, err
+	}
 	if err := validateAndNormalizeLegacyMemberships(context.Background(), driver); err != nil {
 		_ = driver.Close()
 		return nil, err
@@ -77,12 +77,7 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		_ = client.Close()
 		return nil, err
 	}
-	store := &postgresEntStateStore{client: client}
-	if err := store.ensureDefaultPricingCatalog(context.Background()); err != nil {
-		_ = client.Close()
-		return nil, err
-	}
-	return store, nil
+	return &postgresEntStateStore{client: client}, nil
 }
 
 func validateAndNormalizeLegacyMemberships(ctx context.Context, driver dialect.Driver) error {
@@ -292,9 +287,32 @@ func boolField(entityField, setter string, path ...string) entRecordField {
 	return entRecordField{EntityField: entityField, Setter: setter, Path: path, Kind: "bool"}
 }
 
+func billingJSONField(entityField, setter string) entRecordField {
+	return entRecordField{EntityField: entityField, Setter: setter, Kind: "billing_json"}
+}
+
+// ponytail: keep low-cardinality monthly state in one JSON column at the current
+// scale; promote fields to indexed columns only when renewal scans become measurable.
+var monthlyBillingStateKeys = []string{
+	"billingOperationStartedAt",
+	"sub2apiRedeemCode",
+	"monthlyPriceCnyCents",
+	"chargeUsdMicros",
+	"billingAnchorDay",
+	"periodStart",
+	"paidThrough",
+	"autoRenew",
+	"lastRenewalAttemptAt",
+	"lastBillingError",
+	"lastReceiptId",
+	"postChargeBalanceUsdMicros",
+	"postChargeBalanceKnown",
+}
+
 var (
 	accountEntFields = []entRecordField{
 		textField("OwnerUserID", "SetOwnerUserID", "ownerUserId"),
+		intField("Sub2apiUserID", "SetSub2apiUserID", "sub2apiUserId"),
 		textField("Name", "SetName", "name"),
 		textField("Status", "SetStatus", "status"),
 	}
@@ -345,30 +363,17 @@ var (
 		textField("LastProviderSyncError", "SetLastProviderSyncError", "lastProviderSyncError"),
 		textField("ExternalDeletedAt", "SetExternalDeletedAt", "externalDeletedAt"),
 		textField("BillingStatus", "SetBillingStatus", "billingStatus"),
-		textField("HoldID", "SetHoldID", "holdId"),
-		textField("HoldReleaseID", "SetHoldReleaseID", "holdReleaseId"),
-		textField("SettlementID", "SetSettlementID", "settlementId"),
-		textField("LedgerEntryID", "SetLedgerEntryID", "ledgerEntryId"),
-		textField("WalletTransactionID", "SetWalletTransactionID", "walletTransactionId"),
+		textField("BillingOperationID", "SetBillingOperationID", "billingOperationId"),
+		billingJSONField("BillingStateJSON", "SetBillingStateJSON"),
 		textField("PricingVersion", "SetPricingVersion", "pricingVersion"),
-		textField("UsagePeriodEnd", "SetUsagePeriodEnd", "usagePeriodEnd"),
 		textField("EvidenceID", "SetEvidenceID", "evidenceId"),
 		textField("CvmInstanceID", "SetCvmInstanceID", "cvmInstanceId"),
 		textField("InstanceID", "SetInstanceID", "instanceId"),
 		textField("NodeName", "SetNodeName", "nodeName"),
 		textField("MachineName", "SetMachineName", "machineName"),
-		intField("HoldAmountCents", "SetHoldAmountCents", "holdAmountCents"),
-		floatField("HoldAmount", "SetHoldAmount", "holdAmount"),
 		floatField("CPU", "SetCPU", "cpu"),
 		floatField("MemoryGB", "SetMemoryGB", "memoryGb"),
 		floatField("DiskGB", "SetDiskGB", "diskGb"),
-		textField("PriceSnapshotPackageID", "SetPriceSnapshotPackageID", "priceSnapshot", "packageId"),
-		textField("PriceSnapshotResourceType", "SetPriceSnapshotResourceType", "priceSnapshot", "resourceType"),
-		textField("PriceSnapshotCurrency", "SetPriceSnapshotCurrency", "priceSnapshot", "currency"),
-		textField("PriceSnapshotSource", "SetPriceSnapshotSource", "priceSnapshot", "source"),
-		textField("PriceSnapshotSku", "SetPriceSnapshotSku", "priceSnapshot", "sku"),
-		intField("PriceSnapshotUnitPriceCents", "SetPriceSnapshotUnitPriceCents", "priceSnapshot", "unitPriceCents"),
-		floatField("PriceSnapshotComputeHourly", "SetPriceSnapshotComputeHourly", "priceSnapshot", "computeHourly"),
 	}
 	storageEntFields = []entRecordField{
 		textField("AccountID", "SetAccountID", "accountId"),
@@ -387,23 +392,11 @@ var (
 		textField("LastProviderSyncError", "SetLastProviderSyncError", "lastProviderSyncError"),
 		textField("ExternalDeletedAt", "SetExternalDeletedAt", "externalDeletedAt"),
 		textField("BillingStatus", "SetBillingStatus", "billingStatus"),
-		textField("HoldID", "SetHoldID", "holdId"),
-		textField("HoldReleaseID", "SetHoldReleaseID", "holdReleaseId"),
-		textField("SettlementID", "SetSettlementID", "settlementId"),
-		textField("LedgerEntryID", "SetLedgerEntryID", "ledgerEntryId"),
-		textField("WalletTransactionID", "SetWalletTransactionID", "walletTransactionId"),
+		textField("BillingOperationID", "SetBillingOperationID", "billingOperationId"),
+		billingJSONField("BillingStateJSON", "SetBillingStateJSON"),
 		textField("PricingVersion", "SetPricingVersion", "pricingVersion"),
-		textField("UsagePeriodEnd", "SetUsagePeriodEnd", "usagePeriodEnd"),
 		textField("MountPath", "SetMountPath", "mountPath"),
-		intField("HoldAmountCents", "SetHoldAmountCents", "holdAmountCents"),
-		floatField("HoldAmount", "SetHoldAmount", "holdAmount"),
 		floatField("SizeGB", "SetSizeGB", "sizeGb"),
-		textField("PriceSnapshotResourceType", "SetPriceSnapshotResourceType", "priceSnapshot", "resourceType"),
-		textField("PriceSnapshotCurrency", "SetPriceSnapshotCurrency", "priceSnapshot", "currency"),
-		textField("PriceSnapshotSource", "SetPriceSnapshotSource", "priceSnapshot", "source"),
-		intField("PriceSnapshotUnitPriceCents", "SetPriceSnapshotUnitPriceCents", "priceSnapshot", "unitPriceCents"),
-		floatField("PriceSnapshotStorageGBMonth", "SetPriceSnapshotStorageGBMonth", "priceSnapshot", "storageGbMonth"),
-		floatField("PriceSnapshotSizeGB", "SetPriceSnapshotSizeGB", "priceSnapshot", "sizeGb"),
 	}
 	attachmentEntFields = []entRecordField{
 		textField("AccountID", "SetAccountID", "accountId"),
@@ -451,77 +444,6 @@ var (
 		textField("RequestHash", "SetRequestHash", "requestHash"),
 		textField("ManifestJSON", "SetManifestJSON", "manifestJson"),
 		textField("RestoredStorageID", "SetRestoredStorageID", "restoredStorageId"),
-	}
-	walletEntFields = []entRecordField{
-		textField("AccountID", "SetAccountID", "accountId"),
-		textField("Currency", "SetCurrency", "currency"),
-		intField("BalanceCents", "SetBalanceCents", "balanceCents"),
-		intField("FrozenCents", "SetFrozenCents", "frozenCents"),
-		intField("AvailableCents", "SetAvailableCents", "availableCents"),
-		intField("TotalSpentCents", "SetTotalSpentCents", "totalSpentCents"),
-		floatField("Balance", "SetBalance", "balance"),
-		floatField("Frozen", "SetFrozen", "frozen"),
-		floatField("Available", "SetAvailable", "available"),
-		floatField("TotalSpent", "SetTotalSpent", "totalSpent"),
-		floatField("TotalRecharged", "SetTotalRecharged", "totalRecharged"),
-	}
-	ledgerEntFields = []entRecordField{
-		textField("AccountID", "SetAccountID", "accountId"),
-		textField("Type", "SetType", "type"),
-		textField("ResourceID", "SetResourceID", "resourceId"),
-		textField("ResourceKind", "SetResourceKind", "resourceKind"),
-		textField("WorkspaceID", "SetWorkspaceID", "workspaceId"),
-		textField("ComputeAllocationID", "SetComputeAllocationID", "computeAllocationId"),
-		textField("StorageID", "SetStorageID", "storageId"),
-		textField("SettlementID", "SetSettlementID", "settlementId"),
-		textField("PricingVersion", "SetPricingVersion", "pricingVersion"),
-		textField("UsagePeriodStart", "SetUsagePeriodStart", "usagePeriodStart"),
-		textField("UsagePeriodEnd", "SetUsagePeriodEnd", "usagePeriodEnd"),
-		textField("Unit", "SetUnit", "unit"),
-		textField("ProviderCostEvidenceRef", "SetProviderCostEvidenceRef", "providerCostEvidenceRef"),
-		textField("Currency", "SetCurrency", "currency"),
-		intField("AmountCents", "SetAmountCents", "amountCents"),
-		floatField("Quantity", "SetQuantity", "quantity"),
-		textField("Direction", "SetDirection", "direction"),
-		textField("PriceSnapshotPackageID", "SetPriceSnapshotPackageID", "priceSnapshot", "packageId"),
-		textField("PriceSnapshotResourceType", "SetPriceSnapshotResourceType", "priceSnapshot", "resourceType"),
-		textField("PriceSnapshotCurrency", "SetPriceSnapshotCurrency", "priceSnapshot", "currency"),
-		textField("PriceSnapshotSource", "SetPriceSnapshotSource", "priceSnapshot", "source"),
-		textField("PriceSnapshotSku", "SetPriceSnapshotSku", "priceSnapshot", "sku"),
-		intField("PriceSnapshotUnitPriceCents", "SetPriceSnapshotUnitPriceCents", "priceSnapshot", "unitPriceCents"),
-		floatField("PriceSnapshotComputeHourly", "SetPriceSnapshotComputeHourly", "priceSnapshot", "computeHourly"),
-		floatField("PriceSnapshotStorageGBMonth", "SetPriceSnapshotStorageGBMonth", "priceSnapshot", "storageGbMonth"),
-		floatField("PriceSnapshotSizeGB", "SetPriceSnapshotSizeGB", "priceSnapshot", "sizeGb"),
-	}
-	walletTxEntFields = []entRecordField{
-		textField("AccountID", "SetAccountID", "accountId"),
-		textField("Type", "SetType", "type"),
-		textField("LedgerEntryID", "SetLedgerEntryID", "ledgerEntryId"),
-		textField("ResourceID", "SetResourceID", "resourceId"),
-		textField("WorkspaceID", "SetWorkspaceID", "workspaceId"),
-		textField("ComputeAllocationID", "SetComputeAllocationID", "computeAllocationId"),
-		textField("StorageID", "SetStorageID", "storageId"),
-		textField("SettlementID", "SetSettlementID", "settlementId"),
-		textField("Currency", "SetCurrency", "currency"),
-		intField("AmountCents", "SetAmountCents", "amountCents"),
-		intField("BalanceCents", "SetBalanceCents", "balanceCents"),
-		intField("FrozenCents", "SetFrozenCents", "frozenCents"),
-		intField("AvailableCents", "SetAvailableCents", "availableCents"),
-		intField("TotalSpentCents", "SetTotalSpentCents", "totalSpentCents"),
-		textField("MetadataWorkspaceID", "SetMetadataWorkspaceID", "metadata", "workspaceId"),
-		textField("MetadataResourceID", "SetMetadataResourceID", "metadata", "resourceId"),
-		textField("MetadataSettlementID", "SetMetadataSettlementID", "metadata", "settlementId"),
-		textField("MetadataLedgerEntryID", "SetMetadataLedgerEntryID", "metadata", "ledgerEntryId"),
-		textField("MetadataComputeAllocationID", "SetMetadataComputeAllocationID", "metadata", "computeAllocationId"),
-		textField("MetadataStorageID", "SetMetadataStorageID", "metadata", "storageId"),
-	}
-	topupEntFields = []entRecordField{
-		textField("AccountID", "SetAccountID", "accountId"),
-		textField("OperatorUserID", "SetOperatorUserID", "operatorUserId"),
-		textField("Currency", "SetCurrency", "currency"),
-		textField("Source", "SetSource", "source"),
-		textField("Reason", "SetReason", "reason"),
-		intField("AmountCents", "SetAmountCents", "amountCents"),
 	}
 	runtimeOpEntFields = []entRecordField{
 		textField("OperationID", "SetOperationID", "operationId"),
@@ -796,6 +718,7 @@ func (s *postgresEntStateStore) SaveProjectTaskSyncHead(ctx context.Context, row
 		func() any { return s.client.ProjectTaskSyncHead.Create() },
 		func(id string) any { return s.client.ProjectTaskSyncHead.UpdateOneID(id) },
 		projectTaskSyncHeadEntFields,
+		false,
 	)
 }
 
@@ -912,6 +835,7 @@ func (s *postgresEntStateStore) SaveExecutionRequest(ctx context.Context, row ma
 		func() any { return s.client.ExecutionRequest.Create() },
 		func(id string) any { return s.client.ExecutionRequest.UpdateOneID(id) },
 		executionRequestEntFields,
+		false,
 	)
 }
 
@@ -924,7 +848,14 @@ func (s *postgresEntStateStore) ListComputes(ctx context.Context, accountID stri
 }
 
 func (s *postgresEntStateStore) SaveCompute(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ComputeAllocation.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ComputeAllocation.Create() }, computeEntFields)
+	return s.upsertRecord(ctx, row,
+		func(id string) (any, error) { return s.client.ComputeAllocation.Get(ctx, id) },
+		computeResourceIdentityMatches,
+		func() any { return s.client.ComputeAllocation.Create() },
+		func(id string) any { return s.client.ComputeAllocation.UpdateOneID(id) },
+		computeEntFields,
+		true,
+	)
 }
 
 func (s *postgresEntStateStore) DeleteCompute(ctx context.Context, id string) error {
@@ -944,7 +875,100 @@ func (s *postgresEntStateStore) ListStorages(ctx context.Context, accountID stri
 }
 
 func (s *postgresEntStateStore) SaveStorage(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.StorageVolume.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.StorageVolume.Create() }, storageEntFields)
+	return s.upsertRecord(ctx, row,
+		func(id string) (any, error) { return s.client.StorageVolume.Get(ctx, id) },
+		storageResourceIdentityMatches,
+		func() any { return s.client.StorageVolume.Create() },
+		func(id string) any { return s.client.StorageVolume.UpdateOneID(id) },
+		storageEntFields,
+		true,
+	)
+}
+
+func (s *postgresEntStateStore) ClaimResourceBillingOperation(ctx context.Context, resourceType string, row map[string]any) (map[string]any, bool, error) {
+	id := stringValue(row["id"])
+	switch resourceType {
+	case "compute":
+		return claimEntBillingOperation(ctx, row,
+			func() (map[string]any, error) {
+				entity, err := s.client.ComputeAllocation.Query().Where(computeallocation.ID(id)).Only(ctx)
+				if controlplaneent.IsNotFound(err) {
+					return nil, nil
+				}
+				if err != nil {
+					return nil, err
+				}
+				return recordFromEnt(entity, computeEntFields), nil
+			},
+			func() error { return saveRecord(ctx, id, row, s.client.ComputeAllocation.Create(), computeEntFields) },
+			func(expectedOperationID string) (int, error) {
+				builder := s.client.ComputeAllocation.Update().Where(computeallocation.ID(id), computeallocation.BillingOperationID(expectedOperationID))
+				setRecordFields(builder, row, computeEntFields)
+				return builder.Save(ctx)
+			},
+		)
+	case "storage":
+		return claimEntBillingOperation(ctx, row,
+			func() (map[string]any, error) {
+				entity, err := s.client.StorageVolume.Query().Where(storagevolume.ID(id)).Only(ctx)
+				if controlplaneent.IsNotFound(err) {
+					return nil, nil
+				}
+				if err != nil {
+					return nil, err
+				}
+				return recordFromEnt(entity, storageEntFields), nil
+			},
+			func() error { return saveRecord(ctx, id, row, s.client.StorageVolume.Create(), storageEntFields) },
+			func(expectedOperationID string) (int, error) {
+				builder := s.client.StorageVolume.Update().Where(storagevolume.ID(id), storagevolume.BillingOperationID(expectedOperationID))
+				setRecordFields(builder, row, storageEntFields)
+				return builder.Save(ctx)
+			},
+		)
+	default:
+		return nil, false, errors.New("invalid_billing_resource_type")
+	}
+}
+
+func claimEntBillingOperation(ctx context.Context, row map[string]any, load func() (map[string]any, error), create func() error, update func(string) (int, error)) (map[string]any, bool, error) {
+	if stringValue(row["id"]) == "" || stringValue(row["billingOperationId"]) == "" {
+		return nil, false, errors.New("billing_operation_identity_required")
+	}
+	for range 4 {
+		existing, err := load()
+		if err != nil {
+			return nil, false, err
+		}
+		if existing == nil {
+			if err := create(); err != nil {
+				if controlplaneent.IsConstraintError(err) {
+					continue
+				}
+				return nil, false, err
+			}
+			return cloneMap(row), true, nil
+		}
+		operationID := stringValue(row["billingOperationId"])
+		currentOperationID := stringValue(existing["billingOperationId"])
+		if currentOperationID == operationID {
+			if !billingOperationIdentityMatches(existing, row) {
+				return nil, false, errIdempotencyConflict
+			}
+			return existing, false, nil
+		}
+		if billingOperationInProgress(stringValue(existing["billingStatus"])) {
+			return existing, false, errBillingOperationInProgress
+		}
+		updated, err := update(currentOperationID)
+		if err != nil {
+			return nil, false, err
+		}
+		if updated == 1 {
+			return mergeMaps(existing, row), true, nil
+		}
+	}
+	return nil, false, errors.New("billing_operation_claim_retry_exhausted")
 }
 
 func (s *postgresEntStateStore) DeleteStorage(ctx context.Context, id string) error {
@@ -1151,45 +1175,6 @@ func (s *postgresEntStateStore) SaveWorkspaceBackup(ctx context.Context, row map
 	return saveRecord(ctx, id, row, s.client.WorkspaceBackup.Create(), workspaceBackupEntFields)
 }
 
-func (s *postgresEntStateStore) ListWallets(ctx context.Context, accountID string) ([]map[string]any, error) {
-	rows, err := loadRecordSet(ctx, s.client.WalletProjection.Query().All, walletEntFields)
-	if err != nil {
-		return nil, err
-	}
-	return filteredRecords(rows, accountID)
-}
-
-func (s *postgresEntStateStore) SaveWallet(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.WalletProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.WalletProjection.Create() }, walletEntFields)
-}
-
-func (s *postgresEntStateStore) ListLedger(ctx context.Context, accountID string) ([]map[string]any, error) {
-	rows, err := loadEventRows(ctx, s.client.LedgerProjection.Query().Order(controlplaneent.Asc(ledgerprojection.FieldCreatedAt, ledgerprojection.FieldID)).All, ledgerEntFields)
-	return filteredEvents(rows, accountID), err
-}
-
-func (s *postgresEntStateStore) SaveLedgerEntry(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.LedgerProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.LedgerProjection.Create() }, ledgerEntFields)
-}
-
-func (s *postgresEntStateStore) ListWalletTransactions(ctx context.Context, accountID string) ([]map[string]any, error) {
-	rows, err := loadEventRows(ctx, s.client.WalletTransactionProjection.Query().Order(controlplaneent.Asc(wallettransactionprojection.FieldCreatedAt, wallettransactionprojection.FieldID)).All, walletTxEntFields)
-	return filteredEvents(rows, accountID), err
-}
-
-func (s *postgresEntStateStore) SaveWalletTransaction(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.WalletTransactionProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.WalletTransactionProjection.Create() }, walletTxEntFields)
-}
-
-func (s *postgresEntStateStore) ListManualTopups(ctx context.Context, accountID string) ([]map[string]any, error) {
-	rows, err := loadEventRows(ctx, s.client.ManualTopupProjection.Query().Order(controlplaneent.Asc(manualtopupprojection.FieldCreatedAt, manualtopupprojection.FieldID)).All, topupEntFields)
-	return filteredEvents(rows, accountID), err
-}
-
-func (s *postgresEntStateStore) SaveManualTopup(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.ManualTopupProjection.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.ManualTopupProjection.Create() }, topupEntFields)
-}
-
 func (s *postgresEntStateStore) ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error) {
 	rows, err := loadEventRows(ctx, s.client.AdminAuditEvent.Query().Order(controlplaneent.Asc(adminauditevent.FieldCreatedAt, adminauditevent.FieldID)).All, auditEntFields)
 	return filteredEvents(rows, accountID), err
@@ -1233,124 +1218,6 @@ func (s *postgresEntStateStore) BillingReconciliation(ctx context.Context) (map[
 
 func (s *postgresEntStateStore) SaveBillingReconciliation(ctx context.Context, row map[string]any) error {
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.BillingReconciliation.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.BillingReconciliation.Create() }, reconcileEntFields)
-}
-
-func (s *postgresEntStateStore) SettlementResourceRows(ctx context.Context) (controlPlaneRecordSet, controlPlaneRecordSet, error) {
-	computes, err := loadRecordSet(ctx, s.client.ComputeAllocation.Query().All, computeEntFields)
-	if err != nil {
-		return nil, nil, err
-	}
-	storages, err := loadRecordSet(ctx, s.client.StorageVolume.Query().All, storageEntFields)
-	if err != nil {
-		return nil, nil, err
-	}
-	return computes, storages, nil
-}
-
-func (s *postgresEntStateStore) ensureDefaultPricingCatalog(ctx context.Context) error {
-	catalog := defaultPricingCatalog()
-	existing, err := s.client.PricingCatalog.Query().Where(pricingcatalog.Version(catalog.Version)).Only(ctx)
-	if err != nil && !controlplaneent.IsNotFound(err) {
-		return err
-	}
-	if existing == nil {
-		if err := s.client.PricingCatalog.Create().
-			SetID("pricing-catalog-" + stableID(catalog.Version)[:12]).
-			SetVersion(catalog.Version).
-			SetCurrency(catalog.Currency).
-			SetHoldDays(catalog.HoldDays).
-			SetEffectiveFrom("2026-07-06T00:00:00Z").
-			SetStatus("current").
-			Exec(ctx); err != nil && !controlplaneent.IsConstraintError(err) {
-			return err
-		}
-	}
-	count, err := s.client.PricingItem.Query().Where(pricingitem.CatalogVersion(catalog.Version)).Count(ctx)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-	for _, plan := range catalog.Packages {
-		for _, item := range []struct {
-			resourceType string
-			unit         string
-			unitPrice    float64
-		}{
-			{resourceType: "compute", unit: "hour", unitPrice: plan.ComputeHourly},
-			{resourceType: "storage", unit: "gb_month", unitPrice: plan.StorageGBMonth},
-		} {
-			id := "pricing-item-" + stableID(catalog.Version, plan.ID, item.resourceType)[:16]
-			if err := s.client.PricingItem.Create().
-				SetID(id).
-				SetCatalogVersion(catalog.Version).
-				SetPackageID(plan.ID).
-				SetResourceType(item.resourceType).
-				SetUnit(item.unit).
-				SetUnitPrice(item.unitPrice).
-				SetUnitPriceCents(cents(item.unitPrice)).
-				SetAvailable(plan.Available).
-				SetName(plan.Name).
-				SetServer(plan.Server).
-				SetCPU(plan.CPU).
-				SetMemoryGB(plan.MemoryGB).
-				SetDiskGB(plan.DiskGB).
-				Exec(ctx); err != nil && !controlplaneent.IsConstraintError(err) {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *postgresEntStateStore) PricingCatalog(ctx context.Context) (pricingCatalogData, error) {
-	if err := s.ensureDefaultPricingCatalog(ctx); err != nil {
-		return pricingCatalogData{}, err
-	}
-	row, err := s.client.PricingCatalog.Query().Where(pricingcatalog.Status("current")).Only(ctx)
-	if controlplaneent.IsNotFound(err) {
-		return defaultPricingCatalog(), nil
-	}
-	if err != nil {
-		return pricingCatalogData{}, err
-	}
-	items, err := s.client.PricingItem.Query().
-		Where(pricingitem.CatalogVersion(row.Version)).
-		Order(controlplaneent.Asc(pricingitem.FieldPackageID, pricingitem.FieldResourceType)).
-		All(ctx)
-	if err != nil {
-		return pricingCatalogData{}, err
-	}
-	byPackage := map[string]*pricingPackageData{}
-	order := []string{}
-	for _, item := range items {
-		plan := byPackage[item.PackageID]
-		if plan == nil {
-			plan = &pricingPackageData{
-				ID:        item.PackageID,
-				Name:      item.Name,
-				Available: item.Available,
-				CPU:       item.CPU,
-				MemoryGB:  item.MemoryGB,
-				DiskGB:    item.DiskGB,
-				Server:    item.Server,
-			}
-			byPackage[item.PackageID] = plan
-			order = append(order, item.PackageID)
-		}
-		switch item.ResourceType {
-		case "storage":
-			plan.StorageGBMonth = item.UnitPrice
-		default:
-			plan.ComputeHourly = item.UnitPrice
-		}
-	}
-	catalog := pricingCatalogData{Version: row.Version, Currency: row.Currency, HoldDays: row.HoldDays}
-	for _, packageID := range order {
-		catalog.Packages = append(catalog.Packages, *byPackage[packageID])
-	}
-	return catalog, nil
 }
 
 func (s *postgresEntStateStore) ArchiveTerminalResources(ctx context.Context, reason string) (map[string]any, error) {
@@ -1585,6 +1452,15 @@ func recordFromEnt(entity any, fields []entRecordField) controlPlaneRecord {
 	}
 	for _, field := range fields {
 		raw := fieldValue(value, field.EntityField)
+		if field.Kind == "billing_json" {
+			var billing map[string]any
+			if text := stringValue(raw); text != "" && json.Unmarshal([]byte(text), &billing) == nil {
+				for key, value := range billing {
+					row[key] = value
+				}
+			}
+			continue
+		}
 		if isZero(raw) {
 			continue
 		}
@@ -1628,6 +1504,10 @@ func saveRecord(ctx context.Context, id string, row controlPlaneRecord, builder 
 }
 
 func setRecordFields(builder any, row controlPlaneRecord, fields []entRecordField) {
+	setRecordFieldsWithEmptyText(builder, row, fields, false)
+}
+
+func setRecordFieldsWithEmptyText(builder any, row controlPlaneRecord, fields []entRecordField, includeEmptyText bool) {
 	for _, field := range fields {
 		if field.Setter == "" {
 			continue
@@ -1643,16 +1523,26 @@ func setRecordFields(builder any, row controlPlaneRecord, fields []entRecordFiel
 			callSetter(builder, field.Setter, numberValue(value))
 		case "bool":
 			callSetter(builder, field.Setter, boolValue(value))
+		case "billing_json":
+			billing := map[string]any{}
+			for _, key := range monthlyBillingStateKeys {
+				if value, ok := row[key]; ok {
+					billing[key] = value
+				}
+			}
+			if encoded, err := json.Marshal(billing); err == nil {
+				callSetter(builder, field.Setter, string(encoded))
+			}
 		default:
 			text := stringValue(value)
-			if text != "" {
+			if text != "" || includeEmptyText {
 				callSetter(builder, field.Setter, text)
 			}
 		}
 	}
 }
 
-func (s *postgresEntStateStore) upsertRecord(ctx context.Context, row map[string]any, get func(string) (any, error), identityMatches func(any, map[string]any) bool, create func() any, update func(string) any, fields []entRecordField) error {
+func (s *postgresEntStateStore) upsertRecord(ctx context.Context, row map[string]any, get func(string) (any, error), identityMatches func(any, map[string]any) bool, create func() any, update func(string) any, fields []entRecordField, includeEmptyText bool) error {
 	id := stringValue(row["id"])
 	if id == "" {
 		return errors.New("missing_record_id")
@@ -1662,7 +1552,7 @@ func (s *postgresEntStateStore) upsertRecord(ctx context.Context, row map[string
 			return errIdempotencyConflict
 		}
 		builder := update(id)
-		setRecordFields(builder, row, fields)
+		setRecordFieldsWithEmptyText(builder, row, fields, includeEmptyText)
 		return execCreate(ctx, builder)
 	} else if !controlplaneent.IsNotFound(err) {
 		return err
@@ -1686,6 +1576,16 @@ func projectTaskSyncHeadIdentityMatches(existing any, row map[string]any) bool {
 func executionRequestIdentityMatches(existing any, row map[string]any) bool {
 	entity, ok := existing.(*controlplaneent.ExecutionRequest)
 	return ok && entity.OrganizationID == stringValue(row["organizationId"]) && entity.WorkspaceID == stringValue(row["workspaceId"]) && entity.ProjectID == stringValue(row["projectId"]) && entity.TaskID == stringValue(row["taskId"]) && entity.ActorUserID == stringValue(row["actorUserId"]) && entity.EnvironmentRef == stringValue(row["environmentRef"]) && entity.IdempotencyKey == stringValue(row["idempotencyKey"])
+}
+
+func computeResourceIdentityMatches(existing any, row map[string]any) bool {
+	entity, ok := existing.(*controlplaneent.ComputeAllocation)
+	return ok && entity.AccountID == stringValue(row["accountId"])
+}
+
+func storageResourceIdentityMatches(existing any, row map[string]any) bool {
+	entity, ok := existing.(*controlplaneent.StorageVolume)
+	return ok && entity.AccountID == stringValue(row["accountId"])
 }
 
 func (s *postgresEntStateStore) replaceRecord(ctx context.Context, row map[string]any, deleteOne func(string) error, create func() any, fields []entRecordField) error {

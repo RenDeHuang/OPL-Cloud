@@ -23,6 +23,8 @@ type Account struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// OwnerUserID holds the value of the "owner_user_id" field.
 	OwnerUserID string `json:"owner_user_id,omitempty"`
+	// Sub2apiUserID holds the value of the "sub2api_user_id" field.
+	Sub2apiUserID int64 `json:"sub2api_user_id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
 	// Status holds the value of the "status" field.
@@ -35,6 +37,8 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case account.FieldSub2apiUserID:
+			values[i] = new(sql.NullInt64)
 		case account.FieldID, account.FieldOwnerUserID, account.FieldName, account.FieldStatus:
 			values[i] = new(sql.NullString)
 		case account.FieldCreatedAt, account.FieldUpdatedAt:
@@ -77,6 +81,12 @@ func (a *Account) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field owner_user_id", values[i])
 			} else if value.Valid {
 				a.OwnerUserID = value.String
+			}
+		case account.FieldSub2apiUserID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field sub2api_user_id", values[i])
+			} else if value.Valid {
+				a.Sub2apiUserID = value.Int64
 			}
 		case account.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -134,6 +144,9 @@ func (a *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("owner_user_id=")
 	builder.WriteString(a.OwnerUserID)
+	builder.WriteString(", ")
+	builder.WriteString("sub2api_user_id=")
+	builder.WriteString(fmt.Sprintf("%v", a.Sub2apiUserID))
 	builder.WriteString(", ")
 	builder.WriteString("name=")
 	builder.WriteString(a.Name)

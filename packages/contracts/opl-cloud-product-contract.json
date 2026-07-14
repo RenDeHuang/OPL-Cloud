@@ -30,7 +30,7 @@
   "runtimeTemplatePolicy": {
     "defaultTemplateId": "one-person-lab-app",
     "billingObject": false,
-    "ownershipRule": "Runtime templates never own accounts, compute allocations, storage volumes, storage attachments, Workspace URL entries, holds, debits, or lifecycle records."
+    "ownershipRule": "Runtime templates never own accounts, compute allocations, storage volumes, storage attachments, Workspace URL entries, monthly entitlements, charges, or lifecycle records."
   },
   "access": {
     "urlPattern": "https://workspace.medopl.cn/w/<workspaceId>/?token=<share-token>",
@@ -89,7 +89,7 @@
     "member_login_for_shared_urls",
     "workspace_owned_compute_or_storage_lifecycle",
     "local_development_requires_kubernetes",
-    "external_payment_settlement",
+    "external_payment_processing",
     "live_tencent_price_lookup_before_each_resource_create"
   ]
 }

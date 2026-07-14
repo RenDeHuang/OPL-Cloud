@@ -15,8 +15,6 @@
     "typecheck": "tsc -p apps/console-ui/tsconfig.json --noEmit",
     "build": "vite build",
     "verify:production": "node tools/production-verifier.ts",
-    "provision:manual-workspace": "node tools/provision-manual-workspace.ts",
-    "reconcile:tencent": "node services/ledger/ops/reconcile-tencent-bills.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {

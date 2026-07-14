@@ -14,20 +14,9 @@ func (app *controlPlaneServer) workspaceStateRowsLocked(accountID string) []any 
 	output := make([]any, 0, len(rows))
 	for _, row := range rows {
 		workspace := workspaceResponse(cloneMap(row))
-		workspace["billing"] = app.workspaceBillingLocked(workspace)
 		output = append(output, workspace)
 	}
 	return output
-}
-
-func (app *controlPlaneServer) workspaceBillingLocked(workspace map[string]any) map[string]any {
-	workspaceID := stringValue(workspace["id"])
-	compute, _ := app.getCompute(stringValue(workspace["currentComputeAllocationId"]))
-	storage, _ := app.getStorage(stringValue(workspace["storageId"]))
-	return map[string]any{
-		"activeHourlyEstimate": activeHourlyForResource(compute) + activeHourlyForResource(storage),
-		"currentChargeTotal":   resourceDebitTotal(rowsToRecords(app.listLedger(firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])))), firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])), workspaceID),
-	}
 }
 
 func (app *controlPlaneServer) setWorkspaceAccess(workspaceID string, tokenStatus string) (map[string]any, bool, error) {

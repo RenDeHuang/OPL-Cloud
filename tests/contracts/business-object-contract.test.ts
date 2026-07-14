@@ -29,7 +29,7 @@ test("business object contract defines the current commercial object boundary", 
   assert.deepEqual(contract.repositoryBoundaries, ["opl-console", "opl-fabric", "opl-ledger"]);
   assert.deepEqual(contract.routeKinds, ["read_model", "business_object", "external_integration"]);
   assert.ok(contract.principles.includes("Active business object contract contains only current commercial objects."));
-  assert.ok(contract.repoBoundaryRules.includes("Console owns UI, auth, route contracts, and read-model orchestration."));
+  assert.ok(contract.repoBoundaryRules.includes("Console owns UI, auth, route contracts, and product presentation through Control Plane APIs only."));
   assert.ok(contract.repoBoundaryRules.includes("Fabric owns runtime, storage, connector, and agent resource execution boundaries."));
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
 });
@@ -46,8 +46,8 @@ test("business object contract contains only current OPL Cloud business facts", 
     ["StorageVolume", ["list", "detail", "read", "write", "action", "evidence"]],
     ["StorageAttachment", ["list", "detail", "read", "write", "action", "evidence"]],
     ["Workspace", ["list", "detail", "read", "write", "action"]],
-    ["Wallet", ["list", "detail", "read", "action", "audit"]],
-    ["LedgerEntry", ["list", "read", "evidence", "audit"]],
+    ["Balance", ["list", "detail", "read", "audit"]],
+    ["EvidenceReceipt", ["list", "read", "evidence", "audit"]],
     ["FabricOperation", ["list", "detail", "read", "evidence", "audit"]],
     ["AdminAuditEvent", ["list", "read", "audit"]],
     ["SupportTicketMapping", ["list", "detail", "read", "write", "audit"]]
@@ -63,14 +63,14 @@ test("business object contract contains only current OPL Cloud business facts", 
     "Account",
     "AdminAuditEvent",
     "ComputeAllocation",
+    "Balance",
+    "EvidenceReceipt",
     "FabricOperation",
-    "LedgerEntry",
     "Session",
     "StorageAttachment",
     "StorageVolume",
     "SupportTicketMapping",
     "User",
-    "Wallet",
     "Workspace"
   ].sort());
 });

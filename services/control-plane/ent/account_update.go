@@ -62,6 +62,27 @@ func (au *AccountUpdate) SetNillableOwnerUserID(s *string) *AccountUpdate {
 	return au
 }
 
+// SetSub2apiUserID sets the "sub2api_user_id" field.
+func (au *AccountUpdate) SetSub2apiUserID(i int64) *AccountUpdate {
+	au.mutation.ResetSub2apiUserID()
+	au.mutation.SetSub2apiUserID(i)
+	return au
+}
+
+// SetNillableSub2apiUserID sets the "sub2api_user_id" field if the given value is not nil.
+func (au *AccountUpdate) SetNillableSub2apiUserID(i *int64) *AccountUpdate {
+	if i != nil {
+		au.SetSub2apiUserID(*i)
+	}
+	return au
+}
+
+// AddSub2apiUserID adds i to the "sub2api_user_id" field.
+func (au *AccountUpdate) AddSub2apiUserID(i int64) *AccountUpdate {
+	au.mutation.AddSub2apiUserID(i)
+	return au
+}
+
 // SetName sets the "name" field.
 func (au *AccountUpdate) SetName(s string) *AccountUpdate {
 	au.mutation.SetName(s)
@@ -149,6 +170,12 @@ func (au *AccountUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := au.mutation.OwnerUserID(); ok {
 		_spec.SetField(account.FieldOwnerUserID, field.TypeString, value)
 	}
+	if value, ok := au.mutation.Sub2apiUserID(); ok {
+		_spec.SetField(account.FieldSub2apiUserID, field.TypeInt64, value)
+	}
+	if value, ok := au.mutation.AddedSub2apiUserID(); ok {
+		_spec.AddField(account.FieldSub2apiUserID, field.TypeInt64, value)
+	}
 	if value, ok := au.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)
 	}
@@ -206,6 +233,27 @@ func (auo *AccountUpdateOne) SetNillableOwnerUserID(s *string) *AccountUpdateOne
 	if s != nil {
 		auo.SetOwnerUserID(*s)
 	}
+	return auo
+}
+
+// SetSub2apiUserID sets the "sub2api_user_id" field.
+func (auo *AccountUpdateOne) SetSub2apiUserID(i int64) *AccountUpdateOne {
+	auo.mutation.ResetSub2apiUserID()
+	auo.mutation.SetSub2apiUserID(i)
+	return auo
+}
+
+// SetNillableSub2apiUserID sets the "sub2api_user_id" field if the given value is not nil.
+func (auo *AccountUpdateOne) SetNillableSub2apiUserID(i *int64) *AccountUpdateOne {
+	if i != nil {
+		auo.SetSub2apiUserID(*i)
+	}
+	return auo
+}
+
+// AddSub2apiUserID adds i to the "sub2api_user_id" field.
+func (auo *AccountUpdateOne) AddSub2apiUserID(i int64) *AccountUpdateOne {
+	auo.mutation.AddSub2apiUserID(i)
 	return auo
 }
 
@@ -325,6 +373,12 @@ func (auo *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err e
 	}
 	if value, ok := auo.mutation.OwnerUserID(); ok {
 		_spec.SetField(account.FieldOwnerUserID, field.TypeString, value)
+	}
+	if value, ok := auo.mutation.Sub2apiUserID(); ok {
+		_spec.SetField(account.FieldSub2apiUserID, field.TypeInt64, value)
+	}
+	if value, ok := auo.mutation.AddedSub2apiUserID(); ok {
+		_spec.AddField(account.FieldSub2apiUserID, field.TypeInt64, value)
 	}
 	if value, ok := auo.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)

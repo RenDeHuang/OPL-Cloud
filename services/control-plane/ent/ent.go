@@ -18,12 +18,8 @@ import (
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/executionrequest"
-	"opl-cloud/services/control-plane/ent/ledgerprojection"
-	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
 	"opl-cloud/services/control-plane/ent/organization"
-	"opl-cloud/services/control-plane/ent/pricingcatalog"
-	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
@@ -32,8 +28,6 @@ import (
 	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
 	"opl-cloud/services/control-plane/ent/user"
-	"opl-cloud/services/control-plane/ent/walletprojection"
-	"opl-cloud/services/control-plane/ent/wallettransactionprojection"
 	"opl-cloud/services/control-plane/ent/workspace"
 	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
@@ -103,37 +97,31 @@ var (
 func checkColumn(table, column string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			account.Table:                     account.ValidColumn,
-			adminauditevent.Table:             adminauditevent.ValidColumn,
-			archivejob.Table:                  archivejob.ValidColumn,
-			archivedadminauditevent.Table:     archivedadminauditevent.ValidColumn,
-			archivedcomputeallocation.Table:   archivedcomputeallocation.ValidColumn,
-			archivedstorageattachment.Table:   archivedstorageattachment.ValidColumn,
-			archivedstoragevolume.Table:       archivedstoragevolume.ValidColumn,
-			archivedworkspace.Table:           archivedworkspace.ValidColumn,
-			authattempt.Table:                 authattempt.ValidColumn,
-			billingreconciliation.Table:       billingreconciliation.ValidColumn,
-			computeallocation.Table:           computeallocation.ValidColumn,
-			executionrequest.Table:            executionrequest.ValidColumn,
-			ledgerprojection.Table:            ledgerprojection.ValidColumn,
-			manualtopupprojection.Table:       manualtopupprojection.ValidColumn,
-			membership.Table:                  membership.ValidColumn,
-			organization.Table:                organization.ValidColumn,
-			pricingcatalog.Table:              pricingcatalog.ValidColumn,
-			pricingitem.Table:                 pricingitem.ValidColumn,
-			productione2erecord.Table:         productione2erecord.ValidColumn,
-			projecttasksynchead.Table:         projecttasksynchead.ValidColumn,
-			runtimeoperation.Table:            runtimeoperation.ValidColumn,
-			session.Table:                     session.ValidColumn,
-			storageattachment.Table:           storageattachment.ValidColumn,
-			storagevolume.Table:               storagevolume.ValidColumn,
-			supportticketmapping.Table:        supportticketmapping.ValidColumn,
-			user.Table:                        user.ValidColumn,
-			walletprojection.Table:            walletprojection.ValidColumn,
-			wallettransactionprojection.Table: wallettransactionprojection.ValidColumn,
-			workspace.Table:                   workspace.ValidColumn,
-			workspacebackup.Table:             workspacebackup.ValidColumn,
-			workspacesyncevent.Table:          workspacesyncevent.ValidColumn,
+			account.Table:                   account.ValidColumn,
+			adminauditevent.Table:           adminauditevent.ValidColumn,
+			archivejob.Table:                archivejob.ValidColumn,
+			archivedadminauditevent.Table:   archivedadminauditevent.ValidColumn,
+			archivedcomputeallocation.Table: archivedcomputeallocation.ValidColumn,
+			archivedstorageattachment.Table: archivedstorageattachment.ValidColumn,
+			archivedstoragevolume.Table:     archivedstoragevolume.ValidColumn,
+			archivedworkspace.Table:         archivedworkspace.ValidColumn,
+			authattempt.Table:               authattempt.ValidColumn,
+			billingreconciliation.Table:     billingreconciliation.ValidColumn,
+			computeallocation.Table:         computeallocation.ValidColumn,
+			executionrequest.Table:          executionrequest.ValidColumn,
+			membership.Table:                membership.ValidColumn,
+			organization.Table:              organization.ValidColumn,
+			productione2erecord.Table:       productione2erecord.ValidColumn,
+			projecttasksynchead.Table:       projecttasksynchead.ValidColumn,
+			runtimeoperation.Table:          runtimeoperation.ValidColumn,
+			session.Table:                   session.ValidColumn,
+			storageattachment.Table:         storageattachment.ValidColumn,
+			storagevolume.Table:             storagevolume.ValidColumn,
+			supportticketmapping.Table:      supportticketmapping.ValidColumn,
+			user.Table:                      user.ValidColumn,
+			workspace.Table:                 workspace.ValidColumn,
+			workspacebackup.Table:           workspacebackup.ValidColumn,
+			workspacesyncevent.Table:        workspacesyncevent.ValidColumn,
 		})
 	})
 	return columnCheck(table, column)

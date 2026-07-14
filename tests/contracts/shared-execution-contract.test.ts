@@ -66,8 +66,9 @@ test("service owners match the shared execution contract", async () => {
   for (const object of shared.canonicalObjects) {
     assert.ok(boundary.services[object.service].owns.includes(object.ownershipKey), `${object.kind} ownership must stay with ${object.service}`);
   }
-  assert.deepEqual(boundary.externalServices.gateway.owns, ["gatewayKeys", "routePolicies", "modelPolicies", "usageEvents"]);
-  assert.equal(boundary.externalServices.gateway.evidenceSink, "ledger");
+  assert.deepEqual(boundary.externalServices.gateway.owns, ["spendableBalances", "apiKeys", "routePolicies", "modelPolicies", "usageEvents"]);
+  assert.equal(boundary.externalServices.gateway.calls, undefined);
+  assert.equal(boundary.externalServices.gateway.evidenceSink, undefined);
   assert.ok(boundary.services.ledger.owns.includes("reviewPolicies"));
   assert.ok(boundary.services.ledger.readApis.includes("reviewGateEvaluation"));
 });

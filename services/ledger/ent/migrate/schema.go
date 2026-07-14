@@ -13,6 +13,7 @@ var (
 		{Name: "id", Type: field.TypeString, Unique: true},
 		{Name: "receipt_type", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: ""},
+		{Name: "account_id", Type: field.TypeString, Default: ""},
 		{Name: "organization_id", Type: field.TypeString, Default: ""},
 		{Name: "workspace_id", Type: field.TypeString, Default: ""},
 		{Name: "project_id", Type: field.TypeString, Default: ""},
@@ -34,116 +35,46 @@ var (
 		PrimaryKey: []*schema.Column{EvidenceReceiptsColumns[0]},
 		Indexes: []*schema.Index{
 			{
+				Name:    "evidencereceipt_account_id_created_at_id",
+				Unique:  false,
+				Columns: []*schema.Column{EvidenceReceiptsColumns[3], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
+			},
+			{
 				Name:    "evidencereceipt_organization_id_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[3], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[4], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 			{
 				Name:    "evidencereceipt_workspace_id_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[4], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[5], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 			{
 				Name:    "evidencereceipt_project_id_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[5], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[6], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 			{
 				Name:    "evidencereceipt_task_id_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[6], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[7], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 			{
 				Name:    "evidencereceipt_job_id_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[7], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[8], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 			{
 				Name:    "evidencereceipt_receipt_type_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[1], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[1], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 			{
 				Name:    "evidencereceipt_status_created_at_id",
 				Unique:  false,
-				Columns: []*schema.Column{EvidenceReceiptsColumns[2], EvidenceReceiptsColumns[15], EvidenceReceiptsColumns[0]},
+				Columns: []*schema.Column{EvidenceReceiptsColumns[2], EvidenceReceiptsColumns[16], EvidenceReceiptsColumns[0]},
 			},
 		},
-	}
-	// HoldsColumns holds the columns for the "holds" table.
-	HoldsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_type", Type: field.TypeString},
-		{Name: "resource_id", Type: field.TypeString},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "activation_amount_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "original_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "remaining_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "consumed_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "released_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "provider_evidence_ref", Type: field.TypeString, Default: ""},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "status", Type: field.TypeString},
-		{Name: "ledger_entry_id", Type: field.TypeString},
-		{Name: "wallet_transaction_id", Type: field.TypeString},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// HoldsTable holds the schema information for the "holds" table.
-	HoldsTable = &schema.Table{
-		Name:       "holds",
-		Columns:    HoldsColumns,
-		PrimaryKey: []*schema.Column{HoldsColumns[0]},
-	}
-	// HoldActivationsColumns holds the columns for the "hold_activations" table.
-	HoldActivationsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_type", Type: field.TypeString},
-		{Name: "resource_id", Type: field.TypeString},
-		{Name: "hold_id", Type: field.TypeString},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "status", Type: field.TypeString},
-		{Name: "provider_evidence_ref", Type: field.TypeString},
-		{Name: "ledger_entry_id", Type: field.TypeString},
-		{Name: "wallet_transaction_id", Type: field.TypeString},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// HoldActivationsTable holds the schema information for the "hold_activations" table.
-	HoldActivationsTable = &schema.Table{
-		Name:       "hold_activations",
-		Columns:    HoldActivationsColumns,
-		PrimaryKey: []*schema.Column{HoldActivationsColumns[0]},
-	}
-	// HoldReleasesColumns holds the columns for the "hold_releases" table.
-	HoldReleasesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_type", Type: field.TypeString},
-		{Name: "resource_id", Type: field.TypeString},
-		{Name: "hold_id", Type: field.TypeString},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "status", Type: field.TypeString},
-		{Name: "ledger_entry_id", Type: field.TypeString},
-		{Name: "wallet_transaction_id", Type: field.TypeString},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// HoldReleasesTable holds the schema information for the "hold_releases" table.
-	HoldReleasesTable = &schema.Table{
-		Name:       "hold_releases",
-		Columns:    HoldReleasesColumns,
-		PrimaryKey: []*schema.Column{HoldReleasesColumns[0]},
 	}
 	// IdempotencyKeysColumns holds the columns for the "idempotency_keys" table.
 	IdempotencyKeysColumns = []*schema.Column{
@@ -159,44 +90,6 @@ var (
 		Name:       "idempotency_keys",
 		Columns:    IdempotencyKeysColumns,
 		PrimaryKey: []*schema.Column{IdempotencyKeysColumns[0]},
-	}
-	// LedgerEntriesColumns holds the columns for the "ledger_entries" table.
-	LedgerEntriesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "direction", Type: field.TypeString},
-		{Name: "source", Type: field.TypeString},
-		{Name: "operator_user_id", Type: field.TypeString, Default: ""},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// LedgerEntriesTable holds the schema information for the "ledger_entries" table.
-	LedgerEntriesTable = &schema.Table{
-		Name:       "ledger_entries",
-		Columns:    LedgerEntriesColumns,
-		PrimaryKey: []*schema.Column{LedgerEntriesColumns[0]},
-	}
-	// ManualTopupsColumns holds the columns for the "manual_topups" table.
-	ManualTopupsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "operator_user_id", Type: field.TypeString, Default: ""},
-		{Name: "ledger_entry_id", Type: field.TypeString},
-		{Name: "wallet_transaction_id", Type: field.TypeString},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// ManualTopupsTable holds the schema information for the "manual_topups" table.
-	ManualTopupsTable = &schema.Table{
-		Name:       "manual_topups",
-		Columns:    ManualTopupsColumns,
-		PrimaryKey: []*schema.Column{ManualTopupsColumns[0]},
 	}
 	// ReconciliationReportsColumns holds the columns for the "reconciliation_reports" table.
 	ReconciliationReportsColumns = []*schema.Column{
@@ -214,36 +107,6 @@ var (
 		Name:       "reconciliation_reports",
 		Columns:    ReconciliationReportsColumns,
 		PrimaryKey: []*schema.Column{ReconciliationReportsColumns[0]},
-	}
-	// ResourceSettlementsColumns holds the columns for the "resource_settlements" table.
-	ResourceSettlementsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_type", Type: field.TypeString},
-		{Name: "resource_id", Type: field.TypeString},
-		{Name: "hold_id", Type: field.TypeString, Default: ""},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "status", Type: field.TypeString},
-		{Name: "ledger_entry_id", Type: field.TypeString},
-		{Name: "wallet_transaction_id", Type: field.TypeString},
-		{Name: "pricing_version", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_json", Type: field.TypeString, Default: "{}"},
-		{Name: "usage_period_start", Type: field.TypeString, Default: ""},
-		{Name: "usage_period_end", Type: field.TypeString, Default: ""},
-		{Name: "quantity", Type: field.TypeFloat64, Default: 0},
-		{Name: "unit", Type: field.TypeString, Default: ""},
-		{Name: "provider_cost_evidence_ref", Type: field.TypeString, Default: ""},
-		{Name: "idempotency_key", Type: field.TypeString, Unique: true},
-		{Name: "request_hash", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// ResourceSettlementsTable holds the schema information for the "resource_settlements" table.
-	ResourceSettlementsTable = &schema.Table{
-		Name:       "resource_settlements",
-		Columns:    ResourceSettlementsColumns,
-		PrimaryKey: []*schema.Column{ResourceSettlementsColumns[0]},
 	}
 	// ReviewPoliciesColumns holds the columns for the "review_policies" table.
 	ReviewPoliciesColumns = []*schema.Column{
@@ -279,55 +142,12 @@ var (
 			},
 		},
 	}
-	// WalletsColumns holds the columns for the "wallets" table.
-	WalletsColumns = []*schema.Column{
-		{Name: "account_id", Type: field.TypeString, Unique: true},
-		{Name: "balance_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "frozen_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "available_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "total_spent_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "updated_at", Type: field.TypeTime},
-	}
-	// WalletsTable holds the schema information for the "wallets" table.
-	WalletsTable = &schema.Table{
-		Name:       "wallets",
-		Columns:    WalletsColumns,
-		PrimaryKey: []*schema.Column{WalletsColumns[0]},
-	}
-	// WalletTransactionsColumns holds the columns for the "wallet_transactions" table.
-	WalletTransactionsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "ledger_entry_id", Type: field.TypeString},
-		{Name: "amount_cents", Type: field.TypeInt64},
-		{Name: "balance_cents", Type: field.TypeInt64},
-		{Name: "frozen_cents", Type: field.TypeInt64},
-		{Name: "available_cents", Type: field.TypeInt64},
-		{Name: "total_spent_cents", Type: field.TypeInt64},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// WalletTransactionsTable holds the schema information for the "wallet_transactions" table.
-	WalletTransactionsTable = &schema.Table{
-		Name:       "wallet_transactions",
-		Columns:    WalletTransactionsColumns,
-		PrimaryKey: []*schema.Column{WalletTransactionsColumns[0]},
-	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		EvidenceReceiptsTable,
-		HoldsTable,
-		HoldActivationsTable,
-		HoldReleasesTable,
 		IdempotencyKeysTable,
-		LedgerEntriesTable,
-		ManualTopupsTable,
 		ReconciliationReportsTable,
-		ResourceSettlementsTable,
 		ReviewPoliciesTable,
-		WalletsTable,
-		WalletTransactionsTable,
 	}
 )
 

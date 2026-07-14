@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
@@ -12,92 +13,26 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if !ok {
 			return
 		}
-		wallet, err := service.Wallet(r.Context(), accountID)
-		if err != nil {
-			writeUpstreamError(w, err)
-			return
+		balance, ok := app.liveBalance(w, r, service, accountID)
+		if ok {
+			writeJSON(w, http.StatusOK, balance)
 		}
-		if err := app.applyLedgerFacts(accountID, wallet, nil, nil, nil, nil); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusOK, walletProjection(wallet))
 	}))
-	mux.HandleFunc("POST /api/billing/topups", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		if !confirmed(input, "confirm") {
-			writeError(w, http.StatusBadRequest, "confirmation_required")
+	mux.HandleFunc("GET /api/billing/receipts/{id}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
 			return
 		}
-		idempotencyKey := firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""))
-		if idempotencyKey == "" {
-			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
-			return
-		}
-		result, err := service.ManualTopUp(r.Context(), controlplane.ManualTopUpInput{
-			AccountID:      stringField(input, "accountId", "acct-local"),
-			AmountCents:    moneyToCents(input),
-			Currency:       stringField(input, "currency", "CNY"),
-			OperatorUserID: firstNonEmpty(app.sessionUserID(r), stringField(input, "operatorUserId", "operator")),
-			Reason:         stringField(input, "reason", ""),
-		}, idempotencyKey)
+		receipt, err := service.BillingReceipt(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		if err != nil {
 			writeUpstreamError(w, err)
 			return
 		}
-		if err := app.saveManualTopUpProjection(result); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+		if receipt.AccountID != accountID || !strings.HasPrefix(receipt.Type, "billing.") {
+			writeError(w, http.StatusNotFound, "billing_receipt_not_found")
 			return
 		}
-		if err := app.appendAuditEvent(r, "billing.topup", "account", result.TopUp.AccountID, result.TopUp.AccountID, nil, manualTopUpResponse(result), "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusCreated, manualTopUpResponse(result))
-	}))
-	mux.HandleFunc("POST /api/billing/resource-settlements", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		if !confirmed(input, "confirm") {
-			writeError(w, http.StatusBadRequest, "confirmation_required")
-			return
-		}
-		idempotencyKey := firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(input, "sourceEventId", ""))
-		if idempotencyKey == "" {
-			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
-			return
-		}
-		settlement := controlplane.ResourceSettlementInput{
-			AccountID:               stringField(input, "accountId", "acct-local"),
-			WorkspaceID:             stringField(input, "workspaceId", ""),
-			ResourceType:            stringField(input, "resourceType", "compute"),
-			ResourceID:              firstNonEmpty(stringField(input, "resourceId", ""), stringField(input, "computeAllocationId", ""), stringField(input, "storageId", "")),
-			HoldID:                  stringField(input, "holdId", ""),
-			AmountCents:             settlementAmountCents(input),
-			Currency:                stringField(input, "currency", "CNY"),
-			PricingVersion:          stringField(input, "pricingVersion", ""),
-			PriceSnapshot:           mapField(input, "priceSnapshot"),
-			UsagePeriodStart:        stringField(input, "usagePeriodStart", ""),
-			UsagePeriodEnd:          stringField(input, "usagePeriodEnd", ""),
-			Quantity:                numberField(input, "quantity", 0),
-			Unit:                    stringField(input, "unit", ""),
-			ProviderCostEvidenceRef: stringField(input, "providerCostEvidenceRef", ""),
-		}
-		result, err := service.SettleResource(r.Context(), settlement, idempotencyKey)
-		if err != nil {
-			writeUpstreamError(w, err)
-			return
-		}
-		result = completeSettlementResult(result, settlement)
-		if err := app.saveResourceSettlementProjection(result); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		body := settlementResponse(result)
-		if err := app.appendAuditEvent(r, "billing.settle_resource", "ledger_settlement", stringValue(body["id"]), result.AccountID, nil, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusCreated, body)
+		writeJSON(w, http.StatusOK, receipt)
 	}))
 	mux.HandleFunc("POST /api/billing/reconciliation", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)

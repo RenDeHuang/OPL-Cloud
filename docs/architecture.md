@@ -1,57 +1,63 @@
 # Architecture
 
-## Product Layers
+## Request Path
 
-OPL Cloud has five product layers:
+```text
+Browser Console
+  -> Control Plane product API
+       -> Sub2API management API: live balance and exact adjustment
+       -> Fabric API: CVM, CBS, attachment, runtime, provider facts
+       -> Ledger API: receipts and review evidence
+```
 
-- OPL Gateway: AI provider routing, token policy, and request usage policy.
-- OPL Workspace: stable URL entry and lifecycle record backed by persistent storage and the current runtime pointer.
-- OPL Console: account, workspace, billing, access, support, and admin control surface.
-- OPL Fabric: compute, storage, image, route, and infrastructure handoff.
-- OPL Ledger: billing ledger, wallet transactions, audit events, receipts, verifier evidence, and reconciliation.
+Sub2API is external and remains the only spendable-balance, API-key, routing,
+and request-usage owner. The repository does not mirror those records.
 
-## Current Implementation Slice
+## Service Ownership
 
-This repository has four runtime components and one non-runtime contract package:
+`apps/console-ui` owns presentation only. It has no persistence and never calls
+Fabric, Ledger, Tencent, Kubernetes, or Sub2API directly.
 
-- `apps/console-ui`: React + TypeScript browser UI. It owns no persistence and calls only the Control Plane API.
-- `services/control-plane`: Go UI-facing API and product orchestrator. It owns auth, organizations, users, workspaces, support, operation requests, and UI projections. It calls Ledger and Fabric through typed HTTP clients.
-- `services/ledger`: Go service backed by PostgreSQL. It owns wallets, holds, manual top-ups, ledger entries, wallet transactions, receipts, audit events, evidence references, idempotency keys, and reconciliation.
-- `services/fabric`: Go service backed by PostgreSQL for Tencent Cloud and Kubernetes operations. It owns resource catalog, compute, storage, attachments, runtime templates, runtimes, provider request ids, retryable resource operations, resumable content transfers, and storage snapshots.
-- `packages/contracts`: machine-readable product, route, lifecycle, billing, management, storage, evidence, and service-boundary contracts. It is source-of-truth data, not a fifth runtime service.
+`services/control-plane` owns Console auth, account mappings, organizations,
+Workspaces, monthly entitlements, billing-operation recovery, support mappings,
+and product projections. Its public routes express product commands rather than
+generic downstream APIs.
 
-## Boundaries
+`services/fabric` owns compute pools, dedicated CVM allocations, CBS volumes,
+attachments, Workspace runtimes, provider operations, and all Tencent/Kubernetes
+SDK calls. Provider callbacks may update resource facts but cannot overwrite
+Control Plane entitlement state.
 
-Console UI may call Fabric and Ledger only through Control Plane routes. It must not import PostgreSQL drivers, Tencent Cloud SDKs, Kubernetes clients, or service internals.
+`services/ledger` owns EvidenceReceipt, ReviewPolicy, ReconciliationReport,
+Artifact, Continuation, retention, audit, and idempotency records. It never
+changes Sub2API balance.
 
-Control Plane may call Fabric and Ledger only through published service APIs. It must not write ledger tables directly and must not call Tencent Cloud or Kubernetes clients directly.
-
-Ledger owns money and evidence persistence. All Ledger write APIs require idempotency keys and use append-first writes.
-
-Fabric owns cloud resource operations. Tencent Cloud SDK and Kubernetes client-go imports live under `services/fabric` only.
-
-Workspace metadata sync, conflict records, recovery manifests, and product projections belong to Control Plane. Workspace content transfer and provider snapshot execution belong to Fabric. Ledger owns the resulting receipts and evidence references; it does not own artifact bytes.
-
-Fabric details such as TKE, runtime images, Ingress, PVC/CBS, node-pool allocation, and runtime operation evidence are admin/operator surfaces. Lab Owner UI should expose product status and allowed actions, not raw infrastructure evidence.
-
-`one-person-lab-app` is the default Workspace runtime template image. It is not a billable business object, storage owner, or lifecycle owner. ComputeAllocation, StorageVolume, StorageAttachment, Workspace URL, and Ledger records remain the commercial object truth.
-
-Ledger details such as dedup rows, request fingerprints, and raw event payloads are admin/operator surfaces. Lab Owner UI should expose wallet balance, holds, recent charges, usage, top-ups, and human-readable receipts.
+`packages/contracts` is machine-readable current truth, not a runtime service.
+Speculative route and object entries remain outside the active contracts.
 
 ## Persistence
 
-PostgreSQL is the production persistence target for Control Plane, Fabric, and Ledger. In-memory stores are intended for tests and local development.
+Control Plane, Fabric, and Ledger each own their PostgreSQL schema. Cross-service
+writes go through typed HTTP clients; no service writes another service's tables.
+Sub2API data remains in Sub2API.
 
-Commercial identity, wallet, Workspace, billing, support, audit, and receipt data must persist across rollouts when `DATABASE_URL` is configured.
+This deployment starts from a fresh database. There is no compatibility layer,
+dual write, historical billing schema, or old-state importer.
 
-Fabric and Ledger reject a production start without `DATABASE_URL`. Production deployment and readiness checks must supply and verify each service's database configuration.
+## Resource And Billing State
 
-## Current Production Constraint
+Fabric preparation happens before the external charge. Control Plane persists a
+stable billing operation and redeem code before side effects. Only a confirmed
+Sub2API adjustment activates the monthly entitlement. Ledger receipt failure is
+retryable and does not reverse a confirmed charge.
 
-Workspace recovery APIs and Fabric snapshot operations use `snapshot.storage.k8s.io/v1`. The current TKE CBS snapshot installation exposes only `v1beta1`, so production backup and restore are not ready even though the service contracts and orchestration exist. The resolution is to provide the GA snapshot API or replace the provider implementation behind Fabric; adding a legacy API compatibility layer is forbidden.
+All attachment and Workspace runtime operations require an active entitlement.
+Compute expiration destroys compute; storage expiration retains data but blocks
+use until a new entitlement is purchased.
 
-OPL Gateway is deployed and operated outside this repository. The current Console integration is an external link only. Gateway keys, routing policy, model policy, and raw usage remain Gateway-owned until explicit Control Plane, Fabric, and Ledger integration contracts are implemented.
+## Production
 
-## No Compatibility Layer
-
-Legacy Node API and store paths are retired directly after active callers move. The repository must not keep a Node proxy, BFF, or compatibility route layer in front of the Go services. The only acceptable bridge is a one-time state migration that reads the old data shape and writes the new service-owned tables.
+Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
+Deployments. Secrets are Kubernetes Secret references, configuration is a shared
+ConfigMap, and the deploy workflow waits for all three rollouts. The single paid
+production verifier uses the public Console product chain.

@@ -44,11 +44,8 @@ jobs:
       OPL_WORKSPACE_WEBUI_PORT: ${{ vars.OPL_WORKSPACE_WEBUI_PORT || '3000' }}
       OPL_WORKSPACE_DATA_DIR: ${{ vars.OPL_WORKSPACE_DATA_DIR || '/data' }}
       OPL_WORKSPACE_PROJECTS_DIR: ${{ vars.OPL_WORKSPACE_PROJECTS_DIR || '/projects' }}
-      OPL_BASIC_COMPUTE_HOURLY_CNY: ${{ vars.OPL_BASIC_COMPUTE_HOURLY_CNY || '0.468' }}
-      OPL_PRO_COMPUTE_HOURLY_CNY: ${{ vars.OPL_PRO_COMPUTE_HOURLY_CNY || '1.38' }}
-      OPL_STORAGE_GB_MONTH_CNY: ${{ vars.OPL_STORAGE_GB_MONTH_CNY || '0.432' }}
-      OPL_RESOURCE_BILLING_WORKER_ENABLED: ${{ vars.OPL_RESOURCE_BILLING_WORKER_ENABLED || '1' }}
-      OPL_RESOURCE_BILLING_INTERVAL_MS: ${{ vars.OPL_RESOURCE_BILLING_INTERVAL_MS || '3600000' }}
+      OPL_MONTHLY_BILLING_WORKER_ENABLED: ${{ vars.OPL_MONTHLY_BILLING_WORKER_ENABLED || '1' }}
+      OPL_MONTHLY_BILLING_INTERVAL_MS: ${{ vars.OPL_MONTHLY_BILLING_INTERVAL_MS || '3600000' }}
       OPL_BASIC_COMPUTE_INSTANCE_TYPE: ${{ vars.OPL_BASIC_COMPUTE_INSTANCE_TYPE }}
       OPL_BASIC_COMPUTE_NODE_POOL_ID: ${{ vars.OPL_BASIC_COMPUTE_NODE_POOL_ID }}
       OPL_PRO_COMPUTE_INSTANCE_TYPE: ${{ vars.OPL_PRO_COMPUTE_INSTANCE_TYPE || 'SA5.2XLARGE16' }}
@@ -56,6 +53,9 @@ jobs:
       OPL_CODEX_MODEL: ${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}
       OPL_CODEX_REASONING_EFFORT: ${{ vars.OPL_CODEX_REASONING_EFFORT || 'xhigh' }}
       OPL_CODEX_BASE_URL: ${{ vars.OPL_CODEX_BASE_URL || 'https://gflabtoken.cn/v1' }}
+      OPL_SUB2API_BASE_URL: ${{ vars.OPL_SUB2API_BASE_URL || 'https://gflabtoken.cn' }}
+      OPL_SUB2API_SUPPORTED_VERSIONS: ${{ vars.OPL_SUB2API_SUPPORTED_VERSIONS || '0.1.153' }}
+      OPL_SUB2API_REQUEST_TIMEOUT_MS: ${{ vars.OPL_SUB2API_REQUEST_TIMEOUT_MS || '5000' }}
       TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
       TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
       TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
@@ -74,6 +74,8 @@ jobs:
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       OPL_CONSOLE_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
+      OPL_SUB2API_ADMIN_EMAIL: ${{ secrets.OPL_SUB2API_ADMIN_EMAIL }}
+      OPL_SUB2API_ADMIN_PASSWORD: ${{ secrets.OPL_SUB2API_ADMIN_PASSWORD }}
       OPL_INTERNAL_SERVICE_TOKEN: ${{ secrets.OPL_INTERNAL_SERVICE_TOKEN }}
       OPL_OPERATOR_SUMMARY_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
       OPL_AIONUI_ADMIN_PASSWORD_SEED: ${{ secrets.OPL_AIONUI_ADMIN_PASSWORD_SEED }}
@@ -98,6 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           secret_dir="$(mktemp -d)"
+          echo "OPL_DEPLOY_SECRET_DIR=$secret_dir" >> "$GITHUB_ENV"
           chmod 700 "$secret_dir"
           kubeconfig="$secret_dir/kubeconfig"
           if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
@@ -112,7 +115,6 @@ jobs:
           fi
           chmod 600 "$kubeconfig"
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
-          echo "OPL_DEPLOY_SECRET_DIR=$secret_dir" >> "$GITHUB_ENV"
 
       - name: Check deployment inputs
         shell: bash
@@ -122,6 +124,8 @@ jobs:
             OPL_CLOUD_IMAGE
             OPL_WORKSPACE_IMAGE
             DATABASE_URL
+            OPL_SUB2API_ADMIN_EMAIL
+            OPL_SUB2API_ADMIN_PASSWORD
             OPL_AIONUI_ADMIN_PASSWORD_SEED
             TCR_USERNAME
             TCR_PASSWORD
@@ -237,11 +241,22 @@ jobs:
           if (!Array.isArray(users) || !users.every((user) => user && typeof user === "object" && !Array.isArray(user))) {
             throw new Error("OPL_CONSOLE_USERS_JSON must be an array of users");
           }
-          writeFileSync(path, JSON.stringify(users.map((user) => user.role === "pi" ? { ...user, role: "owner" } : user)));
+          const normalized = users.map((user) => user.role === "pi" ? { ...user, role: "owner" } : user);
+          if (!normalized.every((user) => Number.isSafeInteger(user.sub2apiUserId) && user.sub2apiUserId > 0)) {
+            throw new Error("every Console user must include a positive integer sub2apiUserId");
+          }
+          writeFileSync(path, JSON.stringify(normalized));
           NODE
           chmod 600 "$secret_dir/auth-users-json"
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-auth \
             --from-file=OPL_CONSOLE_USERS_JSON="$secret_dir/auth-users-json" \
+            --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
+          printf '%s' "$OPL_SUB2API_ADMIN_EMAIL" > "$secret_dir/sub2api-admin-email"
+          printf '%s' "$OPL_SUB2API_ADMIN_PASSWORD" > "$secret_dir/sub2api-admin-password"
+          chmod 600 "$secret_dir/sub2api-admin-email" "$secret_dir/sub2api-admin-password"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-sub2api \
+            --from-file=OPL_SUB2API_ADMIN_EMAIL="$secret_dir/sub2api-admin-email" \
+            --from-file=OPL_SUB2API_ADMIN_PASSWORD="$secret_dir/sub2api-admin-password" \
             --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-deploy-kubeconfig \
             --from-file=kubeconfig="$KUBECONFIG" \
@@ -378,3 +393,21 @@ jobs:
           set -euo pipefail
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o wide
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud -o jsonpath='{.status.loadBalancer.ingress[*].ip}{"\n"}'
+
+      - name: Remove deployment secrets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="${OPL_DEPLOY_SECRET_DIR:-}"
+          if [ -z "$secret_dir" ]; then
+            exit 0
+          fi
+          case "$secret_dir" in
+            "$RUNNER_TEMP"/*|/tmp/*) ;;
+            *) echo "Refusing to remove unexpected deployment secret path." >&2; exit 1 ;;
+          esac
+          if [ -d "$secret_dir" ]; then
+            find "$secret_dir" -mindepth 1 -delete
+            rmdir "$secret_dir"
+          fi

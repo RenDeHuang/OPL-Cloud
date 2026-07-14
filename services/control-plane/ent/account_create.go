@@ -62,6 +62,20 @@ func (ac *AccountCreate) SetNillableOwnerUserID(s *string) *AccountCreate {
 	return ac
 }
 
+// SetSub2apiUserID sets the "sub2api_user_id" field.
+func (ac *AccountCreate) SetSub2apiUserID(i int64) *AccountCreate {
+	ac.mutation.SetSub2apiUserID(i)
+	return ac
+}
+
+// SetNillableSub2apiUserID sets the "sub2api_user_id" field if the given value is not nil.
+func (ac *AccountCreate) SetNillableSub2apiUserID(i *int64) *AccountCreate {
+	if i != nil {
+		ac.SetSub2apiUserID(*i)
+	}
+	return ac
+}
+
 // SetName sets the "name" field.
 func (ac *AccountCreate) SetName(s string) *AccountCreate {
 	ac.mutation.SetName(s)
@@ -143,6 +157,10 @@ func (ac *AccountCreate) defaults() {
 		v := account.DefaultOwnerUserID
 		ac.mutation.SetOwnerUserID(v)
 	}
+	if _, ok := ac.mutation.Sub2apiUserID(); !ok {
+		v := account.DefaultSub2apiUserID
+		ac.mutation.SetSub2apiUserID(v)
+	}
 	if _, ok := ac.mutation.Name(); !ok {
 		v := account.DefaultName
 		ac.mutation.SetName(v)
@@ -163,6 +181,9 @@ func (ac *AccountCreate) check() error {
 	}
 	if _, ok := ac.mutation.OwnerUserID(); !ok {
 		return &ValidationError{Name: "owner_user_id", err: errors.New(`ent: missing required field "Account.owner_user_id"`)}
+	}
+	if _, ok := ac.mutation.Sub2apiUserID(); !ok {
+		return &ValidationError{Name: "sub2api_user_id", err: errors.New(`ent: missing required field "Account.sub2api_user_id"`)}
 	}
 	if _, ok := ac.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "Account.name"`)}
@@ -221,6 +242,10 @@ func (ac *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := ac.mutation.OwnerUserID(); ok {
 		_spec.SetField(account.FieldOwnerUserID, field.TypeString, value)
 		_node.OwnerUserID = value
+	}
+	if value, ok := ac.mutation.Sub2apiUserID(); ok {
+		_spec.SetField(account.FieldSub2apiUserID, field.TypeInt64, value)
+		_node.Sub2apiUserID = value
 	}
 	if value, ok := ac.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)

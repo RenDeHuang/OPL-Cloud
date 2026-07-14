@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for wallet, package-level compute pools, account-owned compute allocations, storage volumes, storage attachments, Workspace URL entry, resource settlement ledger, Fabric operation facts, support, and admin operations.",
+  "currentSlice": "Business-chain closure for live Sub2API balance, monthly compute and storage entitlements, storage attachments, Workspace URL entry, Ledger receipts, Fabric operation facts, support, and admin operations.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -33,8 +33,8 @@
     "folded_parent"
   ],
   "boundaryRules": [
-    "Console may call Fabric only through package boundary exports or published service APIs.",
-    "Console may call Ledger only through package boundary exports or published service APIs.",
+    "Console calls only Control Plane product APIs.",
+    "Control Plane orchestrates typed Fabric, Ledger, and Sub2API clients without exposing generic proxy routes.",
     "Implemented route means the current commercial route contract names page, API client, server API intent, service boundary, object kind, and permissions; runtime migration must remove retired compatibility routes before merge.",
     "Folded routes are current reachable URLs rendered by a parent page; they must be refreshable and guarded.",
     "External routes are current integration entry points and must name the external URL or integration boundary.",
@@ -278,6 +278,10 @@
         "privateIp",
         "publicIp",
         "billingStatus",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "paidThrough",
+        "autoRenew",
         "workspaceId",
         "status",
         "operationId",
@@ -328,6 +332,10 @@
         "privateIp",
         "publicIp",
         "billingStatus",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "paidThrough",
+        "autoRenew",
         "workspaceId",
         "status",
         "operationId",
@@ -349,10 +357,10 @@
         "failureVisible": true,
         "visibleStages": [
           "已提交",
-          "冻结余额",
-          "云资源创建中",
+          "云资源准备中",
+          "余额扣款中",
+          "月度权益已激活",
           "Runtime 部署中",
-          "存储挂载中",
           "URL 可用"
         ]
       },
@@ -382,7 +390,9 @@
       "apiClient": "apps/console-ui/src/api/resources-api.ts",
       "apiRoutes": [
         "GET /api/compute-allocations/:id",
-        "POST /api/compute-allocations/:id/destroy"
+        "POST /api/compute-allocations/:id/destroy",
+        "POST /api/resources/:id/renew",
+        "POST /api/resources/:id/auto-renew"
       ],
       "serviceBoundary": "ComputeAllocationService",
       "dynamicFields": [
@@ -398,6 +408,10 @@
         "privateIp",
         "publicIp",
         "billingStatus",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "paidThrough",
+        "autoRenew",
         "workspaceId",
         "status",
         "operationId",
@@ -417,10 +431,10 @@
         "failureVisible": true,
         "visibleStages": [
           "已提交",
-          "冻结余额",
-          "云资源创建中",
+          "云资源准备中",
+          "余额扣款中",
+          "月度权益已激活",
           "Runtime 部署中",
-          "存储挂载中",
           "URL 可用"
         ]
       },
@@ -459,7 +473,10 @@
         "sizeGb",
         "storageClassId",
         "providerResourceId",
-        "hourlyEstimate",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "paidThrough",
+        "autoRenew",
         "billingStatus",
         "status",
         "operationId",
@@ -504,7 +521,10 @@
         "sizeGb",
         "storageClassId",
         "providerResourceId",
-        "hourlyEstimate",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "paidThrough",
+        "autoRenew",
         "billingStatus",
         "status",
         "operationId",
@@ -519,8 +539,9 @@
         "failureVisible": true,
         "visibleStages": [
           "已提交",
-          "冻结余额",
-          "存储创建中",
+          "存储准备中",
+          "余额扣款中",
+          "月度权益已激活",
           "可挂载"
         ]
       },
@@ -550,7 +571,9 @@
       "apiClient": "apps/console-ui/src/api/resources-api.ts",
       "apiRoutes": [
         "GET /api/state",
-        "POST /api/storage-volumes/destroy"
+        "POST /api/storage-volumes/destroy",
+        "POST /api/resources/:id/renew",
+        "POST /api/resources/:id/auto-renew"
       ],
       "serviceBoundary": "ResourceProvisioningService",
       "dynamicFields": [
@@ -560,7 +583,10 @@
         "sizeGb",
         "storageClassId",
         "providerResourceId",
-        "hourlyEstimate",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "paidThrough",
+        "autoRenew",
         "billingStatus",
         "status",
         "operationId",
@@ -577,7 +603,7 @@
         "failureVisible": true,
         "visibleStages": [
           "已提交",
-          "释放冻结",
+          "停止续费",
           "销毁存储",
           "已删除"
         ]
@@ -904,52 +930,22 @@
       "hiddenInMenu": true,
       "featureFlag": "billing",
       "routeKind": "read_model",
-      "objectKind": "Wallet",
+      "objectKind": "Balance",
       "pageModule": "apps/console-ui/src/pages/billing/BillingPage.tsx",
       "apiClient": "apps/console-ui/src/api/billing-api.ts",
       "apiRoutes": [
-        "GET /api/state"
+        "GET /api/state",
+        "GET /api/billing/receipts/:id"
       ],
-      "serviceBoundary": "WalletService",
+      "serviceBoundary": "MonthlyBillingProjectionService",
       "dynamicFields": [
-        "availableBalance",
-        "frozenBalance",
-        "activeHourlyEstimate",
-        "nextSettlementAt",
-        "runningDuration"
-      ],
-      "requiresAdmin": false,
-      "requiresAuth": true
-    },
-    {
-      "status": "folded_into_parent",
-      "contractLifecycle": "folded_parent",
-      "ownerRepo": "opl-console",
-      "capabilities": [
-        "read",
-        "detail"
-      ],
-      "id": "billing.wallet",
-      "path": "/console/billing/wallet",
-      "label": "钱包与冻结",
-      "area": "console",
-      "role": "lab_owner",
-      "hiddenInMenu": true,
-      "featureFlag": "billing",
-      "routeKind": "read_model",
-      "objectKind": "Wallet",
-      "pageModule": "apps/console-ui/src/pages/billing/BillingPage.tsx",
-      "apiClient": "apps/console-ui/src/api/billing-api.ts",
-      "apiRoutes": [
-        "GET /api/state"
-      ],
-      "serviceBoundary": "WalletService",
-      "dynamicFields": [
-        "availableBalance",
-        "frozenBalance",
-        "activeHourlyEstimate",
-        "nextSettlementAt",
-        "runningDuration"
+        "balanceUsdMicros",
+        "balanceSource",
+        "pricingVersion",
+        "monthlyEntitlements",
+        "paidThrough",
+        "autoRenew",
+        "manualReview"
       ],
       "requiresAdmin": false,
       "requiresAuth": true
@@ -1162,8 +1158,7 @@
         "POST /api/organizations/members",
         "POST /api/users",
         "POST /api/users/disable",
-        "POST /api/users/delete",
-        "POST /api/billing/topups"
+        "POST /api/users/delete"
       ],
       "serviceBoundary": "ManagementModel",
       "requiresAdmin": true,
@@ -1185,18 +1180,16 @@
       "area": "admin",
       "role": "admin",
       "adminMenu": true,
-      "featureFlag": "manualTopup",
+      "featureFlag": "monthlyBilling",
       "routeKind": "read_model",
-      "objectKind": "Wallet",
+      "objectKind": "Balance",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/billing-api.ts",
       "apiRoutes": [
         "GET /api/state",
-        "POST /api/billing/topups",
-        "POST /api/billing/resource-settlements",
         "POST /api/billing/reconciliation"
       ],
-      "serviceBoundary": "WalletService",
+      "serviceBoundary": "MonthlyBillingProjectionService",
       "requiresAdmin": true,
       "requiresAuth": true
     },
@@ -1218,7 +1211,7 @@
       "adminMenu": true,
       "featureFlag": "ledgerAdmin",
       "routeKind": "read_model",
-      "objectKind": "LedgerEntry",
+      "objectKind": "EvidenceReceipt",
       "pageModule": "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
       "apiClient": "apps/console-ui/src/api/console-read-api.ts",
       "apiRoutes": [

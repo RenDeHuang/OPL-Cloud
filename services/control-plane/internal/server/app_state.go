@@ -18,20 +18,34 @@ import (
 )
 
 type controlPlaneServer struct {
-	mu           sync.Mutex
-	computeLocks sync.Map
-	store        StateStore
-	tables       controlPlaneTableStore
+	mu            sync.Mutex
+	resourceLocks sync.Map
+	store         StateStore
+	tables        controlPlaneTableStore
 	// ponytail: per-process limiter; move to Redis when login traffic spans multiple replicas.
 	loginRateLimits map[string]loginFailure
 }
 
-func (app *controlPlaneServer) lockCompute(id string) func() {
-	value, _ := app.computeLocks.LoadOrStore(id, &sync.Mutex{})
+func (app *controlPlaneServer) lockResource(resourceType, id string) func() {
+	value, _ := app.resourceLocks.LoadOrStore(resourceType+":"+id, &sync.Mutex{})
 	lock := value.(*sync.Mutex)
 	lock.Lock()
 	// ponytail: process-local locks match the single control-plane replica; use DB advisory locks before scaling replicas.
 	return lock.Unlock
+}
+
+func (app *controlPlaneServer) lockEntitlementResources(computeID, storageID, attachmentID string) func() {
+	var unlocks []func()
+	for _, resource := range [][2]string{{"compute", computeID}, {"storage", storageID}, {"attachment", attachmentID}} {
+		if resource[1] != "" {
+			unlocks = append(unlocks, app.lockResource(resource[0], resource[1]))
+		}
+	}
+	return func() {
+		for index := len(unlocks) - 1; index >= 0; index-- {
+			unlocks[index]()
+		}
+	}
 }
 
 type loginFailure struct {
@@ -112,21 +126,14 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 	}
 	return map[string]any{
 		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
-		"billingPolicy":          map[string]any{"holdDays": 7, "priceBasis": "OPL price list"},
 		"packages":               packageList(),
 		"computePools":           computePools,
-		"wallet":                 app.wallet(accountID),
-		"account":                app.wallet(accountID),
 		"user":                   nil,
 		"workspaces":             workspaces,
 		"computeAllocations":     rowsAsAnyFromMaps(app.listComputes(accountID)),
 		"storageVolumes":         rowsAsAnyFromMaps(app.listStorages(accountID)),
 		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments(accountID)),
 		"accounts":               accounts,
-		"billingSummary":         app.accountBillingSummary(accountID),
-		"billingLedger":          rowsAsAnyFromMaps(app.listLedger(accountID)),
-		"walletTransactions":     rowsAsAnyFromMaps(app.listWalletTransactions(accountID)),
-		"manualTopups":           rowsAsAnyFromMaps(app.listManualTopups(accountID)),
 		"supportTickets":         rowsAsAnyFromMaps(app.listSupportMappings(accountID)),
 		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents(accountID)),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(accountID),
@@ -228,47 +235,6 @@ func rowsToRecords(rows []map[string]any) []controlPlaneRecord {
 		out = append(out, cloneMap(row))
 	}
 	return out
-}
-
-func (app *controlPlaneServer) listWallets(accountID string) []map[string]any {
-	rows, err := app.tables.ListWallets(context.Background(), accountID)
-	if err != nil {
-		return nil
-	}
-	return rows
-}
-
-func (app *controlPlaneServer) walletRecordSet(accountID string) controlPlaneRecordSet {
-	rows := app.listWallets(accountID)
-	out := controlPlaneRecordSet{}
-	for _, row := range rows {
-		out[firstNonEmpty(stringValue(row["id"]), stringValue(row["accountId"]))] = cloneMap(row)
-	}
-	return out
-}
-
-func (app *controlPlaneServer) listLedger(accountID string) []map[string]any {
-	rows, err := app.tables.ListLedger(context.Background(), accountID)
-	if err != nil {
-		return nil
-	}
-	return rows
-}
-
-func (app *controlPlaneServer) listWalletTransactions(accountID string) []map[string]any {
-	rows, err := app.tables.ListWalletTransactions(context.Background(), accountID)
-	if err != nil {
-		return nil
-	}
-	return rows
-}
-
-func (app *controlPlaneServer) listManualTopups(accountID string) []map[string]any {
-	rows, err := app.tables.ListManualTopups(context.Background(), accountID)
-	if err != nil {
-		return nil
-	}
-	return rows
 }
 
 func (app *controlPlaneServer) listAuditEvents(accountID string) []map[string]any {
@@ -396,87 +362,6 @@ func isWorkspaceHost(host string) bool {
 	return strings.Trim(strings.Split(host, ":")[0], " ") == workspaceDomain()
 }
 
-func ledgerEntryProjections(entries []clients.LedgerEntry, settlements map[string]clients.ResourceSettlementResult) []map[string]any {
-	rows := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		row := map[string]any{
-			"id":             entry.ID,
-			"accountId":      entry.AccountID,
-			"type":           ledgerEntryType(entry),
-			"amountCents":    ledgerEntryAmount(entry),
-			"currency":       entry.Currency,
-			"source":         entry.Source,
-			"direction":      entry.Direction,
-			"operatorUserId": entry.OperatorUserID,
-			"reason":         entry.Reason,
-			"createdAt":      entry.CreatedAt,
-		}
-		if strings.HasSuffix(entry.Source, "_hold") {
-			row["resourceId"] = entry.Reason
-		}
-		if settlement, ok := settlements[entry.ID]; ok {
-			row["type"] = settlement.ResourceType + "_debit"
-			row["amountCents"] = -settlement.AmountCents
-			row["workspaceId"] = settlement.WorkspaceID
-			row["resourceId"] = settlement.ResourceID
-			row["settlementId"] = settlement.ID
-			row["pricingVersion"] = settlement.PricingVersion
-			row["priceSnapshot"] = settlement.PriceSnapshot
-			row["usagePeriodStart"] = settlement.UsagePeriodStart
-			row["usagePeriodEnd"] = settlement.UsagePeriodEnd
-			row["quantity"] = settlement.Quantity
-			row["unit"] = settlement.Unit
-			row["providerCostEvidenceRef"] = settlement.ProviderCostEvidenceRef
-			if settlement.ResourceType == "storage" {
-				row["storageId"] = settlement.ResourceID
-			} else {
-				row["computeAllocationId"] = settlement.ResourceID
-			}
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func walletTransactionProjections(transactions []clients.WalletTransaction, settlements map[string]clients.ResourceSettlementResult) []map[string]any {
-	rows := make([]map[string]any, 0, len(transactions))
-	for _, tx := range transactions {
-		row := map[string]any{
-			"id":              tx.ID,
-			"accountId":       tx.AccountID,
-			"ledgerEntryId":   tx.LedgerEntryID,
-			"amountCents":     tx.AmountCents,
-			"balanceCents":    tx.BalanceCents,
-			"frozenCents":     tx.FrozenCents,
-			"availableCents":  tx.AvailableCents,
-			"totalSpentCents": tx.TotalSpentCents,
-			"currency":        tx.Currency,
-			"createdAt":       tx.CreatedAt,
-		}
-		if settlement, ok := settlements[tx.ID]; ok {
-			row["type"] = settlement.ResourceType + "_debit"
-			row["metadata"] = settlementMetadata(settlement)
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func settlementMetadata(settlement clients.ResourceSettlementResult) map[string]any {
-	metadata := map[string]any{
-		"workspaceId":   settlement.WorkspaceID,
-		"resourceId":    settlement.ResourceID,
-		"settlementId":  settlement.ID,
-		"ledgerEntryId": settlement.LedgerEntryID,
-	}
-	if settlement.ResourceType == "storage" {
-		metadata["storageId"] = settlement.ResourceID
-	} else {
-		metadata["computeAllocationId"] = settlement.ResourceID
-	}
-	return metadata
-}
-
 func upsertProjectionByID(rows []controlPlaneRecord, row controlPlaneRecord) []controlPlaneRecord {
 	key := projectionReplayKey(row)
 	if key == "" {
@@ -503,59 +388,6 @@ func projectionReplayKey(row controlPlaneRecord) string {
 		}
 	}
 	return strings.Join([]string{id, stringValue(row["type"]), resourceID}, "\x00")
-}
-
-func manualTopUpProjections(topups []clients.ManualTopUp) []map[string]any {
-	rows := make([]map[string]any, 0, len(topups))
-	for _, topup := range topups {
-		rows = append(rows, structToMap(topup))
-	}
-	return rows
-}
-
-func walletHasMoneyFacts(wallet clients.Wallet) bool {
-	return wallet.BalanceCents != 0 || wallet.FrozenCents != 0 || wallet.AvailableCents != 0 || wallet.TotalSpentCents != 0
-}
-
-func ledgerEntryType(entry clients.LedgerEntry) string {
-	if entry.Source == "manual_topup" {
-		return "manual_topup"
-	}
-	return entry.Source
-}
-
-func ledgerEntryAmount(entry clients.LedgerEntry) int64 {
-	if entry.Direction == "debit" {
-		return -entry.AmountCents
-	}
-	return entry.AmountCents
-}
-
-func walletProjection(wallet clients.Wallet) map[string]any {
-	return map[string]any{
-		"id":              wallet.AccountID,
-		"accountId":       wallet.AccountID,
-		"balance":         float64(wallet.BalanceCents) / 100,
-		"balanceCents":    wallet.BalanceCents,
-		"frozen":          float64(wallet.FrozenCents) / 100,
-		"frozenCents":     wallet.FrozenCents,
-		"available":       float64(wallet.AvailableCents) / 100,
-		"availableCents":  wallet.AvailableCents,
-		"totalSpent":      float64(wallet.TotalSpentCents) / 100,
-		"totalSpentCents": wallet.TotalSpentCents,
-		"currency":        wallet.Currency,
-	}
-}
-
-func walletFromMap(row map[string]any) clients.Wallet {
-	return clients.Wallet{
-		AccountID:       stringValue(row["accountId"]),
-		BalanceCents:    int64(numberField(row, "balanceCents", 0)),
-		FrozenCents:     int64(numberField(row, "frozenCents", 0)),
-		AvailableCents:  int64(numberField(row, "availableCents", 0)),
-		TotalSpentCents: int64(numberField(row, "totalSpentCents", 0)),
-		Currency:        firstNonEmpty(stringValue(row["currency"]), "CNY"),
-	}
 }
 
 func packageList() []any {
@@ -853,117 +685,4 @@ func countActiveURLs(input controlPlaneRecordSet) int {
 		}
 	}
 	return count
-}
-
-func totalAccountField(accounts []any, key string) float64 {
-	total := float64(0)
-	for _, item := range accounts {
-		account, _ := item.(map[string]any)
-		total += number(account[key])
-	}
-	return total
-}
-
-func totalTopupsForAccount(topups []map[string]any, accountID string) float64 {
-	total := float64(0)
-	for _, topup := range topups {
-		if firstNonEmpty(stringValue(topup["accountId"]), stringValue(topup["targetAccountId"])) != accountID {
-			continue
-		}
-		total += amountValue(topup)
-	}
-	return total
-}
-
-func totalDebitsForAccount(accountID string, transactions []map[string]any, ledger []map[string]any) float64 {
-	total := float64(0)
-	for _, tx := range transactions {
-		if stringValue(tx["accountId"]) != accountID {
-			continue
-		}
-		amount := amountValue(tx)
-		if amount < 0 {
-			total += -amount
-		}
-	}
-	for _, entry := range ledger {
-		if stringValue(entry["accountId"]) != accountID {
-			continue
-		}
-		amount := amountValue(entry)
-		if amount < 0 {
-			total += -amount
-		}
-	}
-	return total
-}
-
-func totalDebits(transactions []map[string]any, ledger []map[string]any) float64 {
-	total := float64(0)
-	for _, tx := range transactions {
-		if amount := amountValue(tx); amount < 0 {
-			total += -amount
-		}
-	}
-	for _, entry := range ledger {
-		if amount := amountValue(entry); amount < 0 {
-			total += -amount
-		}
-	}
-	return total
-}
-
-func resourceDebitTotal(ledger []map[string]any, accountID string, workspaceID string) float64 {
-	total := float64(0)
-	for _, entry := range ledger {
-		if !isResourceDebit(entry) {
-			continue
-		}
-		if accountID != "" && stringValue(entry["accountId"]) != accountID {
-			continue
-		}
-		if workspaceID != "" && stringValue(entry["workspaceId"]) != workspaceID {
-			continue
-		}
-		if amount := amountValue(entry); amount < 0 {
-			total += -amount
-		}
-	}
-	return total
-}
-
-func isResourceDebit(row map[string]any) bool {
-	switch stringValue(row["type"]) {
-	case "compute_debit", "storage_debit":
-		return true
-	default:
-		return false
-	}
-}
-
-func activeHourlyForResource(row map[string]any) float64 {
-	if row == nil || billingStatusFor(row) != "active" {
-		return 0
-	}
-	switch stringValue(row["status"]) {
-	case "destroyed", "failed", "detached":
-		return 0
-	}
-	return firstPositive(number(row["hourlyPrice"]), number(row["hourlyEstimate"]))
-}
-
-func firstPositive(values ...float64) float64 {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
-}
-
-func amountValue(row map[string]any) float64 {
-	if amount := number(row["amount"]); amount != 0 {
-		return amount
-	}
-	return float64(number(row["amountCents"])) / 100
 }

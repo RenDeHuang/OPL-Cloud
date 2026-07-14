@@ -1,186 +1,79 @@
 {
-  "schemaVersion": 1,
-  "owner": "OPL Ledger",
-  "purpose": "Commercial resource leasing ledger, wallet transaction, resource settlement, hold, top-up, evidence receipt, and reconciliation policy.",
+  "schemaVersion": 2,
+  "owner": "OPL Control Plane",
+  "purpose": "Monthly resource charge, entitlement, receipt, and reconciliation ownership contract.",
   "state": "current",
-  "machineBoundary": "Ledger entries, wallet transactions, manual top-up audits, holds, hold releases, resource settlements, evidence receipts, and billing reconciliation guards. Request-level product billing is owned outside OPL Cloud.",
+  "machineBoundary": "Sub2API owns spendable USD balance; Control Plane owns resource charge operations and monthly entitlement; Ledger owns append-only evidence receipts and reconciliation reports.",
   "lifecycle": {
     "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current contract for the same boundary."
+    "removalCondition": "Replace only with a newer current contract for the same ownership boundary."
   },
-  "billingUnit": "hour",
-  "priceBasis": "opl_user_price_catalog",
-  "providerCostBasis": "internal_estimate_only",
-  "ledgerEntryTypes": [
-    "credit",
-    "compute_hold",
-    "storage_hold",
-    "compute_debit",
-    "storage_debit",
-    "compute_hold_released",
-    "storage_hold_released",
-    "compute_hold_exhausted",
-    "token_reset",
-    "token_deleted",
-    "wallet_transaction",
-    "manual_topup"
+  "billingUnit": "calendar_month",
+  "priceBasis": "opl_monthly_resource_catalog",
+  "providerCostBasis": "internal_evidence_only",
+  "balanceOwner": "sub2api",
+  "balanceReadApis": [
+    "GET /api/v1/admin/users/:id"
   ],
-  "requiredFields": [
-    "id",
-    "workspaceId",
-    "type",
-    "amount",
-    "currency",
-    "sourceEventId",
-    "createdAt"
+  "moneyWriteApis": [
+    "POST /api/v1/admin/redeem-codes/create-and-redeem"
   ],
-  "prepaidHoldPolicy": {
-    "days": 7,
-    "resources": [
-      "compute",
-      "storage"
-    ],
-    "chargeOrder": [
-      "available_balance",
-      "resource_hold"
-    ],
-    "requiredBefore": [
-      "create_compute_allocation",
-      "create_storage_volume"
-    ],
-    "unpaidComputeOperationAllowed": false,
-    "unpaidStorageOperationAllowed": false
+  "chargePolicy": {
+    "currency": "USD",
+    "unit": "usd_micros",
+    "writeType": "negative_redeem_code",
+    "idempotencyIdentity": "opl:<environment>:<billing-operation-id>:charge:v1",
+    "activationRule": "Grant or extend entitlement only after the redeem record and post-charge balance are confirmed.",
+    "ambiguousResult": "manual_review",
+    "automaticPositiveAdjustment": false
   },
-  "holdReleasePolicy": {
-    "api": "POST /ledger/holds/release",
-    "requiredClientField": "idempotencyKey",
-    "requiredResourceFields": [
-      "accountId",
-      "workspaceId",
-      "resourceType",
-      "resourceId",
-      "holdId",
-      "amountCents",
-      "currency"
+  "entitlementPolicy": {
+    "owner": "opl-control-plane",
+    "requiredFields": [
+      "billingStatus",
+      "billingOperationId",
+      "pricingVersion",
+      "monthlyPriceCnyCents",
+      "chargeUsdMicros",
+      "periodStart",
+      "paidThrough",
+      "autoRenew"
     ],
-    "ledgerEntrySources": [
-      "compute_hold_released",
-      "storage_hold_released"
-    ],
-    "walletEffect": "Release reduces frozen balance and increases available balance without increasing balance or total spent.",
-    "replayBehavior": "Same idempotencyKey with the same accountId, resource identity, holdId, amount, currency, and reason returns the existing release receipt.",
-    "conflictBehavior": "Same idempotencyKey with a different release payload fails closed."
+    "computeExpiry": "destroy_and_deny_access",
+    "storageExpiry": "retain_and_deny_access"
   },
   "ledgerEvidencePolicy": {
-    "walletTransactionAfterSnapshotFields": [
-      "balanceCents",
-      "frozenCents",
-      "availableCents",
-      "totalSpentCents"
+    "owner": "opl-ledger",
+    "recordApi": "POST /ledger/receipts",
+    "receiptTypes": [
+      "billing.resource_purchased.v1",
+      "billing.resource_renewed.v1",
+      "billing.resource_expired.v1",
+      "billing.charge_review_required.v1",
+      "billing.reconciliation.v1"
     ],
-    "priceSnapshotFields": [
-      "priceBasis",
-      "userPrice",
-      "providerCostEstimate"
-    ],
-    "resourceSettlementEvidenceFields": [
+    "requiredCostFields": [
       "pricingVersion",
-      "priceSnapshot",
-      "usagePeriodStart",
-      "usagePeriodEnd",
-      "quantity",
-      "unit",
-      "providerCostEvidenceRef"
-    ],
-    "resourceOwnerFields": [
-      "ownerAccountId",
-      "ownerUserId",
-      "computeAllocationId",
-      "storageId",
-      "attachmentId",
-      "workspaceIds",
-      "nodePoolId",
-      "cvmInstanceId",
-      "nodeName",
-      "privateIp",
-      "publicIp"
-    ],
-    "rules": [
-      "Customer debits use final OPL user prices only.",
-      "Provider cost estimates are stored for internal reconciliation and never as the user billing formula.",
-      "Every resource hold, debit, release, and destroy evidence entry must be attributable to an owner and resource identity."
-    ]
-  },
-  "tencentBillReconciliation": {
-    "command": "npm run reconcile:tencent -- --ledger <ledger.json> --tencent <tencent-bills.json>",
-    "defaultToleranceCny": 0.01,
-    "ledgerUsageTypes": [
-      "compute_debit",
-      "storage_debit"
-    ],
-    "tencentBillFields": [
-      "workspaceId",
+      "monthlyPriceCnyCents",
+      "chargeUsdMicros",
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "periodStart",
+      "paidThrough",
       "resourceType",
-      "amount",
-      "currency"
+      "resourceId"
     ],
-    "rawTencentExport": {
-      "supported": true,
-      "requiredWorkspaceTag": "workspace_id",
-      "cliFlag": "--tencent-format raw"
-    },
-    "resourceTypes": [
-      "compute_allocation",
-      "storage_volume"
-    ],
-    "guard": {
-      "storedIn": "billing_reconciliation_reports",
-      "blocks": [
-        "create_compute_allocation",
-        "create_storage_volume"
-      ],
-      "doesNotBlock": [
-        "resolve_workspace_access",
-        "settle_billing",
-        "destroy_compute",
-        "destroy_storage"
-      ],
-      "blockReasons": [
-        "tencent_bill_reconciliation_failed",
-        "billing_reconciliation_report_missing",
-        "billing_reconciliation_report_stale"
-      ],
-      "operatorNotificationType": "billing.reconciliation_guard_blocked"
-    }
-  },
-  "walletPolicy": {
-    "billingTruth": "users",
-    "balanceFields": [
-      "balance",
-      "frozen",
-      "holds",
-      "totalRecharged"
-    ],
-    "mutationRecords": [
-      "walletTransactions",
-      "manualTopups",
-      "billingLedger"
-    ],
-    "compatibilityMirrorsAllowed": false
-  },
-  "manualTopUpPolicy": {
-    "api": "POST /api/billing/topups",
-    "requiredClientField": "idempotencyKey",
-    "sourceEventIdWhenKeyProvided": "manual_topup:<idempotencyKey>",
-    "replayBehavior": "Same idempotencyKey with the same accountId and amount returns the existing account snapshot and must not append billingLedger, walletTransactions, or manualTopups.",
-    "conflictBehavior": "Same idempotencyKey with a different accountId or amount fails closed.",
-    "operatorEvidenceFields": [
-      "idempotencyKey",
-      "sourceEventId",
-      "operatorUserId",
-      "operatorAccountId",
-      "targetAccountId",
-      "amount"
+    "forbiddenContent": [
+      "apiKey",
+      "adminToken",
+      "password",
+      "rawSub2apiResponse"
     ]
+  },
+  "reconciliationPolicy": {
+    "owner": "opl-ledger",
+    "exceptionOnly": true,
+    "mayBlockNewPurchases": true,
+    "requestUsageCopied": false
   }
 }

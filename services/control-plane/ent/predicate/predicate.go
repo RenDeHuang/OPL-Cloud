@@ -42,23 +42,11 @@ type ComputeAllocation func(*sql.Selector)
 // ExecutionRequest is the predicate function for executionrequest builders.
 type ExecutionRequest func(*sql.Selector)
 
-// LedgerProjection is the predicate function for ledgerprojection builders.
-type LedgerProjection func(*sql.Selector)
-
-// ManualTopupProjection is the predicate function for manualtopupprojection builders.
-type ManualTopupProjection func(*sql.Selector)
-
 // Membership is the predicate function for membership builders.
 type Membership func(*sql.Selector)
 
 // Organization is the predicate function for organization builders.
 type Organization func(*sql.Selector)
-
-// PricingCatalog is the predicate function for pricingcatalog builders.
-type PricingCatalog func(*sql.Selector)
-
-// PricingItem is the predicate function for pricingitem builders.
-type PricingItem func(*sql.Selector)
 
 // ProductionE2ERecord is the predicate function for productione2erecord builders.
 type ProductionE2ERecord func(*sql.Selector)
@@ -83,12 +71,6 @@ type SupportTicketMapping func(*sql.Selector)
 
 // User is the predicate function for user builders.
 type User func(*sql.Selector)
-
-// WalletProjection is the predicate function for walletprojection builders.
-type WalletProjection func(*sql.Selector)
-
-// WalletTransactionProjection is the predicate function for wallettransactionprojection builders.
-type WalletTransactionProjection func(*sql.Selector)
 
 // Workspace is the predicate function for workspace builders.
 type Workspace func(*sql.Selector)

@@ -48,6 +48,20 @@ func (erc *EvidenceReceiptCreate) SetNillableStatus(s *string) *EvidenceReceiptC
 	return erc
 }
 
+// SetAccountID sets the "account_id" field.
+func (erc *EvidenceReceiptCreate) SetAccountID(s string) *EvidenceReceiptCreate {
+	erc.mutation.SetAccountID(s)
+	return erc
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (erc *EvidenceReceiptCreate) SetNillableAccountID(s *string) *EvidenceReceiptCreate {
+	if s != nil {
+		erc.SetAccountID(*s)
+	}
+	return erc
+}
+
 // SetOrganizationID sets the "organization_id" field.
 func (erc *EvidenceReceiptCreate) SetOrganizationID(s string) *EvidenceReceiptCreate {
 	erc.mutation.SetOrganizationID(s)
@@ -263,6 +277,10 @@ func (erc *EvidenceReceiptCreate) defaults() {
 		v := evidencereceipt.DefaultStatus
 		erc.mutation.SetStatus(v)
 	}
+	if _, ok := erc.mutation.AccountID(); !ok {
+		v := evidencereceipt.DefaultAccountID
+		erc.mutation.SetAccountID(v)
+	}
 	if _, ok := erc.mutation.OrganizationID(); !ok {
 		v := evidencereceipt.DefaultOrganizationID
 		erc.mutation.SetOrganizationID(v)
@@ -316,6 +334,9 @@ func (erc *EvidenceReceiptCreate) check() error {
 	}
 	if _, ok := erc.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "EvidenceReceipt.status"`)}
+	}
+	if _, ok := erc.mutation.AccountID(); !ok {
+		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "EvidenceReceipt.account_id"`)}
 	}
 	if _, ok := erc.mutation.OrganizationID(); !ok {
 		return &ValidationError{Name: "organization_id", err: errors.New(`ent: missing required field "EvidenceReceipt.organization_id"`)}
@@ -413,6 +434,10 @@ func (erc *EvidenceReceiptCreate) createSpec() (*EvidenceReceipt, *sqlgraph.Crea
 	if value, ok := erc.mutation.Status(); ok {
 		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := erc.mutation.AccountID(); ok {
+		_spec.SetField(evidencereceipt.FieldAccountID, field.TypeString, value)
+		_node.AccountID = value
 	}
 	if value, ok := erc.mutation.OrganizationID(); ok {
 		_spec.SetField(evidencereceipt.FieldOrganizationID, field.TypeString, value)

@@ -152,30 +152,6 @@ func (f ExecutionRequestFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.V
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ExecutionRequestMutation", m)
 }
 
-// The LedgerProjectionFunc type is an adapter to allow the use of ordinary
-// function as LedgerProjection mutator.
-type LedgerProjectionFunc func(context.Context, *ent.LedgerProjectionMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f LedgerProjectionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.LedgerProjectionMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.LedgerProjectionMutation", m)
-}
-
-// The ManualTopupProjectionFunc type is an adapter to allow the use of ordinary
-// function as ManualTopupProjection mutator.
-type ManualTopupProjectionFunc func(context.Context, *ent.ManualTopupProjectionMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ManualTopupProjectionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ManualTopupProjectionMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ManualTopupProjectionMutation", m)
-}
-
 // The MembershipFunc type is an adapter to allow the use of ordinary
 // function as Membership mutator.
 type MembershipFunc func(context.Context, *ent.MembershipMutation) (ent.Value, error)
@@ -198,30 +174,6 @@ func (f OrganizationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OrganizationMutation", m)
-}
-
-// The PricingCatalogFunc type is an adapter to allow the use of ordinary
-// function as PricingCatalog mutator.
-type PricingCatalogFunc func(context.Context, *ent.PricingCatalogMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f PricingCatalogFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.PricingCatalogMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PricingCatalogMutation", m)
-}
-
-// The PricingItemFunc type is an adapter to allow the use of ordinary
-// function as PricingItem mutator.
-type PricingItemFunc func(context.Context, *ent.PricingItemMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f PricingItemFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.PricingItemMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PricingItemMutation", m)
 }
 
 // The ProductionE2ERecordFunc type is an adapter to allow the use of ordinary
@@ -318,30 +270,6 @@ func (f UserFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error)
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.UserMutation", m)
-}
-
-// The WalletProjectionFunc type is an adapter to allow the use of ordinary
-// function as WalletProjection mutator.
-type WalletProjectionFunc func(context.Context, *ent.WalletProjectionMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f WalletProjectionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.WalletProjectionMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.WalletProjectionMutation", m)
-}
-
-// The WalletTransactionProjectionFunc type is an adapter to allow the use of ordinary
-// function as WalletTransactionProjection mutator.
-type WalletTransactionProjectionFunc func(context.Context, *ent.WalletTransactionProjectionMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f WalletTransactionProjectionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.WalletTransactionProjectionMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.WalletTransactionProjectionMutation", m)
 }
 
 // The WorkspaceFunc type is an adapter to allow the use of ordinary

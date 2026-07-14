@@ -9,11 +9,12 @@ export function customerSafeMessage(payload: JsonRecord = {}, fallback = "reques
   return raw;
 }
 
-export async function postJson(path: string, body: JsonRecord = {}, csrfToken = "") {
+export async function postJson(path: string, body: JsonRecord = {}, csrfToken = "", idempotencyKey = "") {
   const headers: Record<string, string> = {
     "content-type": "application/json"
   };
   if (csrfToken) headers["x-opl-csrf"] = csrfToken;
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(path, {
     method: "POST",
     headers,
@@ -42,10 +43,10 @@ export function operationEnvelope(payload: JsonRecord = {}, defaults: JsonRecord
     resourceId,
     failureReason,
     costImpact: {
-      holdAmount: payload?.holdAmount,
-      hourlyPrice: payload?.hourlyPrice,
-      hourlyEstimate: payload?.hourlyEstimate,
-      balanceImpact: payload?.balanceImpact
+      monthlyPriceCnyCents: payload?.monthlyPriceCnyCents,
+      chargeUsdMicros: payload?.chargeUsdMicros,
+      paidThrough: payload?.paidThrough,
+      autoRenew: payload?.autoRenew
     },
     next: defaults.next || {},
     ...payload

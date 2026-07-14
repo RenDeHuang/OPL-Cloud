@@ -40,6 +40,7 @@ test("staging-local scripts load ignored staging env files and require explicit 
   const localApiSource = await source("tools/start-staging-local-api.ts");
   const readinessSource = await source("tools/staging-readiness.ts");
   const verifierSource = await source("tools/staging-local-verifier.ts");
+  const stagingEnvSource = await source("tools/staging-env.ts");
   const envExample = await source("deploy/tke/opl-cloud-staging.local.env.example");
 
   assert.match(localApiSource, /loadEnvFile/, "local staging API must load .env.staging.local");
@@ -49,4 +50,14 @@ test("staging-local scripts load ignored staging env files and require explicit 
   assert.match(verifierSource, /allowPrivateConsoleOrigin: true/, "local-to-staging verifier may use a private local Console origin");
   assert.match(envExample, /OPL_RUNTIME_PROVIDER=tencent-tke/);
   assert.match(envExample, /OPL_CONFIRM_REAL_CLOUD_E2E=0/);
+  for (const key of [
+    "OPL_SUB2API_BASE_URL",
+    "OPL_SUB2API_ADMIN_EMAIL",
+    "OPL_SUB2API_ADMIN_PASSWORD",
+    "OPL_SUB2API_SUPPORTED_VERSIONS",
+    "OPL_MONTHLY_BILLING_WORKER_ENABLED"
+  ]) {
+    assert.match(stagingEnvSource, new RegExp(`"${key}"`), `staging validation must require ${key}`);
+    assert.match(envExample, new RegExp(`^${key}=`, "m"), `staging env example must define ${key}`);
+  }
 });

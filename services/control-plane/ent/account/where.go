@@ -79,6 +79,11 @@ func OwnerUserID(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldOwnerUserID, v))
 }
 
+// Sub2apiUserID applies equality check predicate on the "sub2api_user_id" field. It's identical to Sub2apiUserIDEQ.
+func Sub2apiUserID(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSub2apiUserID, v))
+}
+
 // Name applies equality check predicate on the "name" field. It's identical to NameEQ.
 func Name(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldName, v))
@@ -232,6 +237,46 @@ func OwnerUserIDEqualFold(v string) predicate.Account {
 // OwnerUserIDContainsFold applies the ContainsFold predicate on the "owner_user_id" field.
 func OwnerUserIDContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldOwnerUserID, v))
+}
+
+// Sub2apiUserIDEQ applies the EQ predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSub2apiUserID, v))
+}
+
+// Sub2apiUserIDNEQ applies the NEQ predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDNEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldSub2apiUserID, v))
+}
+
+// Sub2apiUserIDIn applies the In predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldSub2apiUserID, vs...))
+}
+
+// Sub2apiUserIDNotIn applies the NotIn predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDNotIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldSub2apiUserID, vs...))
+}
+
+// Sub2apiUserIDGT applies the GT predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDGT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldSub2apiUserID, v))
+}
+
+// Sub2apiUserIDGTE applies the GTE predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDGTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldSub2apiUserID, v))
+}
+
+// Sub2apiUserIDLT applies the LT predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDLT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldSub2apiUserID, v))
+}
+
+// Sub2apiUserIDLTE applies the LTE predicate on the "sub2api_user_id" field.
+func Sub2apiUserIDLTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldSub2apiUserID, v))
 }
 
 // NameEQ applies the EQ predicate on the "name" field.

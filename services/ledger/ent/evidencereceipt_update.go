@@ -56,6 +56,20 @@ func (eru *EvidenceReceiptUpdate) SetNillableStatus(s *string) *EvidenceReceiptU
 	return eru
 }
 
+// SetAccountID sets the "account_id" field.
+func (eru *EvidenceReceiptUpdate) SetAccountID(s string) *EvidenceReceiptUpdate {
+	eru.mutation.SetAccountID(s)
+	return eru
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (eru *EvidenceReceiptUpdate) SetNillableAccountID(s *string) *EvidenceReceiptUpdate {
+	if s != nil {
+		eru.SetAccountID(*s)
+	}
+	return eru
+}
+
 // SetOrganizationID sets the "organization_id" field.
 func (eru *EvidenceReceiptUpdate) SetOrganizationID(s string) *EvidenceReceiptUpdate {
 	eru.mutation.SetOrganizationID(s)
@@ -303,6 +317,9 @@ func (eru *EvidenceReceiptUpdate) sqlSave(ctx context.Context) (n int, err error
 	if value, ok := eru.mutation.Status(); ok {
 		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
 	}
+	if value, ok := eru.mutation.AccountID(); ok {
+		_spec.SetField(evidencereceipt.FieldAccountID, field.TypeString, value)
+	}
 	if value, ok := eru.mutation.OrganizationID(); ok {
 		_spec.SetField(evidencereceipt.FieldOrganizationID, field.TypeString, value)
 	}
@@ -386,6 +403,20 @@ func (eruo *EvidenceReceiptUpdateOne) SetStatus(s string) *EvidenceReceiptUpdate
 func (eruo *EvidenceReceiptUpdateOne) SetNillableStatus(s *string) *EvidenceReceiptUpdateOne {
 	if s != nil {
 		eruo.SetStatus(*s)
+	}
+	return eruo
+}
+
+// SetAccountID sets the "account_id" field.
+func (eruo *EvidenceReceiptUpdateOne) SetAccountID(s string) *EvidenceReceiptUpdateOne {
+	eruo.mutation.SetAccountID(s)
+	return eruo
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (eruo *EvidenceReceiptUpdateOne) SetNillableAccountID(s *string) *EvidenceReceiptUpdateOne {
+	if s != nil {
+		eruo.SetAccountID(*s)
 	}
 	return eruo
 }
@@ -666,6 +697,9 @@ func (eruo *EvidenceReceiptUpdateOne) sqlSave(ctx context.Context) (_node *Evide
 	}
 	if value, ok := eruo.mutation.Status(); ok {
 		_spec.SetField(evidencereceipt.FieldStatus, field.TypeString, value)
+	}
+	if value, ok := eruo.mutation.AccountID(); ok {
+		_spec.SetField(evidencereceipt.FieldAccountID, field.TypeString, value)
 	}
 	if value, ok := eruo.mutation.OrganizationID(); ok {
 		_spec.SetField(evidencereceipt.FieldOrganizationID, field.TypeString, value)

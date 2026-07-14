@@ -1,44 +1,36 @@
 # Decisions
 
-## 2026-07-03: Adopt One Person Lab Lifecycle
+## 2026-07-14: Sub2API Is The Only Spendable Balance
 
-Decision: this repository follows the `one-person-lab` docs/contracts/tests lifecycle.
+`gflabtoken.cn` owns USD balance, API keys, routing, and request usage. Control
+Plane reads balance and submits exact adjustments through the existing Sub2API
+management API. Console displays that projection. Ledger stores evidence only.
 
-Implications:
+## 2026-07-14: Resources Are Prepaid Monthly
 
-- active docs describe current truth;
-- process records move to `docs/history/**`;
-- machine contracts live in `packages/contracts/**`;
-- tests are classified by lifecycle;
-- temporary tests are retired once their migration or cleanup condition is met.
+Basic compute is CNY 350/month, Pro compute is CNY 1,500/month, and storage is
+CNY 18 per 10 GB/month. Charges use fixed integer USD micros at `1 USD = 7 CNY`.
+Tencent procurement and provider cost are internal evidence, not customer price.
 
-## 2026-07-03: No Long-Term Compatibility Layer
+## 2026-07-14: Control Plane Serves Console Product Commands Only
 
-Decision: do not keep compatibility wrappers, old aliases, or duplicate routes after active callers move.
+Control Plane orchestrates product outcomes. It does not expose generic Fabric,
+Ledger, or Sub2API proxies and does not enter App, Workspace runtime, or MAS
+direct call chains.
 
-Allowed bridge: one-time migration code that upgrades persisted data into the current model.
+## 2026-07-14: Hard Cut On A Fresh Database
 
-Disallowed long-term state:
+There are no users or production billing records to preserve. Old commercial
+schemas, compatibility routes, duplicate write paths, and state importers are
+deleted.
 
-- `accounts` wallet mirror semantics;
-- legacy user import as an auth source after store users exist;
-- retired account-credit endpoint aliases;
-- contracts that preserve legacy aliases as current product truth.
+## 2026-07-14: Provider And Commercial State Have Different Owners
 
-## 2026-07-03: User Wallet Is Commercial Billing Truth
+Fabric owns resource/provider facts. Control Plane owns monthly entitlements and
+billing operations. Ledger owns append-only evidence. A Fabric response must not
+replace Control Plane commercial fields.
 
-Decision: commercial balance, holds, total recharge, and wallet transactions attach to users and billing ownership, not to legacy account mirrors.
+## 2026-07-14: One Production Verifier
 
-Workspace and ledger records may keep `accountId` as billing-account identity, but wallet mutation happens through the current user wallet model.
-
-## 2026-07-03: Lab Owner UI Hides Operator Evidence
-
-Decision: Lab Owner UI is a commercial workspace distribution and billing explanation surface.
-
-Raw Fabric, Runtime, Production Readiness, request fingerprint, dedup, and raw Ledger evidence belong to Admin/operator views.
-
-## 2026-07-03: Deployment Tests Follow Machine Contracts
-
-Decision: workflow, image, deployment, and route tests should read machine contracts or exported manifests instead of hard-coding long source snippets in tests.
-
-This keeps tests permanent while avoiding phase-only guards that break on harmless implementation edits.
+The paid verifier is the only release-gating commercial verifier and covers the
+complete public product chain and exact cleanup.

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -17,8 +16,6 @@ import (
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
-	"opl-cloud/services/control-plane/internal/handler"
-	controlplaneroutes "opl-cloud/services/control-plane/internal/server/routes"
 )
 
 func NewServer(service *controlplane.Service) http.Handler {
@@ -34,8 +31,8 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	if err != nil {
 		return nil, err
 	}
-	if settlementWorkerEnabled() {
-		app.startPeriodicSettlementWorker(context.Background(), service, settlementWorkerInterval())
+	if monthlyBillingWorkerEnabled() {
+		app.startMonthlyBillingWorker(context.Background(), service, monthlyBillingWorkerInterval())
 	}
 	if providerReconcileWorkerEnabled() {
 		app.startProviderReconcileWorker(context.Background(), service, providerReconcileInterval())
@@ -44,14 +41,14 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 		app.startArchiveRetentionWorker(context.Background(), archiveRetentionWorkerInterval())
 	}
 	mux := http.NewServeMux()
-	controlplaneroutes.RegisterCore(mux, handler.CoreHandler{Register: func(mux *http.ServeMux) { registerCoreRoutes(mux, app, service) }})
-	controlplaneroutes.RegisterAuth(mux, handler.AuthHandler{Register: func(mux *http.ServeMux) { registerAuthRoutes(mux, app) }})
-	controlplaneroutes.RegisterState(mux, handler.StateHandler{Register: func(mux *http.ServeMux) { registerStateRoutes(mux, app, service) }})
-	controlplaneroutes.RegisterWorkspace(mux, handler.WorkspaceHandler{Register: func(mux *http.ServeMux) { registerWorkspaceRoutes(mux, app, service) }})
-	controlplaneroutes.RegisterBilling(mux, handler.BillingHandler{Register: func(mux *http.ServeMux) { registerBillingRoutes(mux, app, service) }})
-	controlplaneroutes.RegisterResource(mux, handler.ResourceHandler{Register: func(mux *http.ServeMux) { registerResourceRoutes(mux, app, service) }})
-	controlplaneroutes.RegisterSupport(mux, handler.SupportHandler{Register: func(mux *http.ServeMux) { registerSupportRoutes(mux, app) }})
-	controlplaneroutes.RegisterAdmin(mux, handler.AdminHandler{Register: func(mux *http.ServeMux) { registerAdminRoutes(mux, app) }})
+	registerCoreRoutes(mux, app, service)
+	registerAuthRoutes(mux, app)
+	registerStateRoutes(mux, app, service)
+	registerWorkspaceRoutes(mux, app, service)
+	registerBillingRoutes(mux, app, service)
+	registerResourceRoutes(mux, app, service)
+	registerSupportRoutes(mux, app)
+	registerAdminRoutes(mux, app)
 	registerExecutionRoutes(mux, app, service)
 	registerSyncRoutes(mux, app)
 	registerTransferRoutes(mux, app, service)
@@ -136,42 +133,6 @@ func (app *controlPlaneServer) syncRuntimeOperations(w http.ResponseWriter, r *h
 		return false
 	}
 	if err := app.rememberRuntimeOperations(operations); err != nil {
-		writeError(w, http.StatusInternalServerError, "state_persist_failed")
-		return false
-	}
-	return true
-}
-
-func (app *controlPlaneServer) syncLedgerFacts(w http.ResponseWriter, r *http.Request, service *controlplane.Service, accountID string) bool {
-	entries, err := service.ListLedgerEntries(r.Context(), accountID)
-	if err != nil {
-		writeUpstreamError(w)
-		return false
-	}
-	transactions, err := service.ListWalletTransactions(r.Context(), accountID)
-	if err != nil {
-		writeUpstreamError(w)
-		return false
-	}
-	topups, err := service.ListManualTopUps(r.Context(), accountID)
-	if err != nil {
-		writeUpstreamError(w)
-		return false
-	}
-	settlements, err := service.ListResourceSettlements(r.Context(), accountID)
-	if err != nil {
-		writeUpstreamError(w)
-		return false
-	}
-	var wallet clients.Wallet
-	if accountID != "" {
-		wallet, err = service.Wallet(r.Context(), accountID)
-		if err != nil {
-			writeUpstreamError(w)
-			return false
-		}
-	}
-	if err := app.applyLedgerFacts(accountID, wallet, entries, transactions, topups, settlements); err != nil {
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
 		return false
 	}
@@ -340,12 +301,21 @@ func mutationKey(r *http.Request, input map[string]any) string {
 	return firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(input, "sourceEventId", ""), stableID(r.Method, r.URL.Path, time.Now().UTC().String()))
 }
 
+func requiredMutationKey(w http.ResponseWriter, r *http.Request) (string, bool) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+		return "", false
+	}
+	return key, true
+}
+
 func newResourceID(prefix string) string {
 	return prefix + "_" + stableID(prefix, time.Now().UTC().Format(time.RFC3339Nano))[:18]
 }
 
-func resourceIDForMutation(prefix, key string) string {
-	return prefix + "_" + stableID(prefix, key)[:18]
+func resourceIDForMutation(prefix, accountID, key string) string {
+	return prefix + "_" + stableID(prefix, accountID, key)[:18]
 }
 
 func structToMap(value any) map[string]any {
@@ -369,9 +339,6 @@ func computeResponse(row map[string]any) map[string]any {
 	row["status"] = firstNonEmpty(stringValue(row["status"]), "running")
 	row["billingStatus"] = billingStatusFor(row)
 	row["cvmInstanceId"] = firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"]))
-	if holdCents := numberField(row, "holdAmountCents", 0); holdCents > 0 {
-		row["holdAmount"] = holdCents / 100
-	}
 	if serviceName := stringValue(row["serviceName"]); serviceName != "" {
 		row["runtime"] = map[string]any{"serviceName": serviceName, "service": "service/" + serviceName}
 	}
@@ -389,9 +356,6 @@ func storageResponse(row map[string]any) map[string]any {
 	}
 	row["status"] = firstNonEmpty(stringValue(row["status"]), "available")
 	row["billingStatus"] = billingStatusFor(row)
-	if holdCents := numberField(row, "holdAmountCents", 0); holdCents > 0 {
-		row["holdAmount"] = holdCents / 100
-	}
 	if numberField(row, "sizeGb", 0) == 0 {
 		row["sizeGb"] = 10
 	}
@@ -422,7 +386,7 @@ func workspaceResponse(row map[string]any) map[string]any {
 	if serviceName := stringValue(row["runtimeServiceName"]); serviceName != "" {
 		row["runtime"] = map[string]any{"serviceName": serviceName}
 	}
-	runtimeStatus := firstNonEmpty(stringValue(valueOrNil(row, "runtime", "status")), stringValue(row["runtimeStatus"]), stringValue(row["state"]))
+	runtimeStatus := firstNonEmpty(stringValue(nested(row, "runtime", "status")), stringValue(row["runtimeStatus"]), stringValue(row["state"]))
 	row["runtimeStatus"] = runtimeStatus
 	access, _ := row["access"].(map[string]any)
 	access = cloneMap(access)
@@ -503,123 +467,6 @@ func emptyMergeValue(value any) bool {
 	default:
 		return false
 	}
-}
-
-func manualTopUpResponse(result clients.ManualTopUpResult) map[string]any {
-	return map[string]any{
-		"id":                  result.TopUp.ID,
-		"idempotent":          result.Replayed,
-		"targetAccountId":     result.TopUp.AccountID,
-		"amount":              float64(result.TopUp.AmountCents) / 100,
-		"amountCents":         result.TopUp.AmountCents,
-		"operatorUserId":      result.TopUp.OperatorUserID,
-		"ledgerEntryId":       result.LedgerEntry.ID,
-		"walletTransactionId": result.WalletTransaction.ID,
-		"balance":             float64(result.Wallet.BalanceCents) / 100,
-		"frozen":              float64(result.Wallet.FrozenCents) / 100,
-		"available":           float64(result.Wallet.AvailableCents) / 100,
-		"wallet":              result.Wallet,
-		"status":              "completed",
-	}
-}
-
-func settlementAmountCents(input map[string]any) int64 {
-	if cents := numberField(input, "amountCents", -1); cents >= 0 {
-		return int64(cents)
-	}
-	if amount := numberField(input, "amount", -1); amount >= 0 {
-		return int64(amount * 100)
-	}
-	hours := numberField(input, "hours", 1)
-	return int64(hours * 100)
-}
-
-func destroyResourceInput(id string, row map[string]any) controlplane.DestroyResourceInput {
-	return controlplane.DestroyResourceInput{
-		ID:              id,
-		AccountID:       firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]), "acct-local"),
-		WorkspaceID:     stringValue(row["workspaceId"]),
-		HoldID:          stringValue(row["holdId"]),
-		HoldAmountCents: int64(numberField(row, "holdAmountCents", 0)),
-	}
-}
-
-func computeHoldAmountCents(packageID string) int64 {
-	return computeHoldAmountCentsFromCatalog(defaultPricingCatalog(), packageID)
-}
-
-func storageHoldAmountCents(packageID string, sizeGB float64) int64 {
-	return storageHoldAmountCentsFromCatalog(defaultPricingCatalog(), packageID, sizeGB)
-}
-
-func packageByID(packageID string) map[string]any {
-	for _, plan := range packageList() {
-		row, _ := plan.(map[string]any)
-		if stringValue(row["id"]) == packageID {
-			return row
-		}
-	}
-	first, _ := packageList()[0].(map[string]any)
-	return first
-}
-
-func cents(amount float64) int64 {
-	return int64(math.Round(amount * 100))
-}
-
-func priceField(plan map[string]any, key string) float64 {
-	price, _ := plan["price"].(map[string]any)
-	return numberField(price, key, 0)
-}
-
-func settlementResponse(result clients.ResourceSettlementResult) map[string]any {
-	return map[string]any{
-		"id":                      result.ID,
-		"accountId":               result.AccountID,
-		"workspaceId":             result.WorkspaceID,
-		"resourceType":            result.ResourceType,
-		"resourceId":              result.ResourceID,
-		"holdId":                  result.HoldID,
-		"amount":                  float64(result.AmountCents) / 100,
-		"amountCents":             result.AmountCents,
-		"status":                  result.Status,
-		"ledgerEntryId":           result.LedgerEntryID,
-		"walletTransactionId":     result.WalletTransactionID,
-		"pricingVersion":          result.PricingVersion,
-		"priceSnapshot":           result.PriceSnapshot,
-		"usagePeriodStart":        result.UsagePeriodStart,
-		"usagePeriodEnd":          result.UsagePeriodEnd,
-		"quantity":                result.Quantity,
-		"unit":                    result.Unit,
-		"providerCostEvidenceRef": result.ProviderCostEvidenceRef,
-		"wallet":                  result.Wallet,
-	}
-}
-
-func completeSettlementResult(result clients.ResourceSettlementResult, input controlplane.ResourceSettlementInput) clients.ResourceSettlementResult {
-	result.AccountID = firstNonEmpty(result.AccountID, input.AccountID)
-	result.WorkspaceID = firstNonEmpty(result.WorkspaceID, input.WorkspaceID)
-	result.ResourceType = firstNonEmpty(result.ResourceType, input.ResourceType)
-	result.ResourceID = firstNonEmpty(result.ResourceID, input.ResourceID)
-	result.HoldID = firstNonEmpty(result.HoldID, input.HoldID)
-	if result.AmountCents == 0 {
-		result.AmountCents = input.AmountCents
-	}
-	result.Currency = firstNonEmpty(result.Currency, input.Currency)
-	result.PricingVersion = firstNonEmpty(result.PricingVersion, input.PricingVersion)
-	if len(result.PriceSnapshot) == 0 {
-		result.PriceSnapshot = cloneMap(input.PriceSnapshot)
-	}
-	result.UsagePeriodStart = firstNonEmpty(result.UsagePeriodStart, input.UsagePeriodStart)
-	result.UsagePeriodEnd = firstNonEmpty(result.UsagePeriodEnd, input.UsagePeriodEnd)
-	if result.Quantity == 0 {
-		result.Quantity = input.Quantity
-	}
-	result.Unit = firstNonEmpty(result.Unit, input.Unit)
-	result.ProviderCostEvidenceRef = firstNonEmpty(result.ProviderCostEvidenceRef, input.ProviderCostEvidenceRef)
-	result.Wallet.AccountID = firstNonEmpty(result.Wallet.AccountID, result.AccountID)
-	result.Wallet.Currency = firstNonEmpty(result.Wallet.Currency, result.Currency)
-	return result
 }
 
 func reconciliationResponse(result clients.ReconciliationResult) map[string]any {

@@ -220,12 +220,12 @@ export const consoleActions = Object.freeze([
     routeId: "resources.relationships"
   },
   {
-    id: "billing.wallet",
-    label: "钱包与冻结",
+    id: "billing.overview",
+    label: "查看月度账单",
     type: "route",
     role: "lab_owner",
-    objectKind: "Wallet",
-    routeId: "billing.wallet"
+    objectKind: "MonthlyEntitlement",
+    routeId: "billing.overview"
   },
   {
     id: "support.create",
@@ -250,15 +250,6 @@ export const consoleActions = Object.freeze([
     role: "lab_owner",
     objectKind: "Workspace",
     routeId: "gateway.external"
-  },
-  {
-    id: "admin.manualTopup",
-    label: "人工充值",
-    type: "api",
-    role: "admin",
-    objectKind: "Wallet",
-    apiClient: "apps/console-ui/src/api/billing-api.ts",
-    apiName: "manualTopUp"
   },
   {
     id: "admin.userCreate",
@@ -309,13 +300,5 @@ export const consoleActions = Object.freeze([
     role: "admin",
     objectKind: "AdminAuditEvent",
     routeId: "admin.e2e"
-  },
-  {
-    id: "admin.userWallet.disabled",
-    label: "用户钱包详情",
-    type: "disabled",
-    role: "admin",
-    objectKind: "Wallet",
-    disabledReason: "请在用户表使用人工充值；独立钱包详情不在当前上线范围。"
   }
 ]);

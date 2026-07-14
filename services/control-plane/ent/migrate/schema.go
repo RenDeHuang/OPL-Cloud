@@ -15,6 +15,7 @@ var (
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "owner_user_id", Type: field.TypeString, Default: ""},
+		{Name: "sub2api_user_id", Type: field.TypeInt64, Default: 0},
 		{Name: "name", Type: field.TypeString, Default: ""},
 		{Name: "status", Type: field.TypeString, Default: "active"},
 	}
@@ -222,30 +223,17 @@ var (
 		{Name: "last_provider_sync_error", Type: field.TypeString, Default: ""},
 		{Name: "external_deleted_at", Type: field.TypeString, Default: ""},
 		{Name: "billing_status", Type: field.TypeString, Default: ""},
-		{Name: "hold_id", Type: field.TypeString, Default: ""},
-		{Name: "hold_release_id", Type: field.TypeString, Default: ""},
-		{Name: "settlement_id", Type: field.TypeString, Default: ""},
-		{Name: "ledger_entry_id", Type: field.TypeString, Default: ""},
-		{Name: "wallet_transaction_id", Type: field.TypeString, Default: ""},
 		{Name: "pricing_version", Type: field.TypeString, Default: ""},
-		{Name: "usage_period_end", Type: field.TypeString, Default: ""},
+		{Name: "billing_operation_id", Type: field.TypeString, Default: ""},
+		{Name: "billing_state_json", Type: field.TypeString, Default: "{}"},
 		{Name: "evidence_id", Type: field.TypeString, Default: ""},
 		{Name: "cvm_instance_id", Type: field.TypeString, Default: ""},
 		{Name: "instance_id", Type: field.TypeString, Default: ""},
 		{Name: "node_name", Type: field.TypeString, Default: ""},
 		{Name: "machine_name", Type: field.TypeString, Default: ""},
-		{Name: "hold_amount_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "hold_amount", Type: field.TypeFloat64, Default: 0},
 		{Name: "cpu", Type: field.TypeFloat64, Default: 0},
 		{Name: "memory_gb", Type: field.TypeFloat64, Default: 0},
 		{Name: "disk_gb", Type: field.TypeFloat64, Default: 0},
-		{Name: "price_snapshot_package_id", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_resource_type", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_currency", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_source", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_sku", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_unit_price_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "price_snapshot_compute_hourly", Type: field.TypeFloat64, Default: 0},
 	}
 	// ControlPlaneComputeAllocationsTable holds the schema information for the "control_plane_compute_allocations" table.
 	ControlPlaneComputeAllocationsTable = &schema.Table{
@@ -281,62 +269,6 @@ var (
 		Columns:    ControlPlaneExecutionRequestsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneExecutionRequestsColumns[0]},
 	}
-	// ControlPlaneLedgerProjectionsColumns holds the columns for the "control_plane_ledger_projections" table.
-	ControlPlaneLedgerProjectionsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "type", Type: field.TypeString, Default: ""},
-		{Name: "resource_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_kind", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "compute_allocation_id", Type: field.TypeString, Default: ""},
-		{Name: "storage_id", Type: field.TypeString, Default: ""},
-		{Name: "settlement_id", Type: field.TypeString, Default: ""},
-		{Name: "pricing_version", Type: field.TypeString, Default: ""},
-		{Name: "usage_period_start", Type: field.TypeString, Default: ""},
-		{Name: "usage_period_end", Type: field.TypeString, Default: ""},
-		{Name: "unit", Type: field.TypeString, Default: ""},
-		{Name: "provider_cost_evidence_ref", Type: field.TypeString, Default: ""},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "amount_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "quantity", Type: field.TypeFloat64, Default: 0},
-		{Name: "direction", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_package_id", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_resource_type", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_currency", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_source", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_sku", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_unit_price_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "price_snapshot_compute_hourly", Type: field.TypeFloat64, Default: 0},
-		{Name: "price_snapshot_storage_gb_month", Type: field.TypeFloat64, Default: 0},
-		{Name: "price_snapshot_size_gb", Type: field.TypeFloat64, Default: 0},
-	}
-	// ControlPlaneLedgerProjectionsTable holds the schema information for the "control_plane_ledger_projections" table.
-	ControlPlaneLedgerProjectionsTable = &schema.Table{
-		Name:       "control_plane_ledger_projections",
-		Columns:    ControlPlaneLedgerProjectionsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneLedgerProjectionsColumns[0]},
-	}
-	// ControlPlaneManualTopupProjectionsColumns holds the columns for the "control_plane_manual_topup_projections" table.
-	ControlPlaneManualTopupProjectionsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "operator_user_id", Type: field.TypeString, Default: ""},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "source", Type: field.TypeString, Default: "manual"},
-		{Name: "reason", Type: field.TypeString, Default: ""},
-		{Name: "amount_cents", Type: field.TypeInt64, Default: 0},
-	}
-	// ControlPlaneManualTopupProjectionsTable holds the schema information for the "control_plane_manual_topup_projections" table.
-	ControlPlaneManualTopupProjectionsTable = &schema.Table{
-		Name:       "control_plane_manual_topup_projections",
-		Columns:    ControlPlaneManualTopupProjectionsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneManualTopupProjectionsColumns[0]},
-	}
 	// ControlPlaneMembershipsColumns holds the columns for the "control_plane_memberships" table.
 	ControlPlaneMembershipsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -368,47 +300,6 @@ var (
 		Name:       "control_plane_organizations",
 		Columns:    ControlPlaneOrganizationsColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneOrganizationsColumns[0]},
-	}
-	// ControlPlanePricingCatalogsColumns holds the columns for the "control_plane_pricing_catalogs" table.
-	ControlPlanePricingCatalogsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "version", Type: field.TypeString, Unique: true},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "hold_days", Type: field.TypeInt, Default: 7},
-		{Name: "effective_from", Type: field.TypeString, Default: ""},
-		{Name: "status", Type: field.TypeString, Default: "current"},
-	}
-	// ControlPlanePricingCatalogsTable holds the schema information for the "control_plane_pricing_catalogs" table.
-	ControlPlanePricingCatalogsTable = &schema.Table{
-		Name:       "control_plane_pricing_catalogs",
-		Columns:    ControlPlanePricingCatalogsColumns,
-		PrimaryKey: []*schema.Column{ControlPlanePricingCatalogsColumns[0]},
-	}
-	// ControlPlanePricingItemsColumns holds the columns for the "control_plane_pricing_items" table.
-	ControlPlanePricingItemsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "catalog_version", Type: field.TypeString},
-		{Name: "package_id", Type: field.TypeString},
-		{Name: "resource_type", Type: field.TypeString},
-		{Name: "unit", Type: field.TypeString},
-		{Name: "unit_price", Type: field.TypeFloat64, Default: 0},
-		{Name: "unit_price_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "available", Type: field.TypeBool, Default: true},
-		{Name: "name", Type: field.TypeString, Default: ""},
-		{Name: "server", Type: field.TypeString, Default: ""},
-		{Name: "cpu", Type: field.TypeFloat64, Default: 0},
-		{Name: "memory_gb", Type: field.TypeFloat64, Default: 0},
-		{Name: "disk_gb", Type: field.TypeFloat64, Default: 0},
-	}
-	// ControlPlanePricingItemsTable holds the schema information for the "control_plane_pricing_items" table.
-	ControlPlanePricingItemsTable = &schema.Table{
-		Name:       "control_plane_pricing_items",
-		Columns:    ControlPlanePricingItemsColumns,
-		PrimaryKey: []*schema.Column{ControlPlanePricingItemsColumns[0]},
 	}
 	// ControlPlaneProductionE2eRecordsColumns holds the columns for the "control_plane_production_e2e_records" table.
 	ControlPlaneProductionE2eRecordsColumns = []*schema.Column{
@@ -535,23 +426,11 @@ var (
 		{Name: "last_provider_sync_error", Type: field.TypeString, Default: ""},
 		{Name: "external_deleted_at", Type: field.TypeString, Default: ""},
 		{Name: "billing_status", Type: field.TypeString, Default: ""},
-		{Name: "hold_id", Type: field.TypeString, Default: ""},
-		{Name: "hold_release_id", Type: field.TypeString, Default: ""},
-		{Name: "settlement_id", Type: field.TypeString, Default: ""},
-		{Name: "ledger_entry_id", Type: field.TypeString, Default: ""},
-		{Name: "wallet_transaction_id", Type: field.TypeString, Default: ""},
 		{Name: "pricing_version", Type: field.TypeString, Default: ""},
-		{Name: "usage_period_end", Type: field.TypeString, Default: ""},
+		{Name: "billing_operation_id", Type: field.TypeString, Default: ""},
+		{Name: "billing_state_json", Type: field.TypeString, Default: "{}"},
 		{Name: "mount_path", Type: field.TypeString, Default: ""},
-		{Name: "hold_amount_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "hold_amount", Type: field.TypeFloat64, Default: 0},
 		{Name: "size_gb", Type: field.TypeFloat64, Default: 0},
-		{Name: "price_snapshot_resource_type", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_currency", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_source", Type: field.TypeString, Default: ""},
-		{Name: "price_snapshot_unit_price_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "price_snapshot_storage_gb_month", Type: field.TypeFloat64, Default: 0},
-		{Name: "price_snapshot_size_gb", Type: field.TypeFloat64, Default: 0},
 	}
 	// ControlPlaneStorageVolumesTable holds the schema information for the "control_plane_storage_volumes" table.
 	ControlPlaneStorageVolumesTable = &schema.Table{
@@ -609,61 +488,6 @@ var (
 		Name:       "control_plane_users",
 		Columns:    ControlPlaneUsersColumns,
 		PrimaryKey: []*schema.Column{ControlPlaneUsersColumns[0]},
-	}
-	// ControlPlaneWalletProjectionsColumns holds the columns for the "control_plane_wallet_projections" table.
-	ControlPlaneWalletProjectionsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "balance_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "frozen_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "available_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "total_spent_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "balance", Type: field.TypeFloat64, Default: 0},
-		{Name: "frozen", Type: field.TypeFloat64, Default: 0},
-		{Name: "available", Type: field.TypeFloat64, Default: 0},
-		{Name: "total_spent", Type: field.TypeFloat64, Default: 0},
-		{Name: "total_recharged", Type: field.TypeFloat64, Default: 0},
-	}
-	// ControlPlaneWalletProjectionsTable holds the schema information for the "control_plane_wallet_projections" table.
-	ControlPlaneWalletProjectionsTable = &schema.Table{
-		Name:       "control_plane_wallet_projections",
-		Columns:    ControlPlaneWalletProjectionsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneWalletProjectionsColumns[0]},
-	}
-	// ControlPlaneWalletTransactionProjectionsColumns holds the columns for the "control_plane_wallet_transaction_projections" table.
-	ControlPlaneWalletTransactionProjectionsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "created_at", Type: field.TypeTime},
-		{Name: "updated_at", Type: field.TypeTime},
-		{Name: "account_id", Type: field.TypeString},
-		{Name: "type", Type: field.TypeString, Default: ""},
-		{Name: "ledger_entry_id", Type: field.TypeString, Default: ""},
-		{Name: "resource_id", Type: field.TypeString, Default: ""},
-		{Name: "workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "compute_allocation_id", Type: field.TypeString, Default: ""},
-		{Name: "storage_id", Type: field.TypeString, Default: ""},
-		{Name: "settlement_id", Type: field.TypeString, Default: ""},
-		{Name: "currency", Type: field.TypeString, Default: "CNY"},
-		{Name: "amount_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "balance_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "frozen_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "available_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "total_spent_cents", Type: field.TypeInt64, Default: 0},
-		{Name: "metadata_workspace_id", Type: field.TypeString, Default: ""},
-		{Name: "metadata_resource_id", Type: field.TypeString, Default: ""},
-		{Name: "metadata_settlement_id", Type: field.TypeString, Default: ""},
-		{Name: "metadata_ledger_entry_id", Type: field.TypeString, Default: ""},
-		{Name: "metadata_compute_allocation_id", Type: field.TypeString, Default: ""},
-		{Name: "metadata_storage_id", Type: field.TypeString, Default: ""},
-	}
-	// ControlPlaneWalletTransactionProjectionsTable holds the schema information for the "control_plane_wallet_transaction_projections" table.
-	ControlPlaneWalletTransactionProjectionsTable = &schema.Table{
-		Name:       "control_plane_wallet_transaction_projections",
-		Columns:    ControlPlaneWalletTransactionProjectionsColumns,
-		PrimaryKey: []*schema.Column{ControlPlaneWalletTransactionProjectionsColumns[0]},
 	}
 	// ControlPlaneWorkspacesColumns holds the columns for the "control_plane_workspaces" table.
 	ControlPlaneWorkspacesColumns = []*schema.Column{
@@ -798,12 +622,8 @@ var (
 		ControlPlaneBillingReconciliationTable,
 		ControlPlaneComputeAllocationsTable,
 		ControlPlaneExecutionRequestsTable,
-		ControlPlaneLedgerProjectionsTable,
-		ControlPlaneManualTopupProjectionsTable,
 		ControlPlaneMembershipsTable,
 		ControlPlaneOrganizationsTable,
-		ControlPlanePricingCatalogsTable,
-		ControlPlanePricingItemsTable,
 		ControlPlaneProductionE2eRecordsTable,
 		ControlPlaneProjectTaskSyncHeadsTable,
 		ControlPlaneRuntimeOperationsTable,
@@ -812,8 +632,6 @@ var (
 		ControlPlaneStorageVolumesTable,
 		ControlPlaneSupportTicketMappingsTable,
 		ControlPlaneUsersTable,
-		ControlPlaneWalletProjectionsTable,
-		ControlPlaneWalletTransactionProjectionsTable,
 		ControlPlaneWorkspacesTable,
 		WorkspaceBackupsTable,
 		ControlPlaneWorkspaceSyncEventsTable,
@@ -857,23 +675,11 @@ func init() {
 	ControlPlaneExecutionRequestsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_execution_requests",
 	}
-	ControlPlaneLedgerProjectionsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_ledger_projections",
-	}
-	ControlPlaneManualTopupProjectionsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_manual_topup_projections",
-	}
 	ControlPlaneMembershipsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_memberships",
 	}
 	ControlPlaneOrganizationsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_organizations",
-	}
-	ControlPlanePricingCatalogsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_pricing_catalogs",
-	}
-	ControlPlanePricingItemsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_pricing_items",
 	}
 	ControlPlaneProductionE2eRecordsTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_production_e2e_records",
@@ -898,12 +704,6 @@ func init() {
 	}
 	ControlPlaneUsersTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_users",
-	}
-	ControlPlaneWalletProjectionsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_wallet_projections",
-	}
-	ControlPlaneWalletTransactionProjectionsTable.Annotation = &entsql.Annotation{
-		Table: "control_plane_wallet_transaction_projections",
 	}
 	ControlPlaneWorkspacesTable.Annotation = &entsql.Annotation{
 		Table: "control_plane_workspaces",

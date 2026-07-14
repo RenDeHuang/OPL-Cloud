@@ -127,6 +127,13 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		storageID := stringValue(workspace["storageId"])
 		computeID := stringField(input, "computeAllocationId", "")
 		attachmentID := stringField(input, "attachmentId", "")
+		unlock := app.lockEntitlementResources(computeID, storageID, attachmentID)
+		defer unlock()
+		workspace, ok = app.getWorkspace(workspaceID)
+		if !ok {
+			writeError(w, http.StatusNotFound, "workspace_not_found")
+			return
+		}
 		storage, storageOK := app.getStorage(storageID)
 		compute, computeOK := app.getCompute(computeID)
 		attachment, attachmentOK := app.getAttachment(attachmentID)
@@ -145,6 +152,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		if (storageStatus != "ready" && storageStatus != "available") || (computeStatus != "running" && computeStatus != "ready" && computeStatus != "available" && computeStatus != "active") || (attachmentStatus != "attached" && attachmentStatus != "ready") {
 			writeError(w, http.StatusConflict, "resume_resources_not_ready")
+			return
+		}
+		if !ensureMonthlyEntitlements(w, time.Now(), compute, storage) {
 			return
 		}
 		before := cloneMap(workspace)
@@ -244,6 +254,21 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		computeID := stringValue(attachment["computeAllocationId"])
 		storageID := stringValue(attachment["storageId"])
+		unlock := app.lockEntitlementResources(computeID, storageID, attachmentID)
+		defer unlock()
+		attachment, ok = app.getAttachment(attachmentID)
+		if !ok || stringValue(attachment["computeAllocationId"]) != computeID || stringValue(attachment["storageId"]) != storageID {
+			writeError(w, http.StatusConflict, "attached_compute_storage_required")
+			return
+		}
+		compute, computeOK := app.getCompute(computeID)
+		storage, storageOK := app.getStorage(storageID)
+		if !computeOK || !storageOK || !ensureMonthlyEntitlements(w, time.Now(), compute, storage) {
+			if !computeOK || !storageOK {
+				writeError(w, http.StatusConflict, "monthly_entitlement_inactive")
+			}
+			return
+		}
 		workspace, err := service.CreateWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
 			AccountID:    accountID,
 			OwnerID:      firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", "")),

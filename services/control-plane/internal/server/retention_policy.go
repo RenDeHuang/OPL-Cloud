@@ -24,14 +24,12 @@ func currentRetentionPolicy() retentionPolicy {
 
 func (policy retentionPolicy) dto() map[string]any {
 	return map[string]any{
-		"terminalResources":   map[string]any{"action": "archive", "currentStateOnly": true, "enabled": policy.TerminalArchiveRun},
-		"adminAuditDays":      policy.AdminAuditDays,
-		"supportDays":         policy.SupportDays,
-		"productionE2EDays":   policy.ProductionE2EDays,
-		"billingLedger":       map[string]any{"action": "retain", "reason": "money_evidence_not_archived_by_control_plane"},
-		"fabricOperations":    map[string]any{"action": "retain", "reason": "provider_evidence"},
-		"manualTopups":        map[string]any{"action": "retain", "reason": "money_evidence"},
-		"resourceSettlements": map[string]any{"action": "retain", "reason": "money_evidence"},
+		"terminalResources": map[string]any{"action": "archive", "currentStateOnly": true, "enabled": policy.TerminalArchiveRun},
+		"adminAuditDays":    policy.AdminAuditDays,
+		"supportDays":       policy.SupportDays,
+		"productionE2EDays": policy.ProductionE2EDays,
+		"billingLedger":     map[string]any{"action": "retain", "reason": "money_evidence_not_archived_by_control_plane"},
+		"fabricOperations":  map[string]any{"action": "retain", "reason": "provider_evidence"},
 	}
 }
 

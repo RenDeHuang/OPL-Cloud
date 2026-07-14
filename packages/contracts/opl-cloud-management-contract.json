@@ -1,14 +1,26 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "owner": "OPL Console",
-  "purpose": "Commercial identity, organization, membership, role, billing ownership, and user wallet management model.",
+  "purpose": "Console identity, organization, membership, role, Sub2API account mapping, and management API contract.",
   "state": "current",
-  "machineBoundary": "User, organization, membership, billing owner, wallet, role, disabled status, and management API shape.",
+  "machineBoundary": "Account, organization, membership, role, disabled status, Sub2API user mapping, and management API shape.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
   "entities": {
+    "account": {
+      "requiredFields": [
+        "id",
+        "email",
+        "role",
+        "status",
+        "sub2apiUserId",
+        "createdAt",
+        "updatedAt"
+      ],
+      "sub2apiMapping": "sub2apiUserId is a required positive integer and is the only spendable-balance identity."
+    },
     "organization": {
       "requiredFields": [
         "id",
@@ -19,20 +31,11 @@
         "updatedAt"
       ]
     },
-    "user": {
-      "requiredFields": [
-        "id",
-        "email",
-        "status",
-        "createdAt",
-        "updatedAt"
-      ]
-    },
     "membership": {
       "requiredFields": [
         "id",
         "organizationId",
-        "userId",
+        "accountId",
         "role",
         "status",
         "createdAt",
@@ -44,21 +47,6 @@
         "member"
       ]
     },
-    "billingAccount": {
-      "source": "billing ownership identity used by Workspaces and Ledger records",
-      "walletTruth": "users",
-      "walletFields": [
-        "balance",
-        "frozen",
-        "holds",
-        "totalRecharged"
-      ],
-      "fundingOrder": [
-        "available_balance",
-        "frozen_hold"
-      ],
-      "compatibilityAliasAllowed": false
-    },
     "supportTicketMapping": {
       "requiredFields": [
         "id",
@@ -66,7 +54,6 @@
         "externalTicketId",
         "externalUrl",
         "accountId",
-        "userId",
         "workspaceId",
         "resourceIds",
         "operationId",
@@ -77,27 +64,18 @@
         "createdAt",
         "updatedAt",
         "messages"
-      ],
-      "visibility": [
-        "Lab Owner sees external support mappings scoped to their account.",
-        "Admin sees all external support ticket mappings."
-      ],
-      "workspaceReferencePolicy": [
-        "A mapping may omit workspaceId.",
-        "A mapping with workspaceId must reference a Workspace owned by the mapping accountId."
       ]
     }
   },
   "workspaceOwnership": {
-    "personalWorkspace": "ownerAccountId is the user billing account id and userId identifies the wallet owner",
-    "organizationWorkspace": "ownerAccountId is organization.billingAccountId and userId must have active membership"
+    "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping.",
+    "organizationWorkspace": "ownerAccountId is organization.billingAccountId and the caller must have active membership."
   },
   "api": {
     "createOrganization": "POST /api/organizations",
-    "createUser": "POST /api/users",
+    "createAccount": "POST /api/users",
     "addOrganizationMember": "POST /api/organizations/members",
     "managementState": "GET /api/management/state?organizationId=<id>",
-    "manualTopUp": "POST /api/billing/topups",
     "supportTicketMappings": "GET /api/support/tickets",
     "createSupportTicketMapping": "POST /api/support/tickets"
   },
@@ -106,17 +84,5 @@
     "machineTokenTransport": "x-opl-operator-token header only",
     "queryTokenAllowed": false,
     "adminSessionAllowed": true
-  },
-  "adminMutationSafety": {
-    "manualTopUp": {
-      "requiresClientIdempotencyKey": true,
-      "replayMustNotDoubleCredit": true
-    },
-    "cleanupWorkspaceAccessAll": {
-      "api": "POST /api/operator/cleanup-workspace-access",
-      "requiresConfirmation": true,
-      "requiresCandidatePreviewCount": true,
-      "deletesCloudResources": false
-    }
   }
 }

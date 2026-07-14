@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Form, message } from "antd";
+import { message } from "antd";
 import {
   getConsoleState,
   getManagementState,
@@ -13,8 +13,6 @@ export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
   const [state, setState] = useState<any>(null);
   const [managementState, setManagementState] = useState<any>({ users: [], accounts: [] });
   const [adminOps, setAdminOps] = useState<any>({ operator: null, runtime: null, launch: null, error: "" });
-  const [topUpOpen, setTopUpOpen] = useState(false);
-  const [topUpForm] = Form.useForm();
   const [createPackageId, setCreatePackageId] = useState("basic");
   const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
   const pendingActionKeys = useRef<Set<string>>(new Set());
@@ -115,7 +113,7 @@ export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
     refreshAdminOps();
   }, [isAdmin]);
 
-  const wallet = state?.wallet || state?.account || { balance: 0, frozen: 0, available: 0, totalRecharged: 0 };
+  const balance = state?.balance || { source: "sub2api", currency: "USD", usdMicros: 0 };
   const selectedId = path.match(/\/(?:console|admin)\/workspaces\/([^/]+)/)?.[1];
   const selected = useMemo(
     () => state?.workspaces?.find((workspace) => workspace.id === selectedId) || state?.workspaces?.[0],
@@ -132,7 +130,7 @@ export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
 
   return {
     state,
-    wallet,
+    balance,
     selected,
     selectedPlan,
     selectedCreatePlan,
@@ -140,9 +138,6 @@ export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
     adminOps,
     managementState,
     tickets,
-    topUpOpen,
-    setTopUpOpen,
-    topUpForm,
     pendingActions,
     runAction,
     refresh,

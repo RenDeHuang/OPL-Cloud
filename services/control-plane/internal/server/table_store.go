@@ -9,6 +9,7 @@ import (
 
 var errWorkspaceResumeInProgress = errors.New("workspace_resume_in_progress")
 var errWorkspaceNotSuspended = errors.New("workspace_not_suspended")
+var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
 
 type workspaceResumeOperationResult struct {
 	RequestHash    string         `json:"requestHash"`
@@ -49,6 +50,7 @@ type controlPlaneTableStore interface {
 	DeleteCompute(ctx context.Context, id string) error
 	ListStorages(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveStorage(ctx context.Context, row map[string]any) error
+	ClaimResourceBillingOperation(ctx context.Context, resourceType string, row map[string]any) (map[string]any, bool, error)
 	DeleteStorage(ctx context.Context, id string) error
 	ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveAttachment(ctx context.Context, row map[string]any) error
@@ -62,14 +64,6 @@ type controlPlaneTableStore interface {
 	ListWorkspaceBackups(ctx context.Context, workspaceID string) ([]map[string]any, error)
 	SaveWorkspaceBackup(ctx context.Context, row map[string]any) error
 
-	ListWallets(ctx context.Context, accountID string) ([]map[string]any, error)
-	SaveWallet(ctx context.Context, row map[string]any) error
-	ListLedger(ctx context.Context, accountID string) ([]map[string]any, error)
-	SaveLedgerEntry(ctx context.Context, row map[string]any) error
-	ListWalletTransactions(ctx context.Context, accountID string) ([]map[string]any, error)
-	SaveWalletTransaction(ctx context.Context, row map[string]any) error
-	ListManualTopups(ctx context.Context, accountID string) ([]map[string]any, error)
-	SaveManualTopup(ctx context.Context, row map[string]any) error
 	ListAuditEvents(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveAuditEvent(ctx context.Context, row map[string]any) error
 	ListSupportMappings(ctx context.Context, accountID string) ([]map[string]any, error)
@@ -84,4 +78,27 @@ type controlPlaneTableStore interface {
 	SaveExecutionRequest(ctx context.Context, row map[string]any) error
 	BillingReconciliation(ctx context.Context) (map[string]any, bool, error)
 	SaveBillingReconciliation(ctx context.Context, row map[string]any) error
+}
+
+func billingOperationIdentityMatches(existing, requested map[string]any) bool {
+	for _, field := range []string{"accountId", "billingOperationId", "pricingVersion", "packageId", "periodStart", "paidThrough"} {
+		if stringValue(existing[field]) != stringValue(requested[field]) {
+			return false
+		}
+	}
+	for _, field := range []string{"monthlyPriceCnyCents", "chargeUsdMicros", "sizeGb"} {
+		if numberField(existing, field, 0) != numberField(requested, field, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func billingOperationInProgress(status string) bool {
+	switch status {
+	case "preparing", "charge_pending", "renewal_pending", "manual_review":
+		return true
+	default:
+		return false
+	}
 }

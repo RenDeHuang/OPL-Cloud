@@ -19,6 +19,8 @@ const (
 	FieldUpdatedAt = "updated_at"
 	// FieldOwnerUserID holds the string denoting the owner_user_id field in the database.
 	FieldOwnerUserID = "owner_user_id"
+	// FieldSub2apiUserID holds the string denoting the sub2api_user_id field in the database.
+	FieldSub2apiUserID = "sub2api_user_id"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -33,6 +35,7 @@ var Columns = []string{
 	FieldCreatedAt,
 	FieldUpdatedAt,
 	FieldOwnerUserID,
+	FieldSub2apiUserID,
 	FieldName,
 	FieldStatus,
 }
@@ -56,6 +59,8 @@ var (
 	UpdateDefaultUpdatedAt func() time.Time
 	// DefaultOwnerUserID holds the default value on creation for the "owner_user_id" field.
 	DefaultOwnerUserID string
+	// DefaultSub2apiUserID holds the default value on creation for the "sub2api_user_id" field.
+	DefaultSub2apiUserID int64
 	// DefaultName holds the default value on creation for the "name" field.
 	DefaultName string
 	// DefaultStatus holds the default value on creation for the "status" field.
@@ -85,6 +90,11 @@ func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByOwnerUserID orders the results by the owner_user_id field.
 func ByOwnerUserID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOwnerUserID, opts...).ToFunc()
+}
+
+// BySub2apiUserID orders the results by the sub2api_user_id field.
+func BySub2apiUserID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSub2apiUserID, opts...).ToFunc()
 }
 
 // ByName orders the results by the name field.

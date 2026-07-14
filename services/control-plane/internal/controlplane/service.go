@@ -13,8 +13,9 @@ import (
 const workspaceCompensationTimeout = 30 * time.Second
 
 type Service struct {
-	ledger clients.LedgerClient
-	fabric clients.FabricClient
+	ledger  clients.LedgerClient
+	fabric  clients.FabricClient
+	sub2API clients.Sub2APIClient
 }
 
 func (s *Service) fabricTransfers() (clients.FabricTransferClient, error) {
@@ -127,65 +128,14 @@ type ResumeWorkspaceInput struct {
 	VolumeID     string `json:"storageId"`
 }
 
-type ManualTopUpInput struct {
-	AccountID      string `json:"accountId"`
-	AmountCents    int64  `json:"amountCents"`
-	Currency       string `json:"currency"`
-	OperatorUserID string `json:"operatorUserId"`
-	Reason         string `json:"reason,omitempty"`
-}
-
-type ResourceSettlementInput struct {
-	AccountID               string         `json:"accountId"`
-	WorkspaceID             string         `json:"workspaceId"`
-	ResourceType            string         `json:"resourceType"`
-	ResourceID              string         `json:"resourceId"`
-	HoldID                  string         `json:"holdId"`
-	AmountCents             int64          `json:"amountCents"`
-	Currency                string         `json:"currency"`
-	PricingVersion          string         `json:"pricingVersion,omitempty"`
-	PriceSnapshot           map[string]any `json:"priceSnapshot,omitempty"`
-	UsagePeriodStart        string         `json:"usagePeriodStart,omitempty"`
-	UsagePeriodEnd          string         `json:"usagePeriodEnd,omitempty"`
-	Quantity                float64        `json:"quantity,omitempty"`
-	Unit                    string         `json:"unit,omitempty"`
-	ProviderCostEvidenceRef string         `json:"providerCostEvidenceRef,omitempty"`
-}
-
 type ReconciliationInput struct {
 	Report map[string]any `json:"report"`
-}
-
-type ComputeAllocationInput struct {
-	ID                    string `json:"id,omitempty"`
-	AccountID             string `json:"accountId"`
-	WorkspaceID           string `json:"workspaceId"`
-	PackageID             string `json:"packageId"`
-	HoldAmountCents       int64  `json:"holdAmountCents"`
-	ActivationAmountCents int64  `json:"activationAmountCents"`
-}
-
-type StorageVolumeInput struct {
-	ID                    string `json:"id,omitempty"`
-	AccountID             string `json:"accountId"`
-	WorkspaceID           string `json:"workspaceId"`
-	SizeGB                int    `json:"sizeGb"`
-	HoldAmountCents       int64  `json:"holdAmountCents"`
-	ActivationAmountCents int64  `json:"activationAmountCents"`
 }
 
 type StorageAttachmentInput struct {
 	WorkspaceID string `json:"workspaceId"`
 	ComputeID   string `json:"computeId"`
 	VolumeID    string `json:"volumeId"`
-}
-
-type DestroyResourceInput struct {
-	ID              string `json:"id"`
-	AccountID       string `json:"accountId"`
-	WorkspaceID     string `json:"workspaceId"`
-	HoldID          string `json:"holdId"`
-	HoldAmountCents int64  `json:"holdAmountCents"`
 }
 
 type ExecuteInput struct {
@@ -225,8 +175,19 @@ type ExecutionSyncInput struct {
 	EnvironmentRef string
 }
 
-func NewService(ledger clients.LedgerClient, fabric clients.FabricClient) *Service {
-	return &Service{ledger: ledger, fabric: fabric}
+func NewService(ledger clients.LedgerClient, fabric clients.FabricClient, sub2API ...clients.Sub2APIClient) *Service {
+	service := &Service{ledger: ledger, fabric: fabric}
+	if len(sub2API) > 0 {
+		service.sub2API = sub2API[0]
+	}
+	return service
+}
+
+func (s *Service) BillingReceipt(ctx context.Context, receiptID string) (clients.Receipt, error) {
+	if receiptID == "" {
+		return clients.Receipt{}, fmt.Errorf("receipt_id_required")
+	}
+	return s.ledger.Receipt(ctx, receiptID)
 }
 
 func (s *Service) Execute(ctx context.Context, input ExecuteInput, idempotencyKey string) (ExecutionResult, error) {
@@ -400,57 +361,8 @@ func (s *Service) Continuation(ctx context.Context, receiptID string) (map[strin
 	return s.ledger.Continuation(ctx, receiptID)
 }
 
-func (s *Service) ManualTopUp(ctx context.Context, input ManualTopUpInput, idempotencyKey string) (clients.ManualTopUpResult, error) {
-	return s.ledger.ManualTopUp(ctx, clients.ManualTopUpInput{
-		AccountID:      input.AccountID,
-		AmountCents:    input.AmountCents,
-		Currency:       input.Currency,
-		OperatorUserID: input.OperatorUserID,
-		Reason:         input.Reason,
-	}, idempotencyKey)
-}
-
-func (s *Service) SettleResource(ctx context.Context, input ResourceSettlementInput, idempotencyKey string) (clients.ResourceSettlementResult, error) {
-	return s.ledger.SettleResource(ctx, clients.ResourceSettlementInput{
-		AccountID:               input.AccountID,
-		WorkspaceID:             input.WorkspaceID,
-		ResourceType:            input.ResourceType,
-		ResourceID:              input.ResourceID,
-		HoldID:                  input.HoldID,
-		AmountCents:             input.AmountCents,
-		Currency:                input.Currency,
-		PricingVersion:          input.PricingVersion,
-		PriceSnapshot:           input.PriceSnapshot,
-		UsagePeriodStart:        input.UsagePeriodStart,
-		UsagePeriodEnd:          input.UsagePeriodEnd,
-		Quantity:                input.Quantity,
-		Unit:                    input.Unit,
-		ProviderCostEvidenceRef: input.ProviderCostEvidenceRef,
-	}, idempotencyKey)
-}
-
 func (s *Service) RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (clients.ReconciliationResult, error) {
 	return s.ledger.RecordReconciliation(ctx, clients.ReconciliationInput{Report: input.Report}, idempotencyKey)
-}
-
-func (s *Service) Wallet(ctx context.Context, accountID string) (clients.Wallet, error) {
-	return s.ledger.Wallet(ctx, accountID)
-}
-
-func (s *Service) ListLedgerEntries(ctx context.Context, accountID string) ([]clients.LedgerEntry, error) {
-	return s.ledger.ListLedgerEntries(ctx, accountID)
-}
-
-func (s *Service) ListWalletTransactions(ctx context.Context, accountID string) ([]clients.WalletTransaction, error) {
-	return s.ledger.ListWalletTransactions(ctx, accountID)
-}
-
-func (s *Service) ListManualTopUps(ctx context.Context, accountID string) ([]clients.ManualTopUp, error) {
-	return s.ledger.ListManualTopUps(ctx, accountID)
-}
-
-func (s *Service) ListResourceSettlements(ctx context.Context, accountID string) ([]clients.ResourceSettlementResult, error) {
-	return s.ledger.ListResourceSettlements(ctx, accountID)
 }
 
 func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (clients.WorkspaceRuntime, error) {
@@ -467,232 +379,6 @@ func (s *Service) FabricOperations(ctx context.Context) ([]clients.FabricOperati
 
 func (s *Service) FabricCatalog(ctx context.Context) (clients.FabricCatalog, error) {
 	return s.fabric.Catalog(ctx)
-}
-
-func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput, idempotencyKey string) (clients.ComputeAllocation, error) {
-	if input.HoldAmountCents <= 0 {
-		return clients.ComputeAllocation{}, fmt.Errorf("compute_hold_amount_required")
-	}
-	id := input.ID
-	if id == "" {
-		id = resourceID("ca")
-	}
-	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: id, AmountCents: input.HoldAmountCents, ActivationAmountCents: input.ActivationAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
-	if err != nil {
-		return clients.ComputeAllocation{}, err
-	}
-	allocation, err := s.fabric.CreateComputeAllocation(ctx, clients.ComputeAllocationInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID}, idempotencyKey)
-	if err != nil {
-		failed := clients.ComputeAllocation{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "failed", BillingStatus: "stopping", HoldID: hold.ID, HoldAmountCents: hold.RemainingCents, Wallet: hold.Wallet}
-		release, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID, HoldAmountCents: hold.AmountCents}, "compute", "compute_create_failed", idempotencyKey)
-		if releaseErr == nil {
-			failed.HoldAmountCents = release.AmountCents
-			failed.HoldReleaseID = release.ID
-			failed.LedgerEntryID = release.LedgerEntryID
-			failed.WalletTransactionID = release.WalletTransactionID
-			failed.Wallet = release.Wallet
-			failed.BillingStatus = "stopped"
-		}
-		return failed, errors.Join(err, releaseErr)
-	}
-	allocation.HoldID = hold.ID
-	allocation.HoldAmountCents = hold.AmountCents
-	allocation.Wallet = hold.Wallet
-	allocation.BillingStatus = "pending"
-	return allocation, nil
-}
-
-func (s *Service) GetComputeAllocation(ctx context.Context, id string) (clients.ComputeAllocation, error) {
-	return s.fabric.GetComputeAllocation(ctx, id)
-}
-
-func (s *Service) SyncComputeAllocation(ctx context.Context, input DestroyResourceInput, idempotencyKey string) (clients.ComputeAllocation, error) {
-	allocation, err := s.fabric.SyncComputeAllocation(ctx, input.ID)
-	if err != nil {
-		return allocation, err
-	}
-	allocation.BillingStatus = "pending"
-	if isExternallyDeletedResource(allocation.Status) && input.HoldID != "" {
-		release, err := s.ReleaseResourceHold(ctx, input, "compute", "provider_external_deleted", idempotencyKey)
-		if err != nil {
-			return allocation, err
-		}
-		allocation.HoldID = input.HoldID
-		allocation.HoldAmountCents = input.HoldAmountCents
-		allocation.HoldReleaseID = release.ID
-		allocation.LedgerEntryID = release.LedgerEntryID
-		allocation.WalletTransactionID = release.WalletTransactionID
-		allocation.Wallet = release.Wallet
-		allocation.BillingStatus = "stopped"
-	}
-	if (allocation.Status == "running" || allocation.Status == "ready") && input.HoldID != "" && allocation.MachineName != "" && allocation.InstanceID != "" && allocation.NodeName != "" {
-		providerEvidenceRef := "fabric:" + allocation.MachineName + ":" + allocation.InstanceID + ":" + allocation.NodeName
-		activation, err := s.ledger.ActivateHold(ctx, clients.HoldActivationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "compute", ResourceID: input.ID, HoldID: input.HoldID, Currency: "CNY", ProviderEvidenceRef: providerEvidenceRef}, "compute:"+input.ID+":hold-activation")
-		if err != nil {
-			return allocation, err
-		}
-		allocation.HoldID = input.HoldID
-		allocation.HoldAmountCents = activation.RemainingCents
-		allocation.Wallet = activation.Wallet
-		allocation.LedgerEntryID = activation.ActivationLedgerEntryID
-		allocation.WalletTransactionID = activation.ActivationWalletTransactionID
-		allocation.BillingStatus = "active"
-	}
-	return allocation, nil
-}
-
-func (s *Service) DestroyComputeAllocation(ctx context.Context, input DestroyResourceInput, idempotencyKey string) (clients.ComputeAllocation, error) {
-	allocation, err := s.fabric.DestroyComputeAllocation(ctx, input.ID, idempotencyKey)
-	if err != nil {
-		return allocation, err
-	}
-	allocation.BillingStatus = "stopping"
-	if !isDestroyedResource(allocation.Status) {
-		return allocation, nil
-	}
-	allocation.BillingStatus = "stopped"
-	if input.HoldID != "" {
-		release, err := s.ReleaseResourceHold(ctx, input, "compute", "destroy_compute", idempotencyKey)
-		if err != nil {
-			return allocation, err
-		}
-		allocation.HoldID = input.HoldID
-		allocation.HoldAmountCents = release.AmountCents
-		allocation.HoldReleaseID = release.ID
-		allocation.LedgerEntryID = release.LedgerEntryID
-		allocation.WalletTransactionID = release.WalletTransactionID
-		allocation.Wallet = release.Wallet
-		allocation.BillingStatus = "stopped"
-	}
-	return allocation, nil
-}
-
-func isExternallyDeletedResource(status string) bool {
-	return status == "external_deleted" || status == "deleted" || status == "missing"
-}
-
-func isDestroyedResource(status string) bool {
-	return status == "destroyed" || isExternallyDeletedResource(status)
-}
-
-func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeInput, idempotencyKey string) (clients.StorageVolume, error) {
-	if input.HoldAmountCents <= 0 {
-		return clients.StorageVolume{}, fmt.Errorf("storage_hold_amount_required")
-	}
-	id := input.ID
-	if id == "" {
-		id = resourceID("vol")
-	}
-	hold, err := s.ledger.CreateHold(ctx, clients.HoldInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: id, AmountCents: input.HoldAmountCents, ActivationAmountCents: input.ActivationAmountCents, Currency: "CNY"}, idempotencyKey+":hold")
-	if err != nil {
-		return clients.StorageVolume{}, err
-	}
-	volume, err := s.fabric.CreateStorageVolume(ctx, clients.StorageVolumeInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB}, idempotencyKey)
-	if err != nil {
-		failed := clients.StorageVolume{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "failed", BillingStatus: "stopping", HoldID: hold.ID, HoldAmountCents: hold.RemainingCents, Wallet: hold.Wallet}
-		release, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID, HoldAmountCents: hold.AmountCents}, "storage", "storage_create_failed", idempotencyKey)
-		if releaseErr == nil {
-			failed.HoldAmountCents = release.AmountCents
-			failed.HoldReleaseID = release.ID
-			failed.LedgerEntryID = release.LedgerEntryID
-			failed.WalletTransactionID = release.WalletTransactionID
-			failed.Wallet = release.Wallet
-			failed.BillingStatus = "stopped"
-		}
-		return failed, errors.Join(err, releaseErr)
-	}
-	volume.HoldID = hold.ID
-	volume.HoldAmountCents = hold.AmountCents
-	volume.Wallet = hold.Wallet
-	volume.BillingStatus = "pending"
-	if (volume.Status == "ready" || volume.Status == "available") && volume.ProviderResourceID != "" {
-		activation, err := s.ledger.ActivateHold(ctx, clients.HoldActivationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: id, HoldID: hold.ID, Currency: "CNY", ProviderEvidenceRef: "fabric:" + volume.ProviderResourceID}, idempotencyKey+":hold-activation")
-		if err != nil {
-			volume.BillingStatus = "stopping"
-			if _, cleanupErr := s.fabric.DestroyStorageVolume(ctx, id, idempotencyKey+":activation-cleanup"); cleanupErr != nil {
-				return volume, errors.Join(err, cleanupErr)
-			}
-			volume.Status = "failed"
-			release, releaseErr := s.ReleaseResourceHold(ctx, DestroyResourceInput{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, HoldID: hold.ID}, "storage", "storage_activation_failed", idempotencyKey)
-			if releaseErr == nil {
-				volume.HoldAmountCents = release.AmountCents
-				volume.HoldReleaseID = release.ID
-				volume.LedgerEntryID = release.LedgerEntryID
-				volume.WalletTransactionID = release.WalletTransactionID
-				volume.Wallet = release.Wallet
-				volume.BillingStatus = "stopped"
-			}
-			return volume, errors.Join(err, releaseErr)
-		}
-		volume.HoldAmountCents = activation.RemainingCents
-		volume.Wallet = activation.Wallet
-		volume.LedgerEntryID = activation.ActivationLedgerEntryID
-		volume.WalletTransactionID = activation.ActivationWalletTransactionID
-		volume.BillingStatus = "active"
-	}
-	return volume, nil
-}
-
-func (s *Service) SyncStorageVolume(ctx context.Context, input DestroyResourceInput, idempotencyKey string) (clients.StorageVolume, error) {
-	volume, err := s.fabric.SyncStorageVolume(ctx, input.ID)
-	if err != nil {
-		return volume, err
-	}
-	volume.BillingStatus = "pending"
-	if isExternallyDeletedResource(volume.Status) && input.HoldID != "" {
-		release, err := s.ReleaseResourceHold(ctx, input, "storage", "provider_external_deleted", idempotencyKey)
-		if err != nil {
-			return volume, err
-		}
-		volume.HoldID = input.HoldID
-		volume.HoldAmountCents = input.HoldAmountCents
-		volume.HoldReleaseID = release.ID
-		volume.LedgerEntryID = release.LedgerEntryID
-		volume.WalletTransactionID = release.WalletTransactionID
-		volume.Wallet = release.Wallet
-		volume.BillingStatus = "stopped"
-	}
-	if (volume.Status == "ready" || volume.Status == "available" || volume.Status == "bound") && input.HoldID != "" && volume.ProviderResourceID != "" {
-		activation, err := s.ledger.ActivateHold(ctx, clients.HoldActivationInput{AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: "storage", ResourceID: input.ID, HoldID: input.HoldID, Currency: "CNY", ProviderEvidenceRef: "fabric:" + volume.ProviderResourceID}, idempotencyKey+":hold-activation")
-		if err != nil {
-			return volume, err
-		}
-		volume.HoldID = input.HoldID
-		volume.HoldAmountCents = activation.RemainingCents
-		volume.Wallet = activation.Wallet
-		volume.LedgerEntryID = activation.ActivationLedgerEntryID
-		volume.WalletTransactionID = activation.ActivationWalletTransactionID
-		volume.BillingStatus = "active"
-	}
-	return volume, nil
-}
-
-func (s *Service) DestroyStorageVolume(ctx context.Context, input DestroyResourceInput, idempotencyKey string) (clients.StorageVolume, error) {
-	volume, err := s.fabric.DestroyStorageVolume(ctx, input.ID, idempotencyKey)
-	if err != nil {
-		return volume, err
-	}
-	if input.HoldID != "" {
-		release, err := s.ReleaseResourceHold(ctx, input, "storage", "destroy_storage", idempotencyKey)
-		if err != nil {
-			return volume, err
-		}
-		volume.HoldID = input.HoldID
-		volume.HoldAmountCents = release.AmountCents
-		volume.HoldReleaseID = release.ID
-		volume.LedgerEntryID = release.LedgerEntryID
-		volume.WalletTransactionID = release.WalletTransactionID
-		volume.Wallet = release.Wallet
-		volume.BillingStatus = "stopped"
-	}
-	return volume, nil
-}
-
-func (s *Service) ReleaseResourceHold(ctx context.Context, input DestroyResourceInput, resourceType, reason, idempotencyKey string) (clients.HoldReleaseResult, error) {
-	return s.ledger.ReleaseHold(ctx, clients.HoldReleaseInput{
-		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: resourceType, ResourceID: input.ID,
-		HoldID: input.HoldID, Currency: "CNY", Reason: reason,
-	}, idempotencyKey+":hold-release")
 }
 
 func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (clients.StorageAttachment, error) {
@@ -760,8 +446,4 @@ func (s *Service) ResumeWorkspace(ctx context.Context, input ResumeWorkspaceInpu
 		status = "provisioning"
 	}
 	return domain.WorkspaceProjection{ID: input.WorkspaceID, AccountID: input.AccountID, OwnerID: input.OwnerID, Name: input.Name, PackageID: input.PackageID, Provider: "tencent-tke", URL: url, Status: status, ComputeID: input.ComputeID, VolumeID: input.VolumeID, AttachmentID: input.AttachmentID, RuntimeID: runtime.ID, RuntimeServiceName: runtime.ServiceName, RuntimeReady: runtime.Ready, RuntimeUsername: runtime.Access.Username, CredentialStatus: runtime.Access.CredentialStatus, CredentialVersion: runtime.Access.CredentialVersion, CredentialSecretRef: runtime.Access.SecretRef, ReceiptID: receipt.ReceiptID}, nil
-}
-
-func resourceID(prefix string) string {
-	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
 }

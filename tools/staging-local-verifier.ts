@@ -4,7 +4,7 @@ import {
   loadEnvFile,
   validateStagingLocalEnv
 } from "./staging-env.ts";
-import { verifyProductionChain } from "./production-verifier.ts";
+import { PAID_CONFIRMATION, verifyProductionChain } from "./production-verifier.ts";
 
 function cliArgs(argv) {
   const args = {};
@@ -36,7 +36,7 @@ applyEnv(loadedEnv);
 if (process.env.OPL_CONFIRM_REAL_CLOUD_E2E !== "1") {
   fail("real_cloud_e2e_confirmation_required", {
     required: "Set OPL_CONFIRM_REAL_CLOUD_E2E=1 in the operator shell or .env.staging.local.",
-    warning: "This creates and later destroys real Tencent Cloud resources and records billing ledger entries."
+    warning: "This creates and later destroys real Tencent Cloud resources and charges the mapped Sub2API balance."
   });
 }
 
@@ -51,14 +51,14 @@ try {
   const result = await verifyProductionChain({
     origin,
     allowPrivateConsoleOrigin: true,
+    authUsersJson: process.env.OPL_CONSOLE_USERS_JSON,
     accountId: args.account || process.env.OPL_VERIFY_ACCOUNT_ID,
     workspaceName: args.workspace || process.env.OPL_VERIFY_WORKSPACE_NAME,
     runId: args["run-id"] || process.env.OPL_VERIFY_RUN_ID,
     packageId: args.package || process.env.OPL_VERIFY_PACKAGE_ID,
-    creditAmount: Number(args.credit || process.env.OPL_VERIFY_CREDIT_AMOUNT || 1000),
+    paidConfirmation: PAID_CONFIRMATION,
     workspaceUrlAttempts: Number(args["url-attempts"] || process.env.OPL_VERIFY_URL_ATTEMPTS || 12),
-    retryDelayMs: Number(args["retry-delay-ms"] || process.env.OPL_VERIFY_RETRY_DELAY_MS || 5000),
-    operatorToken: args["operator-token"] || process.env.OPL_VERIFY_OPERATOR_TOKEN || ""
+    retryDelayMs: Number(args["retry-delay-ms"] || process.env.OPL_VERIFY_RETRY_DELAY_MS || 5000)
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 } catch (error) {

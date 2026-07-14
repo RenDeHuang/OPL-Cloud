@@ -23,12 +23,8 @@ import (
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/executionrequest"
-	"opl-cloud/services/control-plane/ent/ledgerprojection"
-	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
 	"opl-cloud/services/control-plane/ent/organization"
-	"opl-cloud/services/control-plane/ent/pricingcatalog"
-	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
@@ -37,8 +33,6 @@ import (
 	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
 	"opl-cloud/services/control-plane/ent/user"
-	"opl-cloud/services/control-plane/ent/walletprojection"
-	"opl-cloud/services/control-plane/ent/wallettransactionprojection"
 	"opl-cloud/services/control-plane/ent/workspace"
 	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
@@ -77,18 +71,10 @@ type Client struct {
 	ComputeAllocation *ComputeAllocationClient
 	// ExecutionRequest is the client for interacting with the ExecutionRequest builders.
 	ExecutionRequest *ExecutionRequestClient
-	// LedgerProjection is the client for interacting with the LedgerProjection builders.
-	LedgerProjection *LedgerProjectionClient
-	// ManualTopupProjection is the client for interacting with the ManualTopupProjection builders.
-	ManualTopupProjection *ManualTopupProjectionClient
 	// Membership is the client for interacting with the Membership builders.
 	Membership *MembershipClient
 	// Organization is the client for interacting with the Organization builders.
 	Organization *OrganizationClient
-	// PricingCatalog is the client for interacting with the PricingCatalog builders.
-	PricingCatalog *PricingCatalogClient
-	// PricingItem is the client for interacting with the PricingItem builders.
-	PricingItem *PricingItemClient
 	// ProductionE2ERecord is the client for interacting with the ProductionE2ERecord builders.
 	ProductionE2ERecord *ProductionE2ERecordClient
 	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
@@ -105,10 +91,6 @@ type Client struct {
 	SupportTicketMapping *SupportTicketMappingClient
 	// User is the client for interacting with the User builders.
 	User *UserClient
-	// WalletProjection is the client for interacting with the WalletProjection builders.
-	WalletProjection *WalletProjectionClient
-	// WalletTransactionProjection is the client for interacting with the WalletTransactionProjection builders.
-	WalletTransactionProjection *WalletTransactionProjectionClient
 	// Workspace is the client for interacting with the Workspace builders.
 	Workspace *WorkspaceClient
 	// WorkspaceBackup is the client for interacting with the WorkspaceBackup builders.
@@ -138,12 +120,8 @@ func (c *Client) init() {
 	c.BillingReconciliation = NewBillingReconciliationClient(c.config)
 	c.ComputeAllocation = NewComputeAllocationClient(c.config)
 	c.ExecutionRequest = NewExecutionRequestClient(c.config)
-	c.LedgerProjection = NewLedgerProjectionClient(c.config)
-	c.ManualTopupProjection = NewManualTopupProjectionClient(c.config)
 	c.Membership = NewMembershipClient(c.config)
 	c.Organization = NewOrganizationClient(c.config)
-	c.PricingCatalog = NewPricingCatalogClient(c.config)
-	c.PricingItem = NewPricingItemClient(c.config)
 	c.ProductionE2ERecord = NewProductionE2ERecordClient(c.config)
 	c.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(c.config)
 	c.RuntimeOperation = NewRuntimeOperationClient(c.config)
@@ -152,8 +130,6 @@ func (c *Client) init() {
 	c.StorageVolume = NewStorageVolumeClient(c.config)
 	c.SupportTicketMapping = NewSupportTicketMappingClient(c.config)
 	c.User = NewUserClient(c.config)
-	c.WalletProjection = NewWalletProjectionClient(c.config)
-	c.WalletTransactionProjection = NewWalletTransactionProjectionClient(c.config)
 	c.Workspace = NewWorkspaceClient(c.config)
 	c.WorkspaceBackup = NewWorkspaceBackupClient(c.config)
 	c.WorkspaceSyncEvent = NewWorkspaceSyncEventClient(c.config)
@@ -247,39 +223,33 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:                         ctx,
-		config:                      cfg,
-		Account:                     NewAccountClient(cfg),
-		AdminAuditEvent:             NewAdminAuditEventClient(cfg),
-		ArchiveJob:                  NewArchiveJobClient(cfg),
-		ArchivedAdminAuditEvent:     NewArchivedAdminAuditEventClient(cfg),
-		ArchivedComputeAllocation:   NewArchivedComputeAllocationClient(cfg),
-		ArchivedStorageAttachment:   NewArchivedStorageAttachmentClient(cfg),
-		ArchivedStorageVolume:       NewArchivedStorageVolumeClient(cfg),
-		ArchivedWorkspace:           NewArchivedWorkspaceClient(cfg),
-		AuthAttempt:                 NewAuthAttemptClient(cfg),
-		BillingReconciliation:       NewBillingReconciliationClient(cfg),
-		ComputeAllocation:           NewComputeAllocationClient(cfg),
-		ExecutionRequest:            NewExecutionRequestClient(cfg),
-		LedgerProjection:            NewLedgerProjectionClient(cfg),
-		ManualTopupProjection:       NewManualTopupProjectionClient(cfg),
-		Membership:                  NewMembershipClient(cfg),
-		Organization:                NewOrganizationClient(cfg),
-		PricingCatalog:              NewPricingCatalogClient(cfg),
-		PricingItem:                 NewPricingItemClient(cfg),
-		ProductionE2ERecord:         NewProductionE2ERecordClient(cfg),
-		ProjectTaskSyncHead:         NewProjectTaskSyncHeadClient(cfg),
-		RuntimeOperation:            NewRuntimeOperationClient(cfg),
-		Session:                     NewSessionClient(cfg),
-		StorageAttachment:           NewStorageAttachmentClient(cfg),
-		StorageVolume:               NewStorageVolumeClient(cfg),
-		SupportTicketMapping:        NewSupportTicketMappingClient(cfg),
-		User:                        NewUserClient(cfg),
-		WalletProjection:            NewWalletProjectionClient(cfg),
-		WalletTransactionProjection: NewWalletTransactionProjectionClient(cfg),
-		Workspace:                   NewWorkspaceClient(cfg),
-		WorkspaceBackup:             NewWorkspaceBackupClient(cfg),
-		WorkspaceSyncEvent:          NewWorkspaceSyncEventClient(cfg),
+		ctx:                       ctx,
+		config:                    cfg,
+		Account:                   NewAccountClient(cfg),
+		AdminAuditEvent:           NewAdminAuditEventClient(cfg),
+		ArchiveJob:                NewArchiveJobClient(cfg),
+		ArchivedAdminAuditEvent:   NewArchivedAdminAuditEventClient(cfg),
+		ArchivedComputeAllocation: NewArchivedComputeAllocationClient(cfg),
+		ArchivedStorageAttachment: NewArchivedStorageAttachmentClient(cfg),
+		ArchivedStorageVolume:     NewArchivedStorageVolumeClient(cfg),
+		ArchivedWorkspace:         NewArchivedWorkspaceClient(cfg),
+		AuthAttempt:               NewAuthAttemptClient(cfg),
+		BillingReconciliation:     NewBillingReconciliationClient(cfg),
+		ComputeAllocation:         NewComputeAllocationClient(cfg),
+		ExecutionRequest:          NewExecutionRequestClient(cfg),
+		Membership:                NewMembershipClient(cfg),
+		Organization:              NewOrganizationClient(cfg),
+		ProductionE2ERecord:       NewProductionE2ERecordClient(cfg),
+		ProjectTaskSyncHead:       NewProjectTaskSyncHeadClient(cfg),
+		RuntimeOperation:          NewRuntimeOperationClient(cfg),
+		Session:                   NewSessionClient(cfg),
+		StorageAttachment:         NewStorageAttachmentClient(cfg),
+		StorageVolume:             NewStorageVolumeClient(cfg),
+		SupportTicketMapping:      NewSupportTicketMappingClient(cfg),
+		User:                      NewUserClient(cfg),
+		Workspace:                 NewWorkspaceClient(cfg),
+		WorkspaceBackup:           NewWorkspaceBackupClient(cfg),
+		WorkspaceSyncEvent:        NewWorkspaceSyncEventClient(cfg),
 	}, nil
 }
 
@@ -297,39 +267,33 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:                         ctx,
-		config:                      cfg,
-		Account:                     NewAccountClient(cfg),
-		AdminAuditEvent:             NewAdminAuditEventClient(cfg),
-		ArchiveJob:                  NewArchiveJobClient(cfg),
-		ArchivedAdminAuditEvent:     NewArchivedAdminAuditEventClient(cfg),
-		ArchivedComputeAllocation:   NewArchivedComputeAllocationClient(cfg),
-		ArchivedStorageAttachment:   NewArchivedStorageAttachmentClient(cfg),
-		ArchivedStorageVolume:       NewArchivedStorageVolumeClient(cfg),
-		ArchivedWorkspace:           NewArchivedWorkspaceClient(cfg),
-		AuthAttempt:                 NewAuthAttemptClient(cfg),
-		BillingReconciliation:       NewBillingReconciliationClient(cfg),
-		ComputeAllocation:           NewComputeAllocationClient(cfg),
-		ExecutionRequest:            NewExecutionRequestClient(cfg),
-		LedgerProjection:            NewLedgerProjectionClient(cfg),
-		ManualTopupProjection:       NewManualTopupProjectionClient(cfg),
-		Membership:                  NewMembershipClient(cfg),
-		Organization:                NewOrganizationClient(cfg),
-		PricingCatalog:              NewPricingCatalogClient(cfg),
-		PricingItem:                 NewPricingItemClient(cfg),
-		ProductionE2ERecord:         NewProductionE2ERecordClient(cfg),
-		ProjectTaskSyncHead:         NewProjectTaskSyncHeadClient(cfg),
-		RuntimeOperation:            NewRuntimeOperationClient(cfg),
-		Session:                     NewSessionClient(cfg),
-		StorageAttachment:           NewStorageAttachmentClient(cfg),
-		StorageVolume:               NewStorageVolumeClient(cfg),
-		SupportTicketMapping:        NewSupportTicketMappingClient(cfg),
-		User:                        NewUserClient(cfg),
-		WalletProjection:            NewWalletProjectionClient(cfg),
-		WalletTransactionProjection: NewWalletTransactionProjectionClient(cfg),
-		Workspace:                   NewWorkspaceClient(cfg),
-		WorkspaceBackup:             NewWorkspaceBackupClient(cfg),
-		WorkspaceSyncEvent:          NewWorkspaceSyncEventClient(cfg),
+		ctx:                       ctx,
+		config:                    cfg,
+		Account:                   NewAccountClient(cfg),
+		AdminAuditEvent:           NewAdminAuditEventClient(cfg),
+		ArchiveJob:                NewArchiveJobClient(cfg),
+		ArchivedAdminAuditEvent:   NewArchivedAdminAuditEventClient(cfg),
+		ArchivedComputeAllocation: NewArchivedComputeAllocationClient(cfg),
+		ArchivedStorageAttachment: NewArchivedStorageAttachmentClient(cfg),
+		ArchivedStorageVolume:     NewArchivedStorageVolumeClient(cfg),
+		ArchivedWorkspace:         NewArchivedWorkspaceClient(cfg),
+		AuthAttempt:               NewAuthAttemptClient(cfg),
+		BillingReconciliation:     NewBillingReconciliationClient(cfg),
+		ComputeAllocation:         NewComputeAllocationClient(cfg),
+		ExecutionRequest:          NewExecutionRequestClient(cfg),
+		Membership:                NewMembershipClient(cfg),
+		Organization:              NewOrganizationClient(cfg),
+		ProductionE2ERecord:       NewProductionE2ERecordClient(cfg),
+		ProjectTaskSyncHead:       NewProjectTaskSyncHeadClient(cfg),
+		RuntimeOperation:          NewRuntimeOperationClient(cfg),
+		Session:                   NewSessionClient(cfg),
+		StorageAttachment:         NewStorageAttachmentClient(cfg),
+		StorageVolume:             NewStorageVolumeClient(cfg),
+		SupportTicketMapping:      NewSupportTicketMappingClient(cfg),
+		User:                      NewUserClient(cfg),
+		Workspace:                 NewWorkspaceClient(cfg),
+		WorkspaceBackup:           NewWorkspaceBackupClient(cfg),
+		WorkspaceSyncEvent:        NewWorkspaceSyncEventClient(cfg),
 	}, nil
 }
 
@@ -362,12 +326,10 @@ func (c *Client) Use(hooks ...Hook) {
 		c.Account, c.AdminAuditEvent, c.ArchiveJob, c.ArchivedAdminAuditEvent,
 		c.ArchivedComputeAllocation, c.ArchivedStorageAttachment,
 		c.ArchivedStorageVolume, c.ArchivedWorkspace, c.AuthAttempt,
-		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest,
-		c.LedgerProjection, c.ManualTopupProjection, c.Membership, c.Organization,
-		c.PricingCatalog, c.PricingItem, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
+		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest, c.Membership,
+		c.Organization, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
 		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
-		c.SupportTicketMapping, c.User, c.WalletProjection,
-		c.WalletTransactionProjection, c.Workspace, c.WorkspaceBackup,
+		c.SupportTicketMapping, c.User, c.Workspace, c.WorkspaceBackup,
 		c.WorkspaceSyncEvent,
 	} {
 		n.Use(hooks...)
@@ -381,12 +343,10 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.Account, c.AdminAuditEvent, c.ArchiveJob, c.ArchivedAdminAuditEvent,
 		c.ArchivedComputeAllocation, c.ArchivedStorageAttachment,
 		c.ArchivedStorageVolume, c.ArchivedWorkspace, c.AuthAttempt,
-		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest,
-		c.LedgerProjection, c.ManualTopupProjection, c.Membership, c.Organization,
-		c.PricingCatalog, c.PricingItem, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
+		c.BillingReconciliation, c.ComputeAllocation, c.ExecutionRequest, c.Membership,
+		c.Organization, c.ProductionE2ERecord, c.ProjectTaskSyncHead,
 		c.RuntimeOperation, c.Session, c.StorageAttachment, c.StorageVolume,
-		c.SupportTicketMapping, c.User, c.WalletProjection,
-		c.WalletTransactionProjection, c.Workspace, c.WorkspaceBackup,
+		c.SupportTicketMapping, c.User, c.Workspace, c.WorkspaceBackup,
 		c.WorkspaceSyncEvent,
 	} {
 		n.Intercept(interceptors...)
@@ -420,18 +380,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.ComputeAllocation.mutate(ctx, m)
 	case *ExecutionRequestMutation:
 		return c.ExecutionRequest.mutate(ctx, m)
-	case *LedgerProjectionMutation:
-		return c.LedgerProjection.mutate(ctx, m)
-	case *ManualTopupProjectionMutation:
-		return c.ManualTopupProjection.mutate(ctx, m)
 	case *MembershipMutation:
 		return c.Membership.mutate(ctx, m)
 	case *OrganizationMutation:
 		return c.Organization.mutate(ctx, m)
-	case *PricingCatalogMutation:
-		return c.PricingCatalog.mutate(ctx, m)
-	case *PricingItemMutation:
-		return c.PricingItem.mutate(ctx, m)
 	case *ProductionE2ERecordMutation:
 		return c.ProductionE2ERecord.mutate(ctx, m)
 	case *ProjectTaskSyncHeadMutation:
@@ -448,10 +400,6 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SupportTicketMapping.mutate(ctx, m)
 	case *UserMutation:
 		return c.User.mutate(ctx, m)
-	case *WalletProjectionMutation:
-		return c.WalletProjection.mutate(ctx, m)
-	case *WalletTransactionProjectionMutation:
-		return c.WalletTransactionProjection.mutate(ctx, m)
 	case *WorkspaceMutation:
 		return c.Workspace.mutate(ctx, m)
 	case *WorkspaceBackupMutation:
@@ -2059,272 +2007,6 @@ func (c *ExecutionRequestClient) mutate(ctx context.Context, m *ExecutionRequest
 	}
 }
 
-// LedgerProjectionClient is a client for the LedgerProjection schema.
-type LedgerProjectionClient struct {
-	config
-}
-
-// NewLedgerProjectionClient returns a client for the LedgerProjection from the given config.
-func NewLedgerProjectionClient(c config) *LedgerProjectionClient {
-	return &LedgerProjectionClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `ledgerprojection.Hooks(f(g(h())))`.
-func (c *LedgerProjectionClient) Use(hooks ...Hook) {
-	c.hooks.LedgerProjection = append(c.hooks.LedgerProjection, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `ledgerprojection.Intercept(f(g(h())))`.
-func (c *LedgerProjectionClient) Intercept(interceptors ...Interceptor) {
-	c.inters.LedgerProjection = append(c.inters.LedgerProjection, interceptors...)
-}
-
-// Create returns a builder for creating a LedgerProjection entity.
-func (c *LedgerProjectionClient) Create() *LedgerProjectionCreate {
-	mutation := newLedgerProjectionMutation(c.config, OpCreate)
-	return &LedgerProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of LedgerProjection entities.
-func (c *LedgerProjectionClient) CreateBulk(builders ...*LedgerProjectionCreate) *LedgerProjectionCreateBulk {
-	return &LedgerProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *LedgerProjectionClient) MapCreateBulk(slice any, setFunc func(*LedgerProjectionCreate, int)) *LedgerProjectionCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &LedgerProjectionCreateBulk{err: fmt.Errorf("calling to LedgerProjectionClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*LedgerProjectionCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &LedgerProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for LedgerProjection.
-func (c *LedgerProjectionClient) Update() *LedgerProjectionUpdate {
-	mutation := newLedgerProjectionMutation(c.config, OpUpdate)
-	return &LedgerProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *LedgerProjectionClient) UpdateOne(lp *LedgerProjection) *LedgerProjectionUpdateOne {
-	mutation := newLedgerProjectionMutation(c.config, OpUpdateOne, withLedgerProjection(lp))
-	return &LedgerProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *LedgerProjectionClient) UpdateOneID(id string) *LedgerProjectionUpdateOne {
-	mutation := newLedgerProjectionMutation(c.config, OpUpdateOne, withLedgerProjectionID(id))
-	return &LedgerProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for LedgerProjection.
-func (c *LedgerProjectionClient) Delete() *LedgerProjectionDelete {
-	mutation := newLedgerProjectionMutation(c.config, OpDelete)
-	return &LedgerProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *LedgerProjectionClient) DeleteOne(lp *LedgerProjection) *LedgerProjectionDeleteOne {
-	return c.DeleteOneID(lp.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *LedgerProjectionClient) DeleteOneID(id string) *LedgerProjectionDeleteOne {
-	builder := c.Delete().Where(ledgerprojection.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &LedgerProjectionDeleteOne{builder}
-}
-
-// Query returns a query builder for LedgerProjection.
-func (c *LedgerProjectionClient) Query() *LedgerProjectionQuery {
-	return &LedgerProjectionQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeLedgerProjection},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a LedgerProjection entity by its id.
-func (c *LedgerProjectionClient) Get(ctx context.Context, id string) (*LedgerProjection, error) {
-	return c.Query().Where(ledgerprojection.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *LedgerProjectionClient) GetX(ctx context.Context, id string) *LedgerProjection {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *LedgerProjectionClient) Hooks() []Hook {
-	return c.hooks.LedgerProjection
-}
-
-// Interceptors returns the client interceptors.
-func (c *LedgerProjectionClient) Interceptors() []Interceptor {
-	return c.inters.LedgerProjection
-}
-
-func (c *LedgerProjectionClient) mutate(ctx context.Context, m *LedgerProjectionMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&LedgerProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&LedgerProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&LedgerProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&LedgerProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown LedgerProjection mutation op: %q", m.Op())
-	}
-}
-
-// ManualTopupProjectionClient is a client for the ManualTopupProjection schema.
-type ManualTopupProjectionClient struct {
-	config
-}
-
-// NewManualTopupProjectionClient returns a client for the ManualTopupProjection from the given config.
-func NewManualTopupProjectionClient(c config) *ManualTopupProjectionClient {
-	return &ManualTopupProjectionClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `manualtopupprojection.Hooks(f(g(h())))`.
-func (c *ManualTopupProjectionClient) Use(hooks ...Hook) {
-	c.hooks.ManualTopupProjection = append(c.hooks.ManualTopupProjection, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `manualtopupprojection.Intercept(f(g(h())))`.
-func (c *ManualTopupProjectionClient) Intercept(interceptors ...Interceptor) {
-	c.inters.ManualTopupProjection = append(c.inters.ManualTopupProjection, interceptors...)
-}
-
-// Create returns a builder for creating a ManualTopupProjection entity.
-func (c *ManualTopupProjectionClient) Create() *ManualTopupProjectionCreate {
-	mutation := newManualTopupProjectionMutation(c.config, OpCreate)
-	return &ManualTopupProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of ManualTopupProjection entities.
-func (c *ManualTopupProjectionClient) CreateBulk(builders ...*ManualTopupProjectionCreate) *ManualTopupProjectionCreateBulk {
-	return &ManualTopupProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ManualTopupProjectionClient) MapCreateBulk(slice any, setFunc func(*ManualTopupProjectionCreate, int)) *ManualTopupProjectionCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ManualTopupProjectionCreateBulk{err: fmt.Errorf("calling to ManualTopupProjectionClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ManualTopupProjectionCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ManualTopupProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for ManualTopupProjection.
-func (c *ManualTopupProjectionClient) Update() *ManualTopupProjectionUpdate {
-	mutation := newManualTopupProjectionMutation(c.config, OpUpdate)
-	return &ManualTopupProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ManualTopupProjectionClient) UpdateOne(mtp *ManualTopupProjection) *ManualTopupProjectionUpdateOne {
-	mutation := newManualTopupProjectionMutation(c.config, OpUpdateOne, withManualTopupProjection(mtp))
-	return &ManualTopupProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ManualTopupProjectionClient) UpdateOneID(id string) *ManualTopupProjectionUpdateOne {
-	mutation := newManualTopupProjectionMutation(c.config, OpUpdateOne, withManualTopupProjectionID(id))
-	return &ManualTopupProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for ManualTopupProjection.
-func (c *ManualTopupProjectionClient) Delete() *ManualTopupProjectionDelete {
-	mutation := newManualTopupProjectionMutation(c.config, OpDelete)
-	return &ManualTopupProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ManualTopupProjectionClient) DeleteOne(mtp *ManualTopupProjection) *ManualTopupProjectionDeleteOne {
-	return c.DeleteOneID(mtp.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ManualTopupProjectionClient) DeleteOneID(id string) *ManualTopupProjectionDeleteOne {
-	builder := c.Delete().Where(manualtopupprojection.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ManualTopupProjectionDeleteOne{builder}
-}
-
-// Query returns a query builder for ManualTopupProjection.
-func (c *ManualTopupProjectionClient) Query() *ManualTopupProjectionQuery {
-	return &ManualTopupProjectionQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeManualTopupProjection},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a ManualTopupProjection entity by its id.
-func (c *ManualTopupProjectionClient) Get(ctx context.Context, id string) (*ManualTopupProjection, error) {
-	return c.Query().Where(manualtopupprojection.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ManualTopupProjectionClient) GetX(ctx context.Context, id string) *ManualTopupProjection {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ManualTopupProjectionClient) Hooks() []Hook {
-	return c.hooks.ManualTopupProjection
-}
-
-// Interceptors returns the client interceptors.
-func (c *ManualTopupProjectionClient) Interceptors() []Interceptor {
-	return c.inters.ManualTopupProjection
-}
-
-func (c *ManualTopupProjectionClient) mutate(ctx context.Context, m *ManualTopupProjectionMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ManualTopupProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ManualTopupProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ManualTopupProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ManualTopupProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown ManualTopupProjection mutation op: %q", m.Op())
-	}
-}
-
 // MembershipClient is a client for the Membership schema.
 type MembershipClient struct {
 	config
@@ -2588,272 +2270,6 @@ func (c *OrganizationClient) mutate(ctx context.Context, m *OrganizationMutation
 		return (&OrganizationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown Organization mutation op: %q", m.Op())
-	}
-}
-
-// PricingCatalogClient is a client for the PricingCatalog schema.
-type PricingCatalogClient struct {
-	config
-}
-
-// NewPricingCatalogClient returns a client for the PricingCatalog from the given config.
-func NewPricingCatalogClient(c config) *PricingCatalogClient {
-	return &PricingCatalogClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `pricingcatalog.Hooks(f(g(h())))`.
-func (c *PricingCatalogClient) Use(hooks ...Hook) {
-	c.hooks.PricingCatalog = append(c.hooks.PricingCatalog, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `pricingcatalog.Intercept(f(g(h())))`.
-func (c *PricingCatalogClient) Intercept(interceptors ...Interceptor) {
-	c.inters.PricingCatalog = append(c.inters.PricingCatalog, interceptors...)
-}
-
-// Create returns a builder for creating a PricingCatalog entity.
-func (c *PricingCatalogClient) Create() *PricingCatalogCreate {
-	mutation := newPricingCatalogMutation(c.config, OpCreate)
-	return &PricingCatalogCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of PricingCatalog entities.
-func (c *PricingCatalogClient) CreateBulk(builders ...*PricingCatalogCreate) *PricingCatalogCreateBulk {
-	return &PricingCatalogCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *PricingCatalogClient) MapCreateBulk(slice any, setFunc func(*PricingCatalogCreate, int)) *PricingCatalogCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &PricingCatalogCreateBulk{err: fmt.Errorf("calling to PricingCatalogClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*PricingCatalogCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &PricingCatalogCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for PricingCatalog.
-func (c *PricingCatalogClient) Update() *PricingCatalogUpdate {
-	mutation := newPricingCatalogMutation(c.config, OpUpdate)
-	return &PricingCatalogUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *PricingCatalogClient) UpdateOne(pc *PricingCatalog) *PricingCatalogUpdateOne {
-	mutation := newPricingCatalogMutation(c.config, OpUpdateOne, withPricingCatalog(pc))
-	return &PricingCatalogUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *PricingCatalogClient) UpdateOneID(id string) *PricingCatalogUpdateOne {
-	mutation := newPricingCatalogMutation(c.config, OpUpdateOne, withPricingCatalogID(id))
-	return &PricingCatalogUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for PricingCatalog.
-func (c *PricingCatalogClient) Delete() *PricingCatalogDelete {
-	mutation := newPricingCatalogMutation(c.config, OpDelete)
-	return &PricingCatalogDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *PricingCatalogClient) DeleteOne(pc *PricingCatalog) *PricingCatalogDeleteOne {
-	return c.DeleteOneID(pc.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *PricingCatalogClient) DeleteOneID(id string) *PricingCatalogDeleteOne {
-	builder := c.Delete().Where(pricingcatalog.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &PricingCatalogDeleteOne{builder}
-}
-
-// Query returns a query builder for PricingCatalog.
-func (c *PricingCatalogClient) Query() *PricingCatalogQuery {
-	return &PricingCatalogQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypePricingCatalog},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a PricingCatalog entity by its id.
-func (c *PricingCatalogClient) Get(ctx context.Context, id string) (*PricingCatalog, error) {
-	return c.Query().Where(pricingcatalog.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *PricingCatalogClient) GetX(ctx context.Context, id string) *PricingCatalog {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *PricingCatalogClient) Hooks() []Hook {
-	return c.hooks.PricingCatalog
-}
-
-// Interceptors returns the client interceptors.
-func (c *PricingCatalogClient) Interceptors() []Interceptor {
-	return c.inters.PricingCatalog
-}
-
-func (c *PricingCatalogClient) mutate(ctx context.Context, m *PricingCatalogMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&PricingCatalogCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&PricingCatalogUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&PricingCatalogUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&PricingCatalogDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown PricingCatalog mutation op: %q", m.Op())
-	}
-}
-
-// PricingItemClient is a client for the PricingItem schema.
-type PricingItemClient struct {
-	config
-}
-
-// NewPricingItemClient returns a client for the PricingItem from the given config.
-func NewPricingItemClient(c config) *PricingItemClient {
-	return &PricingItemClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `pricingitem.Hooks(f(g(h())))`.
-func (c *PricingItemClient) Use(hooks ...Hook) {
-	c.hooks.PricingItem = append(c.hooks.PricingItem, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `pricingitem.Intercept(f(g(h())))`.
-func (c *PricingItemClient) Intercept(interceptors ...Interceptor) {
-	c.inters.PricingItem = append(c.inters.PricingItem, interceptors...)
-}
-
-// Create returns a builder for creating a PricingItem entity.
-func (c *PricingItemClient) Create() *PricingItemCreate {
-	mutation := newPricingItemMutation(c.config, OpCreate)
-	return &PricingItemCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of PricingItem entities.
-func (c *PricingItemClient) CreateBulk(builders ...*PricingItemCreate) *PricingItemCreateBulk {
-	return &PricingItemCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *PricingItemClient) MapCreateBulk(slice any, setFunc func(*PricingItemCreate, int)) *PricingItemCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &PricingItemCreateBulk{err: fmt.Errorf("calling to PricingItemClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*PricingItemCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &PricingItemCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for PricingItem.
-func (c *PricingItemClient) Update() *PricingItemUpdate {
-	mutation := newPricingItemMutation(c.config, OpUpdate)
-	return &PricingItemUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *PricingItemClient) UpdateOne(pi *PricingItem) *PricingItemUpdateOne {
-	mutation := newPricingItemMutation(c.config, OpUpdateOne, withPricingItem(pi))
-	return &PricingItemUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *PricingItemClient) UpdateOneID(id string) *PricingItemUpdateOne {
-	mutation := newPricingItemMutation(c.config, OpUpdateOne, withPricingItemID(id))
-	return &PricingItemUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for PricingItem.
-func (c *PricingItemClient) Delete() *PricingItemDelete {
-	mutation := newPricingItemMutation(c.config, OpDelete)
-	return &PricingItemDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *PricingItemClient) DeleteOne(pi *PricingItem) *PricingItemDeleteOne {
-	return c.DeleteOneID(pi.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *PricingItemClient) DeleteOneID(id string) *PricingItemDeleteOne {
-	builder := c.Delete().Where(pricingitem.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &PricingItemDeleteOne{builder}
-}
-
-// Query returns a query builder for PricingItem.
-func (c *PricingItemClient) Query() *PricingItemQuery {
-	return &PricingItemQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypePricingItem},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a PricingItem entity by its id.
-func (c *PricingItemClient) Get(ctx context.Context, id string) (*PricingItem, error) {
-	return c.Query().Where(pricingitem.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *PricingItemClient) GetX(ctx context.Context, id string) *PricingItem {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *PricingItemClient) Hooks() []Hook {
-	return c.hooks.PricingItem
-}
-
-// Interceptors returns the client interceptors.
-func (c *PricingItemClient) Interceptors() []Interceptor {
-	return c.inters.PricingItem
-}
-
-func (c *PricingItemClient) mutate(ctx context.Context, m *PricingItemMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&PricingItemCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&PricingItemUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&PricingItemUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&PricingItemDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown PricingItem mutation op: %q", m.Op())
 	}
 }
 
@@ -3921,272 +3337,6 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 	}
 }
 
-// WalletProjectionClient is a client for the WalletProjection schema.
-type WalletProjectionClient struct {
-	config
-}
-
-// NewWalletProjectionClient returns a client for the WalletProjection from the given config.
-func NewWalletProjectionClient(c config) *WalletProjectionClient {
-	return &WalletProjectionClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `walletprojection.Hooks(f(g(h())))`.
-func (c *WalletProjectionClient) Use(hooks ...Hook) {
-	c.hooks.WalletProjection = append(c.hooks.WalletProjection, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `walletprojection.Intercept(f(g(h())))`.
-func (c *WalletProjectionClient) Intercept(interceptors ...Interceptor) {
-	c.inters.WalletProjection = append(c.inters.WalletProjection, interceptors...)
-}
-
-// Create returns a builder for creating a WalletProjection entity.
-func (c *WalletProjectionClient) Create() *WalletProjectionCreate {
-	mutation := newWalletProjectionMutation(c.config, OpCreate)
-	return &WalletProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of WalletProjection entities.
-func (c *WalletProjectionClient) CreateBulk(builders ...*WalletProjectionCreate) *WalletProjectionCreateBulk {
-	return &WalletProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *WalletProjectionClient) MapCreateBulk(slice any, setFunc func(*WalletProjectionCreate, int)) *WalletProjectionCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &WalletProjectionCreateBulk{err: fmt.Errorf("calling to WalletProjectionClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*WalletProjectionCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &WalletProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for WalletProjection.
-func (c *WalletProjectionClient) Update() *WalletProjectionUpdate {
-	mutation := newWalletProjectionMutation(c.config, OpUpdate)
-	return &WalletProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *WalletProjectionClient) UpdateOne(wp *WalletProjection) *WalletProjectionUpdateOne {
-	mutation := newWalletProjectionMutation(c.config, OpUpdateOne, withWalletProjection(wp))
-	return &WalletProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *WalletProjectionClient) UpdateOneID(id string) *WalletProjectionUpdateOne {
-	mutation := newWalletProjectionMutation(c.config, OpUpdateOne, withWalletProjectionID(id))
-	return &WalletProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for WalletProjection.
-func (c *WalletProjectionClient) Delete() *WalletProjectionDelete {
-	mutation := newWalletProjectionMutation(c.config, OpDelete)
-	return &WalletProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *WalletProjectionClient) DeleteOne(wp *WalletProjection) *WalletProjectionDeleteOne {
-	return c.DeleteOneID(wp.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *WalletProjectionClient) DeleteOneID(id string) *WalletProjectionDeleteOne {
-	builder := c.Delete().Where(walletprojection.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &WalletProjectionDeleteOne{builder}
-}
-
-// Query returns a query builder for WalletProjection.
-func (c *WalletProjectionClient) Query() *WalletProjectionQuery {
-	return &WalletProjectionQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeWalletProjection},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a WalletProjection entity by its id.
-func (c *WalletProjectionClient) Get(ctx context.Context, id string) (*WalletProjection, error) {
-	return c.Query().Where(walletprojection.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *WalletProjectionClient) GetX(ctx context.Context, id string) *WalletProjection {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *WalletProjectionClient) Hooks() []Hook {
-	return c.hooks.WalletProjection
-}
-
-// Interceptors returns the client interceptors.
-func (c *WalletProjectionClient) Interceptors() []Interceptor {
-	return c.inters.WalletProjection
-}
-
-func (c *WalletProjectionClient) mutate(ctx context.Context, m *WalletProjectionMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&WalletProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&WalletProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&WalletProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&WalletProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown WalletProjection mutation op: %q", m.Op())
-	}
-}
-
-// WalletTransactionProjectionClient is a client for the WalletTransactionProjection schema.
-type WalletTransactionProjectionClient struct {
-	config
-}
-
-// NewWalletTransactionProjectionClient returns a client for the WalletTransactionProjection from the given config.
-func NewWalletTransactionProjectionClient(c config) *WalletTransactionProjectionClient {
-	return &WalletTransactionProjectionClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `wallettransactionprojection.Hooks(f(g(h())))`.
-func (c *WalletTransactionProjectionClient) Use(hooks ...Hook) {
-	c.hooks.WalletTransactionProjection = append(c.hooks.WalletTransactionProjection, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `wallettransactionprojection.Intercept(f(g(h())))`.
-func (c *WalletTransactionProjectionClient) Intercept(interceptors ...Interceptor) {
-	c.inters.WalletTransactionProjection = append(c.inters.WalletTransactionProjection, interceptors...)
-}
-
-// Create returns a builder for creating a WalletTransactionProjection entity.
-func (c *WalletTransactionProjectionClient) Create() *WalletTransactionProjectionCreate {
-	mutation := newWalletTransactionProjectionMutation(c.config, OpCreate)
-	return &WalletTransactionProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of WalletTransactionProjection entities.
-func (c *WalletTransactionProjectionClient) CreateBulk(builders ...*WalletTransactionProjectionCreate) *WalletTransactionProjectionCreateBulk {
-	return &WalletTransactionProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *WalletTransactionProjectionClient) MapCreateBulk(slice any, setFunc func(*WalletTransactionProjectionCreate, int)) *WalletTransactionProjectionCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &WalletTransactionProjectionCreateBulk{err: fmt.Errorf("calling to WalletTransactionProjectionClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*WalletTransactionProjectionCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &WalletTransactionProjectionCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for WalletTransactionProjection.
-func (c *WalletTransactionProjectionClient) Update() *WalletTransactionProjectionUpdate {
-	mutation := newWalletTransactionProjectionMutation(c.config, OpUpdate)
-	return &WalletTransactionProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *WalletTransactionProjectionClient) UpdateOne(wtp *WalletTransactionProjection) *WalletTransactionProjectionUpdateOne {
-	mutation := newWalletTransactionProjectionMutation(c.config, OpUpdateOne, withWalletTransactionProjection(wtp))
-	return &WalletTransactionProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *WalletTransactionProjectionClient) UpdateOneID(id string) *WalletTransactionProjectionUpdateOne {
-	mutation := newWalletTransactionProjectionMutation(c.config, OpUpdateOne, withWalletTransactionProjectionID(id))
-	return &WalletTransactionProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for WalletTransactionProjection.
-func (c *WalletTransactionProjectionClient) Delete() *WalletTransactionProjectionDelete {
-	mutation := newWalletTransactionProjectionMutation(c.config, OpDelete)
-	return &WalletTransactionProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *WalletTransactionProjectionClient) DeleteOne(wtp *WalletTransactionProjection) *WalletTransactionProjectionDeleteOne {
-	return c.DeleteOneID(wtp.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *WalletTransactionProjectionClient) DeleteOneID(id string) *WalletTransactionProjectionDeleteOne {
-	builder := c.Delete().Where(wallettransactionprojection.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &WalletTransactionProjectionDeleteOne{builder}
-}
-
-// Query returns a query builder for WalletTransactionProjection.
-func (c *WalletTransactionProjectionClient) Query() *WalletTransactionProjectionQuery {
-	return &WalletTransactionProjectionQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeWalletTransactionProjection},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a WalletTransactionProjection entity by its id.
-func (c *WalletTransactionProjectionClient) Get(ctx context.Context, id string) (*WalletTransactionProjection, error) {
-	return c.Query().Where(wallettransactionprojection.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *WalletTransactionProjectionClient) GetX(ctx context.Context, id string) *WalletTransactionProjection {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *WalletTransactionProjectionClient) Hooks() []Hook {
-	return c.hooks.WalletTransactionProjection
-}
-
-// Interceptors returns the client interceptors.
-func (c *WalletTransactionProjectionClient) Interceptors() []Interceptor {
-	return c.inters.WalletTransactionProjection
-}
-
-func (c *WalletTransactionProjectionClient) mutate(ctx context.Context, m *WalletTransactionProjectionMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&WalletTransactionProjectionCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&WalletTransactionProjectionUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&WalletTransactionProjectionUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&WalletTransactionProjectionDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown WalletTransactionProjection mutation op: %q", m.Op())
-	}
-}
-
 // WorkspaceClient is a client for the Workspace schema.
 type WorkspaceClient struct {
 	config
@@ -4592,22 +3742,18 @@ type (
 		Account, AdminAuditEvent, ArchiveJob, ArchivedAdminAuditEvent,
 		ArchivedComputeAllocation, ArchivedStorageAttachment, ArchivedStorageVolume,
 		ArchivedWorkspace, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		ExecutionRequest, LedgerProjection, ManualTopupProjection, Membership,
-		Organization, PricingCatalog, PricingItem, ProductionE2ERecord,
+		ExecutionRequest, Membership, Organization, ProductionE2ERecord,
 		ProjectTaskSyncHead, RuntimeOperation, Session, StorageAttachment,
-		StorageVolume, SupportTicketMapping, User, WalletProjection,
-		WalletTransactionProjection, Workspace, WorkspaceBackup,
+		StorageVolume, SupportTicketMapping, User, Workspace, WorkspaceBackup,
 		WorkspaceSyncEvent []ent.Hook
 	}
 	inters struct {
 		Account, AdminAuditEvent, ArchiveJob, ArchivedAdminAuditEvent,
 		ArchivedComputeAllocation, ArchivedStorageAttachment, ArchivedStorageVolume,
 		ArchivedWorkspace, AuthAttempt, BillingReconciliation, ComputeAllocation,
-		ExecutionRequest, LedgerProjection, ManualTopupProjection, Membership,
-		Organization, PricingCatalog, PricingItem, ProductionE2ERecord,
+		ExecutionRequest, Membership, Organization, ProductionE2ERecord,
 		ProjectTaskSyncHead, RuntimeOperation, Session, StorageAttachment,
-		StorageVolume, SupportTicketMapping, User, WalletProjection,
-		WalletTransactionProjection, Workspace, WorkspaceBackup,
+		StorageVolume, SupportTicketMapping, User, Workspace, WorkspaceBackup,
 		WorkspaceSyncEvent []ent.Interceptor
 	}
 )

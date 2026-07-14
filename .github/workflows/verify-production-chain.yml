@@ -22,6 +22,12 @@ on:
         required: false
         default: "10000"
         type: string
+      paid_confirmation:
+        description: Confirm that this run will spend the mapped Sub2API balance.
+        required: true
+        default: false
+        type: boolean
+
 permissions:
   contents: read
 
@@ -40,6 +46,7 @@ jobs:
     env:
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn"
       OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
+      OPL_VERIFY_PAID_CONFIRMATION: ${{ inputs.paid_confirmation && 'I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE' || '' }}
       OPL_VERIFY_ACCOUNT_ID: ${{ inputs.account_id }}
       OPL_VERIFY_PACKAGE_ID: "basic"
       OPL_VERIFY_URL_ATTEMPTS: ${{ inputs.url_attempts }}
@@ -64,14 +71,14 @@ jobs:
       - name: Install browser
         run: npx playwright install --with-deps chromium
 
-      - name: Verify production audit evidence chain
+      - name: Verify production monthly billing chain
         id: verify
         shell: bash
         run: |
           set -euo pipefail
           result="$RUNNER_TEMP/production-verifier-result.json"
           trap 'rm -f "$result"' EXIT
-          node tools/production-console-browser-verifier.ts | tee "$result"
+          node tools/production-verifier.ts --browser-e2e | tee "$result"
           node -e '
             const fs = require("node:fs");
             const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -88,94 +95,3 @@ jobs:
           name: production-browser-e2e
           path: artifacts/production-browser-e2e
           if-no-files-found: ignore
-
-  verify-execution:
-    name: Verify production execution evidence chain
-    needs: verify
-    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
-    environment: production
-    env:
-      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
-      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
-      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
-      OPL_EXECUTION_CONTROL_PLANE_ORIGIN: http://127.0.0.1:18787
-      OPL_EXECUTION_LEDGER_ORIGIN: http://127.0.0.1:18081
-      OPL_EXECUTION_FABRIC_ORIGIN: http://127.0.0.1:18082
-      OPL_EXECUTION_OPERATOR_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
-      OPL_EXECUTION_AUTH_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
-      OPL_EXECUTION_ACCOUNT_ID: ${{ inputs.account_id }}
-      OPL_EXECUTION_WORKSPACE_ID: ${{ needs.verify.outputs.workspace_id }}
-      OPL_EXECUTION_RUN_ID: ${{ inputs.run_id || github.run_id }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Prepare kubeconfig
-        shell: bash
-        run: |
-          set -euo pipefail
-          secret_dir="$(mktemp -d)"
-          chmod 700 "$secret_dir"
-          kubeconfig="$secret_dir/kubeconfig"
-          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
-            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
-          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
-            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
-          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
-            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
-          else
-            echo "No deploy kubeconfig was provided." >&2
-            exit 1
-          fi
-          chmod 600 "$kubeconfig"
-          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
-          echo "OPL_EXECUTION_SECRET_DIR=$secret_dir" >> "$GITHUB_ENV"
-
-      - name: Verify production execution evidence chain
-        shell: bash
-        run: |
-          set -euo pipefail
-          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward service/opl-cloud-control-plane 18787:8787 > "$RUNNER_TEMP/opl-control-plane-port-forward.log" 2>&1 &
-          control_plane_pid=$!
-          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward service/opl-cloud-ledger 18081:8081 > "$RUNNER_TEMP/opl-ledger-port-forward.log" 2>&1 &
-          ledger_pid=$!
-          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" port-forward service/opl-cloud-fabric 18082:8082 > "$RUNNER_TEMP/opl-fabric-port-forward.log" 2>&1 &
-          fabric_pid=$!
-          cleanup() {
-            local status=$?
-            kill "$control_plane_pid" "$ledger_pid" "$fabric_pid" 2>/dev/null || true
-            wait "$control_plane_pid" "$ledger_pid" "$fabric_pid" 2>/dev/null || true
-            rm -f "$KUBECONFIG" "$OPL_EXECUTION_SECRET_DIR/internal-service-token"
-            rmdir "$OPL_EXECUTION_SECRET_DIR" 2>/dev/null || true
-            return "$status"
-          }
-          trap cleanup EXIT
-          internal_service_token_file="$OPL_EXECUTION_SECRET_DIR/internal-service-token"
-          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-internal-service -o jsonpath='{.data.OPL_INTERNAL_SERVICE_TOKEN}' | base64 -d > "$internal_service_token_file"
-          chmod 600 "$internal_service_token_file"
-          export OPL_EXECUTION_INTERNAL_SERVICE_TOKEN="$(cat "$internal_service_token_file")"
-          for url in \
-            "$OPL_EXECUTION_CONTROL_PLANE_ORIGIN/api/healthz" \
-            "$OPL_EXECUTION_LEDGER_ORIGIN/healthz" \
-            "$OPL_EXECUTION_FABRIC_ORIGIN/healthz"; do
-            ready=false
-            for attempt in $(seq 1 30); do
-              if curl -fsS "$url" >/dev/null; then
-                ready=true
-                break
-              fi
-              sleep 1
-            done
-            if [ "$ready" != true ]; then
-              echo "Service port-forward did not become ready." >&2
-              exit 1
-            fi
-          done
-          node tools/production-execution-verifier.ts

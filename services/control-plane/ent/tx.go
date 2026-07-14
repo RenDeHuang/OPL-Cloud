@@ -36,18 +36,10 @@ type Tx struct {
 	ComputeAllocation *ComputeAllocationClient
 	// ExecutionRequest is the client for interacting with the ExecutionRequest builders.
 	ExecutionRequest *ExecutionRequestClient
-	// LedgerProjection is the client for interacting with the LedgerProjection builders.
-	LedgerProjection *LedgerProjectionClient
-	// ManualTopupProjection is the client for interacting with the ManualTopupProjection builders.
-	ManualTopupProjection *ManualTopupProjectionClient
 	// Membership is the client for interacting with the Membership builders.
 	Membership *MembershipClient
 	// Organization is the client for interacting with the Organization builders.
 	Organization *OrganizationClient
-	// PricingCatalog is the client for interacting with the PricingCatalog builders.
-	PricingCatalog *PricingCatalogClient
-	// PricingItem is the client for interacting with the PricingItem builders.
-	PricingItem *PricingItemClient
 	// ProductionE2ERecord is the client for interacting with the ProductionE2ERecord builders.
 	ProductionE2ERecord *ProductionE2ERecordClient
 	// ProjectTaskSyncHead is the client for interacting with the ProjectTaskSyncHead builders.
@@ -64,10 +56,6 @@ type Tx struct {
 	SupportTicketMapping *SupportTicketMappingClient
 	// User is the client for interacting with the User builders.
 	User *UserClient
-	// WalletProjection is the client for interacting with the WalletProjection builders.
-	WalletProjection *WalletProjectionClient
-	// WalletTransactionProjection is the client for interacting with the WalletTransactionProjection builders.
-	WalletTransactionProjection *WalletTransactionProjectionClient
 	// Workspace is the client for interacting with the Workspace builders.
 	Workspace *WorkspaceClient
 	// WorkspaceBackup is the client for interacting with the WorkspaceBackup builders.
@@ -217,12 +205,8 @@ func (tx *Tx) init() {
 	tx.BillingReconciliation = NewBillingReconciliationClient(tx.config)
 	tx.ComputeAllocation = NewComputeAllocationClient(tx.config)
 	tx.ExecutionRequest = NewExecutionRequestClient(tx.config)
-	tx.LedgerProjection = NewLedgerProjectionClient(tx.config)
-	tx.ManualTopupProjection = NewManualTopupProjectionClient(tx.config)
 	tx.Membership = NewMembershipClient(tx.config)
 	tx.Organization = NewOrganizationClient(tx.config)
-	tx.PricingCatalog = NewPricingCatalogClient(tx.config)
-	tx.PricingItem = NewPricingItemClient(tx.config)
 	tx.ProductionE2ERecord = NewProductionE2ERecordClient(tx.config)
 	tx.ProjectTaskSyncHead = NewProjectTaskSyncHeadClient(tx.config)
 	tx.RuntimeOperation = NewRuntimeOperationClient(tx.config)
@@ -231,8 +215,6 @@ func (tx *Tx) init() {
 	tx.StorageVolume = NewStorageVolumeClient(tx.config)
 	tx.SupportTicketMapping = NewSupportTicketMappingClient(tx.config)
 	tx.User = NewUserClient(tx.config)
-	tx.WalletProjection = NewWalletProjectionClient(tx.config)
-	tx.WalletTransactionProjection = NewWalletTransactionProjectionClient(tx.config)
 	tx.Workspace = NewWorkspaceClient(tx.config)
 	tx.WorkspaceBackup = NewWorkspaceBackupClient(tx.config)
 	tx.WorkspaceSyncEvent = NewWorkspaceSyncEventClient(tx.config)

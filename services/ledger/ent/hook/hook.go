@@ -20,42 +20,6 @@ func (f EvidenceReceiptFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Va
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.EvidenceReceiptMutation", m)
 }
 
-// The HoldFunc type is an adapter to allow the use of ordinary
-// function as Hold mutator.
-type HoldFunc func(context.Context, *ent.HoldMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f HoldFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.HoldMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HoldMutation", m)
-}
-
-// The HoldActivationFunc type is an adapter to allow the use of ordinary
-// function as HoldActivation mutator.
-type HoldActivationFunc func(context.Context, *ent.HoldActivationMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f HoldActivationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.HoldActivationMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HoldActivationMutation", m)
-}
-
-// The HoldReleaseFunc type is an adapter to allow the use of ordinary
-// function as HoldRelease mutator.
-type HoldReleaseFunc func(context.Context, *ent.HoldReleaseMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f HoldReleaseFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.HoldReleaseMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.HoldReleaseMutation", m)
-}
-
 // The IdempotencyKeyFunc type is an adapter to allow the use of ordinary
 // function as IdempotencyKey mutator.
 type IdempotencyKeyFunc func(context.Context, *ent.IdempotencyKeyMutation) (ent.Value, error)
@@ -66,30 +30,6 @@ func (f IdempotencyKeyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Val
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.IdempotencyKeyMutation", m)
-}
-
-// The LedgerEntryFunc type is an adapter to allow the use of ordinary
-// function as LedgerEntry mutator.
-type LedgerEntryFunc func(context.Context, *ent.LedgerEntryMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f LedgerEntryFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.LedgerEntryMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.LedgerEntryMutation", m)
-}
-
-// The ManualTopupFunc type is an adapter to allow the use of ordinary
-// function as ManualTopup mutator.
-type ManualTopupFunc func(context.Context, *ent.ManualTopupMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ManualTopupFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ManualTopupMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ManualTopupMutation", m)
 }
 
 // The ReconciliationReportFunc type is an adapter to allow the use of ordinary
@@ -104,18 +44,6 @@ func (f ReconciliationReportFunc) Mutate(ctx context.Context, m ent.Mutation) (e
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ReconciliationReportMutation", m)
 }
 
-// The ResourceSettlementFunc type is an adapter to allow the use of ordinary
-// function as ResourceSettlement mutator.
-type ResourceSettlementFunc func(context.Context, *ent.ResourceSettlementMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ResourceSettlementFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ResourceSettlementMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ResourceSettlementMutation", m)
-}
-
 // The ReviewPolicyFunc type is an adapter to allow the use of ordinary
 // function as ReviewPolicy mutator.
 type ReviewPolicyFunc func(context.Context, *ent.ReviewPolicyMutation) (ent.Value, error)
@@ -126,30 +54,6 @@ func (f ReviewPolicyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ReviewPolicyMutation", m)
-}
-
-// The WalletFunc type is an adapter to allow the use of ordinary
-// function as Wallet mutator.
-type WalletFunc func(context.Context, *ent.WalletMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f WalletFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.WalletMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.WalletMutation", m)
-}
-
-// The WalletTransactionFunc type is an adapter to allow the use of ordinary
-// function as WalletTransaction mutator.
-type WalletTransactionFunc func(context.Context, *ent.WalletTransactionMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f WalletTransactionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.WalletTransactionMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.WalletTransactionMutation", m)
 }
 
 // Condition is a hook condition function.

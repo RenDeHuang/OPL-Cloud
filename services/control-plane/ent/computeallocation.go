@@ -53,20 +53,12 @@ type ComputeAllocation struct {
 	ExternalDeletedAt string `json:"external_deleted_at,omitempty"`
 	// BillingStatus holds the value of the "billing_status" field.
 	BillingStatus string `json:"billing_status,omitempty"`
-	// HoldID holds the value of the "hold_id" field.
-	HoldID string `json:"hold_id,omitempty"`
-	// HoldReleaseID holds the value of the "hold_release_id" field.
-	HoldReleaseID string `json:"hold_release_id,omitempty"`
-	// SettlementID holds the value of the "settlement_id" field.
-	SettlementID string `json:"settlement_id,omitempty"`
-	// LedgerEntryID holds the value of the "ledger_entry_id" field.
-	LedgerEntryID string `json:"ledger_entry_id,omitempty"`
-	// WalletTransactionID holds the value of the "wallet_transaction_id" field.
-	WalletTransactionID string `json:"wallet_transaction_id,omitempty"`
 	// PricingVersion holds the value of the "pricing_version" field.
 	PricingVersion string `json:"pricing_version,omitempty"`
-	// UsagePeriodEnd holds the value of the "usage_period_end" field.
-	UsagePeriodEnd string `json:"usage_period_end,omitempty"`
+	// BillingOperationID holds the value of the "billing_operation_id" field.
+	BillingOperationID string `json:"billing_operation_id,omitempty"`
+	// BillingStateJSON holds the value of the "billing_state_json" field.
+	BillingStateJSON string `json:"billing_state_json,omitempty"`
 	// EvidenceID holds the value of the "evidence_id" field.
 	EvidenceID string `json:"evidence_id,omitempty"`
 	// CvmInstanceID holds the value of the "cvm_instance_id" field.
@@ -77,31 +69,13 @@ type ComputeAllocation struct {
 	NodeName string `json:"node_name,omitempty"`
 	// MachineName holds the value of the "machine_name" field.
 	MachineName string `json:"machine_name,omitempty"`
-	// HoldAmountCents holds the value of the "hold_amount_cents" field.
-	HoldAmountCents int64 `json:"hold_amount_cents,omitempty"`
-	// HoldAmount holds the value of the "hold_amount" field.
-	HoldAmount float64 `json:"hold_amount,omitempty"`
 	// CPU holds the value of the "cpu" field.
 	CPU float64 `json:"cpu,omitempty"`
 	// MemoryGB holds the value of the "memory_gb" field.
 	MemoryGB float64 `json:"memory_gb,omitempty"`
 	// DiskGB holds the value of the "disk_gb" field.
-	DiskGB float64 `json:"disk_gb,omitempty"`
-	// PriceSnapshotPackageID holds the value of the "price_snapshot_package_id" field.
-	PriceSnapshotPackageID string `json:"price_snapshot_package_id,omitempty"`
-	// PriceSnapshotResourceType holds the value of the "price_snapshot_resource_type" field.
-	PriceSnapshotResourceType string `json:"price_snapshot_resource_type,omitempty"`
-	// PriceSnapshotCurrency holds the value of the "price_snapshot_currency" field.
-	PriceSnapshotCurrency string `json:"price_snapshot_currency,omitempty"`
-	// PriceSnapshotSource holds the value of the "price_snapshot_source" field.
-	PriceSnapshotSource string `json:"price_snapshot_source,omitempty"`
-	// PriceSnapshotSku holds the value of the "price_snapshot_sku" field.
-	PriceSnapshotSku string `json:"price_snapshot_sku,omitempty"`
-	// PriceSnapshotUnitPriceCents holds the value of the "price_snapshot_unit_price_cents" field.
-	PriceSnapshotUnitPriceCents int64 `json:"price_snapshot_unit_price_cents,omitempty"`
-	// PriceSnapshotComputeHourly holds the value of the "price_snapshot_compute_hourly" field.
-	PriceSnapshotComputeHourly float64 `json:"price_snapshot_compute_hourly,omitempty"`
-	selectValues               sql.SelectValues
+	DiskGB       float64 `json:"disk_gb,omitempty"`
+	selectValues sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -109,11 +83,9 @@ func (*ComputeAllocation) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case computeallocation.FieldHoldAmount, computeallocation.FieldCPU, computeallocation.FieldMemoryGB, computeallocation.FieldDiskGB, computeallocation.FieldPriceSnapshotComputeHourly:
+		case computeallocation.FieldCPU, computeallocation.FieldMemoryGB, computeallocation.FieldDiskGB:
 			values[i] = new(sql.NullFloat64)
-		case computeallocation.FieldHoldAmountCents, computeallocation.FieldPriceSnapshotUnitPriceCents:
-			values[i] = new(sql.NullInt64)
-		case computeallocation.FieldID, computeallocation.FieldAccountID, computeallocation.FieldOwnerUserID, computeallocation.FieldWorkspaceID, computeallocation.FieldName, computeallocation.FieldPackageID, computeallocation.FieldProvider, computeallocation.FieldProviderResourceID, computeallocation.FieldProviderRequestID, computeallocation.FieldOperationID, computeallocation.FieldStatus, computeallocation.FieldDesiredStatus, computeallocation.FieldProviderStatus, computeallocation.FieldLastProviderSyncAt, computeallocation.FieldLastProviderSyncError, computeallocation.FieldExternalDeletedAt, computeallocation.FieldBillingStatus, computeallocation.FieldHoldID, computeallocation.FieldHoldReleaseID, computeallocation.FieldSettlementID, computeallocation.FieldLedgerEntryID, computeallocation.FieldWalletTransactionID, computeallocation.FieldPricingVersion, computeallocation.FieldUsagePeriodEnd, computeallocation.FieldEvidenceID, computeallocation.FieldCvmInstanceID, computeallocation.FieldInstanceID, computeallocation.FieldNodeName, computeallocation.FieldMachineName, computeallocation.FieldPriceSnapshotPackageID, computeallocation.FieldPriceSnapshotResourceType, computeallocation.FieldPriceSnapshotCurrency, computeallocation.FieldPriceSnapshotSource, computeallocation.FieldPriceSnapshotSku:
+		case computeallocation.FieldID, computeallocation.FieldAccountID, computeallocation.FieldOwnerUserID, computeallocation.FieldWorkspaceID, computeallocation.FieldName, computeallocation.FieldPackageID, computeallocation.FieldProvider, computeallocation.FieldProviderResourceID, computeallocation.FieldProviderRequestID, computeallocation.FieldOperationID, computeallocation.FieldStatus, computeallocation.FieldDesiredStatus, computeallocation.FieldProviderStatus, computeallocation.FieldLastProviderSyncAt, computeallocation.FieldLastProviderSyncError, computeallocation.FieldExternalDeletedAt, computeallocation.FieldBillingStatus, computeallocation.FieldPricingVersion, computeallocation.FieldBillingOperationID, computeallocation.FieldBillingStateJSON, computeallocation.FieldEvidenceID, computeallocation.FieldCvmInstanceID, computeallocation.FieldInstanceID, computeallocation.FieldNodeName, computeallocation.FieldMachineName:
 			values[i] = new(sql.NullString)
 		case computeallocation.FieldCreatedAt, computeallocation.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -246,47 +218,23 @@ func (ca *ComputeAllocation) assignValues(columns []string, values []any) error 
 			} else if value.Valid {
 				ca.BillingStatus = value.String
 			}
-		case computeallocation.FieldHoldID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_id", values[i])
-			} else if value.Valid {
-				ca.HoldID = value.String
-			}
-		case computeallocation.FieldHoldReleaseID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_release_id", values[i])
-			} else if value.Valid {
-				ca.HoldReleaseID = value.String
-			}
-		case computeallocation.FieldSettlementID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field settlement_id", values[i])
-			} else if value.Valid {
-				ca.SettlementID = value.String
-			}
-		case computeallocation.FieldLedgerEntryID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field ledger_entry_id", values[i])
-			} else if value.Valid {
-				ca.LedgerEntryID = value.String
-			}
-		case computeallocation.FieldWalletTransactionID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field wallet_transaction_id", values[i])
-			} else if value.Valid {
-				ca.WalletTransactionID = value.String
-			}
 		case computeallocation.FieldPricingVersion:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field pricing_version", values[i])
 			} else if value.Valid {
 				ca.PricingVersion = value.String
 			}
-		case computeallocation.FieldUsagePeriodEnd:
+		case computeallocation.FieldBillingOperationID:
 			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field usage_period_end", values[i])
+				return fmt.Errorf("unexpected type %T for field billing_operation_id", values[i])
 			} else if value.Valid {
-				ca.UsagePeriodEnd = value.String
+				ca.BillingOperationID = value.String
+			}
+		case computeallocation.FieldBillingStateJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field billing_state_json", values[i])
+			} else if value.Valid {
+				ca.BillingStateJSON = value.String
 			}
 		case computeallocation.FieldEvidenceID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -318,18 +266,6 @@ func (ca *ComputeAllocation) assignValues(columns []string, values []any) error 
 			} else if value.Valid {
 				ca.MachineName = value.String
 			}
-		case computeallocation.FieldHoldAmountCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_amount_cents", values[i])
-			} else if value.Valid {
-				ca.HoldAmountCents = value.Int64
-			}
-		case computeallocation.FieldHoldAmount:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field hold_amount", values[i])
-			} else if value.Valid {
-				ca.HoldAmount = value.Float64
-			}
 		case computeallocation.FieldCPU:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
 				return fmt.Errorf("unexpected type %T for field cpu", values[i])
@@ -347,48 +283,6 @@ func (ca *ComputeAllocation) assignValues(columns []string, values []any) error 
 				return fmt.Errorf("unexpected type %T for field disk_gb", values[i])
 			} else if value.Valid {
 				ca.DiskGB = value.Float64
-			}
-		case computeallocation.FieldPriceSnapshotPackageID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_package_id", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotPackageID = value.String
-			}
-		case computeallocation.FieldPriceSnapshotResourceType:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_resource_type", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotResourceType = value.String
-			}
-		case computeallocation.FieldPriceSnapshotCurrency:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_currency", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotCurrency = value.String
-			}
-		case computeallocation.FieldPriceSnapshotSource:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_source", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotSource = value.String
-			}
-		case computeallocation.FieldPriceSnapshotSku:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_sku", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotSku = value.String
-			}
-		case computeallocation.FieldPriceSnapshotUnitPriceCents:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_unit_price_cents", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotUnitPriceCents = value.Int64
-			}
-		case computeallocation.FieldPriceSnapshotComputeHourly:
-			if value, ok := values[i].(*sql.NullFloat64); !ok {
-				return fmt.Errorf("unexpected type %T for field price_snapshot_compute_hourly", values[i])
-			} else if value.Valid {
-				ca.PriceSnapshotComputeHourly = value.Float64
 			}
 		default:
 			ca.selectValues.Set(columns[i], values[i])
@@ -480,26 +374,14 @@ func (ca *ComputeAllocation) String() string {
 	builder.WriteString("billing_status=")
 	builder.WriteString(ca.BillingStatus)
 	builder.WriteString(", ")
-	builder.WriteString("hold_id=")
-	builder.WriteString(ca.HoldID)
-	builder.WriteString(", ")
-	builder.WriteString("hold_release_id=")
-	builder.WriteString(ca.HoldReleaseID)
-	builder.WriteString(", ")
-	builder.WriteString("settlement_id=")
-	builder.WriteString(ca.SettlementID)
-	builder.WriteString(", ")
-	builder.WriteString("ledger_entry_id=")
-	builder.WriteString(ca.LedgerEntryID)
-	builder.WriteString(", ")
-	builder.WriteString("wallet_transaction_id=")
-	builder.WriteString(ca.WalletTransactionID)
-	builder.WriteString(", ")
 	builder.WriteString("pricing_version=")
 	builder.WriteString(ca.PricingVersion)
 	builder.WriteString(", ")
-	builder.WriteString("usage_period_end=")
-	builder.WriteString(ca.UsagePeriodEnd)
+	builder.WriteString("billing_operation_id=")
+	builder.WriteString(ca.BillingOperationID)
+	builder.WriteString(", ")
+	builder.WriteString("billing_state_json=")
+	builder.WriteString(ca.BillingStateJSON)
 	builder.WriteString(", ")
 	builder.WriteString("evidence_id=")
 	builder.WriteString(ca.EvidenceID)
@@ -516,12 +398,6 @@ func (ca *ComputeAllocation) String() string {
 	builder.WriteString("machine_name=")
 	builder.WriteString(ca.MachineName)
 	builder.WriteString(", ")
-	builder.WriteString("hold_amount_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ca.HoldAmountCents))
-	builder.WriteString(", ")
-	builder.WriteString("hold_amount=")
-	builder.WriteString(fmt.Sprintf("%v", ca.HoldAmount))
-	builder.WriteString(", ")
 	builder.WriteString("cpu=")
 	builder.WriteString(fmt.Sprintf("%v", ca.CPU))
 	builder.WriteString(", ")
@@ -530,27 +406,6 @@ func (ca *ComputeAllocation) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("disk_gb=")
 	builder.WriteString(fmt.Sprintf("%v", ca.DiskGB))
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_package_id=")
-	builder.WriteString(ca.PriceSnapshotPackageID)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_resource_type=")
-	builder.WriteString(ca.PriceSnapshotResourceType)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_currency=")
-	builder.WriteString(ca.PriceSnapshotCurrency)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_source=")
-	builder.WriteString(ca.PriceSnapshotSource)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_sku=")
-	builder.WriteString(ca.PriceSnapshotSku)
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_unit_price_cents=")
-	builder.WriteString(fmt.Sprintf("%v", ca.PriceSnapshotUnitPriceCents))
-	builder.WriteString(", ")
-	builder.WriteString("price_snapshot_compute_hourly=")
-	builder.WriteString(fmt.Sprintf("%v", ca.PriceSnapshotComputeHourly))
 	builder.WriteByte(')')
 	return builder.String()
 }

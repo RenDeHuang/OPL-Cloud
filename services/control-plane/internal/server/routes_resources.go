@@ -11,170 +11,63 @@ import (
 func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/compute-pools", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		computePools, ok := fabricComputePools(w, r, service)
-		if !ok {
-			return
+		if ok {
+			writeJSON(w, http.StatusOK, computePools)
 		}
-		writeJSON(w, http.StatusOK, computePools)
 	}))
 	mux.HandleFunc("GET /api/compute-allocations", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		accountID, ok := app.scopedAccountID(w, r, nil)
-		if !ok {
-			return
+		if ok {
+			writeJSON(w, http.StatusOK, app.state(accountID, nil)["computeAllocations"])
 		}
-		writeJSON(w, http.StatusOK, app.state(accountID, nil)["computeAllocations"])
 	}))
 	mux.HandleFunc("POST /api/compute-allocations", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
 		accountID, ok := app.scopedAccountID(w, r, input)
 		if !ok {
+			return
+		}
+		packageID, validPackage := input["packageId"].(string)
+		if !validPackage || strings.TrimSpace(packageID) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
+			return
+		}
+		if strings.TrimSpace(stringField(input, "id", "")) != "" {
+			writeError(w, http.StatusBadRequest, "resource_id_not_allowed")
 			return
 		}
 		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
-		key := mutationKey(r, input)
-		resourceID := firstNonEmpty(stringField(input, "id", ""), resourceIDForMutation("ca", key))
-		preview, err := app.pricingPreviewResponse(r.Context(), map[string]any{
-			"accountId":      accountID,
-			"resourceType":   "compute",
-			"packageId":      stringField(input, "packageId", "basic"),
-			"computeId":      resourceID,
-			"idempotencyKey": key,
-		}, map[string]any{})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "pricing_catalog_unavailable")
-			return
-		}
-		pending := computeResponse(map[string]any{
-			"id":                    resourceID,
-			"accountId":             accountID,
-			"ownerUserId":           app.sessionUserID(r),
-			"workspaceId":           stringField(input, "workspaceId", ""),
-			"name":                  stringField(input, "name", ""),
-			"packageId":             stringField(input, "packageId", "basic"),
-			"status":                "provisioning",
-			"desiredStatus":         "running",
-			"providerStatus":        "pending",
-			"billingStatus":         "pending",
-			"pricingVersion":        stringValue(preview["pricingVersion"]),
-			"priceSnapshot":         mapField(preview, "priceSnapshot"),
-			"holdAmountCents":       int64(numberField(preview, "holdAmountCents", 0)),
-			"activationAmountCents": int64(numberField(preview, "activationAmountCents", 0)),
-			"createdAt":             time.Now().UTC().Format(time.RFC3339Nano),
+		resourceID := resourceIDForMutation("ca", accountID, key)
+		unlock := app.lockResource("compute", resourceID)
+		defer unlock()
+		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{
+			ResourceType: "compute", ResourceID: resourceID, BillingOperationID: "billing-" + stableID("compute", accountID, key)[:18],
+			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: stringField(input, "workspaceId", ""),
+			Name: stringField(input, "name", ""), PackageID: packageID, Environment: monthlyEnvironment(),
 		})
-		if err := app.saveComputeFact(pending); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		compute, err := service.CreateComputeAllocation(r.Context(), controlplane.ComputeAllocationInput{
-			ID:                    resourceID,
-			AccountID:             accountID,
-			WorkspaceID:           stringField(input, "workspaceId", ""),
-			PackageID:             stringField(input, "packageId", "basic"),
-			HoldAmountCents:       int64(numberField(preview, "holdAmountCents", 0)),
-			ActivationAmountCents: int64(numberField(preview, "activationAmountCents", 0)),
-		}, key)
 		if err != nil {
-			failed := providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), err)
-			if saveErr := app.saveComputeFact(failed); saveErr != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			writeUpstreamError(w, err)
+			writeMonthlyPurchaseError(w, err)
 			return
 		}
-		body := billingActivationFacts(pending, providerSyncFacts(computeResponse(mergeMaps(pending, structToMap(compute))), nil), time.Now())
-		if err := app.saveComputeFact(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if err := app.appendAuditEvent(r, "compute.create", "compute_allocation", stringValue(body["id"]), accountID, nil, body, "succeeded"); err != nil {
+		body = computeResponse(body)
+		if err := app.appendAuditEvent(r, "compute.create", "compute_allocation", resourceID, accountID, nil, body, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusAccepted, body)
 	}))
 	mux.HandleFunc("GET /api/compute-allocations/{id}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimSpace(r.PathValue("id"))
-		compute, ok := app.getCompute(id)
-		if !ok {
-			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
-			return
-		}
-		if !app.canAccessResource(r, compute) {
-			writeError(w, http.StatusForbidden, "account_scope_forbidden")
-			return
-		}
-		unlock := app.lockCompute(id)
-		defer unlock()
-		compute, ok = app.getCompute(id)
-		if !ok || !app.canAccessResource(r, compute) {
-			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
-			return
-		}
-		if stringValue(compute["status"]) != "provisioning" {
-			writeJSON(w, http.StatusOK, compute)
-			return
-		}
-		fresh, err := service.SyncComputeAllocation(r.Context(), destroyResourceInput(id, compute), "compute-readiness:"+id)
-		if err != nil {
-			failed := providerSyncFacts(compute, err)
-			if saveErr := app.saveComputeFact(failed); saveErr != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			writeJSON(w, http.StatusOK, failed)
-			return
-		}
-		body := billingActivationFacts(compute, providerSyncFacts(computeResponse(mergeMaps(compute, structToMap(fresh))), nil), time.Now())
-		body["accountId"] = firstNonEmpty(stringValue(compute["accountId"]), stringValue(compute["ownerAccountId"]))
-		if err := app.saveComputeFact(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusOK, body)
+		app.serveMonthlyCompute(w, r, service, strings.TrimSpace(r.PathValue("id")), false, nil)
 	}))
 	mux.HandleFunc("POST /api/compute-allocations/{id}/sync", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		id := strings.TrimSpace(r.PathValue("id"))
-		existing, ok := app.getCompute(id)
-		if !ok {
-			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
-			return
-		}
-		if !app.canAccessResource(r, existing) {
-			writeError(w, http.StatusForbidden, "account_scope_forbidden")
-			return
-		}
-		unlock := app.lockCompute(id)
-		defer unlock()
-		existing, ok = app.getCompute(id)
-		if !ok || !app.canAccessResource(r, existing) {
-			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
-			return
-		}
-		releaseInput := destroyResourceInput(id, existing)
-		if stringValue(existing["holdReleaseId"]) != "" || billingStatusFor(existing) == "stopped" {
-			releaseInput.HoldID = ""
-			releaseInput.HoldAmountCents = 0
-		}
-		compute, err := service.SyncComputeAllocation(r.Context(), releaseInput, mutationKey(r, input))
-		if err != nil {
-			_ = app.saveComputeFact(providerSyncFacts(existing, err))
-			writeUpstreamError(w, err)
-			return
-		}
-		body := billingActivationFacts(existing, providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(compute))), nil), time.Now())
-		if err := app.saveComputeFact(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if err := app.appendAuditEvent(r, "compute.sync", "compute_allocation", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusOK, body)
+		app.serveMonthlyCompute(w, r, service, strings.TrimSpace(r.PathValue("id")), true, decodeJSON(r))
 	}))
 	mux.HandleFunc("POST /api/compute-allocations/{id}/destroy", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -192,33 +85,21 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		unlock := app.lockCompute(id)
+		unlock := app.lockResource("compute", id)
 		defer unlock()
-		existing, ok = app.getCompute(id)
-		if !ok || !app.canAccessResource(r, existing) {
-			writeError(w, http.StatusNotFound, "compute_allocation_not_found")
-			return
-		}
-		stopping := cloneMap(existing)
-		stopping["status"] = "destroying"
-		stopping["desiredStatus"] = "destroyed"
-		stopping["billingStatus"] = "stopping"
-		if err := app.saveComputeFact(stopping); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		compute, err := service.DestroyComputeAllocation(r.Context(), destroyResourceInput(id, stopping), mutationKey(r, input))
+		existing, _ = app.getCompute(id)
+		result, err := app.cleanupComputeResource(r.Context(), service, id, mutationKey(r, input))
 		if err != nil {
-			_ = app.saveComputeFact(providerSyncFacts(stopping, err))
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(computeResponse(mergeMaps(stopping, structToMap(compute))), nil)
+		body := computeResponse(mergeMaps(existing, structToMap(result)))
+		body["status"], body["desiredStatus"], body["billingStatus"] = "destroyed", "destroyed", "stopped"
 		if err := app.saveComputeFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		if err := app.appendAuditEvent(r, "compute.destroy", "compute_allocation", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
+		if err := app.appendAuditEvent(r, "compute.destroy", "compute_allocation", id, stringValue(existing["accountId"]), existing, body, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
@@ -226,78 +107,61 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 	}))
 	mux.HandleFunc("POST /api/storage-volumes", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
 		accountID, ok := app.scopedAccountID(w, r, input)
 		if !ok {
+			return
+		}
+		sizeGB, validSize := positiveIntegerField(input, "sizeGb")
+		if !validSize {
+			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
 			return
 		}
 		if _, blocked := app.reconciliationBlocksNewWorkspaces(); blocked {
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
-		key := mutationKey(r, input)
-		resourceID := firstNonEmpty(stringField(input, "id", ""), resourceIDForMutation("vol", key))
-		packageID := stringField(input, "packageId", "basic")
-		preview, err := app.pricingPreviewResponse(r.Context(), map[string]any{
-			"accountId":      accountID,
-			"resourceType":   "storage",
-			"packageId":      packageID,
-			"sizeGb":         numberField(input, "sizeGb", 10),
-			"storageId":      resourceID,
-			"idempotencyKey": key,
-		}, map[string]any{})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "pricing_catalog_unavailable")
-			return
-		}
-		pending := storageResponse(map[string]any{
-			"id":                    resourceID,
-			"accountId":             accountID,
-			"ownerUserId":           app.sessionUserID(r),
-			"workspaceId":           stringField(input, "workspaceId", ""),
-			"name":                  stringField(input, "name", ""),
-			"packageId":             packageID,
-			"sizeGb":                numberField(input, "sizeGb", 10),
-			"status":                "provisioning",
-			"desiredStatus":         "available",
-			"providerStatus":        "pending",
-			"billingStatus":         "pending",
-			"pricingVersion":        stringValue(preview["pricingVersion"]),
-			"priceSnapshot":         mapField(preview, "priceSnapshot"),
-			"holdAmountCents":       int64(numberField(preview, "holdAmountCents", 0)),
-			"activationAmountCents": int64(numberField(preview, "activationAmountCents", 0)),
-			"createdAt":             time.Now().UTC().Format(time.RFC3339Nano),
-		})
-		if err := app.saveStorageFact(pending); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		storage, err := service.CreateStorageVolume(r.Context(), controlplane.StorageVolumeInput{
-			ID:                    resourceID,
-			AccountID:             accountID,
-			WorkspaceID:           stringField(input, "workspaceId", ""),
-			SizeGB:                int(numberField(input, "sizeGb", 10)),
-			HoldAmountCents:       int64(numberField(preview, "holdAmountCents", 0)),
-			ActivationAmountCents: int64(numberField(preview, "activationAmountCents", 0)),
-		}, key)
-		if err != nil {
-			failed := providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), err)
-			if saveErr := app.saveStorageFact(failed); saveErr != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+		resourceID := resourceIDForMutation("vol", accountID, key)
+		if requestedID := strings.TrimSpace(stringField(input, "id", "")); requestedID != "" {
+			existing, exists := app.getStorage(requestedID)
+			if !exists {
+				writeError(w, http.StatusBadRequest, "retained_storage_required")
 				return
 			}
-			writeUpstreamError(w, err)
+			if !app.canAccessResource(r, existing) {
+				writeError(w, http.StatusForbidden, "account_scope_forbidden")
+				return
+			}
+			if stringValue(existing["billingStatus"]) != "retained" {
+				writeError(w, http.StatusConflict, "retained_storage_required")
+				return
+			}
+			resourceID = requestedID
+		}
+		unlock := app.lockResource("storage", resourceID)
+		defer unlock()
+		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{
+			ResourceType: "storage", ResourceID: resourceID, BillingOperationID: "billing-" + stableID("storage", accountID, key)[:18],
+			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: stringField(input, "workspaceId", ""),
+			Name: stringField(input, "name", ""), PackageID: stringField(input, "packageId", "basic"),
+			SizeGB: int(sizeGB), Environment: monthlyEnvironment(),
+		})
+		if err != nil {
+			writeMonthlyPurchaseError(w, err)
 			return
 		}
-		body := billingActivationFacts(pending, providerSyncFacts(storageResponse(mergeMaps(pending, structToMap(storage))), nil), time.Now())
-		if err := app.saveStorageFact(body); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if err := app.appendAuditEvent(r, "storage.create", "storage_volume", stringValue(body["id"]), accountID, nil, body, "succeeded"); err != nil {
+		body = storageResponse(body)
+		if err := app.appendAuditEvent(r, "storage.create", "storage_volume", resourceID, accountID, nil, body, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusAccepted, body)
+	}))
+	mux.HandleFunc("POST /api/storage-volumes/{id}/sync", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		app.serveMonthlyStorage(w, r, service, strings.TrimSpace(r.PathValue("id")), decodeJSON(r))
 	}))
 	mux.HandleFunc("POST /api/storage-volumes/destroy", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -315,64 +179,69 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		stopping := cloneMap(existing)
-		stopping["status"] = "destroying"
-		stopping["desiredStatus"] = "destroyed"
-		stopping["billingStatus"] = "stopping"
-		if err := app.saveStorageFact(stopping); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		storage, err := service.DestroyStorageVolume(r.Context(), destroyResourceInput(id, stopping), mutationKey(r, input))
+		unlock := app.lockResource("storage", id)
+		defer unlock()
+		existing, _ = app.getStorage(id)
+		result, err := service.CleanupMonthlyStorage(r.Context(), id, mutationKey(r, input))
 		if err != nil {
-			_ = app.saveStorageFact(providerSyncFacts(stopping, err))
 			writeUpstreamError(w, err)
 			return
 		}
-		body := providerSyncFacts(storageResponse(mergeMaps(stopping, structToMap(storage))), nil)
+		body := storageResponse(mergeMaps(existing, structToMap(result)))
+		body["status"], body["desiredStatus"], body["billingStatus"] = "destroyed", "destroyed", "stopped"
 		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		if err := app.appendAuditEvent(r, "storage.destroy", "storage_volume", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
+		if err := app.appendAuditEvent(r, "storage.destroy", "storage_volume", id, stringValue(existing["accountId"]), existing, body, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
 	}))
-	mux.HandleFunc("POST /api/storage-volumes/{id}/sync", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/resources/{id}/auto-renew", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		id := strings.TrimSpace(r.PathValue("id"))
-		existing, ok := app.getStorage(id)
+		if _, ok := requiredMutationKey(w, r); !ok {
+			return
+		}
+		autoRenew, ok := input["autoRenew"].(bool)
 		if !ok {
-			writeError(w, http.StatusNotFound, "storage_volume_not_found")
+			writeError(w, http.StatusBadRequest, "autoRenew_required")
+			return
+		}
+		id := strings.TrimSpace(r.PathValue("id"))
+		resourceType := "compute"
+		existing, ok := app.getCompute(id)
+		if !ok {
+			resourceType = "storage"
+			existing, ok = app.getStorage(id)
+		}
+		if !ok {
+			writeError(w, http.StatusNotFound, "resource_not_found")
 			return
 		}
 		if !app.canAccessResource(r, existing) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		releaseInput := destroyResourceInput(id, existing)
-		if stringValue(existing["holdReleaseId"]) != "" || billingStatusFor(existing) == "stopped" {
-			releaseInput.HoldID = ""
-			releaseInput.HoldAmountCents = 0
-		}
-		storage, err := service.SyncStorageVolume(r.Context(), releaseInput, mutationKey(r, input))
-		if err != nil {
-			_ = app.saveStorageFact(providerSyncFacts(existing, err))
-			writeUpstreamError(w, err)
-			return
-		}
-		body := billingActivationFacts(existing, providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(storage))), nil), time.Now())
-		if err := app.saveStorageFact(body); err != nil {
+		unlock := app.lockResource(resourceType, id)
+		defer unlock()
+		existing, _ = app.monthlyResource(resourceType, id)
+		before := cloneMap(existing)
+		existing["autoRenew"] = autoRenew
+		if err := app.saveMonthlyResource(r.Context(), resourceType, existing); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		if err := app.appendAuditEvent(r, "storage.sync", "storage_volume", id, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]), stringValue(body["accountId"])), existing, body, "succeeded"); err != nil {
+		if err := app.appendAuditEvent(r, "resource.auto_renew", resourceType, id, stringValue(existing["accountId"]), before, existing, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, body)
+		if resourceType == "storage" {
+			writeJSON(w, http.StatusOK, storageResponse(existing))
+			return
+		}
+		writeJSON(w, http.StatusOK, computeResponse(existing))
 	}))
 	mux.HandleFunc("POST /api/storage-attachments", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -380,8 +249,11 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		if !ok {
 			return
 		}
-		compute, computeOK := app.getCompute(stringField(input, "computeAllocationId", ""))
-		storage, storageOK := app.getStorage(stringField(input, "storageId", ""))
+		computeID, storageID := stringField(input, "computeAllocationId", ""), stringField(input, "storageId", "")
+		unlock := app.lockEntitlementResources(computeID, storageID, "")
+		defer unlock()
+		compute, computeOK := app.getCompute(computeID)
+		storage, storageOK := app.getStorage(storageID)
 		if !computeOK || !storageOK {
 			writeError(w, http.StatusBadRequest, "compute_storage_not_found")
 			return
@@ -395,11 +267,11 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "workspace_scope_forbidden")
 			return
 		}
-		accountID = firstNonEmpty(stringValue(compute["accountId"]), stringValue(compute["ownerAccountId"]), stringValue(storage["accountId"]), stringValue(storage["ownerAccountId"]), accountID)
+		if !ensureMonthlyEntitlements(w, time.Now(), compute, storage) {
+			return
+		}
 		attachment, err := service.CreateStorageAttachment(r.Context(), controlplane.StorageAttachmentInput{
-			WorkspaceID: stringField(input, "workspaceId", ""),
-			ComputeID:   stringField(input, "computeAllocationId", ""),
-			VolumeID:    stringField(input, "storageId", ""),
+			WorkspaceID: workspaceID, ComputeID: stringField(input, "computeAllocationId", ""), VolumeID: stringField(input, "storageId", ""),
 		}, mutationKey(r, input))
 		if err != nil {
 			writeUpstreamError(w, err)
@@ -420,6 +292,8 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 	mux.HandleFunc("POST /api/storage-attachments/detach", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		attachmentID := stringField(input, "attachmentId", "")
+		unlock := app.lockResource("attachment", attachmentID)
+		defer unlock()
 		existing, ok := app.getAttachment(attachmentID)
 		if !ok {
 			writeError(w, http.StatusNotFound, "storage_attachment_not_found")
@@ -439,10 +313,88 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		if err := app.appendAuditEvent(r, "attachment.detach", "storage_attachment", attachmentID, firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])), existing, body, "succeeded"); err != nil {
+		if err := app.appendAuditEvent(r, "attachment.detach", "storage_attachment", attachmentID, stringValue(existing["accountId"]), existing, body, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusOK, body)
 	}))
+}
+
+func (app *controlPlaneServer) serveMonthlyCompute(w http.ResponseWriter, r *http.Request, service *controlplane.Service, id string, forceSync bool, input map[string]any) {
+	existing, ok := app.getCompute(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "compute_allocation_not_found")
+		return
+	}
+	if !app.canAccessResource(r, existing) {
+		writeError(w, http.StatusForbidden, "account_scope_forbidden")
+		return
+	}
+	unlock := app.lockResource("compute", id)
+	defer unlock()
+	existing, _ = app.getCompute(id)
+	if stringValue(existing["billingStatus"]) == "preparing" {
+		body, err := app.resumeMonthlyPurchase(r.Context(), service, existing)
+		if err != nil {
+			writeMonthlyPurchaseError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, computeResponse(body))
+		return
+	}
+	if !forceSync && stringValue(existing["status"]) != "provisioning" {
+		writeJSON(w, http.StatusOK, existing)
+		return
+	}
+	fresh, err := service.SyncMonthlyCompute(r.Context(), id)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	body := providerSyncFacts(computeResponse(mergeMaps(existing, structToMap(fresh))), nil)
+	if err := app.saveComputeFact(body); err != nil {
+		writeError(w, http.StatusInternalServerError, "state_persist_failed")
+		return
+	}
+	if forceSync {
+		_ = app.appendAuditEvent(r, "compute.sync", "compute_allocation", id, stringValue(existing["accountId"]), existing, body, "succeeded")
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func (app *controlPlaneServer) serveMonthlyStorage(w http.ResponseWriter, r *http.Request, service *controlplane.Service, id string, input map[string]any) {
+	existing, ok := app.getStorage(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "storage_volume_not_found")
+		return
+	}
+	if !app.canAccessResource(r, existing) {
+		writeError(w, http.StatusForbidden, "account_scope_forbidden")
+		return
+	}
+	unlock := app.lockResource("storage", id)
+	defer unlock()
+	existing, _ = app.getStorage(id)
+	if stringValue(existing["billingStatus"]) == "preparing" {
+		body, err := app.resumeMonthlyPurchase(r.Context(), service, existing)
+		if err != nil {
+			writeMonthlyPurchaseError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, storageResponse(body))
+		return
+	}
+	fresh, err := service.SyncMonthlyStorage(r.Context(), id)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	body := providerSyncFacts(storageResponse(mergeMaps(existing, structToMap(fresh))), nil)
+	if err := app.saveStorageFact(body); err != nil {
+		writeError(w, http.StatusInternalServerError, "state_persist_failed")
+		return
+	}
+	_ = app.appendAuditEvent(r, "storage.sync", "storage_volume", id, stringValue(existing["accountId"]), existing, body, "succeeded")
+	writeJSON(w, http.StatusOK, body)
 }

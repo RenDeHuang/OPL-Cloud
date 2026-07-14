@@ -73,134 +73,90 @@ func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, ser
 	} else if err := app.rememberRuntimeOperations(operations); err != nil {
 		errs = append(errs, err)
 	}
-	computes, storages, err := app.settlementResourceRows(ctx)
-	if err != nil {
-		return err
-	}
-	for id, row := range computes {
-		if billingStatusFor(row) == "stopping" && stringValue(row["desiredStatus"]) == "destroyed" {
-			result, destroyErr := service.DestroyComputeAllocation(ctx, destroyResourceInput(id, row), "provider-reconcile:destroy-compute:"+id)
-			if destroyErr != nil {
-				errs = append(errs, destroyErr)
-				if saveErr := app.saveComputeFact(providerSyncFacts(row, destroyErr)); saveErr != nil {
-					errs = append(errs, saveErr)
-				}
-				continue
-			}
-			body := providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil)
-			if saveErr := app.saveComputeFact(body); saveErr != nil {
-				errs = append(errs, saveErr)
-			}
-			continue
-		}
-		if isTerminalResourceStatus(stringValue(row["status"])) && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
-			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "compute", "destroy_compute", "provider-reconcile:release-compute:"+id)
-			if releaseErr != nil {
-				errs = append(errs, releaseErr)
-				continue
-			}
-			body := cloneMap(row)
-			body["holdReleaseId"] = release.ID
-			body["holdAmountCents"] = release.AmountCents
-			body["ledgerEntryId"] = release.LedgerEntryID
-			body["walletTransactionId"] = release.WalletTransactionID
-			body["wallet"] = structToMap(release.Wallet)
-			body["billingStatus"] = "stopped"
-			if saveErr := app.saveComputeFact(body); saveErr != nil {
-				errs = append(errs, saveErr)
-			}
-			continue
-		}
-		if stringValue(row["status"]) == "failed" && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
-			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "compute", "compute_create_failed", "provider-reconcile:compute:"+id)
-			if releaseErr != nil {
-				errs = append(errs, releaseErr)
-				continue
-			}
-			body := cloneMap(row)
-			body["holdReleaseId"] = release.ID
-			body["holdAmountCents"] = release.AmountCents
-			body["ledgerEntryId"] = release.LedgerEntryID
-			body["walletTransactionId"] = release.WalletTransactionID
-			body["wallet"] = structToMap(release.Wallet)
-			body["billingStatus"] = "stopped"
-			if saveErr := app.saveComputeFact(body); saveErr != nil {
-				errs = append(errs, saveErr)
-			}
-			continue
-		}
-		if !providerSyncDue(row, now) {
-			continue
-		}
-		unlock := app.lockCompute(id)
-		current, ok := app.getCompute(id)
-		if !ok || !providerSyncDue(current, now) {
-			unlock()
-			continue
-		}
-		row = current
-		result, err := service.SyncComputeAllocation(ctx, destroyResourceInput(id, row), "provider-reconcile:compute:"+id)
-		if err != nil {
-			saveErr := app.saveComputeFact(providerSyncFacts(row, err))
-			unlock()
-			if saveErr != nil {
-				return saveErr
-			}
-			continue
-		}
-		body := billingActivationFacts(row, providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil), now)
-		saveErr := app.saveComputeFact(body)
-		unlock()
-		if saveErr != nil {
-			return saveErr
+	for _, row := range app.listComputes("") {
+		if err := app.reconcileMonthlyCompute(ctx, service, row, now); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	for id, row := range storages {
-		if stringValue(row["status"]) == "failed" && stringValue(row["holdId"]) != "" && stringValue(row["holdReleaseId"]) == "" {
-			release, releaseErr := service.ReleaseResourceHold(ctx, destroyResourceInput(id, row), "storage", "storage_create_failed", "provider-reconcile:storage:"+id)
-			if releaseErr != nil {
-				errs = append(errs, releaseErr)
-				continue
-			}
-			body := cloneMap(row)
-			body["holdReleaseId"] = release.ID
-			body["holdAmountCents"] = release.AmountCents
-			body["ledgerEntryId"] = release.LedgerEntryID
-			body["walletTransactionId"] = release.WalletTransactionID
-			body["wallet"] = structToMap(release.Wallet)
-			body["billingStatus"] = "stopped"
-			if saveErr := app.saveStorageFact(body); saveErr != nil {
-				errs = append(errs, saveErr)
-			}
-			continue
-		}
-		if !providerSyncDue(row, now) {
-			continue
-		}
-		result, err := service.SyncStorageVolume(ctx, destroyResourceInput(id, row), "provider-reconcile:storage:"+id)
-		if err != nil {
-			if saveErr := app.saveStorageFact(providerSyncFacts(row, err)); saveErr != nil {
-				return saveErr
-			}
-			continue
-		}
-		body := billingActivationFacts(row, providerSyncFacts(storageResponse(mergeMaps(row, structToMap(result))), nil), now)
-		if err := app.saveStorageFact(body); err != nil {
-			return err
+	for _, row := range app.listStorages("") {
+		if err := app.reconcileMonthlyStorage(ctx, service, row, now); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
+func (app *controlPlaneServer) reconcileMonthlyCompute(ctx context.Context, service *controlplane.Service, row map[string]any, now time.Time) error {
+	id := stringValue(row["id"])
+	if id == "" {
+		return nil
+	}
+	unlock := app.lockResource("compute", id)
+	defer unlock()
+	var ok bool
+	if row, ok = app.getCompute(id); !ok || !providerSyncDue(row, now) {
+		return nil
+	}
+	if stringValue(row["billingStatus"]) == "preparing" {
+		_, err := app.resumeMonthlyPurchase(ctx, service, row)
+		return err
+	}
+	if stringValue(row["desiredStatus"]) == "destroyed" {
+		result, err := app.cleanupComputeResource(ctx, service, id, "provider-reconcile:destroy-compute:"+id)
+		if err != nil {
+			return err
+		}
+		body := computeResponse(mergeMaps(row, structToMap(result)))
+		body["status"], body["billingStatus"] = "destroyed", "stopped"
+		return app.saveComputeFact(body)
+	}
+	result, err := service.SyncMonthlyCompute(ctx, id)
+	if err != nil {
+		return app.saveComputeFact(providerSyncFacts(row, err))
+	}
+	return app.saveComputeFact(providerSyncFacts(computeResponse(mergeMaps(row, structToMap(result))), nil))
+}
+
+func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, service *controlplane.Service, row map[string]any, now time.Time) error {
+	id := stringValue(row["id"])
+	if id == "" {
+		return nil
+	}
+	unlock := app.lockResource("storage", id)
+	defer unlock()
+	var ok bool
+	if row, ok = app.getStorage(id); !ok || !providerSyncDue(row, now) {
+		return nil
+	}
+	if stringValue(row["billingStatus"]) == "preparing" {
+		_, err := app.resumeMonthlyPurchase(ctx, service, row)
+		return err
+	}
+	if stringValue(row["desiredStatus"]) == "destroyed" {
+		result, err := service.CleanupMonthlyStorage(ctx, id, "provider-reconcile:destroy-storage:"+id)
+		if err != nil {
+			return err
+		}
+		body := storageResponse(mergeMaps(row, structToMap(result)))
+		body["status"], body["billingStatus"] = "destroyed", "stopped"
+		return app.saveStorageFact(body)
+	}
+	result, err := service.SyncMonthlyStorage(ctx, id)
+	if err != nil {
+		return app.saveStorageFact(providerSyncFacts(row, err))
+	}
+	return app.saveStorageFact(providerSyncFacts(storageResponse(mergeMaps(row, structToMap(result))), nil))
+}
+
 func providerSyncDue(row map[string]any, now time.Time) bool {
-	if billingStatusFor(row) == "stopped" || isTerminalResourceStatus(stringValue(row["status"])) {
+	if isTerminalResourceStatus(stringValue(row["status"])) || stringValue(row["billingStatus"]) == "stopped" {
 		return false
 	}
-	status := stringValue(row["status"])
-	if (status == "provisioning" || status == "pending" || status == "creating") && stringValue(row["holdId"]) != "" {
+	if stringValue(row["billingStatus"]) == "preparing" || stringValue(row["desiredStatus"]) == "destroyed" {
 		return true
 	}
-	if status != "running" && status != "ready" && status != "active" && status != "available" && status != "bound" {
+	status := stringValue(row["status"])
+	if status != "provisioning" && status != "pending" && status != "creating" && status != "running" && status != "ready" && status != "active" && status != "available" && status != "bound" {
 		return false
 	}
 	lastSync, ok := parseTimeString(stringValue(row["lastProviderSyncAt"]))
@@ -208,12 +164,8 @@ func providerSyncDue(row map[string]any, now time.Time) bool {
 }
 
 func parseTimeString(value string) (time.Time, bool) {
-	if value == "" {
-		return time.Time{}, false
-	}
 	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		parsed, err := time.Parse(layout, value)
-		if err == nil {
+		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed.UTC(), true
 		}
 	}

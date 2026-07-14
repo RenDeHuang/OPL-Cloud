@@ -379,6 +379,45 @@ func TestCatalogExposesWorkspacePackages(t *testing.T) {
 	}
 }
 
+type resourceBoundaryProvider struct {
+	testProvider
+	computeCalls int
+	storageCalls int
+}
+
+func (p *resourceBoundaryProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+	p.computeCalls++
+	return p.testProvider.ReconcileComputePool(ctx, input)
+}
+
+func (p *resourceBoundaryProvider) CreateStorageVolume(ctx context.Context, input StorageVolumeInput) (StorageVolume, error) {
+	p.storageCalls++
+	return p.testProvider.CreateStorageVolume(ctx, input)
+}
+
+func TestResourceBoundariesRejectUnknownPackagesAndInvalidStorageBeforeProvider(t *testing.T) {
+	provider := &resourceBoundaryProvider{}
+	service := NewService(provider)
+	for _, packageID := range []string{"", "enterprise"} {
+		if _, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: packageID, IdempotencyKey: "invalid-package-" + packageID}); !errors.Is(err, ErrUnsupportedComputePackage) {
+			t.Fatalf("package %q err=%v, want %v", packageID, err, ErrUnsupportedComputePackage)
+		}
+	}
+	for _, sizeGB := range []int{0, 9, 15} {
+		if _, err := service.CreateStorageVolume(context.Background(), StorageVolumeInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", SizeGB: sizeGB, IdempotencyKey: fmt.Sprintf("invalid-storage-%d", sizeGB)}); !errors.Is(err, ErrInvalidStorageSize) {
+			t.Fatalf("storage %dGB err=%v, want %v", sizeGB, err, ErrInvalidStorageSize)
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	operations, err := service.ListOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.computeCalls != 0 || provider.storageCalls != 0 || len(operations) != 0 {
+		t.Fatalf("invalid inputs mutated provider/state: compute=%d storage=%d operations=%#v", provider.computeCalls, provider.storageCalls, operations)
+	}
+}
+
 func TestDryRunComputeAllocationRecordsProviderRequestIDWithoutLedgerTypes(t *testing.T) {
 	service := NewService(testProvider{})
 	allocation, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{

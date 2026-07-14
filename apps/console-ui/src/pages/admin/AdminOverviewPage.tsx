@@ -1,7 +1,6 @@
 import React from "react";
 import { Alert, Button, Drawer, Form, Input, InputNumber, Select, Typography } from "antd";
 import { Plus } from "lucide-react";
-import { manualTopUp, recordBillingReconciliation, settleResourceBilling } from "../../api/billing-api.ts";
 import { addOrganizationMember, archiveTerminalResources, cleanupWorkspaceAccess, createOrganization, createUser, deleteUser, disableUser } from "../../api/console-read-api.ts";
 import {
   ActionGroup,
@@ -17,7 +16,7 @@ import {
   StatusPill,
   TimelineList
 } from "../shared/commercial-console.tsx";
-import { money } from "../shared/formatters.ts";
+import { moneyCents, paidThrough, usdMicros, valueLabel } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
 
@@ -30,36 +29,8 @@ function roleLabel(role = "") {
   }[role] || role || "用户";
 }
 
-function manualTopUpIdempotencyKey() {
-  return `manual-topup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function moneyValue(row: AnyRecord = {}) {
-  if (row.amount != null) return Number(row.amount || 0);
-  return Number(row.amountCents || 0) / 100;
-}
-
 function firstMessage(ticket: AnyRecord = {}) {
   return (ticket.messages || []).map((message) => message.text).filter(Boolean).join(" / ");
-}
-
-function priceSnapshotLabel(row: AnyRecord = {}) {
-  const snapshot = row.priceSnapshot || {};
-  return [
-    row.pricingVersion,
-    snapshot.unitPriceCents != null ? `unitPriceCents ${snapshot.unitPriceCents}` : "",
-    row.quantity && row.unit ? `${row.quantity} ${row.unit}` : "",
-    row.providerCostEvidenceRef
-  ].filter(Boolean).join(" · ") || "-";
-}
-
-function walletAfterLabel(row: AnyRecord = {}) {
-  return [
-    row.balanceCents != null ? `balanceCents ${row.balanceCents}` : "",
-    row.frozenCents != null ? `frozenCents ${row.frozenCents}` : "",
-    row.availableCents != null ? `availableCents ${row.availableCents}` : "",
-    row.totalSpentCents != null ? `totalSpentCents ${row.totalSpentCents}` : ""
-  ].filter(Boolean).join(" · ") || "-";
 }
 
 function costTagsLabel(tags: AnyRecord = {}) {
@@ -68,10 +39,11 @@ function costTagsLabel(tags: AnyRecord = {}) {
 
 export function AdminOverviewPage({ state, managementState = {}, adminOps }: any) {
   const failed = adminOps.operator?.runtimeOperations?.failed ?? 0;
-  const totalSpent = adminOps.operator?.accounts?.totalSpent ?? 0;
   const usersByAccount = new Map<string, AnyRecord>((managementState.users || []).map((user) => [user.accountId, user]));
-  const spendRows = (managementState.accounts || []).slice(0, 8);
+  const accountRows = (managementState.accounts || []).slice(0, 8);
   const resourceLedgerEvidence = managementState.resourceLedgerEvidence || [];
+  const monthlyResources = [...(state.computeAllocations || []), ...(state.storageVolumes || [])];
+  const reviewRequired = monthlyResources.filter((item) => item.billingStatus === "manual_review");
   const resourceAnomalies = adminOps.operator?.resourceAnomalies || [];
   const failedOperations = adminOps.operator?.failedOperations || adminOps.operator?.runtimeOperations?.recentFailed || [];
   const statusRows = [
@@ -79,28 +51,27 @@ export function AdminOverviewPage({ state, managementState = {}, adminOps }: any
     ...failedOperations.map((item) => ({ ...item, kind: item.operationType || "失败操作" }))
   ].slice(0, 8);
   return (
-    <ConsoleSurface title="管理概览" eyebrow="运营" subtitle="谁花了钱、买了什么、现在怎样">
+    <ConsoleSurface title="管理概览" eyebrow="运营" subtitle="账号映射、月度权益和运行状态">
       <MetricStrip
         items={[
-          { label: "账号", value: adminOps.operator?.accounts?.total ?? 0, caption: "托管计费账号", tone: "info" },
+          { label: "账号", value: accountRows.length, caption: "Console 账号", tone: "info" },
+          { label: "Sub2API 映射", value: accountRows.filter((row) => row.sub2apiUserId).length, caption: "余额归属", tone: "good" },
           { label: "买了什么", value: resourceLedgerEvidence.length || state.workspaces.length, caption: "资源和工作区", tone: "good" },
-          { label: "已消费金额", value: money(totalSpent), caption: "debited / totalSpent", tone: totalSpent ? "warn" : "neutral" },
-          { label: "现在怎样", value: resourceAnomalies.length + failed, caption: "异常和失败", tone: resourceAnomalies.length + failed ? "danger" : "good" },
-          { label: "冻结总额", value: money(adminOps.operator?.accounts?.frozen), caption: "全部账号", tone: "warn" }
+          { label: "人工复核", value: reviewRequired.length, caption: "manual_review", tone: reviewRequired.length ? "danger" : "good" },
+          { label: "运行异常", value: resourceAnomalies.length + failed, caption: "资源和操作", tone: resourceAnomalies.length + failed ? "danger" : "good" }
         ]}
       />
       <div className="consoleGrid equal">
-        <InsightPanel title="谁花了钱" eyebrow="账号">
+        <InsightPanel title="账号映射" eyebrow="Sub2API">
           <ObjectTable
             rowKey="id"
-            data={spendRows}
+            data={accountRows}
             emptyText="暂无账号"
             columns={[
               { title: "用户", render: (_, row) => usersByAccount.get(row.id)?.email || row.ownerEmail || "-" },
               { title: "账号", dataIndex: "id", ellipsis: true },
-              { title: "已花费", render: (_, row) => money(row.totalSpent ?? row.totalSpentCents ?? 0) },
-              { title: "余额", dataIndex: "balance", render: (value) => money(value) },
-              { title: "冻结", dataIndex: "frozen", render: (value) => money(value) }
+              { title: "Sub2API User", dataIndex: "sub2apiUserId", render: (value) => value || "未映射" },
+              { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "active"} tone={value === "active" ? "good" : "warn"} /> }
             ]}
           />
         </InsightPanel>
@@ -136,7 +107,7 @@ export function AdminOverviewPage({ state, managementState = {}, adminOps }: any
   );
 }
 
-export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUpForm, session, runAction }: any) {
+export function AdminUsersPage({ managementState, session, runAction }: any) {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [organizationOpen, setOrganizationOpen] = React.useState(false);
   const [memberOpen, setMemberOpen] = React.useState(false);
@@ -148,9 +119,7 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
     const account = accountsById.get(user.accountId) || {};
     return {
       ...user,
-      balance: account.balance ?? user.balance ?? 0,
-      frozen: account.frozen ?? user.frozen ?? 0,
-      totalRecharged: account.totalRecharged ?? user.totalRecharged ?? 0
+      sub2apiUserId: account.sub2apiUserId ?? user.sub2apiUserId
     };
   });
   const activeUsers = users.filter((user) => !["disabled", "deleted"].includes(user.status)).length;
@@ -158,7 +127,7 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
     <ConsoleSurface
       title="用户"
       eyebrow="管理"
-      subtitle="登录用户、组织成员、计费账号、钱包操作"
+      subtitle="登录用户、组织成员与 Sub2API 账号映射"
       extra={(
         <ActionGroup actions={[
           { label: "新建组织", onClick: () => setOrganizationOpen(true) },
@@ -180,7 +149,7 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
           ]}
         />
       </InsightPanel>
-      <InsightPanel title="用户钱包" eyebrow="管理">
+      <InsightPanel title="用户映射" eyebrow="管理">
         <MetricStrip
           items={[
             { label: "用户", value: users.length, caption: "登录用户", tone: users.length ? "info" : "neutral" },
@@ -197,18 +166,13 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
             { title: "用户", dataIndex: "email" },
             { title: "角色", dataIndex: "role", render: (value) => <StatusPill label={roleLabel(value)} tone={value === "admin" ? "info" : "good"} /> },
             { title: "账号", dataIndex: "accountId", render: (value) => <Typography.Text className="inlineCode">{value}</Typography.Text> },
-            { title: "余额", dataIndex: "balance", render: (value) => money(value) },
-            { title: "冻结", dataIndex: "frozen", render: (value) => money(value) },
+            { title: "Sub2API User", dataIndex: "sub2apiUserId", render: (value) => value || "未映射" },
             { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value} tone={value === "active" ? "good" : value === "deleted" ? "danger" : "warn"} /> },
             {
               title: "操作",
               valueType: "option",
               render: (_, row) => (
                 <ActionGroup actions={[
-                  { label: "充值", type: "primary", onClick: () => {
-                    topUpForm.setFieldsValue({ accountId: row.accountId, amount: undefined, reason: "" });
-                    setTopUpOpen(true);
-                  } },
                   <OperationConfirmButton
                     key="disable"
                     label="禁用"
@@ -243,7 +207,6 @@ export function AdminUsersPage({ managementState, topUpOpen, setTopUpOpen, topUp
       <CreateUserDrawer open={createOpen} setOpen={setCreateOpen} form={createForm} session={session} runAction={runAction} />
       <CreateOrganizationDrawer open={organizationOpen} setOpen={setOrganizationOpen} form={organizationForm} session={session} runAction={runAction} />
       <AddOrganizationMemberDrawer open={memberOpen} setOpen={setMemberOpen} form={memberForm} session={session} runAction={runAction} users={users} organizations={managementState.organizations || []} />
-      <TopUpDrawer open={topUpOpen} setOpen={setTopUpOpen} form={topUpForm} session={session} runAction={runAction} />
     </ConsoleSurface>
   );
 }
@@ -328,7 +291,7 @@ function CreateUserDrawer({ open, setOpen, form, session, runAction }: any) {
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ role: "pi", initialBalance: 0 }}
+        initialValues={{ role: "pi" }}
         onFinish={async (values) => {
           const created = await runAction(
             () => createUser(values, session.csrfToken),
@@ -361,8 +324,8 @@ function CreateUserDrawer({ open, setOpen, form, session, runAction }: any) {
         <Form.Item name="accountId" label="账号 ID" rules={[{ required: true, message: "请输入账号 ID" }]}>
           <Input placeholder="acct-lab-alpha" />
         </Form.Item>
-        <Form.Item name="initialBalance" label="初始余额">
-          <InputNumber min={0} className="fullWidth" />
+        <Form.Item name="sub2apiUserId" label="Sub2API User ID" rules={[{ required: true, message: "请输入 Sub2API User ID" }]}>
+          <InputNumber min={1} precision={0} className="fullWidth" />
         </Form.Item>
         <Button type="primary" htmlType="submit">创建用户</Button>
       </Form>
@@ -370,184 +333,62 @@ function CreateUserDrawer({ open, setOpen, form, session, runAction }: any) {
   );
 }
 
-function TopUpDrawer({ open, setOpen, form, session, runAction }: any) {
-  const topUpOperationKey = React.useRef("");
-  React.useEffect(() => {
-    if (open && !topUpOperationKey.current) topUpOperationKey.current = manualTopUpIdempotencyKey();
-    if (!open) topUpOperationKey.current = "";
-  }, [open]);
+export function AdminBillingPage({ state, managementState = {}, adminOps }: any) {
+  const resources = [
+    ...(state.computeAllocations || []).map((item) => ({ ...item, resourceType: "计算" })),
+    ...(state.storageVolumes || []).map((item) => ({ ...item, resourceType: "存储" }))
+  ];
+  const reviewRows = resources.filter((item) => ["manual_review", "past_due"].includes(item.billingStatus));
+  const accounts = managementState.accounts || [];
+  const reconciliation = state.billingReconciliation || adminOps.operator?.billingReconciliation || {};
   return (
-    <Drawer title="用户钱包充值" open={open} onClose={() => setOpen(false)} width={420}>
-      <Form form={form} layout="vertical" onFinish={async (values) => {
-        if (!topUpOperationKey.current) topUpOperationKey.current = manualTopUpIdempotencyKey();
-        const toppedUp = await runAction(
-          () => manualTopUp({
-            ...values,
-            operatorUserId: session.user?.id || "",
-            operatorAccountId: session.user?.accountId || "",
-            idempotencyKey: topUpOperationKey.current,
-            confirm: true
-          }, session.csrfToken),
-          "充值已记录",
-          { actionKey: "admin-manual-topup" }
-        );
-        if (toppedUp) {
-          topUpOperationKey.current = "";
-          setOpen(false);
-        }
-      }}>
-        <Form.Item name="accountId" label="账号" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="amount" label="金额" rules={[{ required: true }]}><InputNumber min={1} className="fullWidth" /></Form.Item>
-        <Form.Item name="reason" label="原因"><Input /></Form.Item>
-        <Button type="primary" htmlType="submit">确认充值</Button>
-      </Form>
-    </Drawer>
-  );
-}
-
-export function AdminBillingPage({ state, managementState, adminOps, session, runAction }: any) {
-  const [reconciliationOpen, setReconciliationOpen] = React.useState(false);
-  const [reconciliationForm] = Form.useForm();
-  const totalSpent = adminOps.operator?.accounts?.totalSpent ?? 0;
-  const reconciliationGuard = state.billingReconciliation?.guard || adminOps.operator?.billingReconciliation?.guard || {};
-  return (
-    <ConsoleSurface
-      title="账单运营"
-      eyebrow="管理"
-      subtitle="人工充值、资源结算、对账保护、钱包流水证据"
-      extra={(
-        <ActionGroup actions={[
-          <OperationConfirmButton
-            key="settle"
-            label="触发资源结算"
-            title="确认触发资源结算"
-            description="按当前活跃计算和存储生成资源扣费；释放冻结只降低 frozen，使可用余额增加，不会额外增加 balance。"
-            onConfirm={() => runAction(
-              () => settleResourceBilling({
-                hours: 1,
-                sourceEventId: `admin_resource_settlement:${Date.now()}`,
-                confirm: true
-              }, session.csrfToken),
-              "资源结算已记录",
-              { actionKey: "admin-resource-settlement" }
-            )}
-          />,
-          { label: "记录对账", type: "primary", onClick: () => setReconciliationOpen(true) }
-        ]} />
-      )}
-    >
+    <ConsoleSurface title="账单运营" eyebrow="管理" subtitle="Sub2API 映射、月度权益与异常复核">
       <MetricStrip
         items={[
-          { label: "已消费金额", value: money(totalSpent), caption: "totalSpent / debited", tone: totalSpent ? "warn" : "neutral" },
-          { label: "最近对账", value: reconciliationGuard.status || "not_required", caption: reconciliationGuard.reason || "阻塞原因：无", tone: reconciliationGuard.blockNewWorkspaces ? "danger" : "good" },
-          { label: "冻结释放", value: "可用余额增加", caption: "释放冻结降低 frozen，不增加 balance", tone: "info" }
+          { label: "账号映射", value: accounts.filter((row) => row.sub2apiUserId).length, caption: "Sub2API User", tone: "good" },
+          { label: "月度资源", value: resources.length, caption: "计算与存储", tone: resources.length ? "info" : "neutral" },
+          { label: "人工复核", value: reviewRows.length, caption: "manual_review / past_due", tone: reviewRows.length ? "danger" : "good" },
+          { label: "对账状态", value: reconciliation.status || reconciliation.guard?.status || "ok", caption: reconciliation.reason || reconciliation.guard?.reason || "无异常", tone: reconciliation.blockNewWorkspaces || reconciliation.guard?.blockNewWorkspaces ? "danger" : "good" }
         ]}
       />
       <div className="consoleGrid equal">
-        <InsightPanel title="手工充值记录" eyebrow="充值">
-          <TimelineList
-            emptyText="暂无充值记录"
-            items={(state.manualTopups || []).slice(-8).reverse().map((event) => ({
-              title: event.targetAccountId,
-              description: [
-                event.reason || event.id,
-                event.operatorUserId || event.operatorAccountId ? `operator ${event.operatorUserId || event.operatorAccountId}` : "",
-                event.ledgerEntryId ? `ledgerEntryId ${event.ledgerEntryId}` : "",
-                event.walletTransactionId ? `walletTransactionId ${event.walletTransactionId}` : "",
-                event.balanceBefore != null ? `${money(event.balanceBefore)} -> ${money(event.balanceAfter)}` : ""
-              ].filter(Boolean).join(" · "),
-              meta: money(event.amount),
-              tone: "good"
-            }))}
+        <InsightPanel title="账号映射" eyebrow="Sub2API">
+          <ObjectTable
+            data={accounts}
+            emptyText="暂无账号"
+            columns={[
+              { title: "Console 账号", dataIndex: "id", ellipsis: true },
+              { title: "Sub2API User", dataIndex: "sub2apiUserId", render: (value) => value || "未映射" },
+              { title: "状态", dataIndex: "status", render: (value) => <StatusPill label={value || "active"} tone={value === "active" ? "good" : "warn"} /> }
+            ]}
           />
         </InsightPanel>
-        <InsightPanel title="钱包流水" eyebrow="流水">
-          <TimelineList
-            emptyText="暂无钱包流水"
-            items={(state.walletTransactions || []).slice(-8).reverse().map((event) => ({
-              title: event.type,
-              description: `${event.accountId || ""} · ${walletAfterLabel(event)}`,
-              meta: money(event.amount),
-              tone: Number(event.amount || 0) < 0 ? "warn" : "good"
-            }))}
-          />
-        </InsightPanel>
-        <InsightPanel title="操作审计" eyebrow="审计">
-          <TimelineList
-            emptyText="暂无操作审计"
-            items={(managementState.auditEvents || []).slice(-8).reverse().map((event) => ({
-              title: event.action,
-              description: [
-                event.targetAccountId || event.actorAccountId,
-                event.resourceKind && event.resourceId ? `${event.resourceKind} ${event.resourceId}` : "",
-                event.actorUserId ? `actor ${event.actorUserId}` : "",
-                event.result
-              ].filter(Boolean).join(" · "),
-              meta: event.createdAt,
-              tone: event.result === "succeeded" ? "good" : "warn"
-            }))}
+        <InsightPanel title="异常复核" eyebrow="月度权益">
+          <ObjectTable
+            data={reviewRows}
+            emptyText="暂无待复核资源"
+            columns={[
+              { title: "类型", dataIndex: "resourceType" },
+              { title: "资源", render: (_, row) => row.name || row.id },
+              { title: "状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={valueLabel(value)} tone="danger" /> },
+              { title: "错误", dataIndex: "lastBillingError", ellipsis: true },
+              { title: "扣款", dataIndex: "chargeUsdMicros", render: (value) => usdMicros(value) }
+            ]}
           />
         </InsightPanel>
       </div>
-      <ReconciliationDrawer open={reconciliationOpen} setOpen={setReconciliationOpen} form={reconciliationForm} session={session} runAction={runAction} />
+      <InsightPanel title="操作审计" eyebrow="审计">
+        <TimelineList
+          emptyText="暂无操作审计"
+          items={(managementState.auditEvents || []).slice(-8).reverse().map((event) => ({
+            title: event.action,
+            description: [event.targetAccountId || event.actorAccountId, event.resourceKind && event.resourceId ? `${event.resourceKind} ${event.resourceId}` : "", event.result].filter(Boolean).join(" · "),
+            meta: event.createdAt,
+            tone: event.result === "succeeded" ? "good" : "warn"
+          }))}
+        />
+      </InsightPanel>
     </ConsoleSurface>
-  );
-}
-
-function ReconciliationDrawer({ open, setOpen, form, session, runAction }: any) {
-  return (
-    <Drawer title="记录账务对账" open={open} onClose={() => setOpen(false)} width={520}>
-      <Form
-        form={form}
-        layout="vertical"
-        initialValues={{ status: "ok", reason: "operator_reconciliation", blockNewWorkspaces: false }}
-        onFinish={async (values) => {
-          const recorded = await runAction(
-            () => recordBillingReconciliation({
-              source: "operator",
-              confirm: true,
-              report: {
-                id: `operator-reconciliation-${Date.now()}`,
-                generatedAt: new Date().toISOString(),
-                guard: {
-                  status: values.status,
-                  reason: values.reason,
-                  blockNewWorkspaces: values.blockNewWorkspaces === true
-                }
-              }
-            }, session.csrfToken),
-            "对账已记录",
-            { actionKey: "admin-billing-reconciliation" }
-          );
-          if (recorded) {
-            form.resetFields();
-            setOpen(false);
-          }
-        }}
-      >
-        <Form.Item name="status" label="对账状态" rules={[{ required: true }]}>
-          <Select
-            options={[
-              { label: "通过", value: "ok" },
-              { label: "阻塞", value: "blocked" },
-              { label: "需复核", value: "review_required" }
-            ]}
-          />
-        </Form.Item>
-        <Form.Item name="reason" label="阻塞原因 / 处理说明" rules={[{ required: true }]}>
-          <Input.TextArea rows={4} placeholder="写清楚最近对账结果、阻塞原因或处理入口" />
-        </Form.Item>
-        <Form.Item name="blockNewWorkspaces" label="是否阻塞新工作区">
-          <Select
-            options={[
-              { label: "不阻塞", value: false },
-              { label: "阻塞", value: true }
-            ]}
-          />
-        </Form.Item>
-        <Button type="primary" htmlType="submit">记录对账</Button>
-      </Form>
-    </Drawer>
   );
 }
 
@@ -566,21 +407,23 @@ export function AdminFabricPage() {
 }
 
 export function AdminLedgerPage({ state }: any) {
+  const receipts = state.billingReceipts || [];
   return (
-    <ConsoleSurface title="账本" eyebrow="管理" subtitle="账单证据">
-      <InsightPanel title="账务事件" eyebrow="证据">
+    <ConsoleSurface title="账本" eyebrow="管理" subtitle="月度购买与续费 Receipt">
+      <InsightPanel title="Billing Receipt" eyebrow="只读证据">
         <ObjectTable
-          rowKey="id"
+          rowKey={(row) => row.receiptId || row.id}
           pagination={{ pageSize: 8 }}
-          data={state.billingLedger || []}
-          emptyText="暂无账务事件"
+          data={receipts}
+          emptyText="暂无 Billing Receipt"
           columns={[
-            { title: "事件", dataIndex: "type" },
+            { title: "Receipt", render: (_, row) => row.receiptId || row.id },
+            { title: "事件", render: (_, row) => row.type || row.receiptType },
             { title: "账号", dataIndex: "accountId", ellipsis: true },
             { title: "工作区", dataIndex: "workspaceId", ellipsis: true },
-            { title: "价格快照", render: (_, row) => <Typography.Text className="inlineCode">{priceSnapshotLabel(row)}</Typography.Text> },
-            { title: "成本证据", dataIndex: "providerCostEvidenceRef", ellipsis: true },
-            { title: "金额", render: (_, row) => money(moneyValue(row)) }
+            { title: "参考月价", render: (_, row) => moneyCents(row.monthlyPriceCnyCents || row.cost?.monthlyPriceCnyCents) },
+            { title: "钱包扣款", render: (_, row) => usdMicros(row.chargeUsdMicros || row.cost?.chargeUsdMicros) },
+            { title: "有效期至", render: (_, row) => paidThrough(row.paidThrough || row.cost?.paidThrough) }
           ]}
         />
       </InsightPanel>
@@ -689,8 +532,7 @@ export function AdminDiagnosticsPage({ managementState, adminOps }: any) {
             { title: "存储 ID", dataIndex: "storageId", width: 170, ellipsis: true },
             { title: "挂载 ID", dataIndex: "attachmentId", width: 170, ellipsis: true },
             { title: "存储 provider", dataIndex: "storageProviderId", width: 190, ellipsis: true, render: (value) => <Typography.Text copyable className="inlineCode">{value || "-"}</Typography.Text> },
-            { title: "账本", dataIndex: "ledgerEntryIds", width: 190, ellipsis: true, render: (value) => (value || []).join(", ") || "-" },
-            { title: "钱包流水", dataIndex: "walletTransactionIds", width: 190, ellipsis: true, render: (value) => (value || []).join(", ") || "-" },
+            { title: "Receipt", dataIndex: "receiptIds", width: 190, ellipsis: true, render: (value, row) => (value || [row.lastReceiptId]).filter(Boolean).join(", ") || "-" },
             { title: "Operation", dataIndex: "operationId", width: 170, ellipsis: true },
             { title: "Cost tags", dataIndex: "costTags", width: 260, ellipsis: true, render: (value) => <Typography.Text className="inlineCode">{costTagsLabel(value)}</Typography.Text> },
             { title: "状态", dataIndex: "status", width: 95, render: (value) => <StatusPill label={value} tone={value === "failed" ? "danger" : "info"} /> },

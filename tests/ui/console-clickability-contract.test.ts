@@ -60,12 +60,10 @@ test("workspace and support click targets are route/action registry backed", () 
     "workspace.resetUrl",
     "workspace.enableUrl",
     "workspace.deleteUrl",
-    "billing.wallet",
+    "billing.overview",
     "support.create",
     "support.detail",
-    "admin.manualTopup",
-    "admin.userCreate",
-    "admin.userWallet.disabled"
+    "admin.userCreate"
   ]) {
     assert.ok(actionsById.has(id), `missing action ${id}`);
   }

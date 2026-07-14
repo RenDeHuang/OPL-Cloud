@@ -1,23 +1,43 @@
 package server
 
-import "context"
-import "net/http"
-import "time"
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
+)
+
+func (app *controlPlaneServer) cleanupComputeResource(ctx context.Context, service *controlplane.Service, computeID, key string) (clients.ComputeAllocation, error) {
+	for _, workspace := range app.listWorkspaces("") {
+		if stringValue(workspace["currentComputeAllocationId"]) != computeID && stringValue(workspace["computeAllocationId"]) != computeID {
+			continue
+		}
+		workspaceID := stringValue(workspace["id"])
+		if _, err := service.CleanupWorkspaceRuntime(ctx, workspaceID, key+":runtime:"+workspaceID); err != nil {
+			return clients.ComputeAllocation{}, err
+		}
+		workspace["state"], workspace["status"] = "suspended", "suspended"
+		workspace["currentComputeAllocationId"], workspace["computeAllocationId"] = "", ""
+		workspace["runtimeId"], workspace["runtimeServiceName"], workspace["serviceName"] = "", "", ""
+		workspace["runtime"] = map[string]any{}
+		access := cloneMap(mapField(workspace, "access"))
+		access["tokenStatus"], access["requiresLogin"] = "suspended", false
+		workspace["access"] = access
+		if err := app.tables.SaveWorkspace(ctx, workspace); err != nil {
+			return clients.ComputeAllocation{}, err
+		}
+	}
+	return service.CleanupMonthlyCompute(ctx, computeID, key)
+}
 
 func (app *controlPlaneServer) saveComputeFact(allocation any) error {
 	if row, ok := allocation.(map[string]any); ok {
-		accountID := stringValue(row["accountId"])
 		if isTerminalResourceStatus(stringValue(row["status"])) {
-			if err := app.saveReleaseProjection(accountID, "compute", stringValue(row["id"]), row); err != nil {
-				return err
-			}
 			if err := app.suspendWorkspacesForCompute(stringValue(row["id"])); err != nil {
 				return err
 			}
-			return app.tables.SaveCompute(context.Background(), row)
-		}
-		if err := app.saveHoldProjection(accountID, "compute", stringValue(row["id"]), row); err != nil {
-			return err
 		}
 		return app.tables.SaveCompute(context.Background(), row)
 	}
@@ -26,66 +46,14 @@ func (app *controlPlaneServer) saveComputeFact(allocation any) error {
 
 func (app *controlPlaneServer) saveStorageFact(volume any) error {
 	if row, ok := volume.(map[string]any); ok {
-		accountID := stringValue(row["accountId"])
 		if isTerminalResourceStatus(stringValue(row["status"])) {
-			if err := app.saveReleaseProjection(accountID, "storage", stringValue(row["id"]), row); err != nil {
-				return err
-			}
 			if err := app.markWorkspacesStorageDestroyed(stringValue(row["id"])); err != nil {
 				return err
 			}
-			return app.tables.SaveStorage(context.Background(), row)
-		}
-		if err := app.saveHoldProjection(accountID, "storage", stringValue(row["id"]), row); err != nil {
-			return err
 		}
 		return app.tables.SaveStorage(context.Background(), row)
 	}
 	return nil
-}
-
-func (app *controlPlaneServer) saveHoldProjection(accountID string, resourceType string, resourceID string, row map[string]any) error {
-	holdID := stringValue(row["holdId"])
-	if accountID == "" || holdID == "" {
-		return nil
-	}
-	if wallet, ok := row["wallet"].(map[string]any); ok {
-		ledgerWallet := walletFromMap(wallet)
-		if ledgerWallet.AccountID != "" {
-			if err := app.tables.SaveWallet(context.Background(), walletProjection(ledgerWallet)); err != nil {
-				return err
-			}
-		}
-	}
-	ledger := map[string]any{"id": holdID, "accountId": accountID, "type": resourceType + "_hold", "resourceId": resourceID, "amountCents": int64(numberField(row, "holdAmountCents", 0))}
-	if resourceType == "storage" {
-		ledger["storageId"] = resourceID
-	} else {
-		ledger["computeAllocationId"] = resourceID
-	}
-	return app.tables.SaveLedgerEntry(context.Background(), ledger)
-}
-
-func (app *controlPlaneServer) saveReleaseProjection(accountID string, resourceType string, resourceID string, row map[string]any) error {
-	releaseID := stringValue(row["holdReleaseId"])
-	if accountID == "" || releaseID == "" {
-		return nil
-	}
-	if wallet, ok := row["wallet"].(map[string]any); ok {
-		ledgerWallet := walletFromMap(wallet)
-		if ledgerWallet.AccountID != "" {
-			if err := app.tables.SaveWallet(context.Background(), walletProjection(ledgerWallet)); err != nil {
-				return err
-			}
-		}
-	}
-	ledger := map[string]any{"id": releaseID, "accountId": accountID, "type": resourceType + "_hold_released", "resourceId": resourceID, "amountCents": int64(numberField(row, "holdAmountCents", 0))}
-	if resourceType == "storage" {
-		ledger["storageId"] = resourceID
-	} else {
-		ledger["computeAllocationId"] = resourceID
-	}
-	return app.tables.SaveLedgerEntry(context.Background(), ledger)
 }
 
 func (app *controlPlaneServer) saveAttachmentFact(attachment any, input map[string]any) error {
@@ -157,17 +125,6 @@ func providerSyncFacts(row map[string]any, err error) map[string]any {
 		return out
 	}
 	out["providerStatus"] = firstNonEmpty(status, "running")
-	return out
-}
-
-func billingActivationFacts(previous, current map[string]any, now time.Time) map[string]any {
-	out := cloneMap(current)
-	if billingStatusFor(previous) == "active" || billingStatusFor(out) != "active" || stringValue(out["billingNextSettlementAt"]) != "" {
-		return out
-	}
-	activatedAt := now.UTC()
-	out["billingActivatedAt"] = activatedAt.Format(time.RFC3339)
-	out["billingNextSettlementAt"] = activatedAt.Add(time.Hour).Format(time.RFC3339)
 	return out
 }
 

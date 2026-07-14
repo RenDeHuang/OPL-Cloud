@@ -2,9 +2,9 @@ import { defaultLaunchConfig, isFeatureEnabled } from "../config/launch-config.t
 
 type AnyRecord = Record<string, any>;
 
-const computeAllocationStages = Object.freeze(["已提交", "冻结余额", "云资源创建中", "Runtime 部署中", "存储挂载中", "URL 可用"]);
-const storageCreateStages = Object.freeze(["已提交", "冻结余额", "存储创建中", "可挂载"]);
-const storageDestroyStages = Object.freeze(["已提交", "释放冻结", "销毁存储", "已删除"]);
+const computeAllocationStages = Object.freeze(["已提交", "云资源准备中", "余额扣款中", "月度权益已激活", "Runtime 部署中", "URL 可用"]);
+const storageCreateStages = Object.freeze(["已提交", "存储准备中", "余额扣款中", "月度权益已激活", "可挂载"]);
+const storageDestroyStages = Object.freeze(["已提交", "停止续费", "销毁存储", "已删除"]);
 const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
 const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
 const workspaceEntryStages = Object.freeze(["已提交", "生成 URL", "URL 可用"]);
@@ -108,6 +108,10 @@ const computeAllocationFields = Object.freeze([
   "privateIp",
   "publicIp",
   "billingStatus",
+  "monthlyPriceCnyCents",
+  "chargeUsdMicros",
+  "paidThrough",
+  "autoRenew",
   "workspaceId",
   "status",
   "operationId",
@@ -137,7 +141,10 @@ const storageVolumeFields = Object.freeze([
   "sizeGb",
   "storageClassId",
   "providerResourceId",
-  "hourlyEstimate",
+  "monthlyPriceCnyCents",
+  "chargeUsdMicros",
+  "paidThrough",
+  "autoRenew",
   "billingStatus",
   "status",
   "operationId",
@@ -146,11 +153,14 @@ const storageVolumeFields = Object.freeze([
 ]);
 
 const billingFields = Object.freeze([
-  "availableBalance",
-  "frozenBalance",
-  "activeHourlyEstimate",
-  "nextSettlementAt",
-  "runningDuration"
+  "balance.source",
+  "balance.currency",
+  "balance.usdMicros",
+  "monthlyPriceCnyCents",
+  "chargeUsdMicros",
+  "paidThrough",
+  "autoRenew",
+  "billingStatus"
 ]);
 
 function currentRoute(route) {
@@ -540,32 +550,13 @@ export const oplRoutes = Object.freeze([
     hiddenInMenu: true,
     featureFlag: "billing",
     routeKind: "read_model",
-    objectKind: "Wallet",
+    objectKind: "MonthlyEntitlement",
     pageModule: "apps/console-ui/src/pages/billing/BillingPage.tsx",
-    apiClient: "apps/console-ui/src/api/billing-api.ts",
+    apiClient: "apps/console-ui/src/api/console-read-api.ts",
     apiRoutes: ["GET /api/state"],
-    serviceBoundary: "WalletService",
+    serviceBoundary: "ConsoleBillingProjection",
     dynamicFields: billingFields,
     capabilities: ["read", "list", "detail"]
-  }),
-  currentRoute({
-    id: "billing.wallet",
-    path: "/console/billing/wallet",
-    label: "钱包与冻结",
-    area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "billing",
-    status: "folded_into_parent",
-    contractLifecycle: "folded_parent",
-    routeKind: "read_model",
-    objectKind: "Wallet",
-    pageModule: "apps/console-ui/src/pages/billing/BillingPage.tsx",
-    apiClient: "apps/console-ui/src/api/billing-api.ts",
-    apiRoutes: ["GET /api/state"],
-    serviceBoundary: "WalletService",
-    dynamicFields: billingFields,
-    capabilities: ["read", "detail"]
   }),
   currentRoute({
     id: "account.overview",
@@ -684,7 +675,7 @@ export const oplRoutes = Object.freeze([
     objectKind: "User",
     pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
     apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/management/state", "POST /api/organizations", "POST /api/organizations/members", "POST /api/users", "POST /api/users/disable", "POST /api/users/delete", "POST /api/billing/topups"],
+    apiRoutes: ["GET /api/management/state", "POST /api/organizations", "POST /api/organizations/members", "POST /api/users", "POST /api/users/disable", "POST /api/users/delete"],
     serviceBoundary: "ManagementModel",
     capabilities: ["list", "read", "write", "action", "audit"]
   }),
@@ -695,14 +686,13 @@ export const oplRoutes = Object.freeze([
     area: "admin",
     role: "admin",
     adminMenu: true,
-    featureFlag: "manualTopup",
     routeKind: "read_model",
-    objectKind: "Wallet",
+    objectKind: "MonthlyEntitlement",
     pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/billing-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/billing/topups", "POST /api/billing/resource-settlements", "POST /api/billing/reconciliation"],
-    serviceBoundary: "WalletService",
-    capabilities: ["read", "list", "action", "audit"]
+    apiClient: "apps/console-ui/src/api/console-read-api.ts",
+    apiRoutes: ["GET /api/state", "GET /api/management/state"],
+    serviceBoundary: "ConsoleBillingProjection",
+    capabilities: ["read", "list", "audit"]
   }),
   currentRoute({
     id: "admin.ledger",
@@ -714,7 +704,7 @@ export const oplRoutes = Object.freeze([
     adminMenu: true,
     featureFlag: "ledgerAdmin",
     routeKind: "read_model",
-    objectKind: "LedgerEntry",
+    objectKind: "EvidenceReceipt",
     pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
     apiClient: "apps/console-ui/src/api/console-read-api.ts",
     apiRoutes: ["GET /api/state"],

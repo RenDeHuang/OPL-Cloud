@@ -1,12 +1,12 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "owner": "OPL Platform Architecture",
-  "purpose": "Target ownership contract for Console UI, Control Plane, Ledger, Fabric, and the external Gateway boundary.",
+  "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
-  "machineBoundary": "Service ownership, persistence, cloud SDK ownership, external Gateway evidence handoff, migration, runtime marker, and evidence secret rules.",
+  "machineBoundary": "Service ownership, persistence, cloud SDK ownership, Sub2API balance access, and evidence rules.",
   "lifecycle": {
     "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current service-boundary contract after all callers and deployments move to the new boundary."
+    "removalCondition": "Replace only with a newer current service-boundary contract."
   },
   "services": {
     "consoleUi": {
@@ -27,6 +27,8 @@
         "organizations",
         "memberships",
         "workspaces",
+        "monthlyEntitlements",
+        "billingOperations",
         "projectTaskSyncHeads",
         "executionRequests",
         "approvals",
@@ -35,7 +37,8 @@
       ],
       "calls": {
         "ledger": "http",
-        "fabric": "http"
+        "fabric": "http",
+        "sub2api": "http"
       }
     },
     "ledger": {
@@ -43,11 +46,6 @@
       "language": "go",
       "persistence": "postgresql",
       "owns": [
-        "wallets",
-        "holds",
-        "manualTopups",
-        "ledgerEntries",
-        "walletTransactions",
         "evidenceReceipts",
         "artifactManifests",
         "reviewResults",
@@ -86,22 +84,24 @@
   },
   "externalServices": {
     "gateway": {
-      "repository": "opl-gateway",
+      "product": "Sub2API",
+      "origin": "https://gflabtoken.cn",
       "owns": [
-        "gatewayKeys",
+        "spendableBalances",
+        "apiKeys",
         "routePolicies",
         "modelPolicies",
         "usageEvents"
       ],
-      "calls": {
-        "ledger": "evidence_api"
-      },
-      "evidenceSink": "ledger"
+      "controlPlaneApi": [
+        "read balance",
+        "create and redeem adjustment"
+      ]
     }
   },
   "migration": {
     "compatibilityLayer": "forbidden",
-    "allowedBridge": "one_time_state_migration_only",
+    "allowedBridge": "none_fresh_database",
     "retireNodeApi": true,
     "retireNodeStore": true
   },
@@ -117,21 +117,14 @@
     ],
     "controlPlane": [
       "tencentcloud",
-      "kubernetes/client-go",
-      "ledger_entries INSERT",
-      "manual_topups INSERT",
-      "wallet_transactions INSERT"
+      "kubernetes/client-go"
     ],
     "ledger": [
       "tencentcloud",
       "kubernetes/client-go",
       "workspace runtime deployment"
     ],
-    "fabric": [
-      "manual_topups",
-      "wallet_transactions",
-      "ledger_entries"
-    ]
+    "fabric": []
   },
   "secretPolicy": {
     "forbiddenEvidenceMarkers": [
@@ -159,8 +152,9 @@
       "tokenVersion",
       "redactedUrl",
       "providerRequestId",
-      "ledgerEntryId",
-      "operationId"
+      "operationId",
+      "sub2apiUserId",
+      "sub2apiRedeemCode"
     ]
   }
 }

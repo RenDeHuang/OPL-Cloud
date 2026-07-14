@@ -21,6 +21,8 @@ type EvidenceReceipt struct {
 	ReceiptType string `json:"receipt_type,omitempty"`
 	// Status holds the value of the "status" field.
 	Status string `json:"status,omitempty"`
+	// AccountID holds the value of the "account_id" field.
+	AccountID string `json:"account_id,omitempty"`
 	// OrganizationID holds the value of the "organization_id" field.
 	OrganizationID string `json:"organization_id,omitempty"`
 	// WorkspaceID holds the value of the "workspace_id" field.
@@ -55,7 +57,7 @@ func (*EvidenceReceipt) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case evidencereceipt.FieldID, evidencereceipt.FieldReceiptType, evidencereceipt.FieldStatus, evidencereceipt.FieldOrganizationID, evidencereceipt.FieldWorkspaceID, evidencereceipt.FieldProjectID, evidencereceipt.FieldTaskID, evidencereceipt.FieldJobID, evidencereceipt.FieldPayloadJSON, evidencereceipt.FieldSupersedesReceiptID, evidencereceipt.FieldProviderRequestID, evidencereceipt.FieldRedactedURL, evidencereceipt.FieldTokenVersion, evidencereceipt.FieldIdempotencyKey, evidencereceipt.FieldRequestHash:
+		case evidencereceipt.FieldID, evidencereceipt.FieldReceiptType, evidencereceipt.FieldStatus, evidencereceipt.FieldAccountID, evidencereceipt.FieldOrganizationID, evidencereceipt.FieldWorkspaceID, evidencereceipt.FieldProjectID, evidencereceipt.FieldTaskID, evidencereceipt.FieldJobID, evidencereceipt.FieldPayloadJSON, evidencereceipt.FieldSupersedesReceiptID, evidencereceipt.FieldProviderRequestID, evidencereceipt.FieldRedactedURL, evidencereceipt.FieldTokenVersion, evidencereceipt.FieldIdempotencyKey, evidencereceipt.FieldRequestHash:
 			values[i] = new(sql.NullString)
 		case evidencereceipt.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -91,6 +93,12 @@ func (er *EvidenceReceipt) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field status", values[i])
 			} else if value.Valid {
 				er.Status = value.String
+			}
+		case evidencereceipt.FieldAccountID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field account_id", values[i])
+			} else if value.Valid {
+				er.AccountID = value.String
 			}
 		case evidencereceipt.FieldOrganizationID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -211,6 +219,9 @@ func (er *EvidenceReceipt) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("status=")
 	builder.WriteString(er.Status)
+	builder.WriteString(", ")
+	builder.WriteString("account_id=")
+	builder.WriteString(er.AccountID)
 	builder.WriteString(", ")
 	builder.WriteString("organization_id=")
 	builder.WriteString(er.OrganizationID)

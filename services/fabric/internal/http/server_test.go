@@ -309,6 +309,24 @@ func TestCreateComputeAllocationHTTPRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestResourceBoundaryHTTPReturnsBadRequest(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	for _, tc := range []struct{ name, path, body string }{
+		{name: "package", path: "/fabric/compute-allocations", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"enterprise"}`},
+		{name: "storage", path: "/fabric/storage-volumes", body: `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":15}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := testRequest(http.MethodPost, tc.path, bytes.NewBufferString(tc.body))
+			req.Header.Set("Idempotency-Key", "invalid-"+tc.name)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	server := NewServer(service, "internal-secret")

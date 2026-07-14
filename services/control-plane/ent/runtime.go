@@ -15,12 +15,8 @@ import (
 	"opl-cloud/services/control-plane/ent/billingreconciliation"
 	"opl-cloud/services/control-plane/ent/computeallocation"
 	"opl-cloud/services/control-plane/ent/executionrequest"
-	"opl-cloud/services/control-plane/ent/ledgerprojection"
-	"opl-cloud/services/control-plane/ent/manualtopupprojection"
 	"opl-cloud/services/control-plane/ent/membership"
 	"opl-cloud/services/control-plane/ent/organization"
-	"opl-cloud/services/control-plane/ent/pricingcatalog"
-	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/ent/productione2erecord"
 	"opl-cloud/services/control-plane/ent/projecttasksynchead"
 	"opl-cloud/services/control-plane/ent/runtimeoperation"
@@ -30,8 +26,6 @@ import (
 	"opl-cloud/services/control-plane/ent/storagevolume"
 	"opl-cloud/services/control-plane/ent/supportticketmapping"
 	"opl-cloud/services/control-plane/ent/user"
-	"opl-cloud/services/control-plane/ent/walletprojection"
-	"opl-cloud/services/control-plane/ent/wallettransactionprojection"
 	"opl-cloud/services/control-plane/ent/workspace"
 	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
@@ -58,12 +52,16 @@ func init() {
 	accountDescOwnerUserID := accountFields[3].Descriptor()
 	// account.DefaultOwnerUserID holds the default value on creation for the owner_user_id field.
 	account.DefaultOwnerUserID = accountDescOwnerUserID.Default.(string)
+	// accountDescSub2apiUserID is the schema descriptor for sub2api_user_id field.
+	accountDescSub2apiUserID := accountFields[4].Descriptor()
+	// account.DefaultSub2apiUserID holds the default value on creation for the sub2api_user_id field.
+	account.DefaultSub2apiUserID = accountDescSub2apiUserID.Default.(int64)
 	// accountDescName is the schema descriptor for name field.
-	accountDescName := accountFields[4].Descriptor()
+	accountDescName := accountFields[5].Descriptor()
 	// account.DefaultName holds the default value on creation for the name field.
 	account.DefaultName = accountDescName.Default.(string)
 	// accountDescStatus is the schema descriptor for status field.
-	accountDescStatus := accountFields[5].Descriptor()
+	accountDescStatus := accountFields[6].Descriptor()
 	// account.DefaultStatus holds the default value on creation for the status field.
 	account.DefaultStatus = accountDescStatus.Default.(string)
 	// accountDescID is the schema descriptor for id field.
@@ -550,102 +548,50 @@ func init() {
 	computeallocationDescBillingStatus := computeallocationFields[18].Descriptor()
 	// computeallocation.DefaultBillingStatus holds the default value on creation for the billing_status field.
 	computeallocation.DefaultBillingStatus = computeallocationDescBillingStatus.Default.(string)
-	// computeallocationDescHoldID is the schema descriptor for hold_id field.
-	computeallocationDescHoldID := computeallocationFields[19].Descriptor()
-	// computeallocation.DefaultHoldID holds the default value on creation for the hold_id field.
-	computeallocation.DefaultHoldID = computeallocationDescHoldID.Default.(string)
-	// computeallocationDescHoldReleaseID is the schema descriptor for hold_release_id field.
-	computeallocationDescHoldReleaseID := computeallocationFields[20].Descriptor()
-	// computeallocation.DefaultHoldReleaseID holds the default value on creation for the hold_release_id field.
-	computeallocation.DefaultHoldReleaseID = computeallocationDescHoldReleaseID.Default.(string)
-	// computeallocationDescSettlementID is the schema descriptor for settlement_id field.
-	computeallocationDescSettlementID := computeallocationFields[21].Descriptor()
-	// computeallocation.DefaultSettlementID holds the default value on creation for the settlement_id field.
-	computeallocation.DefaultSettlementID = computeallocationDescSettlementID.Default.(string)
-	// computeallocationDescLedgerEntryID is the schema descriptor for ledger_entry_id field.
-	computeallocationDescLedgerEntryID := computeallocationFields[22].Descriptor()
-	// computeallocation.DefaultLedgerEntryID holds the default value on creation for the ledger_entry_id field.
-	computeallocation.DefaultLedgerEntryID = computeallocationDescLedgerEntryID.Default.(string)
-	// computeallocationDescWalletTransactionID is the schema descriptor for wallet_transaction_id field.
-	computeallocationDescWalletTransactionID := computeallocationFields[23].Descriptor()
-	// computeallocation.DefaultWalletTransactionID holds the default value on creation for the wallet_transaction_id field.
-	computeallocation.DefaultWalletTransactionID = computeallocationDescWalletTransactionID.Default.(string)
 	// computeallocationDescPricingVersion is the schema descriptor for pricing_version field.
-	computeallocationDescPricingVersion := computeallocationFields[24].Descriptor()
+	computeallocationDescPricingVersion := computeallocationFields[19].Descriptor()
 	// computeallocation.DefaultPricingVersion holds the default value on creation for the pricing_version field.
 	computeallocation.DefaultPricingVersion = computeallocationDescPricingVersion.Default.(string)
-	// computeallocationDescUsagePeriodEnd is the schema descriptor for usage_period_end field.
-	computeallocationDescUsagePeriodEnd := computeallocationFields[25].Descriptor()
-	// computeallocation.DefaultUsagePeriodEnd holds the default value on creation for the usage_period_end field.
-	computeallocation.DefaultUsagePeriodEnd = computeallocationDescUsagePeriodEnd.Default.(string)
+	// computeallocationDescBillingOperationID is the schema descriptor for billing_operation_id field.
+	computeallocationDescBillingOperationID := computeallocationFields[20].Descriptor()
+	// computeallocation.DefaultBillingOperationID holds the default value on creation for the billing_operation_id field.
+	computeallocation.DefaultBillingOperationID = computeallocationDescBillingOperationID.Default.(string)
+	// computeallocationDescBillingStateJSON is the schema descriptor for billing_state_json field.
+	computeallocationDescBillingStateJSON := computeallocationFields[21].Descriptor()
+	// computeallocation.DefaultBillingStateJSON holds the default value on creation for the billing_state_json field.
+	computeallocation.DefaultBillingStateJSON = computeallocationDescBillingStateJSON.Default.(string)
 	// computeallocationDescEvidenceID is the schema descriptor for evidence_id field.
-	computeallocationDescEvidenceID := computeallocationFields[26].Descriptor()
+	computeallocationDescEvidenceID := computeallocationFields[22].Descriptor()
 	// computeallocation.DefaultEvidenceID holds the default value on creation for the evidence_id field.
 	computeallocation.DefaultEvidenceID = computeallocationDescEvidenceID.Default.(string)
 	// computeallocationDescCvmInstanceID is the schema descriptor for cvm_instance_id field.
-	computeallocationDescCvmInstanceID := computeallocationFields[27].Descriptor()
+	computeallocationDescCvmInstanceID := computeallocationFields[23].Descriptor()
 	// computeallocation.DefaultCvmInstanceID holds the default value on creation for the cvm_instance_id field.
 	computeallocation.DefaultCvmInstanceID = computeallocationDescCvmInstanceID.Default.(string)
 	// computeallocationDescInstanceID is the schema descriptor for instance_id field.
-	computeallocationDescInstanceID := computeallocationFields[28].Descriptor()
+	computeallocationDescInstanceID := computeallocationFields[24].Descriptor()
 	// computeallocation.DefaultInstanceID holds the default value on creation for the instance_id field.
 	computeallocation.DefaultInstanceID = computeallocationDescInstanceID.Default.(string)
 	// computeallocationDescNodeName is the schema descriptor for node_name field.
-	computeallocationDescNodeName := computeallocationFields[29].Descriptor()
+	computeallocationDescNodeName := computeallocationFields[25].Descriptor()
 	// computeallocation.DefaultNodeName holds the default value on creation for the node_name field.
 	computeallocation.DefaultNodeName = computeallocationDescNodeName.Default.(string)
 	// computeallocationDescMachineName is the schema descriptor for machine_name field.
-	computeallocationDescMachineName := computeallocationFields[30].Descriptor()
+	computeallocationDescMachineName := computeallocationFields[26].Descriptor()
 	// computeallocation.DefaultMachineName holds the default value on creation for the machine_name field.
 	computeallocation.DefaultMachineName = computeallocationDescMachineName.Default.(string)
-	// computeallocationDescHoldAmountCents is the schema descriptor for hold_amount_cents field.
-	computeallocationDescHoldAmountCents := computeallocationFields[31].Descriptor()
-	// computeallocation.DefaultHoldAmountCents holds the default value on creation for the hold_amount_cents field.
-	computeallocation.DefaultHoldAmountCents = computeallocationDescHoldAmountCents.Default.(int64)
-	// computeallocationDescHoldAmount is the schema descriptor for hold_amount field.
-	computeallocationDescHoldAmount := computeallocationFields[32].Descriptor()
-	// computeallocation.DefaultHoldAmount holds the default value on creation for the hold_amount field.
-	computeallocation.DefaultHoldAmount = computeallocationDescHoldAmount.Default.(float64)
 	// computeallocationDescCPU is the schema descriptor for cpu field.
-	computeallocationDescCPU := computeallocationFields[33].Descriptor()
+	computeallocationDescCPU := computeallocationFields[27].Descriptor()
 	// computeallocation.DefaultCPU holds the default value on creation for the cpu field.
 	computeallocation.DefaultCPU = computeallocationDescCPU.Default.(float64)
 	// computeallocationDescMemoryGB is the schema descriptor for memory_gb field.
-	computeallocationDescMemoryGB := computeallocationFields[34].Descriptor()
+	computeallocationDescMemoryGB := computeallocationFields[28].Descriptor()
 	// computeallocation.DefaultMemoryGB holds the default value on creation for the memory_gb field.
 	computeallocation.DefaultMemoryGB = computeallocationDescMemoryGB.Default.(float64)
 	// computeallocationDescDiskGB is the schema descriptor for disk_gb field.
-	computeallocationDescDiskGB := computeallocationFields[35].Descriptor()
+	computeallocationDescDiskGB := computeallocationFields[29].Descriptor()
 	// computeallocation.DefaultDiskGB holds the default value on creation for the disk_gb field.
 	computeallocation.DefaultDiskGB = computeallocationDescDiskGB.Default.(float64)
-	// computeallocationDescPriceSnapshotPackageID is the schema descriptor for price_snapshot_package_id field.
-	computeallocationDescPriceSnapshotPackageID := computeallocationFields[36].Descriptor()
-	// computeallocation.DefaultPriceSnapshotPackageID holds the default value on creation for the price_snapshot_package_id field.
-	computeallocation.DefaultPriceSnapshotPackageID = computeallocationDescPriceSnapshotPackageID.Default.(string)
-	// computeallocationDescPriceSnapshotResourceType is the schema descriptor for price_snapshot_resource_type field.
-	computeallocationDescPriceSnapshotResourceType := computeallocationFields[37].Descriptor()
-	// computeallocation.DefaultPriceSnapshotResourceType holds the default value on creation for the price_snapshot_resource_type field.
-	computeallocation.DefaultPriceSnapshotResourceType = computeallocationDescPriceSnapshotResourceType.Default.(string)
-	// computeallocationDescPriceSnapshotCurrency is the schema descriptor for price_snapshot_currency field.
-	computeallocationDescPriceSnapshotCurrency := computeallocationFields[38].Descriptor()
-	// computeallocation.DefaultPriceSnapshotCurrency holds the default value on creation for the price_snapshot_currency field.
-	computeallocation.DefaultPriceSnapshotCurrency = computeallocationDescPriceSnapshotCurrency.Default.(string)
-	// computeallocationDescPriceSnapshotSource is the schema descriptor for price_snapshot_source field.
-	computeallocationDescPriceSnapshotSource := computeallocationFields[39].Descriptor()
-	// computeallocation.DefaultPriceSnapshotSource holds the default value on creation for the price_snapshot_source field.
-	computeallocation.DefaultPriceSnapshotSource = computeallocationDescPriceSnapshotSource.Default.(string)
-	// computeallocationDescPriceSnapshotSku is the schema descriptor for price_snapshot_sku field.
-	computeallocationDescPriceSnapshotSku := computeallocationFields[40].Descriptor()
-	// computeallocation.DefaultPriceSnapshotSku holds the default value on creation for the price_snapshot_sku field.
-	computeallocation.DefaultPriceSnapshotSku = computeallocationDescPriceSnapshotSku.Default.(string)
-	// computeallocationDescPriceSnapshotUnitPriceCents is the schema descriptor for price_snapshot_unit_price_cents field.
-	computeallocationDescPriceSnapshotUnitPriceCents := computeallocationFields[41].Descriptor()
-	// computeallocation.DefaultPriceSnapshotUnitPriceCents holds the default value on creation for the price_snapshot_unit_price_cents field.
-	computeallocation.DefaultPriceSnapshotUnitPriceCents = computeallocationDescPriceSnapshotUnitPriceCents.Default.(int64)
-	// computeallocationDescPriceSnapshotComputeHourly is the schema descriptor for price_snapshot_compute_hourly field.
-	computeallocationDescPriceSnapshotComputeHourly := computeallocationFields[42].Descriptor()
-	// computeallocation.DefaultPriceSnapshotComputeHourly holds the default value on creation for the price_snapshot_compute_hourly field.
-	computeallocation.DefaultPriceSnapshotComputeHourly = computeallocationDescPriceSnapshotComputeHourly.Default.(float64)
 	// computeallocationDescID is the schema descriptor for id field.
 	computeallocationDescID := computeallocationFields[0].Descriptor()
 	// computeallocation.IDValidator is a validator for the "id" field. It is called by the builders before save.
@@ -730,166 +676,6 @@ func init() {
 	executionrequestDescID := executionrequestFields[0].Descriptor()
 	// executionrequest.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	executionrequest.IDValidator = executionrequestDescID.Validators[0].(func(string) error)
-	ledgerprojectionFields := schema.LedgerProjection{}.Fields()
-	_ = ledgerprojectionFields
-	// ledgerprojectionDescCreatedAt is the schema descriptor for created_at field.
-	ledgerprojectionDescCreatedAt := ledgerprojectionFields[1].Descriptor()
-	// ledgerprojection.DefaultCreatedAt holds the default value on creation for the created_at field.
-	ledgerprojection.DefaultCreatedAt = ledgerprojectionDescCreatedAt.Default.(func() time.Time)
-	// ledgerprojectionDescUpdatedAt is the schema descriptor for updated_at field.
-	ledgerprojectionDescUpdatedAt := ledgerprojectionFields[2].Descriptor()
-	// ledgerprojection.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	ledgerprojection.DefaultUpdatedAt = ledgerprojectionDescUpdatedAt.Default.(func() time.Time)
-	// ledgerprojection.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	ledgerprojection.UpdateDefaultUpdatedAt = ledgerprojectionDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// ledgerprojectionDescAccountID is the schema descriptor for account_id field.
-	ledgerprojectionDescAccountID := ledgerprojectionFields[3].Descriptor()
-	// ledgerprojection.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
-	ledgerprojection.AccountIDValidator = ledgerprojectionDescAccountID.Validators[0].(func(string) error)
-	// ledgerprojectionDescType is the schema descriptor for type field.
-	ledgerprojectionDescType := ledgerprojectionFields[4].Descriptor()
-	// ledgerprojection.DefaultType holds the default value on creation for the type field.
-	ledgerprojection.DefaultType = ledgerprojectionDescType.Default.(string)
-	// ledgerprojectionDescResourceID is the schema descriptor for resource_id field.
-	ledgerprojectionDescResourceID := ledgerprojectionFields[5].Descriptor()
-	// ledgerprojection.DefaultResourceID holds the default value on creation for the resource_id field.
-	ledgerprojection.DefaultResourceID = ledgerprojectionDescResourceID.Default.(string)
-	// ledgerprojectionDescResourceKind is the schema descriptor for resource_kind field.
-	ledgerprojectionDescResourceKind := ledgerprojectionFields[6].Descriptor()
-	// ledgerprojection.DefaultResourceKind holds the default value on creation for the resource_kind field.
-	ledgerprojection.DefaultResourceKind = ledgerprojectionDescResourceKind.Default.(string)
-	// ledgerprojectionDescWorkspaceID is the schema descriptor for workspace_id field.
-	ledgerprojectionDescWorkspaceID := ledgerprojectionFields[7].Descriptor()
-	// ledgerprojection.DefaultWorkspaceID holds the default value on creation for the workspace_id field.
-	ledgerprojection.DefaultWorkspaceID = ledgerprojectionDescWorkspaceID.Default.(string)
-	// ledgerprojectionDescComputeAllocationID is the schema descriptor for compute_allocation_id field.
-	ledgerprojectionDescComputeAllocationID := ledgerprojectionFields[8].Descriptor()
-	// ledgerprojection.DefaultComputeAllocationID holds the default value on creation for the compute_allocation_id field.
-	ledgerprojection.DefaultComputeAllocationID = ledgerprojectionDescComputeAllocationID.Default.(string)
-	// ledgerprojectionDescStorageID is the schema descriptor for storage_id field.
-	ledgerprojectionDescStorageID := ledgerprojectionFields[9].Descriptor()
-	// ledgerprojection.DefaultStorageID holds the default value on creation for the storage_id field.
-	ledgerprojection.DefaultStorageID = ledgerprojectionDescStorageID.Default.(string)
-	// ledgerprojectionDescSettlementID is the schema descriptor for settlement_id field.
-	ledgerprojectionDescSettlementID := ledgerprojectionFields[10].Descriptor()
-	// ledgerprojection.DefaultSettlementID holds the default value on creation for the settlement_id field.
-	ledgerprojection.DefaultSettlementID = ledgerprojectionDescSettlementID.Default.(string)
-	// ledgerprojectionDescPricingVersion is the schema descriptor for pricing_version field.
-	ledgerprojectionDescPricingVersion := ledgerprojectionFields[11].Descriptor()
-	// ledgerprojection.DefaultPricingVersion holds the default value on creation for the pricing_version field.
-	ledgerprojection.DefaultPricingVersion = ledgerprojectionDescPricingVersion.Default.(string)
-	// ledgerprojectionDescUsagePeriodStart is the schema descriptor for usage_period_start field.
-	ledgerprojectionDescUsagePeriodStart := ledgerprojectionFields[12].Descriptor()
-	// ledgerprojection.DefaultUsagePeriodStart holds the default value on creation for the usage_period_start field.
-	ledgerprojection.DefaultUsagePeriodStart = ledgerprojectionDescUsagePeriodStart.Default.(string)
-	// ledgerprojectionDescUsagePeriodEnd is the schema descriptor for usage_period_end field.
-	ledgerprojectionDescUsagePeriodEnd := ledgerprojectionFields[13].Descriptor()
-	// ledgerprojection.DefaultUsagePeriodEnd holds the default value on creation for the usage_period_end field.
-	ledgerprojection.DefaultUsagePeriodEnd = ledgerprojectionDescUsagePeriodEnd.Default.(string)
-	// ledgerprojectionDescUnit is the schema descriptor for unit field.
-	ledgerprojectionDescUnit := ledgerprojectionFields[14].Descriptor()
-	// ledgerprojection.DefaultUnit holds the default value on creation for the unit field.
-	ledgerprojection.DefaultUnit = ledgerprojectionDescUnit.Default.(string)
-	// ledgerprojectionDescProviderCostEvidenceRef is the schema descriptor for provider_cost_evidence_ref field.
-	ledgerprojectionDescProviderCostEvidenceRef := ledgerprojectionFields[15].Descriptor()
-	// ledgerprojection.DefaultProviderCostEvidenceRef holds the default value on creation for the provider_cost_evidence_ref field.
-	ledgerprojection.DefaultProviderCostEvidenceRef = ledgerprojectionDescProviderCostEvidenceRef.Default.(string)
-	// ledgerprojectionDescCurrency is the schema descriptor for currency field.
-	ledgerprojectionDescCurrency := ledgerprojectionFields[16].Descriptor()
-	// ledgerprojection.DefaultCurrency holds the default value on creation for the currency field.
-	ledgerprojection.DefaultCurrency = ledgerprojectionDescCurrency.Default.(string)
-	// ledgerprojectionDescAmountCents is the schema descriptor for amount_cents field.
-	ledgerprojectionDescAmountCents := ledgerprojectionFields[17].Descriptor()
-	// ledgerprojection.DefaultAmountCents holds the default value on creation for the amount_cents field.
-	ledgerprojection.DefaultAmountCents = ledgerprojectionDescAmountCents.Default.(int64)
-	// ledgerprojectionDescQuantity is the schema descriptor for quantity field.
-	ledgerprojectionDescQuantity := ledgerprojectionFields[18].Descriptor()
-	// ledgerprojection.DefaultQuantity holds the default value on creation for the quantity field.
-	ledgerprojection.DefaultQuantity = ledgerprojectionDescQuantity.Default.(float64)
-	// ledgerprojectionDescDirection is the schema descriptor for direction field.
-	ledgerprojectionDescDirection := ledgerprojectionFields[19].Descriptor()
-	// ledgerprojection.DefaultDirection holds the default value on creation for the direction field.
-	ledgerprojection.DefaultDirection = ledgerprojectionDescDirection.Default.(string)
-	// ledgerprojectionDescPriceSnapshotPackageID is the schema descriptor for price_snapshot_package_id field.
-	ledgerprojectionDescPriceSnapshotPackageID := ledgerprojectionFields[20].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotPackageID holds the default value on creation for the price_snapshot_package_id field.
-	ledgerprojection.DefaultPriceSnapshotPackageID = ledgerprojectionDescPriceSnapshotPackageID.Default.(string)
-	// ledgerprojectionDescPriceSnapshotResourceType is the schema descriptor for price_snapshot_resource_type field.
-	ledgerprojectionDescPriceSnapshotResourceType := ledgerprojectionFields[21].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotResourceType holds the default value on creation for the price_snapshot_resource_type field.
-	ledgerprojection.DefaultPriceSnapshotResourceType = ledgerprojectionDescPriceSnapshotResourceType.Default.(string)
-	// ledgerprojectionDescPriceSnapshotCurrency is the schema descriptor for price_snapshot_currency field.
-	ledgerprojectionDescPriceSnapshotCurrency := ledgerprojectionFields[22].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotCurrency holds the default value on creation for the price_snapshot_currency field.
-	ledgerprojection.DefaultPriceSnapshotCurrency = ledgerprojectionDescPriceSnapshotCurrency.Default.(string)
-	// ledgerprojectionDescPriceSnapshotSource is the schema descriptor for price_snapshot_source field.
-	ledgerprojectionDescPriceSnapshotSource := ledgerprojectionFields[23].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotSource holds the default value on creation for the price_snapshot_source field.
-	ledgerprojection.DefaultPriceSnapshotSource = ledgerprojectionDescPriceSnapshotSource.Default.(string)
-	// ledgerprojectionDescPriceSnapshotSku is the schema descriptor for price_snapshot_sku field.
-	ledgerprojectionDescPriceSnapshotSku := ledgerprojectionFields[24].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotSku holds the default value on creation for the price_snapshot_sku field.
-	ledgerprojection.DefaultPriceSnapshotSku = ledgerprojectionDescPriceSnapshotSku.Default.(string)
-	// ledgerprojectionDescPriceSnapshotUnitPriceCents is the schema descriptor for price_snapshot_unit_price_cents field.
-	ledgerprojectionDescPriceSnapshotUnitPriceCents := ledgerprojectionFields[25].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotUnitPriceCents holds the default value on creation for the price_snapshot_unit_price_cents field.
-	ledgerprojection.DefaultPriceSnapshotUnitPriceCents = ledgerprojectionDescPriceSnapshotUnitPriceCents.Default.(int64)
-	// ledgerprojectionDescPriceSnapshotComputeHourly is the schema descriptor for price_snapshot_compute_hourly field.
-	ledgerprojectionDescPriceSnapshotComputeHourly := ledgerprojectionFields[26].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotComputeHourly holds the default value on creation for the price_snapshot_compute_hourly field.
-	ledgerprojection.DefaultPriceSnapshotComputeHourly = ledgerprojectionDescPriceSnapshotComputeHourly.Default.(float64)
-	// ledgerprojectionDescPriceSnapshotStorageGBMonth is the schema descriptor for price_snapshot_storage_gb_month field.
-	ledgerprojectionDescPriceSnapshotStorageGBMonth := ledgerprojectionFields[27].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotStorageGBMonth holds the default value on creation for the price_snapshot_storage_gb_month field.
-	ledgerprojection.DefaultPriceSnapshotStorageGBMonth = ledgerprojectionDescPriceSnapshotStorageGBMonth.Default.(float64)
-	// ledgerprojectionDescPriceSnapshotSizeGB is the schema descriptor for price_snapshot_size_gb field.
-	ledgerprojectionDescPriceSnapshotSizeGB := ledgerprojectionFields[28].Descriptor()
-	// ledgerprojection.DefaultPriceSnapshotSizeGB holds the default value on creation for the price_snapshot_size_gb field.
-	ledgerprojection.DefaultPriceSnapshotSizeGB = ledgerprojectionDescPriceSnapshotSizeGB.Default.(float64)
-	// ledgerprojectionDescID is the schema descriptor for id field.
-	ledgerprojectionDescID := ledgerprojectionFields[0].Descriptor()
-	// ledgerprojection.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	ledgerprojection.IDValidator = ledgerprojectionDescID.Validators[0].(func(string) error)
-	manualtopupprojectionFields := schema.ManualTopupProjection{}.Fields()
-	_ = manualtopupprojectionFields
-	// manualtopupprojectionDescCreatedAt is the schema descriptor for created_at field.
-	manualtopupprojectionDescCreatedAt := manualtopupprojectionFields[1].Descriptor()
-	// manualtopupprojection.DefaultCreatedAt holds the default value on creation for the created_at field.
-	manualtopupprojection.DefaultCreatedAt = manualtopupprojectionDescCreatedAt.Default.(func() time.Time)
-	// manualtopupprojectionDescUpdatedAt is the schema descriptor for updated_at field.
-	manualtopupprojectionDescUpdatedAt := manualtopupprojectionFields[2].Descriptor()
-	// manualtopupprojection.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	manualtopupprojection.DefaultUpdatedAt = manualtopupprojectionDescUpdatedAt.Default.(func() time.Time)
-	// manualtopupprojection.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	manualtopupprojection.UpdateDefaultUpdatedAt = manualtopupprojectionDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// manualtopupprojectionDescAccountID is the schema descriptor for account_id field.
-	manualtopupprojectionDescAccountID := manualtopupprojectionFields[3].Descriptor()
-	// manualtopupprojection.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
-	manualtopupprojection.AccountIDValidator = manualtopupprojectionDescAccountID.Validators[0].(func(string) error)
-	// manualtopupprojectionDescOperatorUserID is the schema descriptor for operator_user_id field.
-	manualtopupprojectionDescOperatorUserID := manualtopupprojectionFields[4].Descriptor()
-	// manualtopupprojection.DefaultOperatorUserID holds the default value on creation for the operator_user_id field.
-	manualtopupprojection.DefaultOperatorUserID = manualtopupprojectionDescOperatorUserID.Default.(string)
-	// manualtopupprojectionDescCurrency is the schema descriptor for currency field.
-	manualtopupprojectionDescCurrency := manualtopupprojectionFields[5].Descriptor()
-	// manualtopupprojection.DefaultCurrency holds the default value on creation for the currency field.
-	manualtopupprojection.DefaultCurrency = manualtopupprojectionDescCurrency.Default.(string)
-	// manualtopupprojectionDescSource is the schema descriptor for source field.
-	manualtopupprojectionDescSource := manualtopupprojectionFields[6].Descriptor()
-	// manualtopupprojection.DefaultSource holds the default value on creation for the source field.
-	manualtopupprojection.DefaultSource = manualtopupprojectionDescSource.Default.(string)
-	// manualtopupprojectionDescReason is the schema descriptor for reason field.
-	manualtopupprojectionDescReason := manualtopupprojectionFields[7].Descriptor()
-	// manualtopupprojection.DefaultReason holds the default value on creation for the reason field.
-	manualtopupprojection.DefaultReason = manualtopupprojectionDescReason.Default.(string)
-	// manualtopupprojectionDescAmountCents is the schema descriptor for amount_cents field.
-	manualtopupprojectionDescAmountCents := manualtopupprojectionFields[8].Descriptor()
-	// manualtopupprojection.DefaultAmountCents holds the default value on creation for the amount_cents field.
-	manualtopupprojection.DefaultAmountCents = manualtopupprojectionDescAmountCents.Default.(int64)
-	// manualtopupprojectionDescID is the schema descriptor for id field.
-	manualtopupprojectionDescID := manualtopupprojectionFields[0].Descriptor()
-	// manualtopupprojection.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	manualtopupprojection.IDValidator = manualtopupprojectionDescID.Validators[0].(func(string) error)
 	membershipFields := schema.Membership{}.Fields()
 	_ = membershipFields
 	// membershipDescCreatedAt is the schema descriptor for created_at field.
@@ -954,106 +740,6 @@ func init() {
 	organizationDescID := organizationFields[0].Descriptor()
 	// organization.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	organization.IDValidator = organizationDescID.Validators[0].(func(string) error)
-	pricingcatalogFields := schema.PricingCatalog{}.Fields()
-	_ = pricingcatalogFields
-	// pricingcatalogDescCreatedAt is the schema descriptor for created_at field.
-	pricingcatalogDescCreatedAt := pricingcatalogFields[1].Descriptor()
-	// pricingcatalog.DefaultCreatedAt holds the default value on creation for the created_at field.
-	pricingcatalog.DefaultCreatedAt = pricingcatalogDescCreatedAt.Default.(func() time.Time)
-	// pricingcatalogDescUpdatedAt is the schema descriptor for updated_at field.
-	pricingcatalogDescUpdatedAt := pricingcatalogFields[2].Descriptor()
-	// pricingcatalog.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	pricingcatalog.DefaultUpdatedAt = pricingcatalogDescUpdatedAt.Default.(func() time.Time)
-	// pricingcatalog.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	pricingcatalog.UpdateDefaultUpdatedAt = pricingcatalogDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// pricingcatalogDescVersion is the schema descriptor for version field.
-	pricingcatalogDescVersion := pricingcatalogFields[3].Descriptor()
-	// pricingcatalog.VersionValidator is a validator for the "version" field. It is called by the builders before save.
-	pricingcatalog.VersionValidator = pricingcatalogDescVersion.Validators[0].(func(string) error)
-	// pricingcatalogDescCurrency is the schema descriptor for currency field.
-	pricingcatalogDescCurrency := pricingcatalogFields[4].Descriptor()
-	// pricingcatalog.DefaultCurrency holds the default value on creation for the currency field.
-	pricingcatalog.DefaultCurrency = pricingcatalogDescCurrency.Default.(string)
-	// pricingcatalogDescHoldDays is the schema descriptor for hold_days field.
-	pricingcatalogDescHoldDays := pricingcatalogFields[5].Descriptor()
-	// pricingcatalog.DefaultHoldDays holds the default value on creation for the hold_days field.
-	pricingcatalog.DefaultHoldDays = pricingcatalogDescHoldDays.Default.(int)
-	// pricingcatalogDescEffectiveFrom is the schema descriptor for effective_from field.
-	pricingcatalogDescEffectiveFrom := pricingcatalogFields[6].Descriptor()
-	// pricingcatalog.DefaultEffectiveFrom holds the default value on creation for the effective_from field.
-	pricingcatalog.DefaultEffectiveFrom = pricingcatalogDescEffectiveFrom.Default.(string)
-	// pricingcatalogDescStatus is the schema descriptor for status field.
-	pricingcatalogDescStatus := pricingcatalogFields[7].Descriptor()
-	// pricingcatalog.DefaultStatus holds the default value on creation for the status field.
-	pricingcatalog.DefaultStatus = pricingcatalogDescStatus.Default.(string)
-	// pricingcatalogDescID is the schema descriptor for id field.
-	pricingcatalogDescID := pricingcatalogFields[0].Descriptor()
-	// pricingcatalog.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	pricingcatalog.IDValidator = pricingcatalogDescID.Validators[0].(func(string) error)
-	pricingitemFields := schema.PricingItem{}.Fields()
-	_ = pricingitemFields
-	// pricingitemDescCreatedAt is the schema descriptor for created_at field.
-	pricingitemDescCreatedAt := pricingitemFields[1].Descriptor()
-	// pricingitem.DefaultCreatedAt holds the default value on creation for the created_at field.
-	pricingitem.DefaultCreatedAt = pricingitemDescCreatedAt.Default.(func() time.Time)
-	// pricingitemDescUpdatedAt is the schema descriptor for updated_at field.
-	pricingitemDescUpdatedAt := pricingitemFields[2].Descriptor()
-	// pricingitem.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	pricingitem.DefaultUpdatedAt = pricingitemDescUpdatedAt.Default.(func() time.Time)
-	// pricingitem.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	pricingitem.UpdateDefaultUpdatedAt = pricingitemDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// pricingitemDescCatalogVersion is the schema descriptor for catalog_version field.
-	pricingitemDescCatalogVersion := pricingitemFields[3].Descriptor()
-	// pricingitem.CatalogVersionValidator is a validator for the "catalog_version" field. It is called by the builders before save.
-	pricingitem.CatalogVersionValidator = pricingitemDescCatalogVersion.Validators[0].(func(string) error)
-	// pricingitemDescPackageID is the schema descriptor for package_id field.
-	pricingitemDescPackageID := pricingitemFields[4].Descriptor()
-	// pricingitem.PackageIDValidator is a validator for the "package_id" field. It is called by the builders before save.
-	pricingitem.PackageIDValidator = pricingitemDescPackageID.Validators[0].(func(string) error)
-	// pricingitemDescResourceType is the schema descriptor for resource_type field.
-	pricingitemDescResourceType := pricingitemFields[5].Descriptor()
-	// pricingitem.ResourceTypeValidator is a validator for the "resource_type" field. It is called by the builders before save.
-	pricingitem.ResourceTypeValidator = pricingitemDescResourceType.Validators[0].(func(string) error)
-	// pricingitemDescUnit is the schema descriptor for unit field.
-	pricingitemDescUnit := pricingitemFields[6].Descriptor()
-	// pricingitem.UnitValidator is a validator for the "unit" field. It is called by the builders before save.
-	pricingitem.UnitValidator = pricingitemDescUnit.Validators[0].(func(string) error)
-	// pricingitemDescUnitPrice is the schema descriptor for unit_price field.
-	pricingitemDescUnitPrice := pricingitemFields[7].Descriptor()
-	// pricingitem.DefaultUnitPrice holds the default value on creation for the unit_price field.
-	pricingitem.DefaultUnitPrice = pricingitemDescUnitPrice.Default.(float64)
-	// pricingitemDescUnitPriceCents is the schema descriptor for unit_price_cents field.
-	pricingitemDescUnitPriceCents := pricingitemFields[8].Descriptor()
-	// pricingitem.DefaultUnitPriceCents holds the default value on creation for the unit_price_cents field.
-	pricingitem.DefaultUnitPriceCents = pricingitemDescUnitPriceCents.Default.(int64)
-	// pricingitemDescAvailable is the schema descriptor for available field.
-	pricingitemDescAvailable := pricingitemFields[9].Descriptor()
-	// pricingitem.DefaultAvailable holds the default value on creation for the available field.
-	pricingitem.DefaultAvailable = pricingitemDescAvailable.Default.(bool)
-	// pricingitemDescName is the schema descriptor for name field.
-	pricingitemDescName := pricingitemFields[10].Descriptor()
-	// pricingitem.DefaultName holds the default value on creation for the name field.
-	pricingitem.DefaultName = pricingitemDescName.Default.(string)
-	// pricingitemDescServer is the schema descriptor for server field.
-	pricingitemDescServer := pricingitemFields[11].Descriptor()
-	// pricingitem.DefaultServer holds the default value on creation for the server field.
-	pricingitem.DefaultServer = pricingitemDescServer.Default.(string)
-	// pricingitemDescCPU is the schema descriptor for cpu field.
-	pricingitemDescCPU := pricingitemFields[12].Descriptor()
-	// pricingitem.DefaultCPU holds the default value on creation for the cpu field.
-	pricingitem.DefaultCPU = pricingitemDescCPU.Default.(float64)
-	// pricingitemDescMemoryGB is the schema descriptor for memory_gb field.
-	pricingitemDescMemoryGB := pricingitemFields[13].Descriptor()
-	// pricingitem.DefaultMemoryGB holds the default value on creation for the memory_gb field.
-	pricingitem.DefaultMemoryGB = pricingitemDescMemoryGB.Default.(float64)
-	// pricingitemDescDiskGB is the schema descriptor for disk_gb field.
-	pricingitemDescDiskGB := pricingitemFields[14].Descriptor()
-	// pricingitem.DefaultDiskGB holds the default value on creation for the disk_gb field.
-	pricingitem.DefaultDiskGB = pricingitemDescDiskGB.Default.(float64)
-	// pricingitemDescID is the schema descriptor for id field.
-	pricingitemDescID := pricingitemFields[0].Descriptor()
-	// pricingitem.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	pricingitem.IDValidator = pricingitemDescID.Validators[0].(func(string) error)
 	productione2erecordFields := schema.ProductionE2ERecord{}.Fields()
 	_ = productione2erecordFields
 	// productione2erecordDescCreatedAt is the schema descriptor for created_at field.
@@ -1386,74 +1072,26 @@ func init() {
 	storagevolumeDescBillingStatus := storagevolumeFields[18].Descriptor()
 	// storagevolume.DefaultBillingStatus holds the default value on creation for the billing_status field.
 	storagevolume.DefaultBillingStatus = storagevolumeDescBillingStatus.Default.(string)
-	// storagevolumeDescHoldID is the schema descriptor for hold_id field.
-	storagevolumeDescHoldID := storagevolumeFields[19].Descriptor()
-	// storagevolume.DefaultHoldID holds the default value on creation for the hold_id field.
-	storagevolume.DefaultHoldID = storagevolumeDescHoldID.Default.(string)
-	// storagevolumeDescHoldReleaseID is the schema descriptor for hold_release_id field.
-	storagevolumeDescHoldReleaseID := storagevolumeFields[20].Descriptor()
-	// storagevolume.DefaultHoldReleaseID holds the default value on creation for the hold_release_id field.
-	storagevolume.DefaultHoldReleaseID = storagevolumeDescHoldReleaseID.Default.(string)
-	// storagevolumeDescSettlementID is the schema descriptor for settlement_id field.
-	storagevolumeDescSettlementID := storagevolumeFields[21].Descriptor()
-	// storagevolume.DefaultSettlementID holds the default value on creation for the settlement_id field.
-	storagevolume.DefaultSettlementID = storagevolumeDescSettlementID.Default.(string)
-	// storagevolumeDescLedgerEntryID is the schema descriptor for ledger_entry_id field.
-	storagevolumeDescLedgerEntryID := storagevolumeFields[22].Descriptor()
-	// storagevolume.DefaultLedgerEntryID holds the default value on creation for the ledger_entry_id field.
-	storagevolume.DefaultLedgerEntryID = storagevolumeDescLedgerEntryID.Default.(string)
-	// storagevolumeDescWalletTransactionID is the schema descriptor for wallet_transaction_id field.
-	storagevolumeDescWalletTransactionID := storagevolumeFields[23].Descriptor()
-	// storagevolume.DefaultWalletTransactionID holds the default value on creation for the wallet_transaction_id field.
-	storagevolume.DefaultWalletTransactionID = storagevolumeDescWalletTransactionID.Default.(string)
 	// storagevolumeDescPricingVersion is the schema descriptor for pricing_version field.
-	storagevolumeDescPricingVersion := storagevolumeFields[24].Descriptor()
+	storagevolumeDescPricingVersion := storagevolumeFields[19].Descriptor()
 	// storagevolume.DefaultPricingVersion holds the default value on creation for the pricing_version field.
 	storagevolume.DefaultPricingVersion = storagevolumeDescPricingVersion.Default.(string)
-	// storagevolumeDescUsagePeriodEnd is the schema descriptor for usage_period_end field.
-	storagevolumeDescUsagePeriodEnd := storagevolumeFields[25].Descriptor()
-	// storagevolume.DefaultUsagePeriodEnd holds the default value on creation for the usage_period_end field.
-	storagevolume.DefaultUsagePeriodEnd = storagevolumeDescUsagePeriodEnd.Default.(string)
+	// storagevolumeDescBillingOperationID is the schema descriptor for billing_operation_id field.
+	storagevolumeDescBillingOperationID := storagevolumeFields[20].Descriptor()
+	// storagevolume.DefaultBillingOperationID holds the default value on creation for the billing_operation_id field.
+	storagevolume.DefaultBillingOperationID = storagevolumeDescBillingOperationID.Default.(string)
+	// storagevolumeDescBillingStateJSON is the schema descriptor for billing_state_json field.
+	storagevolumeDescBillingStateJSON := storagevolumeFields[21].Descriptor()
+	// storagevolume.DefaultBillingStateJSON holds the default value on creation for the billing_state_json field.
+	storagevolume.DefaultBillingStateJSON = storagevolumeDescBillingStateJSON.Default.(string)
 	// storagevolumeDescMountPath is the schema descriptor for mount_path field.
-	storagevolumeDescMountPath := storagevolumeFields[26].Descriptor()
+	storagevolumeDescMountPath := storagevolumeFields[22].Descriptor()
 	// storagevolume.DefaultMountPath holds the default value on creation for the mount_path field.
 	storagevolume.DefaultMountPath = storagevolumeDescMountPath.Default.(string)
-	// storagevolumeDescHoldAmountCents is the schema descriptor for hold_amount_cents field.
-	storagevolumeDescHoldAmountCents := storagevolumeFields[27].Descriptor()
-	// storagevolume.DefaultHoldAmountCents holds the default value on creation for the hold_amount_cents field.
-	storagevolume.DefaultHoldAmountCents = storagevolumeDescHoldAmountCents.Default.(int64)
-	// storagevolumeDescHoldAmount is the schema descriptor for hold_amount field.
-	storagevolumeDescHoldAmount := storagevolumeFields[28].Descriptor()
-	// storagevolume.DefaultHoldAmount holds the default value on creation for the hold_amount field.
-	storagevolume.DefaultHoldAmount = storagevolumeDescHoldAmount.Default.(float64)
 	// storagevolumeDescSizeGB is the schema descriptor for size_gb field.
-	storagevolumeDescSizeGB := storagevolumeFields[29].Descriptor()
+	storagevolumeDescSizeGB := storagevolumeFields[23].Descriptor()
 	// storagevolume.DefaultSizeGB holds the default value on creation for the size_gb field.
 	storagevolume.DefaultSizeGB = storagevolumeDescSizeGB.Default.(float64)
-	// storagevolumeDescPriceSnapshotResourceType is the schema descriptor for price_snapshot_resource_type field.
-	storagevolumeDescPriceSnapshotResourceType := storagevolumeFields[30].Descriptor()
-	// storagevolume.DefaultPriceSnapshotResourceType holds the default value on creation for the price_snapshot_resource_type field.
-	storagevolume.DefaultPriceSnapshotResourceType = storagevolumeDescPriceSnapshotResourceType.Default.(string)
-	// storagevolumeDescPriceSnapshotCurrency is the schema descriptor for price_snapshot_currency field.
-	storagevolumeDescPriceSnapshotCurrency := storagevolumeFields[31].Descriptor()
-	// storagevolume.DefaultPriceSnapshotCurrency holds the default value on creation for the price_snapshot_currency field.
-	storagevolume.DefaultPriceSnapshotCurrency = storagevolumeDescPriceSnapshotCurrency.Default.(string)
-	// storagevolumeDescPriceSnapshotSource is the schema descriptor for price_snapshot_source field.
-	storagevolumeDescPriceSnapshotSource := storagevolumeFields[32].Descriptor()
-	// storagevolume.DefaultPriceSnapshotSource holds the default value on creation for the price_snapshot_source field.
-	storagevolume.DefaultPriceSnapshotSource = storagevolumeDescPriceSnapshotSource.Default.(string)
-	// storagevolumeDescPriceSnapshotUnitPriceCents is the schema descriptor for price_snapshot_unit_price_cents field.
-	storagevolumeDescPriceSnapshotUnitPriceCents := storagevolumeFields[33].Descriptor()
-	// storagevolume.DefaultPriceSnapshotUnitPriceCents holds the default value on creation for the price_snapshot_unit_price_cents field.
-	storagevolume.DefaultPriceSnapshotUnitPriceCents = storagevolumeDescPriceSnapshotUnitPriceCents.Default.(int64)
-	// storagevolumeDescPriceSnapshotStorageGBMonth is the schema descriptor for price_snapshot_storage_gb_month field.
-	storagevolumeDescPriceSnapshotStorageGBMonth := storagevolumeFields[34].Descriptor()
-	// storagevolume.DefaultPriceSnapshotStorageGBMonth holds the default value on creation for the price_snapshot_storage_gb_month field.
-	storagevolume.DefaultPriceSnapshotStorageGBMonth = storagevolumeDescPriceSnapshotStorageGBMonth.Default.(float64)
-	// storagevolumeDescPriceSnapshotSizeGB is the schema descriptor for price_snapshot_size_gb field.
-	storagevolumeDescPriceSnapshotSizeGB := storagevolumeFields[35].Descriptor()
-	// storagevolume.DefaultPriceSnapshotSizeGB holds the default value on creation for the price_snapshot_size_gb field.
-	storagevolume.DefaultPriceSnapshotSizeGB = storagevolumeDescPriceSnapshotSizeGB.Default.(float64)
 	// storagevolumeDescID is the schema descriptor for id field.
 	storagevolumeDescID := storagevolumeFields[0].Descriptor()
 	// storagevolume.IDValidator is a validator for the "id" field. It is called by the builders before save.
@@ -1598,162 +1236,6 @@ func init() {
 	userDescID := userFields[0].Descriptor()
 	// user.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	user.IDValidator = userDescID.Validators[0].(func(string) error)
-	walletprojectionFields := schema.WalletProjection{}.Fields()
-	_ = walletprojectionFields
-	// walletprojectionDescCreatedAt is the schema descriptor for created_at field.
-	walletprojectionDescCreatedAt := walletprojectionFields[1].Descriptor()
-	// walletprojection.DefaultCreatedAt holds the default value on creation for the created_at field.
-	walletprojection.DefaultCreatedAt = walletprojectionDescCreatedAt.Default.(func() time.Time)
-	// walletprojectionDescUpdatedAt is the schema descriptor for updated_at field.
-	walletprojectionDescUpdatedAt := walletprojectionFields[2].Descriptor()
-	// walletprojection.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	walletprojection.DefaultUpdatedAt = walletprojectionDescUpdatedAt.Default.(func() time.Time)
-	// walletprojection.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	walletprojection.UpdateDefaultUpdatedAt = walletprojectionDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// walletprojectionDescAccountID is the schema descriptor for account_id field.
-	walletprojectionDescAccountID := walletprojectionFields[3].Descriptor()
-	// walletprojection.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
-	walletprojection.AccountIDValidator = walletprojectionDescAccountID.Validators[0].(func(string) error)
-	// walletprojectionDescCurrency is the schema descriptor for currency field.
-	walletprojectionDescCurrency := walletprojectionFields[4].Descriptor()
-	// walletprojection.DefaultCurrency holds the default value on creation for the currency field.
-	walletprojection.DefaultCurrency = walletprojectionDescCurrency.Default.(string)
-	// walletprojectionDescBalanceCents is the schema descriptor for balance_cents field.
-	walletprojectionDescBalanceCents := walletprojectionFields[5].Descriptor()
-	// walletprojection.DefaultBalanceCents holds the default value on creation for the balance_cents field.
-	walletprojection.DefaultBalanceCents = walletprojectionDescBalanceCents.Default.(int64)
-	// walletprojectionDescFrozenCents is the schema descriptor for frozen_cents field.
-	walletprojectionDescFrozenCents := walletprojectionFields[6].Descriptor()
-	// walletprojection.DefaultFrozenCents holds the default value on creation for the frozen_cents field.
-	walletprojection.DefaultFrozenCents = walletprojectionDescFrozenCents.Default.(int64)
-	// walletprojectionDescAvailableCents is the schema descriptor for available_cents field.
-	walletprojectionDescAvailableCents := walletprojectionFields[7].Descriptor()
-	// walletprojection.DefaultAvailableCents holds the default value on creation for the available_cents field.
-	walletprojection.DefaultAvailableCents = walletprojectionDescAvailableCents.Default.(int64)
-	// walletprojectionDescTotalSpentCents is the schema descriptor for total_spent_cents field.
-	walletprojectionDescTotalSpentCents := walletprojectionFields[8].Descriptor()
-	// walletprojection.DefaultTotalSpentCents holds the default value on creation for the total_spent_cents field.
-	walletprojection.DefaultTotalSpentCents = walletprojectionDescTotalSpentCents.Default.(int64)
-	// walletprojectionDescBalance is the schema descriptor for balance field.
-	walletprojectionDescBalance := walletprojectionFields[9].Descriptor()
-	// walletprojection.DefaultBalance holds the default value on creation for the balance field.
-	walletprojection.DefaultBalance = walletprojectionDescBalance.Default.(float64)
-	// walletprojectionDescFrozen is the schema descriptor for frozen field.
-	walletprojectionDescFrozen := walletprojectionFields[10].Descriptor()
-	// walletprojection.DefaultFrozen holds the default value on creation for the frozen field.
-	walletprojection.DefaultFrozen = walletprojectionDescFrozen.Default.(float64)
-	// walletprojectionDescAvailable is the schema descriptor for available field.
-	walletprojectionDescAvailable := walletprojectionFields[11].Descriptor()
-	// walletprojection.DefaultAvailable holds the default value on creation for the available field.
-	walletprojection.DefaultAvailable = walletprojectionDescAvailable.Default.(float64)
-	// walletprojectionDescTotalSpent is the schema descriptor for total_spent field.
-	walletprojectionDescTotalSpent := walletprojectionFields[12].Descriptor()
-	// walletprojection.DefaultTotalSpent holds the default value on creation for the total_spent field.
-	walletprojection.DefaultTotalSpent = walletprojectionDescTotalSpent.Default.(float64)
-	// walletprojectionDescTotalRecharged is the schema descriptor for total_recharged field.
-	walletprojectionDescTotalRecharged := walletprojectionFields[13].Descriptor()
-	// walletprojection.DefaultTotalRecharged holds the default value on creation for the total_recharged field.
-	walletprojection.DefaultTotalRecharged = walletprojectionDescTotalRecharged.Default.(float64)
-	// walletprojectionDescID is the schema descriptor for id field.
-	walletprojectionDescID := walletprojectionFields[0].Descriptor()
-	// walletprojection.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	walletprojection.IDValidator = walletprojectionDescID.Validators[0].(func(string) error)
-	wallettransactionprojectionFields := schema.WalletTransactionProjection{}.Fields()
-	_ = wallettransactionprojectionFields
-	// wallettransactionprojectionDescCreatedAt is the schema descriptor for created_at field.
-	wallettransactionprojectionDescCreatedAt := wallettransactionprojectionFields[1].Descriptor()
-	// wallettransactionprojection.DefaultCreatedAt holds the default value on creation for the created_at field.
-	wallettransactionprojection.DefaultCreatedAt = wallettransactionprojectionDescCreatedAt.Default.(func() time.Time)
-	// wallettransactionprojectionDescUpdatedAt is the schema descriptor for updated_at field.
-	wallettransactionprojectionDescUpdatedAt := wallettransactionprojectionFields[2].Descriptor()
-	// wallettransactionprojection.DefaultUpdatedAt holds the default value on creation for the updated_at field.
-	wallettransactionprojection.DefaultUpdatedAt = wallettransactionprojectionDescUpdatedAt.Default.(func() time.Time)
-	// wallettransactionprojection.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
-	wallettransactionprojection.UpdateDefaultUpdatedAt = wallettransactionprojectionDescUpdatedAt.UpdateDefault.(func() time.Time)
-	// wallettransactionprojectionDescAccountID is the schema descriptor for account_id field.
-	wallettransactionprojectionDescAccountID := wallettransactionprojectionFields[3].Descriptor()
-	// wallettransactionprojection.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
-	wallettransactionprojection.AccountIDValidator = wallettransactionprojectionDescAccountID.Validators[0].(func(string) error)
-	// wallettransactionprojectionDescType is the schema descriptor for type field.
-	wallettransactionprojectionDescType := wallettransactionprojectionFields[4].Descriptor()
-	// wallettransactionprojection.DefaultType holds the default value on creation for the type field.
-	wallettransactionprojection.DefaultType = wallettransactionprojectionDescType.Default.(string)
-	// wallettransactionprojectionDescLedgerEntryID is the schema descriptor for ledger_entry_id field.
-	wallettransactionprojectionDescLedgerEntryID := wallettransactionprojectionFields[5].Descriptor()
-	// wallettransactionprojection.DefaultLedgerEntryID holds the default value on creation for the ledger_entry_id field.
-	wallettransactionprojection.DefaultLedgerEntryID = wallettransactionprojectionDescLedgerEntryID.Default.(string)
-	// wallettransactionprojectionDescResourceID is the schema descriptor for resource_id field.
-	wallettransactionprojectionDescResourceID := wallettransactionprojectionFields[6].Descriptor()
-	// wallettransactionprojection.DefaultResourceID holds the default value on creation for the resource_id field.
-	wallettransactionprojection.DefaultResourceID = wallettransactionprojectionDescResourceID.Default.(string)
-	// wallettransactionprojectionDescWorkspaceID is the schema descriptor for workspace_id field.
-	wallettransactionprojectionDescWorkspaceID := wallettransactionprojectionFields[7].Descriptor()
-	// wallettransactionprojection.DefaultWorkspaceID holds the default value on creation for the workspace_id field.
-	wallettransactionprojection.DefaultWorkspaceID = wallettransactionprojectionDescWorkspaceID.Default.(string)
-	// wallettransactionprojectionDescComputeAllocationID is the schema descriptor for compute_allocation_id field.
-	wallettransactionprojectionDescComputeAllocationID := wallettransactionprojectionFields[8].Descriptor()
-	// wallettransactionprojection.DefaultComputeAllocationID holds the default value on creation for the compute_allocation_id field.
-	wallettransactionprojection.DefaultComputeAllocationID = wallettransactionprojectionDescComputeAllocationID.Default.(string)
-	// wallettransactionprojectionDescStorageID is the schema descriptor for storage_id field.
-	wallettransactionprojectionDescStorageID := wallettransactionprojectionFields[9].Descriptor()
-	// wallettransactionprojection.DefaultStorageID holds the default value on creation for the storage_id field.
-	wallettransactionprojection.DefaultStorageID = wallettransactionprojectionDescStorageID.Default.(string)
-	// wallettransactionprojectionDescSettlementID is the schema descriptor for settlement_id field.
-	wallettransactionprojectionDescSettlementID := wallettransactionprojectionFields[10].Descriptor()
-	// wallettransactionprojection.DefaultSettlementID holds the default value on creation for the settlement_id field.
-	wallettransactionprojection.DefaultSettlementID = wallettransactionprojectionDescSettlementID.Default.(string)
-	// wallettransactionprojectionDescCurrency is the schema descriptor for currency field.
-	wallettransactionprojectionDescCurrency := wallettransactionprojectionFields[11].Descriptor()
-	// wallettransactionprojection.DefaultCurrency holds the default value on creation for the currency field.
-	wallettransactionprojection.DefaultCurrency = wallettransactionprojectionDescCurrency.Default.(string)
-	// wallettransactionprojectionDescAmountCents is the schema descriptor for amount_cents field.
-	wallettransactionprojectionDescAmountCents := wallettransactionprojectionFields[12].Descriptor()
-	// wallettransactionprojection.DefaultAmountCents holds the default value on creation for the amount_cents field.
-	wallettransactionprojection.DefaultAmountCents = wallettransactionprojectionDescAmountCents.Default.(int64)
-	// wallettransactionprojectionDescBalanceCents is the schema descriptor for balance_cents field.
-	wallettransactionprojectionDescBalanceCents := wallettransactionprojectionFields[13].Descriptor()
-	// wallettransactionprojection.DefaultBalanceCents holds the default value on creation for the balance_cents field.
-	wallettransactionprojection.DefaultBalanceCents = wallettransactionprojectionDescBalanceCents.Default.(int64)
-	// wallettransactionprojectionDescFrozenCents is the schema descriptor for frozen_cents field.
-	wallettransactionprojectionDescFrozenCents := wallettransactionprojectionFields[14].Descriptor()
-	// wallettransactionprojection.DefaultFrozenCents holds the default value on creation for the frozen_cents field.
-	wallettransactionprojection.DefaultFrozenCents = wallettransactionprojectionDescFrozenCents.Default.(int64)
-	// wallettransactionprojectionDescAvailableCents is the schema descriptor for available_cents field.
-	wallettransactionprojectionDescAvailableCents := wallettransactionprojectionFields[15].Descriptor()
-	// wallettransactionprojection.DefaultAvailableCents holds the default value on creation for the available_cents field.
-	wallettransactionprojection.DefaultAvailableCents = wallettransactionprojectionDescAvailableCents.Default.(int64)
-	// wallettransactionprojectionDescTotalSpentCents is the schema descriptor for total_spent_cents field.
-	wallettransactionprojectionDescTotalSpentCents := wallettransactionprojectionFields[16].Descriptor()
-	// wallettransactionprojection.DefaultTotalSpentCents holds the default value on creation for the total_spent_cents field.
-	wallettransactionprojection.DefaultTotalSpentCents = wallettransactionprojectionDescTotalSpentCents.Default.(int64)
-	// wallettransactionprojectionDescMetadataWorkspaceID is the schema descriptor for metadata_workspace_id field.
-	wallettransactionprojectionDescMetadataWorkspaceID := wallettransactionprojectionFields[17].Descriptor()
-	// wallettransactionprojection.DefaultMetadataWorkspaceID holds the default value on creation for the metadata_workspace_id field.
-	wallettransactionprojection.DefaultMetadataWorkspaceID = wallettransactionprojectionDescMetadataWorkspaceID.Default.(string)
-	// wallettransactionprojectionDescMetadataResourceID is the schema descriptor for metadata_resource_id field.
-	wallettransactionprojectionDescMetadataResourceID := wallettransactionprojectionFields[18].Descriptor()
-	// wallettransactionprojection.DefaultMetadataResourceID holds the default value on creation for the metadata_resource_id field.
-	wallettransactionprojection.DefaultMetadataResourceID = wallettransactionprojectionDescMetadataResourceID.Default.(string)
-	// wallettransactionprojectionDescMetadataSettlementID is the schema descriptor for metadata_settlement_id field.
-	wallettransactionprojectionDescMetadataSettlementID := wallettransactionprojectionFields[19].Descriptor()
-	// wallettransactionprojection.DefaultMetadataSettlementID holds the default value on creation for the metadata_settlement_id field.
-	wallettransactionprojection.DefaultMetadataSettlementID = wallettransactionprojectionDescMetadataSettlementID.Default.(string)
-	// wallettransactionprojectionDescMetadataLedgerEntryID is the schema descriptor for metadata_ledger_entry_id field.
-	wallettransactionprojectionDescMetadataLedgerEntryID := wallettransactionprojectionFields[20].Descriptor()
-	// wallettransactionprojection.DefaultMetadataLedgerEntryID holds the default value on creation for the metadata_ledger_entry_id field.
-	wallettransactionprojection.DefaultMetadataLedgerEntryID = wallettransactionprojectionDescMetadataLedgerEntryID.Default.(string)
-	// wallettransactionprojectionDescMetadataComputeAllocationID is the schema descriptor for metadata_compute_allocation_id field.
-	wallettransactionprojectionDescMetadataComputeAllocationID := wallettransactionprojectionFields[21].Descriptor()
-	// wallettransactionprojection.DefaultMetadataComputeAllocationID holds the default value on creation for the metadata_compute_allocation_id field.
-	wallettransactionprojection.DefaultMetadataComputeAllocationID = wallettransactionprojectionDescMetadataComputeAllocationID.Default.(string)
-	// wallettransactionprojectionDescMetadataStorageID is the schema descriptor for metadata_storage_id field.
-	wallettransactionprojectionDescMetadataStorageID := wallettransactionprojectionFields[22].Descriptor()
-	// wallettransactionprojection.DefaultMetadataStorageID holds the default value on creation for the metadata_storage_id field.
-	wallettransactionprojection.DefaultMetadataStorageID = wallettransactionprojectionDescMetadataStorageID.Default.(string)
-	// wallettransactionprojectionDescID is the schema descriptor for id field.
-	wallettransactionprojectionDescID := wallettransactionprojectionFields[0].Descriptor()
-	// wallettransactionprojection.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	wallettransactionprojection.IDValidator = wallettransactionprojectionDescID.Validators[0].(func(string) error)
 	workspaceFields := schema.Workspace{}.Fields()
 	_ = workspaceFields
 	// workspaceDescCreatedAt is the schema descriptor for created_at field.

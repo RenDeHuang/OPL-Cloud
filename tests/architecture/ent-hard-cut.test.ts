@@ -51,13 +51,6 @@ test("Go services use Ent schema and migrations for production persistence", asy
   }
 });
 
-test("resource Hold migration does not restore released historical funds", async () => {
-	const migration = await readFile("services/ledger/migrations/202607120001_resource_hold_lifecycle.sql", "utf8");
-	assert.match(migration, /released_cents\s*=\s*amount_cents[^;]*status\s*=\s*'released'/is);
-	assert.match(migration, /remaining_cents\s*=\s*amount_cents[^;]*status\s*=\s*'held'/is);
-	assert.doesNotMatch(migration, /remaining_cents\s*=\s*amount_cents\s+WHERE\s+remaining_cents\s*=\s*0\s+AND/is);
-});
-
 test("Control Plane Ent model includes current facts and archive facts", async () => {
   const requiredSchemas = [
     "account.go",
@@ -70,10 +63,6 @@ test("Control Plane Ent model includes current facts and archive facts", async (
     "storage_volume.go",
     "storage_attachment.go",
     "workspace.go",
-    "wallet_projection.go",
-    "ledger_projection.go",
-    "wallet_transaction_projection.go",
-    "manual_topup_projection.go",
     "billing_reconciliation.go",
     "runtime_operation.go",
     "admin_audit_event.go",
@@ -91,21 +80,18 @@ test("Control Plane Ent model includes current facts and archive facts", async (
   }
 });
 
-test("Ledger and Fabric Ent models cover money and cloud-operation facts", async () => {
+test("Ledger and Fabric Ent models cover evidence and cloud-operation facts", async () => {
   for (const schema of [
-    "wallet.go",
-    "ledger_entry.go",
-    "wallet_transaction.go",
-    "manual_topup.go",
-    "hold.go",
-    "hold_release.go",
     "evidence_receipt.go",
-    "resource_settlement.go",
     "reconciliation_report.go",
+    "review_policy.go",
     "idempotency_key.go"
   ]) {
     assert.equal(await exists(`services/ledger/ent/schema/${schema}`), true, `missing Ledger Ent schema ${schema}`);
   }
+	for (const schema of ["wallet.go", "ledger_entry.go", "wallet_transaction.go", "manual_topup.go", "hold.go", "hold_release.go", "resource_settlement.go"]) {
+		assert.equal(await exists(`services/ledger/ent/schema/${schema}`), false, `retired Ledger Ent schema ${schema} must be deleted`);
+	}
 	for (const schema of ["fabric_operation.go", "connector.go", "environment_template.go"]) {
     assert.equal(await exists(`services/fabric/ent/schema/${schema}`), true, `missing Fabric Ent schema ${schema}`);
   }

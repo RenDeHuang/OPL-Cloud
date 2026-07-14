@@ -7,13 +7,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,34 +76,8 @@ func storedAttachment(t *testing.T, app *controlPlaneServer, id string) map[stri
 	return attachment
 }
 
-func TestCreateWorkspaceHTTPUsesMutationKeyWhenHeaderIsAbsent(t *testing.T) {
-	calls := []string{}
-	ledger := &fakeLedgerClientWithKeys{fakeLedgerClient{}, []string{}}
-	server := NewServer(controlplane.NewService(ledger, &fakeFabricClient{calls: &calls}))
-
-	compute := createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResource(t, server, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
-	createResource(t, server, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
-
-	body := bytes.NewBufferString(`{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", body)
-	session := tenantAdminSessionForTest(t, server)
-	addSessionCookies(req, session)
-	req.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
-	}
-	if len(ledger.keys) == 0 || ledger.keys[0] == "" {
-		t.Fatalf("expected generated workspace idempotency key, got %#v", ledger.keys)
-	}
-}
-
 func TestConsoleStaticEntryServesLoginAndHome(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	for _, path := range []string{"/", "/login", "/console/overview"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -121,7 +92,7 @@ func TestConsoleStaticEntryServesLoginAndHome(t *testing.T) {
 }
 
 func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/diagnostics", nil)
 	addSessionCookies(req, operatorSessionForTest(t, server))
 	rec := httptest.NewRecorder()
@@ -135,7 +106,7 @@ func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testin
 
 func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	calls := []string{}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 
 	compute := createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	storage := createResource(t, server, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
@@ -193,18 +164,18 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 		"runtime": map[string]any{"serviceName": "opl-compute-old"}, "runtimeServiceName": "opl-compute-old-root", "serviceName": "opl-compute-old-legacy", "access": map[string]any{"tokenStatus": "suspended"},
 	}
 	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running"}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-replacement", "storageId": "storage-alpha", "status": "attached"}))
 	mustStore(t, store.SaveProjectTaskSyncHead(context.Background(), map[string]any{"id": "project-alpha", "workspaceId": "workspace-alpha", "projectId": "project-alpha", "taskId": "task-alpha", "version": int64(7)}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
 	if err != nil {
 		t.Fatalf("create resume server: %v", err)
 	}
 	admin := operatorSessionForTest(t, server)
-	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner-resume@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner-resume@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(ownerUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-resume@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-resume@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	owner := loginForTest(t, server, "owner-resume@lab.example", "CorrectHorseBatteryStaple!")
 	outsider := loginForTest(t, server, "outside-resume@lab.example", "CorrectHorseBatteryStaple!")
 	body := `{"computeAllocationId":"compute-replacement","attachmentId":"attachment-replacement"}`
@@ -305,10 +276,10 @@ func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T
 	}
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "access": map[string]any{"tokenStatus": "suspended"}}))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running"}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatalf("create audit failure server: %v", err)
 	}
@@ -329,11 +300,11 @@ func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T
 func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing.T) {
 	store := newMemoryTableStore()
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "runtime": map[string]any{"serviceName": "old-nested"}, "runtimeServiceName": "old-root", "serviceName": "old-legacy", "access": map[string]any{"tokenStatus": "suspended", "account": "opl", "username": "opl", "credentialStatus": "configured", "credentialVersion": "v1", "secretRef": "old-secret"}}))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running"}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
 	runtime := clients.WorkspaceRuntime{ID: "runtime-new", WorkspaceID: "workspace-alpha", Status: "provisioning", Ready: false}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{runtime: runtime}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{runtime: runtime}), store)
 	if err != nil {
 		t.Fatalf("create provisioning resume server: %v", err)
 	}
@@ -355,14 +326,14 @@ func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing
 	}
 }
 
-func TestConcurrentWorkspaceResumeClaimsBeforeFabricSideEffects(t *testing.T) {
+func TestConcurrentWorkspaceResumeWaitsForResourceMutation(t *testing.T) {
 	store := newMemoryTableStore()
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "access": map[string]any{"tokenStatus": "suspended"}}))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available"}))
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running"}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
 	fabric := &blockingResumeFabricClient{fakeFabricClient: fakeFabricClient{}, entered: make(chan struct{}, 2), release: make(chan struct{})}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
 	if err != nil {
 		t.Fatalf("create resume server: %v", err)
 	}
@@ -394,116 +365,27 @@ func TestConcurrentWorkspaceResumeClaimsBeforeFabricSideEffects(t *testing.T) {
 		<-second
 		t.Fatal("concurrent resume reached Fabric twice")
 	case response := <-second:
-		if response.Code != http.StatusConflict {
-			close(fabric.release)
-			<-first
-			t.Fatalf("second resume status = %d: %s", response.Code, response.Body.String())
-		}
-	case <-time.After(time.Second):
 		close(fabric.release)
 		<-first
-		t.Fatal("second resume did not resolve deterministically")
+		t.Fatalf("second resume crossed resource lock with status %d: %s", response.Code, response.Body.String())
+	case <-time.After(50 * time.Millisecond):
 	}
 	close(fabric.release)
 	if response := <-first; response.Code != http.StatusOK {
 		t.Fatalf("first resume status = %d: %s", response.Code, response.Body.String())
 	}
-}
-
-func TestPricingPreviewMatchesResourceHoldAmount(t *testing.T) {
-	ledger := &capturingHoldLedgerClient{}
-	server := NewServer(controlplane.NewService(ledger, &fakeFabricClient{}))
-	session := tenantAdminSessionForTest(t, server)
-
-	previewReq := httptest.NewRequest(http.MethodPost, "/api/pricing/preview", bytes.NewBufferString(`{"accountId":"acct-alpha","resourceType":"compute","packageId":"basic"}`))
-	addSessionCookies(previewReq, session)
-	previewReq.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
-	previewRec := httptest.NewRecorder()
-	server.ServeHTTP(previewRec, previewReq)
-	if previewRec.Code != http.StatusOK {
-		t.Fatalf("preview status = %d, want 200: %s", previewRec.Code, previewRec.Body.String())
-	}
-	var preview map[string]any
-	if err := json.NewDecoder(previewRec.Body).Decode(&preview); err != nil {
-		t.Fatalf("decode preview: %v", err)
-	}
-	holdAmountCents := int64(numberField(preview, "holdAmountCents", 0))
-	if holdAmountCents <= 0 || stringValue(preview["pricingVersion"]) == "" || preview["priceSnapshot"] == nil {
-		t.Fatalf("preview must return pricingVersion, priceSnapshot and holdAmountCents: %#v", preview)
-	}
-
-	createReq := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","packageId":"basic"}`))
-	addSessionCookies(createReq, session)
-	createReq.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
-	createRec := httptest.NewRecorder()
-	server.ServeHTTP(createRec, createReq)
-	if createRec.Code != http.StatusAccepted {
-		t.Fatalf("create status = %d, want 202: %s", createRec.Code, createRec.Body.String())
-	}
-	if ledger.lastHold.AmountCents != holdAmountCents {
-		t.Fatalf("create hold amount = %d, want preview %d", ledger.lastHold.AmountCents, holdAmountCents)
-	}
-}
-
-func TestStoragePricingSnapshotUsesResourceHourlyAmount(t *testing.T) {
-	preview := pricingPreviewResponse(map[string]any{"resourceType": "storage", "packageId": "basic", "sizeGb": 10}, map[string]any{})
-	snapshot := mapField(preview, "priceSnapshot")
-	if int64(numberField(snapshot, "unitPriceCents", 0)) != int64(numberField(preview, "activationAmountCents", 0)) || int64(numberField(snapshot, "monthlyUnitPriceCents", 0)) != 43 {
-		t.Fatalf("storage pricing preview = %#v", preview)
-	}
-}
-
-func TestPricingCatalogMatchesContractDefaults(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "packages", "contracts", "opl-cloud-pricing-contract.json"))
-	if err != nil {
-		t.Fatalf("read pricing contract: %v", err)
-	}
-	var contract map[string]any
-	if err := json.Unmarshal(raw, &contract); err != nil {
-		t.Fatalf("decode pricing contract: %v", err)
-	}
-	computeHourly, _ := contract["computeHourly"].(map[string]any)
-	assertPlanPrice := func(packageID string) {
-		t.Helper()
-		plan := packageByID(packageID)
-		price, _ := plan["price"].(map[string]any)
-		if price["computeHourly"] != computeHourly[packageID] {
-			t.Fatalf("%s compute price = %v, want contract %v", packageID, price["computeHourly"], computeHourly[packageID])
+	select {
+	case response := <-second:
+		if response.Code != http.StatusConflict {
+			t.Fatalf("second resume status = %d: %s", response.Code, response.Body.String())
 		}
-		if price["storageGbMonth"] != contract["storageGbMonth"] {
-			t.Fatalf("%s storage price = %v, want contract %v", packageID, price["storageGbMonth"], contract["storageGbMonth"])
-		}
-	}
-	if pricingCatalogVersion != contract["catalogVersion"] || pricingCurrency != contract["currency"] {
-		t.Fatalf("pricing catalog identity drifted from contract")
-	}
-	assertPlanPrice("basic")
-	assertPlanPrice("pro")
-}
-
-func TestBillingSummaryReadsLedgerWallet(t *testing.T) {
-	server := NewServer(controlplane.NewService(walletSummaryLedgerClient{}, &fakeFabricClient{}))
-	session := tenantAdminSessionForTest(t, server)
-	req := httptest.NewRequest(http.MethodGet, "/api/billing/summary?accountId=acct-alpha", nil)
-	addAuth(req, session)
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("billing summary status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var summary map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&summary); err != nil {
-		t.Fatalf("decode summary: %v", err)
-	}
-	if summary["accountId"] != "acct-alpha" || summary["balanceCents"] != float64(12345) || summary["availableCents"] != float64(12000) || summary["frozenCents"] != float64(345) {
-		t.Fatalf("billing summary must come from Ledger wallet: %#v", summary)
+	case <-time.After(time.Second):
+		t.Fatal("second resume did not resolve after resource unlock")
 	}
 }
 
 func TestComputePoolsReadFabricCatalog(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &catalogFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &catalogFabricClient{}))
 	session := operatorSessionForTest(t, server)
 	req := httptest.NewRequest(http.MethodGet, "/api/compute-pools", nil)
 	addAuth(req, session)
@@ -524,7 +406,7 @@ func TestComputePoolsReadFabricCatalog(t *testing.T) {
 }
 
 func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &catalogFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &catalogFabricClient{}))
 	session := tenantAdminSessionForTest(t, server)
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
 	addAuth(req, session)
@@ -548,7 +430,7 @@ func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
 
 func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	calls := []string{}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
@@ -584,9 +466,9 @@ func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 
 func TestWorkspaceRuntimeStatusDoesNotReadSecretForUnknownProjection(t *testing.T) {
 	calls := []string{}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	admin := operatorSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-unknown@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-unknown@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	outsider := loginForTest(t, server, "outside-unknown@lab.example", "CorrectHorseBatteryStaple!")
 
 	before := len(calls)
@@ -601,9 +483,9 @@ func TestWorkspaceRuntimeStatusDoesNotReadSecretForUnknownProjection(t *testing.
 
 func TestWorkspaceRuntimeStatusForbidsCrossAccountSecretRead(t *testing.T) {
 	calls := []string{}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	admin := tenantAdminSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	outsider := loginForTest(t, server, "outside@lab.example", "CorrectHorseBatteryStaple!")
 
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
@@ -631,68 +513,18 @@ func TestWorkspaceListNeverExposesPersistedPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if password := stringValue(valueOrNil(stored[0], "access", "password")); password != "" {
+	if password := stringValue(nested(stored[0], "access", "password")); password != "" {
 		t.Fatalf("memory store retained Workspace password: %q", password)
 	}
 	workspace := app.state("acct-alpha", nil)["workspaces"].([]any)[0].(map[string]any)
-	if password := stringValue(valueOrNil(workspace, "access", "password")); password != "" {
+	if password := stringValue(nested(workspace, "access", "password")); password != "" {
 		t.Fatalf("Workspace list exposed password: %q", password)
-	}
-}
-
-func TestPersistentFactsSurviveServerRestart(t *testing.T) {
-	setTestOperatorAccount(t, "acct-alpha")
-	path := t.TempDir() + "/control-plane-state.sqlite"
-	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
-	server, err := NewPersistentServer(service, NewTestEntStateStore(t, path))
-	if err != nil {
-		t.Fatalf("create persistent server: %v", err)
-	}
-	session := tenantAdminSessionForTest(t, server)
-	ensureCustomerMembershipForTest(t, server, session, "acct-alpha", "usr-admin")
-	createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-
-	restarted, err := NewPersistentServer(service, NewTestEntStateStore(t, path))
-	if err != nil {
-		t.Fatalf("restart persistent server: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, restarted))
-	rec := httptest.NewRecorder()
-	restarted.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	computes := state["computeAllocations"].([]any)
-	if len(computes) != 1 || computes[0].(map[string]any)["id"] == "" {
-		t.Fatalf("compute allocation did not survive restart: %#v", computes)
-	}
-	ledger := state["billingLedger"].([]any)
-	if len(ledger) != 1 || ledger[0].(map[string]any)["type"] != "compute_hold" || ledger[0].(map[string]any)["resourceId"] == "" {
-		t.Fatalf("compute hold ledger did not survive restart: %#v", ledger)
-	}
-	wallet := state["wallet"].(map[string]any)
-	if wallet["frozenCents"].(float64) <= 0 {
-		t.Fatalf("wallet frozen state did not survive restart: %#v", wallet)
-	}
-}
-
-func TestHoldLedgerProjectionKeepsResourceIdentity(t *testing.T) {
-	rows := ledgerEntryProjections([]clients.LedgerEntry{{
-		ID: "ledger-hold-alpha", AccountID: "acct-alpha", Source: "compute_hold", Reason: "compute-alpha",
-	}}, nil)
-	if len(rows) != 1 || rows[0]["resourceId"] != "compute-alpha" {
-		t.Fatalf("hold ledger projection lost resource identity: %#v", rows)
 	}
 }
 
 func TestSessionFactSurvivesServerRestart(t *testing.T) {
 	path := t.TempDir() + "/control-plane-state.sqlite"
-	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
 	server, err := NewPersistentServer(service, NewTestEntStateStore(t, path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
@@ -716,7 +548,7 @@ func TestSessionFactSurvivesServerRestart(t *testing.T) {
 func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 	setTestOperatorAccount(t, "acct-alpha")
 	path := t.TempDir() + "/control-plane-state.sqlite"
-	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
 	server, err := NewPersistentServer(service, NewTestEntStateStore(t, path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
@@ -751,8 +583,8 @@ func TestWorkspaceTokenStatePersistsAcrossRestart(t *testing.T) {
 }
 
 func TestBootstrapImportsAdminSeedAndDoesNotExposeLegacyOwner(t *testing.T) {
-	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-admin-production","email":"admin@medopl.cn","password":"StableAdminPass2026!","name":"Admin","role":"admin","accountId":"acct-admin"}]`)
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-admin-production","email":"admin@medopl.cn","password":"StableAdminPass2026!","name":"Admin","role":"admin","accountId":"acct-admin","sub2apiUserId":41}]`)
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 
 	loginRec := loginForTest(t, server, "admin@medopl.cn", "StableAdminPass2026!")
 	if loginRec.Header().Get("x-opl-csrf-token") == "" {
@@ -773,11 +605,11 @@ func TestLoginAcceptsLegacyScryptPasswordHash(t *testing.T) {
 }
 
 func TestNonAdminRequestsCannotSelectAnotherAccount(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
-	alphaUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"alpha@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	alphaUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"alpha@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(alphaUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"beta@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"beta@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	alpha := loginForTest(t, server, "alpha@lab.example", "CorrectHorseBatteryStaple!")
 
 	readOther := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-beta", nil)
@@ -809,11 +641,11 @@ func TestNonAdminRequestsCannotSelectAnotherAccount(t *testing.T) {
 	}
 }
 
-func TestAdminMutationsAppendAuditEvents(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+func TestBillingReconciliationAppendsAuditEvent(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/billing/topups", `{"accountId":"acct-alpha","amount":100,"idempotencyKey":"audit-topup","confirm":true}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-audit","status":"ok"}}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
 	addSessionCookies(req, admin)
@@ -829,24 +661,59 @@ func TestAdminMutationsAppendAuditEvents(t *testing.T) {
 	events := state["auditEvents"].([]any)
 	if !slices.ContainsFunc(events, func(item any) bool {
 		event := item.(map[string]any)
-		return event["action"] == "billing.topup" && event["targetAccountId"] == "acct-alpha" && event["actorUserId"] != "" && event["result"] == "succeeded"
+		return event["action"] == "billing.reconciliation" && event["actorUserId"] != "" && event["result"] == "succeeded"
 	}) {
-		t.Fatalf("missing billing topup audit event: %#v", events)
+		t.Fatalf("missing billing reconciliation audit event: %#v", events)
 	}
 }
 
 func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
-	duplicate := requestWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"PI@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	duplicate := requestWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"PI@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	if duplicate.Code != http.StatusConflict || !strings.Contains(duplicate.Body.String(), "user_already_exists") {
 		t.Fatalf("duplicate create status=%d body=%s, want 409 user_already_exists", duplicate.Code, duplicate.Body.String())
 	}
 }
 
 type fakeLedgerClient struct{}
+
+type testSub2APIClient struct {
+	mu      sync.Mutex
+	balance int64
+	charges map[string]int64
+}
+
+func (*testSub2APIClient) Version(context.Context) (string, error) { return "0.1.151", nil }
+
+func (c *testSub2APIClient) Balance(_ context.Context, userID int64) (clients.Sub2APIBalance, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return clients.Sub2APIBalance{UserID: userID, USDMicros: c.balance}, nil
+}
+
+func (c *testSub2APIClient) Charge(_ context.Context, input clients.Sub2APIChargeInput) (clients.Sub2APICharge, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if previous, ok := c.charges[input.Code]; ok {
+		if previous != input.ChargeUSDMicros {
+			return clients.Sub2APICharge{}, errors.New("redeem_code_conflict")
+		}
+		return clients.Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: previous, Status: "used"}, nil
+	}
+	if input.ChargeUSDMicros <= 0 || input.ChargeUSDMicros > c.balance {
+		return clients.Sub2APICharge{}, errors.New("insufficient_balance")
+	}
+	c.balance -= input.ChargeUSDMicros
+	c.charges[input.Code] = input.ChargeUSDMicros
+	return clients.Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: input.ChargeUSDMicros, Status: "used"}, nil
+}
+
+func newTestService(ledger clients.LedgerClient, fabric clients.FabricClient) *controlplane.Service {
+	return controlplane.NewService(ledger, fabric, &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}})
+}
 
 type failingResourceCreateFabricClient struct{ fakeFabricClient }
 
@@ -858,76 +725,12 @@ func (*failingResourceCreateFabricClient) CreateStorageVolume(context.Context, c
 	return clients.StorageVolume{}, errors.New("storage create failed")
 }
 
-type fakeLedgerClientWithKeys struct {
-	fakeLedgerClient
-	keys []string
-}
-
-type capturingHoldLedgerClient struct {
-	fakeLedgerClient
-	lastHold clients.HoldInput
-}
-
-type blockingActivationLedgerClient struct {
-	fakeLedgerClient
-	calls         atomic.Int32
-	firstEntered  chan struct{}
-	secondEntered chan struct{}
-	release       chan struct{}
-}
-
-func (f *blockingActivationLedgerClient) ActivateHold(ctx context.Context, input clients.HoldActivationInput, key string) (clients.HoldActivationResult, error) {
-	switch f.calls.Add(1) {
-	case 1:
-		close(f.firstEntered)
-		select {
-		case <-f.release:
-		case <-ctx.Done():
-			return clients.HoldActivationResult{}, ctx.Err()
-		}
-	case 2:
-		close(f.secondEntered)
-	}
-	return f.fakeLedgerClient.ActivateHold(ctx, input, key)
-}
-
-func (f *capturingHoldLedgerClient) CreateHold(ctx context.Context, input clients.HoldInput, idempotencyKey string) (clients.HoldResult, error) {
-	f.lastHold = input
-	return f.fakeLedgerClient.CreateHold(ctx, input, idempotencyKey)
-}
-
-func (f *fakeLedgerClientWithKeys) CreateHold(ctx context.Context, input clients.HoldInput, idempotencyKey string) (clients.HoldResult, error) {
-	f.keys = append(f.keys, idempotencyKey)
-	return f.fakeLedgerClient.CreateHold(ctx, input, idempotencyKey)
-}
-
-func (fakeLedgerClient) ManualTopUp(_ context.Context, input clients.ManualTopUpInput, _ string) (clients.ManualTopUpResult, error) {
-	return clients.ManualTopUpResult{
-		TopUp:             clients.ManualTopUp{ID: "topup-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents, OperatorUserID: input.OperatorUserID},
-		LedgerEntry:       clients.LedgerEntry{ID: "ledger-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents},
-		WalletTransaction: clients.WalletTransaction{ID: "wallet-tx-from-ledger", AccountID: input.AccountID, AmountCents: input.AmountCents},
-		Wallet:            clients.Wallet{AccountID: input.AccountID, BalanceCents: input.AmountCents, AvailableCents: input.AmountCents, Currency: "CNY"},
-	}, nil
-}
-
-func (fakeLedgerClient) CreateHold(_ context.Context, input clients.HoldInput, _ string) (clients.HoldResult, error) {
-	return clients.HoldResult{ID: "hold-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, AmountCents: input.AmountCents, ActivationAmountCents: input.ActivationAmountCents, RemainingCents: input.AmountCents, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 20000, FrozenCents: input.AmountCents, AvailableCents: 20000 - input.AmountCents, Currency: "CNY"}}, nil
-}
-
-func (fakeLedgerClient) ActivateHold(_ context.Context, input clients.HoldActivationInput, _ string) (clients.HoldActivationResult, error) {
-	return clients.HoldActivationResult{HoldResult: clients.HoldResult{ID: input.HoldID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, RemainingCents: 16800, Status: "active", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 19900, FrozenCents: 16800, AvailableCents: 3100, Currency: "CNY"}}, ActivationLedgerEntryID: "ledger-activation", ActivationWalletTransactionID: "wallet-activation"}, nil
-}
-
-func (fakeLedgerClient) ReleaseHold(_ context.Context, input clients.HoldReleaseInput, _ string) (clients.HoldReleaseResult, error) {
-	return clients.HoldReleaseResult{ID: "release-" + input.ResourceType + "-" + input.ResourceID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: 16800, Status: "released", Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, FrozenCents: 0, AvailableCents: 8800, Currency: "CNY"}}, nil
-}
-
 func (fakeLedgerClient) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
-	return clients.Receipt{ReceiptID: "receipt-from-ledger", WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: "continuation-from-ledger"}, nil
+	return clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-from-ledger", ContinuationID: "continuation-from-ledger"}, nil
 }
 
 func (fakeLedgerClient) Receipt(_ context.Context, receiptID string) (clients.Receipt, error) {
-	return clients.Receipt{ReceiptID: receiptID, Status: "completed", Execution: map[string]any{"jobStatus": "succeeded", "attempt": float64(1)}, ContinuationID: "continuation-from-ledger"}, nil
+	return clients.Receipt{ReceiptInput: clients.ReceiptInput{Status: "completed", Execution: map[string]any{"jobStatus": "succeeded", "attempt": float64(1)}}, ReceiptID: receiptID, ContinuationID: "continuation-from-ledger"}, nil
 }
 
 func (fakeLedgerClient) Artifact(_ context.Context, artifactID string) (clients.Artifact, error) {
@@ -942,48 +745,8 @@ func (fakeLedgerClient) Continuation(_ context.Context, receiptID string) (map[s
 	return map[string]any{"receiptId": receiptID, "continuationId": "continuation-from-ledger"}, nil
 }
 
-func (fakeLedgerClient) SettleResource(_ context.Context, input clients.ResourceSettlementInput, _ string) (clients.ResourceSettlementResult, error) {
-	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, ResourceType: input.ResourceType, ResourceID: input.ResourceID, HoldID: input.HoldID, AmountCents: input.AmountCents, Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger", PricingVersion: input.PricingVersion, PriceSnapshot: input.PriceSnapshot, UsagePeriodStart: input.UsagePeriodStart, UsagePeriodEnd: input.UsagePeriodEnd, Quantity: input.Quantity, Unit: input.Unit, ProviderCostEvidenceRef: input.ProviderCostEvidenceRef, Wallet: clients.Wallet{AccountID: input.AccountID, BalanceCents: 8800, AvailableCents: 8800, Currency: "CNY"}}, nil
-}
-
-type fakeLedgerClientWithoutSettlementIdentity struct {
-	fakeLedgerClient
-}
-
-func (fakeLedgerClientWithoutSettlementIdentity) SettleResource(_ context.Context, _ clients.ResourceSettlementInput, _ string) (clients.ResourceSettlementResult, error) {
-	return clients.ResourceSettlementResult{ID: "settlement-from-ledger", Status: "settled", LedgerEntryID: "ledger-settlement-from-ledger", WalletTransactionID: "wallet-settlement-from-ledger"}, nil
-}
-
-type walletSummaryLedgerClient struct {
-	fakeLedgerClient
-}
-
-func (walletSummaryLedgerClient) Wallet(_ context.Context, accountID string) (clients.Wallet, error) {
-	return clients.Wallet{AccountID: accountID, BalanceCents: 12345, FrozenCents: 345, AvailableCents: 12000, TotalSpentCents: 6789, Currency: "CNY"}, nil
-}
-
 func (fakeLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "ok", Report: input.Report, BlockNewWorkspaces: false, Reason: "operator_reconciliation"}, nil
-}
-
-func (fakeLedgerClient) Wallet(_ context.Context, accountID string) (clients.Wallet, error) {
-	return clients.Wallet{AccountID: accountID, Currency: "CNY"}, nil
-}
-
-func (fakeLedgerClient) ListLedgerEntries(_ context.Context, _ string) ([]clients.LedgerEntry, error) {
-	return nil, nil
-}
-
-func (fakeLedgerClient) ListWalletTransactions(_ context.Context, _ string) ([]clients.WalletTransaction, error) {
-	return nil, nil
-}
-
-func (fakeLedgerClient) ListManualTopUps(_ context.Context, _ string) ([]clients.ManualTopUp, error) {
-	return nil, nil
-}
-
-func (fakeLedgerClient) ListResourceSettlements(_ context.Context, _ string) ([]clients.ResourceSettlementResult, error) {
-	return nil, nil
 }
 
 type fakeBlockingReconciliationLedgerClient struct {
@@ -992,48 +755,6 @@ type fakeBlockingReconciliationLedgerClient struct {
 
 func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Context, input clients.ReconciliationInput, _ string) (clients.ReconciliationResult, error) {
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "tencent_bill_reconciliation_failed"}, nil
-}
-
-type readBackedLedgerClient struct {
-	fakeLedgerClient
-}
-
-func (readBackedLedgerClient) Wallet(_ context.Context, accountID string) (clients.Wallet, error) {
-	return clients.Wallet{AccountID: accountID, BalanceCents: 9900, FrozenCents: 1200, AvailableCents: 8700, TotalSpentCents: 1200, Currency: "CNY"}, nil
-}
-
-func (readBackedLedgerClient) ListLedgerEntries(_ context.Context, _ string) ([]clients.LedgerEntry, error) {
-	return []clients.LedgerEntry{{ID: "ledger-settlement-alpha", AccountID: "acct-alpha", AmountCents: 1200, Currency: "CNY", Direction: "debit", Source: "compute_settlement", Reason: "ws-alpha"}}, nil
-}
-
-func (readBackedLedgerClient) ListWalletTransactions(_ context.Context, _ string) ([]clients.WalletTransaction, error) {
-	return []clients.WalletTransaction{{ID: "wallet-tx-alpha", AccountID: "acct-alpha", LedgerEntryID: "ledger-settlement-alpha", AmountCents: -1200, BalanceCents: 9900, FrozenCents: 1200, AvailableCents: 8700, TotalSpentCents: 1200, Currency: "CNY"}}, nil
-}
-
-func (readBackedLedgerClient) ListManualTopUps(_ context.Context, _ string) ([]clients.ManualTopUp, error) {
-	return []clients.ManualTopUp{}, nil
-}
-
-func (readBackedLedgerClient) ListResourceSettlements(_ context.Context, _ string) ([]clients.ResourceSettlementResult, error) {
-	return []clients.ResourceSettlementResult{{
-		ID:                      "settlement-alpha",
-		AccountID:               "acct-alpha",
-		WorkspaceID:             "ws-alpha",
-		ResourceType:            "compute",
-		ResourceID:              "compute-alpha",
-		AmountCents:             1200,
-		Currency:                "CNY",
-		Status:                  "settled",
-		LedgerEntryID:           "ledger-settlement-alpha",
-		WalletTransactionID:     "wallet-tx-alpha",
-		PricingVersion:          "pricing-2026-07",
-		PriceSnapshot:           map[string]any{"unitPriceCents": 1200},
-		UsagePeriodStart:        "2026-07-08T00:00:00Z",
-		UsagePeriodEnd:          "2026-07-08T01:00:00Z",
-		Quantity:                1,
-		Unit:                    "hour",
-		ProviderCostEvidenceRef: "tencent-row-alpha",
-	}}, nil
 }
 
 type failingFabricClient struct {
@@ -1108,7 +829,7 @@ func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", BillingStatus: "active", ServiceName: "opl-compute-from-fabric"}, nil
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric"}, nil
 }
 
 func (f *provisioningComputeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
@@ -1128,32 +849,32 @@ func (f *pendingComputeFabricClient) SyncComputeAllocation(_ context.Context, id
 
 func (f *fakeFabricClient) GetComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute-get")
-	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", BillingStatus: "active", ServiceName: "opl-compute-from-fabric"}, nil
+	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute-sync")
-	return clients.ComputeAllocation{ID: id, Status: "external_deleted", Provider: "tencent-tke", ProviderRequestID: "compute-sync-from-fabric", BillingStatus: "stopped"}, nil
+	return clients.ComputeAllocation{ID: id, Status: "external_deleted", Provider: "tencent-tke", ProviderRequestID: "compute-sync-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) DestroyComputeAllocation(_ context.Context, id string, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute-destroy")
-	return clients.ComputeAllocation{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "compute-destroy-from-fabric", BillingStatus: "stopped"}, nil
+	return clients.ComputeAllocation{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "compute-destroy-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage")
-	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "pvc/volume-from-fabric-data", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs", BillingStatus: "active"}, nil
+	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "pvc/volume-from-fabric-data", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs"}, nil
 }
 
 func (f *fakeFabricClient) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
 	f.record("fabric.storage-sync")
-	return clients.StorageVolume{ID: id, Status: "external_deleted", Provider: "tencent-tke", ProviderRequestID: "storage-sync-from-fabric", BillingStatus: "stopped"}, nil
+	return clients.StorageVolume{ID: id, Status: "external_deleted", Provider: "tencent-tke", ProviderRequestID: "storage-sync-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage-destroy")
-	return clients.StorageVolume{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric", BillingStatus: "stopped"}, nil
+	return clients.StorageVolume{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
@@ -1238,7 +959,7 @@ func (f *fakeFabricClient) CancelJob(_ context.Context, jobID string, _ string) 
 }
 
 func TestExecutionRoutesPersistCanonicalFlow(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-project-alpha"}`)
@@ -1282,7 +1003,7 @@ func TestProjectCreationRequiresWorkspaceOrganizationOwnership(t *testing.T) {
 	}
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-beta", "email": "beta-admin@example.com", "accountId": "acct-beta", "role": "admin", "status": "active", "passwordHash": passwordHash}))
 	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-admin-beta", "organizationId": "org-beta", "userId": "usr-beta", "accountId": "acct-beta", "role": "admin", "status": "active"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatalf("create server: %v", err)
 	}
@@ -1326,7 +1047,7 @@ func TestProjectCreationReportsIdentityStoreFailures(t *testing.T) {
 			mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}))
 			mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-project-admin", "organizationId": "org-alpha", "userId": "usr-project-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
 			mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "status": "running"}))
-			server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+			server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 			if err != nil {
 				t.Fatalf("create server: %v", err)
 			}
@@ -1375,7 +1096,7 @@ func TestProjectCreationReportsMissingIdentity(t *testing.T) {
 			if tc.workspace != nil {
 				mustStore(t, store.SaveWorkspace(context.Background(), tc.workspace))
 			}
-			server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+			server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 			if err != nil {
 				t.Fatalf("create server: %v", err)
 			}
@@ -1412,7 +1133,7 @@ func (*executionCompletionLedgerClient) RecordReceipt(_ context.Context, input c
 	if input.Status == "completed" {
 		continuationID = "continuation-final"
 	}
-	return clients.Receipt{ReceiptID: receiptID, Status: input.Status, WorkspaceID: input.WorkspaceID, ProjectID: input.ProjectID, TaskID: input.TaskID, RequestID: input.RequestID, ApprovalID: input.ApprovalID, JobID: input.JobID, ContinuationID: continuationID}, nil
+	return clients.Receipt{ReceiptInput: input, ReceiptID: receiptID, ContinuationID: continuationID}, nil
 }
 
 func (*executionCompletionLedgerClient) Continuation(_ context.Context, receiptID string) (map[string]any, error) {
@@ -1429,9 +1150,9 @@ func (f *completedExecutionFabricClient) GetJob(_ context.Context, jobID string)
 }
 
 func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(&executionCompletionLedgerClient{}, &completedExecutionFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(&executionCompletionLedgerClient{}, &completedExecutionFabricClient{}))
 	admin := operatorSessionForTest(t, server)
-	memberUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"member@execution.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	memberUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"member@execution.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(memberUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
 	member := loginForTest(t, server, "member@execution.example", "CorrectHorseBatteryStaple!")
 
@@ -1452,7 +1173,7 @@ func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
 		t.Fatalf("continuation status = %d: %s", continuationRec.Code, continuationRec.Body.String())
 	}
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	outsider := loginForTest(t, server, "outside-continuation@example.com", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, outsider, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
 	if forbidden.Code != http.StatusUnauthorized {
@@ -1461,7 +1182,7 @@ func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
 }
 
 func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 	req := httptest.NewRequest(http.MethodPost, "/api/projects", bytes.NewBufferString(`{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1474,7 +1195,7 @@ func TestProjectIdentityRequiresIdempotencyKey(t *testing.T) {
 }
 
 func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
@@ -1493,9 +1214,9 @@ func TestExecutionRequestSameKeyDifferentPayloadConflicts(t *testing.T) {
 }
 
 func TestExecutionRoutesAuthorizeActiveOrganizationMembers(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
-	piUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@execution.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	piUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"pi@execution.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(piUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
 	pi := loginForTest(t, server, "pi@execution.example", "CorrectHorseBatteryStaple!")
 	rec := requestWithSession(t, server, pi, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
@@ -1503,7 +1224,7 @@ func TestExecutionRoutesAuthorizeActiveOrganizationMembers(t *testing.T) {
 		t.Fatalf("member status = %d body=%s, want created", rec.Code, rec.Body.String())
 	}
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	outsider := loginForTest(t, server, "outsider@execution.example", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, outsider, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	if forbidden.Code != http.StatusUnauthorized || !strings.Contains(forbidden.Body.String(), "not_authenticated") {
@@ -1628,7 +1349,7 @@ func createResource(t *testing.T, server http.Handler, method string, path strin
 }
 
 func explicitOperatorTestPath(path string) bool {
-	return strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/organizations") || strings.HasPrefix(path, "/api/operator") || strings.HasPrefix(path, "/api/management") || strings.HasPrefix(path, "/api/billing/topups") || strings.HasPrefix(path, "/api/billing/resource-settlements") || strings.HasPrefix(path, "/api/billing/reconciliation")
+	return strings.HasPrefix(path, "/api/users") || strings.HasPrefix(path, "/api/organizations") || strings.HasPrefix(path, "/api/operator") || strings.HasPrefix(path, "/api/management") || strings.HasPrefix(path, "/api/billing/reconciliation")
 }
 
 func createResourceWithSession(t *testing.T, server http.Handler, loginRec *httptest.ResponseRecorder, method string, path string, body string) map[string]any {
@@ -1666,7 +1387,7 @@ func tenantAdminSessionForTest(t *testing.T, server http.Handler) *httptest.Resp
 	t.Helper()
 	global := reservedOperatorSessionForTest(t, server)
 	email := "tenant-admin-" + newResourceID("test") + "@example.com"
-	user := createResourceWithSession(t, server, global, http.MethodPost, "/api/users", `{"email":"`+email+`","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!"}`)
+	user := createResourceWithSession(t, server, global, http.MethodPost, "/api/users", `{"email":"`+email+`","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	membership := requestWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"admin"}`)
 	if membership.Code < 200 || membership.Code >= 300 {
 		organization := createResourceWithSession(t, server, global, http.MethodPost, "/api/organizations", `{"name":"Test tenant","billingAccountId":"acct-alpha"}`)
@@ -1698,389 +1419,6 @@ func addSessionCookies(req *http.Request, loginRec *httptest.ResponseRecorder) {
 func addAuth(req *http.Request, loginRec *httptest.ResponseRecorder) {
 	addSessionCookies(req, loginRec)
 	req.Header.Set("x-opl-csrf", loginRec.Header().Get("x-opl-csrf-token"))
-}
-
-func TestCreateComputeAllocationUsesFabricService(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	req := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","packageId":"basic","name":"Production Compute"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", "compute-once")
-	addAuth(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusAccepted, rec.Body.String())
-	}
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if stringValue(body["id"]) == "" || body["providerRequestId"] != "compute-request-from-fabric" || body["holdId"] != "hold-compute-"+stringValue(body["id"]) {
-		t.Fatalf("compute allocation did not come from Fabric: %#v", body)
-	}
-	if body["provider"] != "tencent-tke" || body["billingStatus"] != "pending" || body["nodeName"] != "node-from-fabric" || body["instanceId"] != "ins-from-fabric" {
-		t.Fatalf("compute allocation missing route contract fields: %#v", body)
-	}
-	getReq := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(body["id"]), nil)
-	addSessionCookies(getReq, tenantAdminSessionForTest(t, server))
-	getRec := httptest.NewRecorder()
-	server.ServeHTTP(getRec, getReq)
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("get status = %d, want %d: %s", getRec.Code, http.StatusOK, getRec.Body.String())
-	}
-}
-
-func TestGetProvisioningComputeActivatesHoldThroughSync(t *testing.T) {
-	calls := []string{}
-	fabric := &provisioningComputeFabricClient{fakeFabricClient{calls: &calls}}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, fabric))
-	admin := tenantAdminSessionForTest(t, server)
-	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(created["id"]), nil)
-	addSessionCookies(req, admin)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("get status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body["status"] != "running" || body["billingStatus"] != "active" || body["ledgerEntryId"] != "ledger-activation" {
-		t.Fatalf("compute did not converge through Hold activation: %#v", body)
-	}
-	if !slices.Contains(calls, "fabric.compute-sync") || slices.Contains(calls, "fabric.compute-get") {
-		t.Fatalf("provisioning GET calls = %#v", calls)
-	}
-}
-
-func TestGetProvisioningComputeWaitsForMachineIdentity(t *testing.T) {
-	calls := []string{}
-	fabric := &pendingComputeFabricClient{provisioningComputeFabricClient{fakeFabricClient{calls: &calls}}}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, fabric))
-	admin := tenantAdminSessionForTest(t, server)
-	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(created["id"]), nil)
-	addSessionCookies(req, admin)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("get status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var body map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body["status"] != "provisioning" || body["billingStatus"] != "pending" || !slices.Contains(calls, "fabric.compute-sync") || slices.Contains(calls, "fabric.compute-get") {
-		t.Fatalf("pending compute response=%#v calls=%#v", body, calls)
-	}
-}
-
-func TestGetProvisioningComputeSerializesHoldActivation(t *testing.T) {
-	fabric := &provisioningComputeFabricClient{}
-	ledger := &blockingActivationLedgerClient{
-		firstEntered:  make(chan struct{}),
-		secondEntered: make(chan struct{}),
-		release:       make(chan struct{}),
-	}
-	server := NewServer(controlplane.NewService(ledger, fabric))
-	admin := tenantAdminSessionForTest(t, server)
-	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	results := make(chan map[string]any, 2)
-
-	request := func() {
-		req := httptest.NewRequest(http.MethodGet, "/api/compute-allocations/"+stringValue(created["id"]), nil)
-		addSessionCookies(req, admin)
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, req)
-		var body map[string]any
-		if rec.Code == http.StatusOK {
-			_ = json.NewDecoder(rec.Body).Decode(&body)
-		}
-		results <- body
-	}
-
-	go request()
-	<-ledger.firstEntered
-	go request()
-	select {
-	case <-ledger.secondEntered:
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(ledger.release)
-	first, second := <-results, <-results
-
-	if ledger.calls.Load() != 1 || first["billingStatus"] != "active" || second["billingStatus"] != "active" {
-		t.Fatalf("activation calls=%d first=%#v second=%#v", ledger.calls.Load(), first, second)
-	}
-}
-
-func TestFailedResourceCreatePersistsReleasedHoldFacts(t *testing.T) {
-	tests := []struct {
-		name   string
-		prefix string
-		path   string
-		body   string
-	}{
-		{name: "compute", prefix: "ca", path: "/api/compute-allocations", body: `{"accountId":"acct-alpha","packageId":"basic"}`},
-		{name: "storage", prefix: "vol", path: "/api/storage-volumes", body: `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10}`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := NewServer(controlplane.NewService(fakeLedgerClient{}, &failingResourceCreateFabricClient{}))
-			key := "failed-" + tt.name
-			admin := tenantAdminSessionForTest(t, server)
-			req := httptest.NewRequest(http.MethodPost, tt.path, bytes.NewBufferString(tt.body))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Idempotency-Key", key)
-			addAuth(req, admin)
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-			if rec.Code != http.StatusBadGateway {
-				t.Fatalf("create status = %d, want 502: %s", rec.Code, rec.Body.String())
-			}
-
-			id := resourceIDForMutation(tt.prefix, key)
-			getReq := httptest.NewRequest(http.MethodGet, "/api/state", nil)
-			addSessionCookies(getReq, admin)
-			getRec := httptest.NewRecorder()
-			server.ServeHTTP(getRec, getReq)
-			if getRec.Code != http.StatusOK {
-				t.Fatalf("get status = %d: %s", getRec.Code, getRec.Body.String())
-			}
-			var state map[string]any
-			if err := json.NewDecoder(getRec.Body).Decode(&state); err != nil {
-				t.Fatal(err)
-			}
-			items := state["computeAllocations"].([]any)
-			if tt.name == "storage" {
-				items = state["storageVolumes"].([]any)
-			}
-			row := items[0].(map[string]any)
-			if row["id"] != id || row["status"] != "failed" || row["billingStatus"] != "stopped" || stringValue(row["holdId"]) == "" || stringValue(row["holdReleaseId"]) == "" {
-				t.Fatalf("persisted failure facts = %#v", row)
-			}
-		})
-	}
-}
-
-func TestProviderStatusDoesNotActivateBillingWithoutLedgerEvidence(t *testing.T) {
-	body := storageResponse(map[string]any{"id": "storage-alpha", "status": "ready", "billingStatus": "pending"})
-	compute := computeResponse(map[string]any{"id": "compute-alpha", "status": "running", "billingStatus": "pending"})
-	if body["status"] != "available" || body["billingStatus"] != "pending" || compute["billingStatus"] != "pending" {
-		t.Fatalf("provider response activated billing without Ledger evidence: storage=%#v compute=%#v", body, compute)
-	}
-}
-
-func TestBillingActivationFactsStartsAfterPrepaidFirstHour(t *testing.T) {
-	now := time.Date(2026, 7, 9, 12, 30, 0, 0, time.UTC)
-	body := billingActivationFacts(
-		map[string]any{"billingStatus": "pending"},
-		map[string]any{"billingStatus": "active"},
-		now,
-	)
-	if body["billingActivatedAt"] != "2026-07-09T12:30:00Z" || body["billingNextSettlementAt"] != "2026-07-09T13:30:00Z" {
-		t.Fatalf("activation schedule = %#v", body)
-	}
-	replayed := billingActivationFacts(body, cloneMap(body), now.Add(time.Hour))
-	if replayed["billingNextSettlementAt"] != "2026-07-09T13:30:00Z" {
-		t.Fatalf("activation replay reset settlement schedule: %#v", replayed)
-	}
-}
-
-func TestTerminalResourceStatusStopsBilling(t *testing.T) {
-	body := computeResponse(map[string]any{"id": "compute-alpha", "status": "destroyed", "billingStatus": "active"})
-	if body["billingStatus"] != "stopped" {
-		t.Fatalf("terminal resource should stop billing, got %#v", body)
-	}
-}
-
-func TestSyncComputeAllocationExternalDeleteStopsBillingAndSuspendsWorkspace(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := tenantAdminSessionForTest(t, server)
-	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
-	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-alpha","workspaceId":"ws-alpha","attachmentId":"`+stringValue(attachment["id"])+`","name":"Alpha"}`)
-
-	syncRec := requestWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations/"+stringValue(compute["id"])+"/sync", `{}`)
-	if syncRec.Code != http.StatusOK {
-		t.Fatalf("sync status = %d, want %d: %s", syncRec.Code, http.StatusOK, syncRec.Body.String())
-	}
-	var synced map[string]any
-	if err := json.NewDecoder(syncRec.Body).Decode(&synced); err != nil {
-		t.Fatalf("decode sync: %v", err)
-	}
-	if synced["status"] != "external_deleted" || synced["billingStatus"] != "stopped" || synced["holdReleaseId"] != "release-compute-"+stringValue(compute["id"]) {
-		t.Fatalf("sync must return stopped backend facts: %#v", synced)
-	}
-
-	stateRec := requestWithSession(t, server, admin, http.MethodGet, "/api/state?accountId=acct-alpha", ``)
-	if stateRec.Code != http.StatusOK {
-		t.Fatalf("state status = %d, want %d: %s", stateRec.Code, http.StatusOK, stateRec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(stateRec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	workspace := state["workspaces"].([]any)[0].(map[string]any)
-	if workspace["state"] != "suspended" || workspace["currentComputeAllocationId"] != "" {
-		t.Fatalf("workspace must be suspended after provider deletion: %#v", workspace)
-	}
-}
-
-func TestSyncStorageVolumeExternalDeleteStopsBillingAndDeletesWorkspaceData(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	admin := tenantAdminSessionForTest(t, server)
-	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
-	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-alpha","workspaceId":"ws-alpha","attachmentId":"`+stringValue(attachment["id"])+`","name":"Alpha"}`)
-
-	syncRec := requestWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes/"+stringValue(storage["id"])+"/sync", `{}`)
-	if syncRec.Code != http.StatusOK {
-		t.Fatalf("sync status = %d, want %d: %s", syncRec.Code, http.StatusOK, syncRec.Body.String())
-	}
-	var synced map[string]any
-	if err := json.NewDecoder(syncRec.Body).Decode(&synced); err != nil {
-		t.Fatalf("decode sync: %v", err)
-	}
-	if synced["status"] != "external_deleted" || synced["billingStatus"] != "stopped" || synced["holdReleaseId"] != "release-storage-"+stringValue(storage["id"]) {
-		t.Fatalf("sync must return stopped backend facts: %#v", synced)
-	}
-
-	stateRec := requestWithSession(t, server, admin, http.MethodGet, "/api/state?accountId=acct-alpha", ``)
-	if stateRec.Code != http.StatusOK {
-		t.Fatalf("state status = %d, want %d: %s", stateRec.Code, http.StatusOK, stateRec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(stateRec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	workspace := state["workspaces"].([]any)[0].(map[string]any)
-	if workspace["state"] != "data_deleted" || workspace["status"] != "unrecoverable" {
-		t.Fatalf("workspace data must be marked deleted after provider storage deletion: %#v", workspace)
-	}
-}
-
-func TestManagementStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
-	app := newControlPlaneApp()
-	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
-		"id":                         "ws-alpha",
-		"ownerAccountId":             "acct-alpha",
-		"ownerUserId":                "usr-alpha",
-		"currentComputeAllocationId": "compute-alpha",
-		"currentAttachmentId":        "attach-alpha",
-		"storageId":                  "storage-alpha",
-	}))
-	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
-		"id":             "compute-alpha",
-		"ownerAccountId": "acct-alpha",
-		"ownerUserId":    "usr-alpha",
-		"cvmInstanceId":  "ins-alpha",
-		"nodeName":       "node-alpha",
-	}))
-	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
-		"id":             "storage-alpha",
-		"ownerAccountId": "acct-alpha",
-	}))
-	ledger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha"})
-	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-alpha", "computeAllocationId": "compute-alpha"})
-	wallets, err := app.tables.ListWalletTransactions(context.Background(), "acct-alpha")
-	mustStore(t, err)
-	wallet := wallets[len(wallets)-1]
-
-	state := app.managementState(true, nil)
-	rows := state["resourceLedgerEvidence"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("resourceLedgerEvidence rows = %d, want 1: %#v", len(rows), rows)
-	}
-	row := rows[0].(map[string]any)
-	if row["ownerAccountId"] != "acct-alpha" || row["ownerUserId"] != "usr-alpha" || row["cvmInstanceId"] != "ins-alpha" || row["nodeName"] != "node-alpha" || row["storageId"] != "storage-alpha" {
-		t.Fatalf("unexpected ownership evidence: %#v", row)
-	}
-	if !slices.Contains(row["workspaceIds"].([]string), "ws-alpha") {
-		t.Fatalf("workspaceIds missing ws-alpha: %#v", row["workspaceIds"])
-	}
-	if !slices.Contains(row["ledgerEntryIds"].([]string), ledger["id"].(string)) {
-		t.Fatalf("ledgerEntryIds missing ledger id: %#v", row["ledgerEntryIds"])
-	}
-	if !slices.Contains(row["walletTransactionIds"].([]string), wallet["id"].(string)) {
-		t.Fatalf("walletTransactionIds missing wallet id: %#v", row["walletTransactionIds"])
-	}
-}
-
-func TestConsoleStateIncludesResourceLedgerEvidenceChain(t *testing.T) {
-	app := newControlPlaneApp()
-	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
-		"id":                         "ws-replacement",
-		"ownerAccountId":             "acct-alpha",
-		"currentComputeAllocationId": "compute-replacement",
-		"currentAttachmentId":        "attach-replacement",
-		"storageId":                  "storage-alpha",
-	}))
-	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "ownerAccountId": "acct-alpha", "status": "running", "billingStatus": "active", "hourlyPrice": 1.25}))
-	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "ownerAccountId": "acct-alpha", "status": "available", "billingStatus": "active", "hourlyEstimate": 0.25}))
-	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-replacement", "ownerAccountId": "acct-alpha"}))
-	mustStore(t, app.tables.SaveRuntimeOperation(context.Background(), map[string]any{
-		"id":           "fabric-op-runtime-replacement",
-		"operationId":  "op-runtime-replacement",
-		"resourceKind": "workspace_runtime",
-		"resourceId":   "ws-replacement",
-		"workspaceId":  "ws-replacement",
-		"status":       "succeeded",
-		"redactedProviderPayload": map[string]any{
-			"costTags": map[string]any{
-				"opl_account_id":   "acct-alpha",
-				"opl_workspace_id": "ws-replacement",
-				"opl_resource_id":  "ws-replacement",
-				"opl_operation_id": "op-runtime-replacement",
-			},
-		},
-	}))
-	app.mu.Lock()
-	computeLedger := app.addLedgerLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement", "amountCents": -250})
-	storageLedger := app.addLedgerLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha", "amountCents": -125})
-	app.addWalletTxLocked("acct-alpha", "compute_debit", map[string]any{"workspaceId": "ws-replacement", "computeAllocationId": "compute-replacement", "amountCents": -250})
-	app.addWalletTxLocked("acct-alpha", "storage_debit", map[string]any{"workspaceId": "ws-replacement", "storageId": "storage-alpha", "amountCents": -125})
-	app.mu.Unlock()
-
-	state := app.state("acct-alpha", nil)
-	rows := state["resourceLedgerEvidence"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("resourceLedgerEvidence rows = %d, want 1: %#v", len(rows), rows)
-	}
-	row := rows[0].(map[string]any)
-	if row["operationId"] != "op-runtime-replacement" {
-		t.Fatalf("row missing runtime operation id: %#v", row)
-	}
-	tags, _ := row["costTags"].(map[string]any)
-	if tags["opl_account_id"] != "acct-alpha" || tags["opl_workspace_id"] != "ws-replacement" || tags["opl_operation_id"] != "op-runtime-replacement" {
-		t.Fatalf("row missing provider cost tags: %#v", row)
-	}
-	ledgerIDs := row["ledgerEntryIds"].([]string)
-	if !slices.Contains(ledgerIDs, computeLedger["id"].(string)) || !slices.Contains(ledgerIDs, storageLedger["id"].(string)) {
-		t.Fatalf("row missing settlement ledger links: %#v", row)
-	}
-	if len(row["walletTransactionIds"].([]string)) != 2 {
-		t.Fatalf("row missing settlement wallet links: %#v", row)
-	}
-	summary := state["billingSummary"].(map[string]any)
-	if summary["activeHourlyEstimate"] != float64(1.5) || summary["recentResourceDebitTotal"] != float64(3.75) {
-		t.Fatalf("state missing backend billing summary: %#v", summary)
-	}
-	workspace := state["workspaces"].([]any)[0].(map[string]any)
-	billing := workspace["billing"].(map[string]any)
-	if billing["activeHourlyEstimate"] != float64(1.5) || billing["currentChargeTotal"] != float64(3.75) {
-		t.Fatalf("workspace missing backend billing facts: %#v", workspace)
-	}
 }
 
 func TestResourceLedgerEvidenceDerivesProviderCostTags(t *testing.T) {
@@ -2128,13 +1466,7 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	}))
 
 	mustStore(t, app.saveComputeFact(map[string]any{
-		"id":              "compute-alpha",
-		"accountId":       "acct-alpha",
-		"status":          "destroyed",
-		"holdId":          "hold-compute",
-		"holdReleaseId":   "release-compute",
-		"holdAmountCents": 7862,
-		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": 20000, "frozenCents": 0, "availableCents": 20000, "currency": "CNY"},
+		"id": "compute-alpha", "accountId": "acct-alpha", "status": "destroyed", "billingStatus": "stopped",
 	}))
 	workspace := storedWorkspace(t, app, "ws-alpha")
 	if workspace["state"] != "suspended" || workspace["currentComputeAllocationId"] != "" {
@@ -2148,32 +1480,48 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 	}
 
 	mustStore(t, app.saveStorageFact(map[string]any{
-		"id":              "storage-alpha",
-		"accountId":       "acct-alpha",
-		"status":          "destroyed",
-		"holdId":          "hold-storage",
-		"holdReleaseId":   "release-storage",
-		"holdAmountCents": 101,
-		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": 20000, "frozenCents": 0, "availableCents": 20000, "currency": "CNY"},
+		"id": "storage-alpha", "accountId": "acct-alpha", "status": "destroyed", "billingStatus": "stopped",
 	}))
 	workspace = storedWorkspace(t, app, "ws-alpha")
 	access, ok := workspace["access"].(map[string]any)
 	if workspace["state"] != "data_deleted" || workspace["status"] != "unrecoverable" || !ok || access["tokenStatus"] != "disabled" {
 		t.Fatalf("storage destroy did not mark workspace unrecoverable: %#v", workspace)
 	}
-	ledger, err := app.tables.ListLedger(context.Background(), "acct-alpha")
-	mustStore(t, err)
-	if len(ledger) != 2 || ledger[0]["type"] != "compute_hold_released" || ledger[1]["type"] != "storage_hold_released" {
-		t.Fatalf("missing hold release ledger projection: %#v", ledger)
+}
+
+func TestDestroyComputeCleansLinkedWorkspaceRuntimeFirst(t *testing.T) {
+	calls := []string{}
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"compute-alpha"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"storage-alpha"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+	workspace := createResourceWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","attachmentId":"`+stringValue(attachment["id"])+`","workspaceName":"Workspace Alpha"}`)
+
+	createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations/"+stringValue(compute["id"])+"/destroy", `{"confirm":true}`)
+	runtimeDestroy := slices.Index(calls, "fabric.runtime-destroy")
+	computeDestroy := slices.Index(calls, "fabric.compute-destroy")
+	if runtimeDestroy < 0 || computeDestroy < 0 || runtimeDestroy > computeDestroy {
+		t.Fatalf("destroy order = %#v, want runtime before compute", calls)
+	}
+
+	rec := requestWithSession(t, server, session, http.MethodGet, "/api/workspaces", "")
+	var workspaces []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&workspaces); err != nil {
+		t.Fatal(err)
+	}
+	row := recordByID(workspaces, stringValue(workspace["id"]))
+	if row["state"] != "suspended" || stringValue(row["runtimeId"]) != "" || stringValue(row["runtimeServiceName"]) != "" || stringValue(nested(row, "runtime", "serviceName")) != "" {
+		t.Fatalf("destroyed runtime projection = %#v", row)
 	}
 }
 
 func TestDetachStorageAttachmentPreservesOwnershipFacts(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"compute-alpha"}`)
-	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","name":"storage-alpha"}`)
+	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"storage-alpha"}`)
 	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
 
 	detached := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments/detach", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
@@ -2218,74 +1566,6 @@ func TestPersistDerivesAttachmentAccountFromExistingFacts(t *testing.T) {
 	}
 }
 
-func TestManagementStateUsesRealAccountsAndLedger(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-
-	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
-	createResource(t, server, http.MethodPost, "/api/billing/topups", `{"accountId":"acct-alpha","amount":100,"idempotencyKey":"topup-alpha","confirm":true}`)
-	createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123,"confirm":true}`)
-
-	stateReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
-	addSessionCookies(stateReq, operatorSessionForTest(t, server))
-	stateRec := httptest.NewRecorder()
-	server.ServeHTTP(stateRec, stateReq)
-	if stateRec.Code != http.StatusOK {
-		t.Fatalf("management state status = %d: %s", stateRec.Code, stateRec.Body.String())
-	}
-	var management map[string]any
-	if err := json.NewDecoder(stateRec.Body).Decode(&management); err != nil {
-		t.Fatalf("decode management state: %v", err)
-	}
-	accounts := management["accounts"].([]any)
-	if !slices.ContainsFunc(accounts, func(item any) bool {
-		account := item.(map[string]any)
-		return account["accountId"] == "acct-alpha" && number(account["totalSpent"]) > 0
-	}) {
-		t.Fatalf("management accounts missing real account totals: %#v", accounts)
-	}
-	if len(management["manualTopups"].([]any)) == 0 || len(management["billingLedger"].([]any)) == 0 || len(management["walletTransactions"].([]any)) == 0 {
-		t.Fatalf("management state missing ledger-backed admin rows: %#v", management)
-	}
-
-	operatorReq := httptest.NewRequest(http.MethodGet, "/api/operator/summary", nil)
-	addSessionCookies(operatorReq, operatorSessionForTest(t, server))
-	operatorRec := httptest.NewRecorder()
-	server.ServeHTTP(operatorRec, operatorReq)
-	if operatorRec.Code != http.StatusOK {
-		t.Fatalf("operator summary status = %d: %s", operatorRec.Code, operatorRec.Body.String())
-	}
-	var operator map[string]any
-	if err := json.NewDecoder(operatorRec.Body).Decode(&operator); err != nil {
-		t.Fatalf("decode operator summary: %v", err)
-	}
-	operatorAccounts := operator["accounts"].(map[string]any)
-	if number(operatorAccounts["total"]) < 1 || number(operatorAccounts["totalSpent"]) <= 0 {
-		t.Fatalf("operator accounts did not use real totals: %#v", operatorAccounts)
-	}
-}
-
-func TestOperatorAccountTotalsIgnoreDeletedUserWalletResiduals(t *testing.T) {
-	app := newControlPlaneApp()
-	mustStore(t, app.tables.SaveUser(context.Background(), map[string]any{"id": "usr-active", "accountId": "acct-active", "role": "member", "status": "active", "email": "active@example.test"}))
-	mustStore(t, app.tables.SaveUser(context.Background(), map[string]any{"id": "usr-deleted", "accountId": "acct-deleted", "role": "member", "status": "deleted", "email": "deleted@example.test"}))
-	mustStore(t, app.tables.SaveWallet(context.Background(), map[string]any{"id": "acct-active", "accountId": "acct-active", "balance": 10.0, "frozen": 2.0, "totalSpent": 3.0}))
-	mustStore(t, app.tables.SaveWallet(context.Background(), map[string]any{"id": "acct-deleted", "accountId": "acct-deleted", "balance": 99.0, "frozen": 88.0, "totalSpent": 77.0}))
-	mustStore(t, app.tables.SaveWallet(context.Background(), map[string]any{"id": "acct-wallet-only", "accountId": "acct-wallet-only", "balance": 50.0, "frozen": 40.0, "totalSpent": 30.0}))
-	summary := app.operatorSummary()
-
-	accounts := summary["accounts"].(map[string]any)
-	if accounts["total"] != 2 {
-		t.Fatalf("operator account count should ignore deleted/userless wallet residuals: %#v", accounts)
-	}
-	if number(accounts["frozen"]) != 2 {
-		t.Fatalf("operator frozen total should use active backend account wallets only: %#v", accounts)
-	}
-	if number(accounts["totalSpent"]) != 3 {
-		t.Fatalf("operator spent total should use wallet totalSpent without double-counting ledger rows: %#v", accounts)
-	}
-}
-
 func TestCleanupWorkspaceAccessDisablesInvalidActiveURL(t *testing.T) {
 	app := newControlPlaneApp()
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
@@ -2305,13 +1585,12 @@ func TestCleanupWorkspaceAccessDisablesInvalidActiveURL(t *testing.T) {
 	}
 }
 
-func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) {
+func TestArchiveTerminalResourcesRemovesCurrentState(t *testing.T) {
 	app := newControlPlaneApp()
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "status": "destroyed"}))
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-dead", "status": "destroyed"}))
 	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{"id": "attach-dead", "status": "detached"}))
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-dead", "state": "unrecoverable"}))
-	mustStore(t, app.tables.SaveLedgerEntry(context.Background(), map[string]any{"id": "ledger-kept"}))
 
 	result, err := app.archiveTerminalResources(context.Background(), map[string]any{"reason": "test"})
 	if err != nil {
@@ -2323,11 +1602,6 @@ func TestArchiveTerminalResourcesRemovesCurrentStateWithoutLedger(t *testing.T) 
 	if len(app.listComputes("")) != 0 || len(app.listStorages("")) != 0 || len(app.listAttachments("")) != 0 || len(app.listWorkspaces("")) != 0 {
 		t.Fatalf("terminal resources still in current state")
 	}
-	ledger, err := app.tables.ListLedger(context.Background(), "")
-	mustStore(t, err)
-	if len(ledger) != 1 {
-		t.Fatalf("archive must not remove ledger facts: %#v", ledger)
-	}
 }
 
 func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.T) {
@@ -2336,7 +1610,7 @@ func TestArchiveStateEndpointReturnsBackendArchiveAndRetentionPolicy(t *testing.
 	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-dead", "accountId": "acct-alpha", "status": "destroyed"}); err != nil {
 		t.Fatalf("seed terminal compute: %v", err)
 	}
-	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
 	server, err := NewPersistentServer(service, store)
 	if err != nil {
 		t.Fatalf("server: %v", err)
@@ -2378,60 +1652,8 @@ func TestManagementStateIncludesBackendCleanupAndAnomalySummary(t *testing.T) {
 	}
 }
 
-func TestResourceSettlementProjectsLedgerEvidenceIntoConsoleState(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-
-	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123,"confirm":true}`)
-	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"storage","resourceId":"storage-alpha","amountCents":45,"confirm":true}`)
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-
-	ledger := state["billingLedger"].([]any)
-	if !slices.ContainsFunc(ledger, func(row any) bool {
-		entry := row.(map[string]any)
-		return entry["type"] == "compute_debit" && entry["computeAllocationId"] == "compute-alpha" && entry["workspaceId"] == "ws-alpha"
-	}) {
-		t.Fatalf("missing compute debit ledger projection: %#v", ledger)
-	}
-	if !slices.ContainsFunc(ledger, func(row any) bool {
-		entry := row.(map[string]any)
-		return entry["type"] == "storage_debit" && entry["storageId"] == "storage-alpha" && entry["workspaceId"] == "ws-alpha"
-	}) {
-		t.Fatalf("missing storage debit ledger projection: %#v", ledger)
-	}
-	if _, ok := state["resourceUsageLogs"]; ok {
-		t.Fatalf("state must not expose retired resource usage projection: %#v", state["resourceUsageLogs"])
-	}
-	walletTx := state["walletTransactions"].([]any)
-	if len(walletTx) != 2 {
-		t.Fatalf("wallet transaction rows = %d, want 2: %#v", len(walletTx), walletTx)
-	}
-	runtimeOps := state["runtimeOperations"].([]any)
-	if !slices.ContainsFunc(runtimeOps, func(row any) bool {
-		operation := row.(map[string]any)
-		return operation["operationId"] == "op-create-compute-alpha" && operation["providerRequestId"] == "compute-request-from-fabric" && operation["requestHash"] == "request-hash-alpha"
-	}) {
-		t.Fatalf("state missing Fabric runtime operation facts: %#v", runtimeOps)
-	}
-	if _, ok := state["audit"]; ok {
-		t.Fatalf("state must not expose empty audit facts when no audit source is synced: %#v", state["audit"])
-	}
-	if _, ok := state["evidenceLedger"]; ok {
-		t.Fatalf("state must not expose empty evidence facts when no evidence source is synced: %#v", state["evidenceLedger"])
-	}
-}
-
 func TestConsoleStateHydratesResourceListsFromFabricOperations(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fabricClientWithResourceOperations{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fabricClientWithResourceOperations{}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
 	addSessionCookies(req, tenantAdminSessionForTest(t, server))
@@ -2471,12 +1693,12 @@ func TestConsoleStateHydratesResourceListsFromFabricOperations(t *testing.T) {
 	}
 }
 
-func TestRememberRuntimeOperationPreservesComputeCommercialFacts(t *testing.T) {
+func TestRememberRuntimeOperationPreservesComputeBillingFacts(t *testing.T) {
 	app := newControlPlaneAppEmpty()
 	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-alpha", "accountId": "acct-alpha", "ownerUserId": "user-alpha", "name": "Alpha compute",
-		"status": "provisioning", "holdId": "hold-compute", "holdAmountCents": int64(7862),
-		"pricingVersion": "pricing-v1", "priceSnapshot": map[string]any{"packageId": "basic", "unitPriceCents": int64(47)},
+		"id": "compute-alpha", "accountId": "acct-alpha", "ownerUserId": "user-alpha", "name": "Alpha compute", "status": "provisioning",
+		"billingStatus": "active", "pricingVersion": "pricing-v1", "chargeUsdMicros": int64(50_000_000),
+		"periodStart": "2026-07-14T00:00:00Z", "paidThrough": "2026-08-14T00:00:00Z", "lastReceiptId": "receipt-compute",
 	}))
 
 	err := app.rememberRuntimeOperations([]clients.FabricOperation{{
@@ -2489,7 +1711,7 @@ func TestRememberRuntimeOperationPreservesComputeCommercialFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	compute, _ := app.getCompute("compute-alpha")
-	if compute["holdId"] != "hold-compute" || int64(numberField(compute, "holdAmountCents", 0)) != 7862 || compute["pricingVersion"] != "pricing-v1" || compute["ownerUserId"] != "user-alpha" || compute["name"] != "Alpha compute" {
+	if compute["billingStatus"] != "active" || int64(numberField(compute, "chargeUsdMicros", 0)) != 50_000_000 || compute["paidThrough"] != "2026-08-14T00:00:00Z" || compute["lastReceiptId"] != "receipt-compute" || compute["pricingVersion"] != "pricing-v1" || compute["ownerUserId"] != "user-alpha" || compute["name"] != "Alpha compute" {
 		t.Fatalf("Fabric operation erased Control Plane facts: %#v", compute)
 	}
 	if compute["nodeName"] != "node-from-fabric" || compute["status"] != "running" {
@@ -2497,12 +1719,12 @@ func TestRememberRuntimeOperationPreservesComputeCommercialFacts(t *testing.T) {
 	}
 }
 
-func TestRememberRuntimeOperationPreservesStorageCommercialFacts(t *testing.T) {
+func TestRememberRuntimeOperationPreservesStorageBillingFacts(t *testing.T) {
 	app := newControlPlaneAppEmpty()
 	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
-		"id": "storage-alpha", "accountId": "acct-alpha", "ownerUserId": "user-alpha", "name": "Alpha storage",
-		"status": "provisioning", "holdId": "hold-storage", "holdAmountCents": int64(101),
-		"pricingVersion": "pricing-v1", "priceSnapshot": map[string]any{"resourceType": "storage", "unitPriceCents": int64(1)},
+		"id": "storage-alpha", "accountId": "acct-alpha", "ownerUserId": "user-alpha", "name": "Alpha storage", "status": "provisioning",
+		"billingStatus": "active", "pricingVersion": "pricing-v1", "chargeUsdMicros": int64(2_571_429),
+		"periodStart": "2026-07-14T00:00:00Z", "paidThrough": "2026-08-14T00:00:00Z", "lastReceiptId": "receipt-storage",
 	}))
 
 	err := app.rememberRuntimeOperations([]clients.FabricOperation{{
@@ -2515,7 +1737,7 @@ func TestRememberRuntimeOperationPreservesStorageCommercialFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	storage, _ := app.getStorage("storage-alpha")
-	if storage["holdId"] != "hold-storage" || int64(numberField(storage, "holdAmountCents", 0)) != 101 || storage["pricingVersion"] != "pricing-v1" || storage["ownerUserId"] != "user-alpha" || storage["name"] != "Alpha storage" {
+	if storage["billingStatus"] != "active" || int64(numberField(storage, "chargeUsdMicros", 0)) != 2_571_429 || storage["paidThrough"] != "2026-08-14T00:00:00Z" || storage["lastReceiptId"] != "receipt-storage" || storage["pricingVersion"] != "pricing-v1" || storage["ownerUserId"] != "user-alpha" || storage["name"] != "Alpha storage" {
 		t.Fatalf("Fabric operation erased Control Plane facts: %#v", storage)
 	}
 	if storage["providerResourceId"] != "pvc/storage-alpha-data" || storage["status"] != "available" {
@@ -2525,7 +1747,7 @@ func TestRememberRuntimeOperationPreservesStorageCommercialFacts(t *testing.T) {
 
 func TestConsoleStateSkipsUnscopedHistoricFabricResourceProjection(t *testing.T) {
 	setTestOperatorAccount(t, "acct-alpha")
-	service := controlplane.NewService(fakeLedgerClient{}, &fabricClientWithUnscopedHistoricOperation{})
+	service := newTestService(fakeLedgerClient{}, &fabricClientWithUnscopedHistoricOperation{})
 	server, err := NewPersistentServer(service, NewTestEntStateStore(t, t.TempDir()+"/historic-fabric.sqlite"))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
@@ -2552,169 +1774,9 @@ func TestConsoleStateSkipsUnscopedHistoricFabricResourceProjection(t *testing.T)
 	}
 }
 
-func TestResourceSettlementProjectionKeepsRequestIdentityWhenLedgerOmitsIt(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClientWithoutSettlementIdentity{}, &fakeFabricClient{}))
-
-	createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123,"confirm":true}`)
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-
-	ledger := state["billingLedger"].([]any)
-	if !slices.ContainsFunc(ledger, func(row any) bool {
-		entry := row.(map[string]any)
-		return entry["accountId"] == "acct-alpha" && entry["type"] == "compute_debit" && entry["computeAllocationId"] == "compute-alpha" && entry["workspaceId"] == "ws-alpha"
-	}) {
-		t.Fatalf("missing settlement request identity in ledger projection: %#v", ledger)
-	}
-	wallet := state["wallet"].(map[string]any)
-	if wallet["accountId"] != "acct-alpha" {
-		t.Fatalf("wallet lost settlement request account: %#v", wallet)
-	}
-}
-
-func TestResourceSettlementPassesPriceAndEvidenceSnapshotToLedger(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	body := `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","holdId":"hold-compute-alpha","amountCents":123,"currency":"CNY","pricingVersion":"opl-tencent-v1","priceSnapshot":{"unitPriceCents":123,"sku":"basic-cvm"},"usagePeriodStart":"2026-07-08T00:00:00Z","usagePeriodEnd":"2026-07-08T01:00:00Z","quantity":1,"unit":"hour","providerCostEvidenceRef":"fabric:op-alpha","confirm":true}`
-
-	settlement := createResource(t, server, http.MethodPost, "/api/billing/resource-settlements", body)
-	if settlement["holdId"] != "hold-compute-alpha" || settlement["pricingVersion"] != "opl-tencent-v1" || settlement["providerCostEvidenceRef"] != "fabric:op-alpha" {
-		t.Fatalf("settlement response lost price/evidence fields: %#v", settlement)
-	}
-	priceSnapshot := settlement["priceSnapshot"].(map[string]any)
-	if priceSnapshot["unitPriceCents"] != float64(123) {
-		t.Fatalf("settlement response lost price facts: %#v", settlement)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	ledger := state["billingLedger"].([]any)
-	if !slices.ContainsFunc(ledger, func(row any) bool {
-		entry := row.(map[string]any)
-		facts, _ := entry["priceSnapshot"].(map[string]any)
-		return entry["type"] == "compute_debit" && entry["pricingVersion"] == "opl-tencent-v1" && entry["providerCostEvidenceRef"] == "fabric:op-alpha" && facts["sku"] == "basic-cvm"
-	}) {
-		t.Fatalf("state ledger lost settlement evidence: %#v", ledger)
-	}
-}
-
-func TestStateRefreshesLedgerFactsFromLedgerReads(t *testing.T) {
-	server := NewServer(controlplane.NewService(readBackedLedgerClient{}, &fakeFabricClient{}))
-
-	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-alpha", nil)
-	addSessionCookies(req, tenantAdminSessionForTest(t, server))
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", rec.Code, rec.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&state); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	wallet := state["wallet"].(map[string]any)
-	if wallet["balanceCents"] != float64(9900) || wallet["totalSpentCents"] != float64(1200) {
-		t.Fatalf("state wallet was not refreshed from Ledger: %#v", wallet)
-	}
-	ledger := state["billingLedger"].([]any)
-	if !slices.ContainsFunc(ledger, func(row any) bool {
-		entry := row.(map[string]any)
-		priceSnapshot, _ := entry["priceSnapshot"].(map[string]any)
-		return entry["type"] == "compute_debit" && entry["computeAllocationId"] == "compute-alpha" && priceSnapshot["unitPriceCents"] == float64(1200)
-	}) {
-		t.Fatalf("state missing Ledger settlement evidence: %#v", ledger)
-	}
-	transactions := state["walletTransactions"].([]any)
-	if len(transactions) != 1 || transactions[0].(map[string]any)["availableCents"] != float64(8700) {
-		t.Fatalf("state missing wallet after facts: %#v", transactions)
-	}
-	tx := transactions[0].(map[string]any)
-	metadata, _ := tx["metadata"].(map[string]any)
-	if tx["type"] != "compute_debit" || metadata["computeAllocationId"] != "compute-alpha" || metadata["settlementId"] != "settlement-alpha" {
-		t.Fatalf("state wallet transaction missing settlement metadata: %#v", tx)
-	}
-
-	managementReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
-	addSessionCookies(managementReq, operatorSessionForTest(t, server))
-	managementRec := httptest.NewRecorder()
-	server.ServeHTTP(managementRec, managementReq)
-	if managementRec.Code != http.StatusOK {
-		t.Fatalf("management state status = %d: %s", managementRec.Code, managementRec.Body.String())
-	}
-	var management map[string]any
-	if err := json.NewDecoder(managementRec.Body).Decode(&management); err != nil {
-		t.Fatalf("decode management state: %v", err)
-	}
-	if len(management["billingLedger"].([]any)) == 0 || len(management["walletTransactions"].([]any)) == 0 {
-		t.Fatalf("management state did not expose Ledger read facts: %#v", management)
-	}
-}
-
-func TestApplyLedgerFactsSerializesProjectionWrites(t *testing.T) {
-	store := &concurrencyDetectingTableStore{memoryTableStore: newMemoryTableStore()}
-	app := newControlPlaneAppEmpty()
-	app.tables = store
-	ledger := readBackedLedgerClient{}
-	wallet, _ := ledger.Wallet(context.Background(), "acct-alpha")
-	entries, _ := ledger.ListLedgerEntries(context.Background(), "acct-alpha")
-	transactions, _ := ledger.ListWalletTransactions(context.Background(), "acct-alpha")
-	settlements, _ := ledger.ListResourceSettlements(context.Background(), "acct-alpha")
-
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			if err := app.applyLedgerFacts("acct-alpha", wallet, entries, transactions, nil, settlements); err != nil {
-				t.Errorf("apply ledger facts: %v", err)
-			}
-		}()
-	}
-	close(start)
-	wg.Wait()
-	if got := atomic.LoadInt32(&store.concurrentLedgerWrites); got != 0 {
-		t.Fatalf("ledger projection writes were concurrent: %d", got)
-	}
-}
-
-type concurrencyDetectingTableStore struct {
-	*memoryTableStore
-	activeLedgerWrites     int32
-	concurrentLedgerWrites int32
-}
-
-func (s *concurrencyDetectingTableStore) SaveLedgerEntry(ctx context.Context, row map[string]any) error {
-	if active := atomic.AddInt32(&s.activeLedgerWrites, 1); active > 1 {
-		atomic.AddInt32(&s.concurrentLedgerWrites, 1)
-	}
-	time.Sleep(time.Millisecond)
-	err := s.memoryTableStore.SaveLedgerEntry(ctx, row)
-	atomic.AddInt32(&s.activeLedgerWrites, -1)
-	return err
-}
-
 func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 	var calls []string
-	server := NewServer(controlplane.NewService(fakeBlockingReconciliationLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	server := NewServer(newTestService(fakeBlockingReconciliationLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantAdminSessionForTest(t, server)
 
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-mismatch","status":"mismatch"}}`)
@@ -2856,7 +1918,7 @@ func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
 }
 
 func TestOverviewHTTP(t *testing.T) {
-	server := NewServer(controlplane.NewService(nil, nil))
+	server := NewServer(newTestService(nil, nil))
 	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
 	addSessionCookies(req, tenantAdminSessionForTest(t, server))
 	rec := httptest.NewRecorder()
@@ -2877,7 +1939,7 @@ func TestOverviewHTTP(t *testing.T) {
 
 func TestOperatorLoginUsesConfiguredToken(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
-	server := NewServer(controlplane.NewService(nil, nil))
+	server := NewServer(newTestService(nil, nil))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-opl-operator-token", "operator-secret")
@@ -2898,7 +1960,7 @@ func TestOperatorLoginUsesConfiguredToken(t *testing.T) {
 
 func TestOperatorLoginRejectsInvalidToken(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
-	server := NewServer(controlplane.NewService(nil, nil))
+	server := NewServer(newTestService(nil, nil))
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/operator-login", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-opl-operator-token", "wrong")
@@ -2913,7 +1975,7 @@ func TestOperatorLoginRejectsInvalidToken(t *testing.T) {
 
 func TestOperatorLoginRateLimitsInvalidToken(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
-	server := NewServer(controlplane.NewService(nil, nil))
+	server := NewServer(newTestService(nil, nil))
 
 	var rec *httptest.ResponseRecorder
 	for range 6 {
@@ -2930,7 +1992,7 @@ func TestOperatorLoginRateLimitsInvalidToken(t *testing.T) {
 }
 
 func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	session := tenantAdminSessionForTest(t, server)
 	body := `{"accountId":"acct-alpha","packageId":"` + strings.Repeat("x", int(maxJSONBodyBytes)+1) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(body))
@@ -2947,7 +2009,7 @@ func TestProtectedWriteRejectsOversizedJSONBody(t *testing.T) {
 }
 
 func TestUpstreamErrorsDoNotLeakProviderDetails(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &failingFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &failingFabricClient{}))
 	req := httptest.NewRequest(http.MethodGet, "/api/runtime/readiness", nil)
 	rec := httptest.NewRecorder()
 
@@ -2962,7 +2024,7 @@ func TestUpstreamErrorsDoNotLeakProviderDetails(t *testing.T) {
 }
 
 func TestReadinessRoutesArePublicButAdminRoutesStayProtected(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 
 	for _, path := range []string{"/api/runtime/readiness", "/api/production/readiness"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -2987,7 +2049,7 @@ func TestReadinessRoutesArePublicButAdminRoutesStayProtected(t *testing.T) {
 
 func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 
 	postWithoutSession := httptest.NewRequest(http.MethodPost, "/api/compute-allocations", bytes.NewBufferString(`{"accountId":"acct-alpha","packageId":"basic"}`))
 	postWithoutSession.Header.Set("Content-Type", "application/json")
@@ -3009,10 +2071,10 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 		t.Fatalf("write without csrf status = %d, want 403: %s", postWithoutCSRFRec.Code, postWithoutCSRFRec.Body.String())
 	}
 
-	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(ownerUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
 	owner := loginForTest(t, server, "owner@lab.example", "CorrectHorseBatteryStaple!")
-	adminReq := httptest.NewRequest(http.MethodPost, "/api/billing/topups", bytes.NewBufferString(`{"accountId":"acct-alpha","amount":100,"idempotencyKey":"topup-nonadmin"}`))
+	adminReq := httptest.NewRequest(http.MethodPost, "/api/billing/reconciliation", bytes.NewBufferString(`{"confirm":true,"report":{"id":"recon-nonadmin","status":"ok"}}`))
 	adminReq.Header.Set("Content-Type", "application/json")
 	adminReq.Header.Set("Idempotency-Key", "topup-nonadmin")
 	addSessionCookies(adminReq, owner)
@@ -3029,19 +2091,68 @@ func TestProtectedAPIRoutesRequireSessionCSRFAndAdminRole(t *testing.T) {
 	}
 }
 
+func TestPaidResourcePurchaseRequiresIdempotencyKeyBeforeSideEffects(t *testing.T) {
+	calls := []string{}
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	session := tenantAdminSessionForTest(t, server)
+
+	for _, tc := range []struct {
+		path string
+		body string
+	}{
+		{path: "/api/compute-allocations", body: `{"accountId":"acct-alpha","packageId":"basic"}`},
+		{path: "/api/storage-volumes", body: `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10}`},
+	} {
+		req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		addAuth(req, session)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing Idempotency-Key") {
+			t.Fatalf("%s status = %d body=%s, want missing Idempotency-Key", tc.path, rec.Code, rec.Body.String())
+		}
+	}
+	if len(calls) != 0 {
+		t.Fatalf("missing purchase key reached Fabric: %#v", calls)
+	}
+}
+
+func TestResourceAutoRenewProductCommandUpdatesOnlyControlPlaneState(t *testing.T) {
+	calls := []string{}
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	session := tenantAdminSessionForTest(t, server)
+	resources := []map[string]any{
+		createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`),
+		createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10}`),
+	}
+	before := len(calls)
+	for _, resource := range resources {
+		updated := createResourceWithSession(t, server, session, http.MethodPost, "/api/resources/"+stringValue(resource["id"])+"/auto-renew", `{"autoRenew":false}`)
+		if updated["id"] != resource["id"] || updated["autoRenew"] != false {
+			t.Fatalf("auto-renew response = %#v", updated)
+		}
+	}
+	if len(calls) != before {
+		t.Fatalf("auto-renew toggle touched Fabric: %#v", calls[before:])
+	}
+
+	invalid := requestWithSession(t, server, session, http.MethodPost, "/api/resources/"+stringValue(resources[0]["id"])+"/auto-renew", `{}`)
+	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "autoRenew_required") {
+		t.Fatalf("invalid auto-renew status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func TestHighRiskMutationsRequireBackendConfirmation(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
 	tenant := tenantAdminSessionForTest(t, server)
-	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"member@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	created := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"member@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 
 	for _, tc := range []struct {
 		method string
 		path   string
 		body   string
 	}{
-		{http.MethodPost, "/api/billing/topups", `{"accountId":"acct-alpha","amount":100,"idempotencyKey":"topup-confirm"}`},
-		{http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","resourceType":"compute","resourceId":"compute-alpha","amountCents":123}`},
 		{http.MethodPost, "/api/billing/reconciliation", `{"report":{"id":"recon-confirm","generatedAt":"2026-07-06T00:00:00Z"}}`},
 		{http.MethodPost, "/api/users/delete", `{"userId":"` + stringValue(created["id"]) + `","reason":"left_lab"}`},
 		{http.MethodPost, "/api/compute-allocations/compute-alpha/destroy", `{}`},
@@ -3061,12 +2172,12 @@ func TestHighRiskMutationsRequireBackendConfirmation(t *testing.T) {
 }
 
 func TestLoginSessionMeAndLogoutUseStoredPasswordHash(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
-	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!"}`)
+	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(ownerUser["id"])+`","accountId":"acct-alpha","role":"admin"}`)
 
-	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"owner@lab.example","password":"CorrectHorseBatteryStaple!"}`))
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(`{"email":"owner@lab.example","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`))
 	loginReq.Header.Set("Content-Type", "application/json")
 	loginRec := httptest.NewRecorder()
 	server.ServeHTTP(loginRec, loginReq)
@@ -3130,8 +2241,8 @@ func TestLoginSessionMeAndLogoutUseStoredPasswordHash(t *testing.T) {
 }
 
 func TestLoginRateLimitBlocksRepeatedFailuresAndResetsAfterSuccess(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!"}`)
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	createResource(t, server, http.MethodPost, "/api/users", `{"email":"owner@lab.example","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 
 	for i := 0; i < 2; i++ {
 		rec := loginAttemptForTest(server, "owner@lab.example", "wrong", "203.0.113.10:1000")
@@ -3159,7 +2270,7 @@ func TestLoginRateLimitBlocksRepeatedFailuresAndResetsAfterSuccess(t *testing.T)
 }
 
 func TestUserDeleteLifecycleReturnsNotFoundWithoutStub(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodPost, "/api/users/delete", bytes.NewBufferString(`{"userId":"usr-missing","reason":"test","confirm":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	addAuth(req, operatorSessionForTest(t, server))
@@ -3186,8 +2297,8 @@ func TestUserDeleteLifecycleReturnsNotFoundWithoutStub(t *testing.T) {
 }
 
 func TestUserSoftDeleteRevokesSessionsAndHidesByDefault(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
-	created := createResource(t, server, http.MethodPost, "/api/users", `{"email":"member@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!"}`)
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	created := createResource(t, server, http.MethodPost, "/api/users", `{"email":"member@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	loginRec := loginForTest(t, server, "member@lab.example", "CorrectHorseBatteryStaple!")
 
 	deleteReq := httptest.NewRequest(http.MethodPost, "/api/users/delete", bytes.NewBufferString(`{"userId":"`+stringValue(created["id"])+`","reason":"left_lab","confirm":true}`))
@@ -3288,7 +2399,7 @@ func assertDeletedUserPresent(t *testing.T, server http.Handler, userID string) 
 }
 
 func TestUserLifecycleProtectsLastActiveOperator(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	operator := operatorSessionForTest(t, server)
 	for _, tc := range []struct {
 		path string
@@ -3314,7 +2425,7 @@ func TestUserLifecycleProtectsLastActiveOperator(t *testing.T) {
 }
 
 func TestSupportTicketMappingRequiresExternalTicket(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	req := httptest.NewRequest(http.MethodPost, "/api/support/tickets", bytes.NewBufferString(`{"accountId":"acct-alpha","title":"Need help"}`))
 	req.Header.Set("Content-Type", "application/json")
 	addAuth(req, tenantAdminSessionForTest(t, server))
@@ -3330,7 +2441,7 @@ func TestSupportTicketMappingRequiresExternalTicket(t *testing.T) {
 func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 	setTestOperatorAccount(t, "acct-alpha")
 	path := t.TempDir() + "/control-plane-state.sqlite"
-	service := controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{})
+	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
 	server, err := NewPersistentServer(service, NewTestEntStateStore(t, path))
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
@@ -3366,7 +2477,7 @@ func TestSupportTicketMappingPersistsExternalContext(t *testing.T) {
 
 func setTestOperatorAccount(t *testing.T, accountID string) {
 	t.Helper()
-	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-admin","email":"admin@medopl.cn","password":"StableAdminPass2026!","role":"admin","accountId":"`+accountID+`"}]`)
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-admin","email":"admin@medopl.cn","password":"StableAdminPass2026!","role":"admin","accountId":"`+accountID+`","sub2apiUserId":41}]`)
 }
 
 func ensureCustomerMembershipForTest(t *testing.T, server http.Handler, admin *httptest.ResponseRecorder, accountID, userID string) {
@@ -3376,7 +2487,7 @@ func ensureCustomerMembershipForTest(t *testing.T, server http.Handler, admin *h
 }
 
 func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	cases := []struct {
 		method string
 		path   string
@@ -3396,11 +2507,9 @@ func TestActiveConsoleAPIRoutesReachControlPlane(t *testing.T) {
 		{http.MethodPost, "/api/auth/logout", `{}`},
 		{http.MethodPost, "/api/organizations", `{"name":"Lab","billingAccountId":"acct-lab"}`},
 		{http.MethodPost, "/api/organizations/members", `{"organizationId":"org-lab","userId":"usr-owner","role":"member"}`},
-		{http.MethodPost, "/api/users", `{"email":"pi@medopl.cn","accountId":"acct-lab","password":"secret"}`},
+		{http.MethodPost, "/api/users", `{"email":"pi@medopl.cn","accountId":"acct-lab","password":"secret","sub2apiUserId":41}`},
 		{http.MethodPost, "/api/users/disable", `{"userId":"usr-owner"}`},
 		{http.MethodPost, "/api/users/delete", `{"userId":"usr-owner"}`},
-		{http.MethodPost, "/api/billing/topups", `{"accountId":"acct-lab","amount":100,"idempotencyKey":"topup-test"}`},
-		{http.MethodPost, "/api/billing/resource-settlements", `{"accountId":"acct-lab","hours":1}`},
 		{http.MethodPost, "/api/billing/reconciliation", `{"report":{"id":"recon-test","generatedAt":"2026-07-06T00:00:00Z"}}`},
 		{http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"compute"}`},
 		{http.MethodPost, "/api/compute-allocations/compute-alpha/sync", `{}`},

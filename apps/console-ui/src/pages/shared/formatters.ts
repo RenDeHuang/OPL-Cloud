@@ -6,15 +6,25 @@ export function moneyCents(value) {
   return money(Number(value || 0) / 100);
 }
 
-export function available(wallet) {
-  return Number(wallet?.available || 0);
+export function usdMicros(value) {
+  return `$${(Number(value || 0) / 1_000_000).toFixed(6)}`;
+}
+
+export function usdBalance(balance: any = {}) {
+  return usdMicros(balance.usdMicros);
+}
+
+export function paidThrough(value = "") {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("zh-CN", { timeZone: "UTC" });
 }
 
 export function statusLabel(workspace) {
   if (!workspace) return "No Workspace";
   const labels = {
     running: "运行中",
-    storage_hold_exhausted: "存储冻结不足",
+    retained: "存储已保留",
     destroyed: "已销毁",
     failed: "失败"
   };
@@ -23,6 +33,8 @@ export function statusLabel(workspace) {
 
 export function valueLabel(value) {
   const labels = {
+    preparing: "创建资源",
+    charge_pending: "等待扣款",
     active: "有效",
     available: "可用",
     running: "运行中",
@@ -33,7 +45,9 @@ export function valueLabel(value) {
     attached_retained: "挂载保留",
     detached_retained: "卸载保留",
     restored_retained: "已恢复",
-    hold_exhausted: "冻结不足",
+    past_due: "续费失败",
+    renewal_pending: "续费中",
+    manual_review: "人工复核",
     ready: "就绪",
     blocked: "阻塞"
   };
@@ -72,7 +86,7 @@ export function workspaceAccessTone(workspace: any = {}) {
 
 export function statusColor(value) {
   if (["running", "active", "available", "ready"].includes(value)) return "green";
-  if (["failed", "destroyed", "hold_exhausted", "blocked"].includes(value)) return "red";
+  if (["failed", "destroyed", "past_due", "manual_review", "blocked"].includes(value)) return "red";
   if (["stopped"].includes(value)) return "orange";
   return "blue";
 }

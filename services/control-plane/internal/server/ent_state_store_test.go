@@ -10,7 +10,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	controlplaneenttest "opl-cloud/services/control-plane/ent/enttest"
-	"opl-cloud/services/control-plane/ent/pricingitem"
 	"opl-cloud/services/control-plane/internal/clients"
 )
 
@@ -21,107 +20,117 @@ func NewTestEntStateStore(t *testing.T, path string) StateStore {
 	return &postgresEntStateStore{client: client}
 }
 
-func TestEntStateStorePricingCatalogReadsPricingTables(t *testing.T) {
+func TestEntStateStoreSub2APIMappingAndMonthlyEntitlementRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	store := NewTestEntStateStore(t, t.TempDir()+"/pricing.sqlite").(*postgresEntStateStore)
-
-	if _, err := store.PricingCatalog(ctx); err != nil {
-		t.Fatalf("seed pricing catalog: %v", err)
+	store := NewTestEntStateStore(t, t.TempDir()+"/monthly.sqlite")
+	if err := store.SaveAccount(ctx, map[string]any{"id": "acct-monthly", "status": "active", "sub2apiUserId": int64(41)}); err != nil {
+		t.Fatalf("save account mapping: %v", err)
 	}
-	if _, err := store.client.PricingItem.Update().
-		Where(
-			pricingitem.CatalogVersion(pricingCatalogVersion),
-			pricingitem.PackageID("basic"),
-			pricingitem.ResourceType("compute"),
-		).
-		SetUnitPrice(2.5).
-		SetUnitPriceCents(250).
-		Save(ctx); err != nil {
-		t.Fatalf("update pricing item: %v", err)
-	}
-
-	catalog, err := store.PricingCatalog(ctx)
+	accounts, err := store.ListAccounts(ctx)
 	if err != nil {
-		t.Fatalf("read pricing catalog: %v", err)
+		t.Fatalf("list accounts: %v", err)
 	}
-	basic := packageByIDFromCatalog(catalog, "basic")
-	if basic.ComputeHourly != 2.5 {
-		t.Fatalf("pricing catalog must read DB item price, got %#v", basic)
+	account := recordByID(accounts, "acct-monthly")
+	if int64(numberField(account, "sub2apiUserId", 0)) != 41 {
+		t.Fatalf("account mapping = %#v", account)
+	}
+
+	monthly := map[string]any{
+		"accountId":                  "acct-monthly",
+		"billingStatus":              "active",
+		"billingOperationId":         "billing-op-41",
+		"billingOperationStartedAt":  "2026-07-14T00:00:00Z",
+		"sub2apiRedeemCode":          "opl:test:billing-op-41:charge:v1",
+		"pricingVersion":             pricingCatalogVersion,
+		"monthlyPriceCnyCents":       int64(35000),
+		"chargeUsdMicros":            int64(50_000_000),
+		"billingAnchorDay":           int64(14),
+		"periodStart":                "2026-07-14T00:00:00Z",
+		"paidThrough":                "2026-08-14T00:00:00Z",
+		"autoRenew":                  true,
+		"lastRenewalAttemptAt":       "2026-07-14T00:00:00Z",
+		"lastBillingError":           "",
+		"lastReceiptId":              "receipt-41",
+		"postChargeBalanceUsdMicros": int64(0),
+		"postChargeBalanceKnown":     true,
+	}
+	compute := mergeMaps(monthly, map[string]any{"id": "compute-monthly", "packageId": "basic"})
+	storage := mergeMaps(monthly, map[string]any{"id": "storage-monthly", "packageId": "basic", "sizeGb": 30})
+	if err := store.SaveCompute(ctx, compute); err != nil {
+		t.Fatalf("save monthly compute: %v", err)
+	}
+	if err := store.SaveStorage(ctx, storage); err != nil {
+		t.Fatalf("save monthly storage: %v", err)
+	}
+
+	computes, err := store.ListComputes(ctx, "acct-monthly")
+	if err != nil {
+		t.Fatalf("list monthly compute: %v", err)
+	}
+	storages, err := store.ListStorages(ctx, "acct-monthly")
+	if err != nil {
+		t.Fatalf("list monthly storage: %v", err)
+	}
+	for kind, row := range map[string]map[string]any{
+		"compute": recordByID(computes, "compute-monthly"),
+		"storage": recordByID(storages, "storage-monthly"),
+	} {
+		if row["billingOperationId"] != "billing-op-41" || int64(numberField(row, "monthlyPriceCnyCents", 0)) != 35000 || int64(numberField(row, "chargeUsdMicros", 0)) != 50_000_000 || row["paidThrough"] != "2026-08-14T00:00:00Z" || row["autoRenew"] != true {
+			t.Fatalf("%s monthly fields = %#v", kind, row)
+		}
+		if row["postChargeBalanceKnown"] != true || int64(numberField(row, "postChargeBalanceUsdMicros", 0)) != 0 {
+			t.Fatalf("%s zero post-charge balance is not known: %#v", kind, row)
+		}
 	}
 }
 
-func TestEntStateStoreIgnoresDuplicateEventProjectionIDs(t *testing.T) {
-	store := NewTestEntStateStore(t, t.TempDir()+"/duplicate-events.sqlite")
-	row := map[string]any{"id": "ledger-alpha", "accountId": "acct-alpha", "type": "compute_debit", "amountCents": int64(-100)}
-	if err := store.SaveLedgerEntry(context.Background(), row); err != nil {
-		t.Fatalf("save ledger projection: %v", err)
-	}
-	if err := store.SaveLedgerEntry(context.Background(), row); err != nil {
-		t.Fatalf("duplicate event projections should not break table persistence: %v", err)
-	}
-}
-
-func TestComputeFactRefreshIgnoresFabricWalletWithoutAccount(t *testing.T) {
-	store := NewTestEntStateStore(t, t.TempDir()+"/empty-fabric-wallet.sqlite")
-	app := newControlPlaneAppEmpty()
-	app.tables = store
-	row := map[string]any{
-		"id":              "compute-alpha",
-		"accountId":       "acct-alpha",
-		"status":          "provisioning",
-		"holdId":          "hold-alpha",
-		"holdAmountCents": int64(16800),
-		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": int64(20000), "frozenCents": int64(16800), "availableCents": int64(3200), "currency": "CNY"},
-	}
-	if err := app.saveComputeFact(row); err != nil {
-		t.Fatalf("seed compute fact: %v", err)
-	}
-
-	refreshed := cloneMap(row)
-	refreshed["wallet"] = map[string]any{"accountId": "", "balanceCents": int64(0), "frozenCents": int64(0), "availableCents": int64(0), "currency": ""}
-	if err := app.saveComputeFact(refreshed); err != nil {
-		t.Fatalf("Fabric refresh with an empty wallet must preserve Ledger facts: %v", err)
-	}
-
-	wallets, err := store.ListWallets(context.Background(), "acct-alpha")
-	if err != nil {
-		t.Fatalf("list wallets: %v", err)
-	}
-	if len(wallets) != 1 || int64(numberField(wallets[0], "frozenCents", 0)) != 16800 {
-		t.Fatalf("Fabric refresh changed the Ledger wallet projection: %#v", wallets)
+func TestEntStateStoreBillingOperationReplayConflictsOnAmountOrPeriod(t *testing.T) {
+	ctx := context.Background()
+	for name, store := range map[string]StateStore{
+		"memory": newMemoryTableStore(),
+		"ent":    NewTestEntStateStore(t, t.TempDir()+"/billing-claim.sqlite"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			operation := map[string]any{
+				"id":                   "compute-claim-41",
+				"accountId":            "acct-alpha",
+				"packageId":            "basic",
+				"billingStatus":        "preparing",
+				"billingOperationId":   "billing-op-claim-41",
+				"pricingVersion":       pricingCatalogVersion,
+				"monthlyPriceCnyCents": int64(35000),
+				"chargeUsdMicros":      int64(50_000_000),
+				"periodStart":          "2026-07-14T00:00:00Z",
+				"paidThrough":          "2026-08-14T00:00:00Z",
+			}
+			claimed, fresh, err := store.ClaimResourceBillingOperation(ctx, "compute", operation)
+			if err != nil || !fresh || claimed["billingOperationId"] != operation["billingOperationId"] {
+				t.Fatalf("first claim fresh=%v row=%#v err=%v", fresh, claimed, err)
+			}
+			if _, fresh, err := store.ClaimResourceBillingOperation(ctx, "compute", operation); err != nil || fresh {
+				t.Fatalf("same operation replay fresh=%v err=%v", fresh, err)
+			}
+			for field, value := range map[string]any{
+				"chargeUsdMicros": int64(49_000_000),
+				"paidThrough":     "2026-09-14T00:00:00Z",
+			} {
+				conflict := cloneMap(operation)
+				conflict[field] = value
+				if _, _, err := store.ClaimResourceBillingOperation(ctx, "compute", conflict); !errors.Is(err, errIdempotencyConflict) {
+					t.Fatalf("%s conflict error = %v", field, err)
+				}
+			}
+		})
 	}
 }
 
-func TestTerminalComputeFactRefreshIgnoresFabricWalletWithoutAccount(t *testing.T) {
-	store := NewTestEntStateStore(t, t.TempDir()+"/empty-terminal-fabric-wallet.sqlite")
-	app := newControlPlaneAppEmpty()
-	app.tables = store
-	row := map[string]any{
-		"id":              "compute-alpha",
-		"accountId":       "acct-alpha",
-		"status":          "destroyed",
-		"holdId":          "hold-alpha",
-		"holdReleaseId":   "release-alpha",
-		"holdAmountCents": int64(16800),
-		"wallet":          map[string]any{"accountId": "acct-alpha", "balanceCents": int64(20000), "frozenCents": int64(0), "availableCents": int64(20000), "currency": "CNY"},
+func recordByID(rows []map[string]any, id string) map[string]any {
+	for _, row := range rows {
+		if stringValue(row["id"]) == id {
+			return row
+		}
 	}
-	if err := app.saveComputeFact(row); err != nil {
-		t.Fatalf("seed terminal compute fact: %v", err)
-	}
-
-	refreshed := cloneMap(row)
-	refreshed["wallet"] = map[string]any{"accountId": "", "balanceCents": int64(0), "frozenCents": int64(0), "availableCents": int64(0), "currency": ""}
-	if err := app.saveComputeFact(refreshed); err != nil {
-		t.Fatalf("terminal Fabric refresh with an empty wallet must preserve Ledger facts: %v", err)
-	}
-
-	wallets, err := store.ListWallets(context.Background(), "acct-alpha")
-	if err != nil {
-		t.Fatalf("list wallets: %v", err)
-	}
-	if len(wallets) != 1 || int64(numberField(wallets[0], "frozenCents", 0)) != 0 || int64(numberField(wallets[0], "balanceCents", 0)) != 20000 {
-		t.Fatalf("terminal Fabric refresh changed the released Ledger wallet projection: %#v", wallets)
-	}
+	return nil
 }
 
 func TestEntStateStoreNeverPersistsWorkspacePassword(t *testing.T) {
@@ -136,7 +145,7 @@ func TestEntStateStoreNeverPersistsWorkspacePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if password := stringValue(valueOrNil(rows[0], "access", "password")); password != "" {
+	if password := stringValue(nested(rows[0], "access", "password")); password != "" {
 		t.Fatalf("Workspace password persisted: %q", password)
 	}
 }
@@ -192,42 +201,6 @@ func TestEntStateStoreWorkspaceResumeClaimIsRetryableAndExclusive(t *testing.T) 
 	}
 	if _, replayed, err := store.ClaimWorkspaceResume(ctx, "workspace-alpha", operation); err != nil || replayed {
 		t.Fatalf("retry claim = replayed:%v err:%v", replayed, err)
-	}
-}
-
-func TestEntStateStorePersistsWalletTransactionWalletAfter(t *testing.T) {
-	store := NewTestEntStateStore(t, t.TempDir()+"/wallet-after.sqlite")
-	if err := store.SaveWalletTransaction(context.Background(), map[string]any{
-		"id":              "wallet-tx-alpha",
-		"accountId":       "acct-alpha",
-		"type":            "compute_debit",
-		"ledgerEntryId":   "ledger-alpha",
-		"amountCents":     int64(-100),
-		"balanceCents":    int64(900),
-		"frozenCents":     int64(10),
-		"availableCents":  int64(890),
-		"totalSpentCents": int64(100),
-		"currency":        "CNY",
-		"metadata": map[string]any{
-			"computeAllocationId": "compute-alpha",
-		},
-	}); err != nil {
-		t.Fatalf("save wallet transaction projection: %v", err)
-	}
-	loaded, err := store.ListWalletTransactions(context.Background(), "acct-alpha")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx := loaded[0]
-	for key, want := range map[string]int64{
-		"balanceCents":    900,
-		"frozenCents":     10,
-		"availableCents":  890,
-		"totalSpentCents": 100,
-	} {
-		if got := int64(numberField(tx, key, 0)); got != want {
-			t.Fatalf("%s = %d, want %d in %#v", key, got, want, tx)
-		}
 	}
 }
 
@@ -387,6 +360,52 @@ func TestEntStateStoreUpdatesExecutionRequestWithoutRecreatingIt(t *testing.T) {
 	}
 	if !after.CreatedAt.Equal(before.CreatedAt) || after.Status != "approved" {
 		t.Fatalf("request was recreated instead of updated: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestEntStateStoreUpdatesResourcesWithoutRecreatingThem(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/resource-update.sqlite").(*postgresEntStateStore)
+	ctx := context.Background()
+	createdAt := "2026-07-01T00:00:00Z"
+
+	compute := map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "status": "provisioning",
+		"lastProviderSyncError": "provider temporarily unavailable", "createdAt": createdAt,
+	}
+	if err := store.SaveCompute(ctx, compute); err != nil {
+		t.Fatal(err)
+	}
+	delete(compute, "createdAt")
+	compute["status"], compute["lastProviderSyncError"] = "running", ""
+	if err := store.SaveCompute(ctx, compute); err != nil {
+		t.Fatal(err)
+	}
+	storedCompute, err := store.client.ComputeAllocation.Get(ctx, "compute-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedCompute.CreatedAt.Format(time.RFC3339) != createdAt || storedCompute.Status != "running" || storedCompute.LastProviderSyncError != "" {
+		t.Fatalf("compute was recreated or not updated: %#v", storedCompute)
+	}
+
+	storage := map[string]any{
+		"id": "storage-alpha", "accountId": "acct-alpha", "status": "creating",
+		"lastProviderSyncError": "provider temporarily unavailable", "createdAt": createdAt,
+	}
+	if err := store.SaveStorage(ctx, storage); err != nil {
+		t.Fatal(err)
+	}
+	delete(storage, "createdAt")
+	storage["status"], storage["lastProviderSyncError"] = "available", ""
+	if err := store.SaveStorage(ctx, storage); err != nil {
+		t.Fatal(err)
+	}
+	storedStorage, err := store.client.StorageVolume.Get(ctx, "storage-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedStorage.CreatedAt.Format(time.RFC3339) != createdAt || storedStorage.Status != "available" || storedStorage.LastProviderSyncError != "" {
+		t.Fatalf("storage was recreated or not updated: %#v", storedStorage)
 	}
 }
 

@@ -1,7 +1,7 @@
 import React from "react";
 import { PageContainer, ProTable } from "@ant-design/pro-components";
 import { Alert, Button, Empty, List, Popconfirm, Space, Tag, Typography } from "antd";
-import { available, customerSafeMessage, money } from "./formatters.ts";
+import { customerSafeMessage, usdBalance, usdMicros } from "./formatters.ts";
 
 type AnyRecord = Record<string, any>;
 
@@ -40,8 +40,9 @@ function statusText(value = "") {
 
 const resourceOperationStages = Object.freeze([
   "已提交",
-  "冻结余额",
-  "云资源创建中",
+  "云资源准备中",
+  "余额扣款中",
+  "月度权益已激活",
   "Runtime 部署中",
   "存储挂载中",
   "URL 可用"
@@ -181,7 +182,7 @@ export function OperationResultPanel({ result, pending = false }: any) {
         type="info"
         showIcon
         message="操作已提交"
-        description="正在冻结余额、创建云资源并部署 Runtime，通常需要 3-5 分钟。"
+        description="正在创建云资源、完成月费扣款并部署 Runtime，通常需要 3-5 分钟。"
       />
     );
   }
@@ -245,21 +246,13 @@ export function PriceImpactPanel({ items = [], emptyText = "暂无价格信息" 
   return <ResourceSplit items={items.length ? items : [{ label: "价格", value: "-", meta: emptyText, status: "pending", tone: "neutral" }]} />;
 }
 
-export function WalletRiskPanel({ wallet = {}, requiredHold = 0, resourceLabel = "资源" }: any) {
-  const currentAvailable = available(wallet);
-  const afterHold = Math.max(0, currentAvailable - Number(requiredHold || 0));
-  const blocked = Number(requiredHold || 0) > currentAvailable;
-  const lowAfter = !blocked && afterHold < Math.max(10, Number(requiredHold || 0) * 0.2);
-  const message = blocked ? "余额不足" : lowAfter ? "冻结后余额偏低" : "余额充足";
-  const description = blocked
-    ? `${resourceLabel} 需要冻结 ${money(requiredHold)}，当前可用 ${money(currentAvailable)}，可能无法开通。`
-    : `${resourceLabel} 冻结后预计可用 ${money(afterHold)}。`;
+export function BalanceChargePanel({ balance = {}, chargeUsdMicros = 0, resourceLabel = "资源" }: any) {
   return (
     <Alert
-      type={blocked ? "error" : lowAfter ? "warning" : "success"}
+      type="info"
       showIcon
-      message={message}
-      description={description}
+      message={`${resourceLabel}将从 Sub2API 余额扣款`}
+      description={`当前余额 ${usdBalance(balance)}，本次扣款 ${usdMicros(chargeUsdMicros)}。最终结果以后端确认为准。`}
     />
   );
 }
@@ -288,7 +281,7 @@ export function ResourceRelationshipGraph({ state = {}, title = "资源关系" }
   const attachments = state.storageAttachments || [];
   const workspaces = state.workspaces || [];
   const nodes = [
-    { label: "账号", value: state.account?.id || state.wallet?.accountId || state.user?.accountId || "-", tone: "info" },
+    { label: "账号", value: state.account?.id || state.account?.accountId || state.user?.accountId || "-", tone: "info" },
     { label: "计算", value: `${compute.length} 个`, tone: compute.some((item) => item.status === "failed") ? "danger" : compute.length ? "good" : "neutral" },
     { label: "存储", value: `${storage.length} 个`, tone: storage.some((item) => item.status === "failed") ? "danger" : storage.length ? "good" : "neutral" },
     { label: "挂载", value: `${attachments.length} 个`, tone: attachments.some((item) => item.status === "failed") ? "danger" : attachments.length ? "good" : "neutral" },

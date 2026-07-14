@@ -8,21 +8,22 @@ import {
   MetricStrip,
   ResourceSplit
 } from "../shared/commercial-console.tsx";
-import { available, money } from "../shared/formatters.ts";
+import { usdBalance } from "../shared/formatters.ts";
 
 function roleLabel(role = "") {
   return role === "admin" ? "运维" : "用户";
 }
 
-export function AccountPage({ state, wallet, session }: any) {
+export function AccountPage({ state, balance, session }: any) {
   const displayRole = roleLabel(session.user.role);
+  const accountId = state.account?.id || state.account?.accountId || session.user.accountId;
   return (
     <ConsoleSurface title="账号" eyebrow="账号" subtitle="登录身份、权限范围和余额">
       <MetricStrip
         items={[
           { label: "权限", value: displayRole, caption: "当前登录", icon: <ShieldCheck size={16} />, tone: session.user.role === "admin" ? "info" : "good" },
-          { label: "计费账号", value: state.account.id, caption: "余额归属", icon: <UserRound size={16} />, tone: "neutral" },
-          { label: "可用余额", value: money(available(wallet)), caption: `${money(wallet.frozen)} 已冻结`, icon: <WalletCards size={16} />, tone: available(wallet) > 0 ? "good" : "warn" },
+          { label: "计费账号", value: accountId, caption: "Sub2API 映射", icon: <UserRound size={16} />, tone: "neutral" },
+          { label: "Sub2API 余额", value: usdBalance(balance), caption: "gflabtoken.cn · USD", icon: <WalletCards size={16} />, tone: Number(balance.usdMicros || 0) > 0 ? "good" : "warn" },
           { label: "工作区", value: state.workspaces.length, caption: "可打开", tone: "info" },
           { label: "工单", value: state.supportTickets?.length || 0, caption: "支持记录", tone: "neutral" }
         ]}
@@ -34,7 +35,7 @@ export function AccountPage({ state, wallet, session }: any) {
             items={[
               { label: "邮箱", value: session.user.email, meta: "登录身份", status: "可用", tone: "good" },
               { label: "权限", value: displayRole, meta: "可使用的页面和操作", status: "已限定", tone: "info" },
-              { label: "计费账号", value: state.account.id, meta: "余额归属", status: "当前", tone: "neutral" },
+              { label: "计费账号", value: accountId, meta: "Sub2API 余额归属", status: "当前", tone: "neutral" },
               { label: "登录状态", value: "已登录", meta: "会话已保护", status: "安全", tone: "good" }
             ]}
           />

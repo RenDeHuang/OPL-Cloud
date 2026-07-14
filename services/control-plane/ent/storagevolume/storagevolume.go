@@ -49,40 +49,16 @@ const (
 	FieldExternalDeletedAt = "external_deleted_at"
 	// FieldBillingStatus holds the string denoting the billing_status field in the database.
 	FieldBillingStatus = "billing_status"
-	// FieldHoldID holds the string denoting the hold_id field in the database.
-	FieldHoldID = "hold_id"
-	// FieldHoldReleaseID holds the string denoting the hold_release_id field in the database.
-	FieldHoldReleaseID = "hold_release_id"
-	// FieldSettlementID holds the string denoting the settlement_id field in the database.
-	FieldSettlementID = "settlement_id"
-	// FieldLedgerEntryID holds the string denoting the ledger_entry_id field in the database.
-	FieldLedgerEntryID = "ledger_entry_id"
-	// FieldWalletTransactionID holds the string denoting the wallet_transaction_id field in the database.
-	FieldWalletTransactionID = "wallet_transaction_id"
 	// FieldPricingVersion holds the string denoting the pricing_version field in the database.
 	FieldPricingVersion = "pricing_version"
-	// FieldUsagePeriodEnd holds the string denoting the usage_period_end field in the database.
-	FieldUsagePeriodEnd = "usage_period_end"
+	// FieldBillingOperationID holds the string denoting the billing_operation_id field in the database.
+	FieldBillingOperationID = "billing_operation_id"
+	// FieldBillingStateJSON holds the string denoting the billing_state_json field in the database.
+	FieldBillingStateJSON = "billing_state_json"
 	// FieldMountPath holds the string denoting the mount_path field in the database.
 	FieldMountPath = "mount_path"
-	// FieldHoldAmountCents holds the string denoting the hold_amount_cents field in the database.
-	FieldHoldAmountCents = "hold_amount_cents"
-	// FieldHoldAmount holds the string denoting the hold_amount field in the database.
-	FieldHoldAmount = "hold_amount"
 	// FieldSizeGB holds the string denoting the size_gb field in the database.
 	FieldSizeGB = "size_gb"
-	// FieldPriceSnapshotResourceType holds the string denoting the price_snapshot_resource_type field in the database.
-	FieldPriceSnapshotResourceType = "price_snapshot_resource_type"
-	// FieldPriceSnapshotCurrency holds the string denoting the price_snapshot_currency field in the database.
-	FieldPriceSnapshotCurrency = "price_snapshot_currency"
-	// FieldPriceSnapshotSource holds the string denoting the price_snapshot_source field in the database.
-	FieldPriceSnapshotSource = "price_snapshot_source"
-	// FieldPriceSnapshotUnitPriceCents holds the string denoting the price_snapshot_unit_price_cents field in the database.
-	FieldPriceSnapshotUnitPriceCents = "price_snapshot_unit_price_cents"
-	// FieldPriceSnapshotStorageGBMonth holds the string denoting the price_snapshot_storage_gb_month field in the database.
-	FieldPriceSnapshotStorageGBMonth = "price_snapshot_storage_gb_month"
-	// FieldPriceSnapshotSizeGB holds the string denoting the price_snapshot_size_gb field in the database.
-	FieldPriceSnapshotSizeGB = "price_snapshot_size_gb"
 	// Table holds the table name of the storagevolume in the database.
 	Table = "control_plane_storage_volumes"
 )
@@ -108,23 +84,11 @@ var Columns = []string{
 	FieldLastProviderSyncError,
 	FieldExternalDeletedAt,
 	FieldBillingStatus,
-	FieldHoldID,
-	FieldHoldReleaseID,
-	FieldSettlementID,
-	FieldLedgerEntryID,
-	FieldWalletTransactionID,
 	FieldPricingVersion,
-	FieldUsagePeriodEnd,
+	FieldBillingOperationID,
+	FieldBillingStateJSON,
 	FieldMountPath,
-	FieldHoldAmountCents,
-	FieldHoldAmount,
 	FieldSizeGB,
-	FieldPriceSnapshotResourceType,
-	FieldPriceSnapshotCurrency,
-	FieldPriceSnapshotSource,
-	FieldPriceSnapshotUnitPriceCents,
-	FieldPriceSnapshotStorageGBMonth,
-	FieldPriceSnapshotSizeGB,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -176,40 +140,16 @@ var (
 	DefaultExternalDeletedAt string
 	// DefaultBillingStatus holds the default value on creation for the "billing_status" field.
 	DefaultBillingStatus string
-	// DefaultHoldID holds the default value on creation for the "hold_id" field.
-	DefaultHoldID string
-	// DefaultHoldReleaseID holds the default value on creation for the "hold_release_id" field.
-	DefaultHoldReleaseID string
-	// DefaultSettlementID holds the default value on creation for the "settlement_id" field.
-	DefaultSettlementID string
-	// DefaultLedgerEntryID holds the default value on creation for the "ledger_entry_id" field.
-	DefaultLedgerEntryID string
-	// DefaultWalletTransactionID holds the default value on creation for the "wallet_transaction_id" field.
-	DefaultWalletTransactionID string
 	// DefaultPricingVersion holds the default value on creation for the "pricing_version" field.
 	DefaultPricingVersion string
-	// DefaultUsagePeriodEnd holds the default value on creation for the "usage_period_end" field.
-	DefaultUsagePeriodEnd string
+	// DefaultBillingOperationID holds the default value on creation for the "billing_operation_id" field.
+	DefaultBillingOperationID string
+	// DefaultBillingStateJSON holds the default value on creation for the "billing_state_json" field.
+	DefaultBillingStateJSON string
 	// DefaultMountPath holds the default value on creation for the "mount_path" field.
 	DefaultMountPath string
-	// DefaultHoldAmountCents holds the default value on creation for the "hold_amount_cents" field.
-	DefaultHoldAmountCents int64
-	// DefaultHoldAmount holds the default value on creation for the "hold_amount" field.
-	DefaultHoldAmount float64
 	// DefaultSizeGB holds the default value on creation for the "size_gb" field.
 	DefaultSizeGB float64
-	// DefaultPriceSnapshotResourceType holds the default value on creation for the "price_snapshot_resource_type" field.
-	DefaultPriceSnapshotResourceType string
-	// DefaultPriceSnapshotCurrency holds the default value on creation for the "price_snapshot_currency" field.
-	DefaultPriceSnapshotCurrency string
-	// DefaultPriceSnapshotSource holds the default value on creation for the "price_snapshot_source" field.
-	DefaultPriceSnapshotSource string
-	// DefaultPriceSnapshotUnitPriceCents holds the default value on creation for the "price_snapshot_unit_price_cents" field.
-	DefaultPriceSnapshotUnitPriceCents int64
-	// DefaultPriceSnapshotStorageGBMonth holds the default value on creation for the "price_snapshot_storage_gb_month" field.
-	DefaultPriceSnapshotStorageGBMonth float64
-	// DefaultPriceSnapshotSizeGB holds the default value on creation for the "price_snapshot_size_gb" field.
-	DefaultPriceSnapshotSizeGB float64
 	// IDValidator is a validator for the "id" field. It is called by the builders before save.
 	IDValidator func(string) error
 )
@@ -312,39 +252,19 @@ func ByBillingStatus(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldBillingStatus, opts...).ToFunc()
 }
 
-// ByHoldID orders the results by the hold_id field.
-func ByHoldID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldHoldID, opts...).ToFunc()
-}
-
-// ByHoldReleaseID orders the results by the hold_release_id field.
-func ByHoldReleaseID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldHoldReleaseID, opts...).ToFunc()
-}
-
-// BySettlementID orders the results by the settlement_id field.
-func BySettlementID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldSettlementID, opts...).ToFunc()
-}
-
-// ByLedgerEntryID orders the results by the ledger_entry_id field.
-func ByLedgerEntryID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldLedgerEntryID, opts...).ToFunc()
-}
-
-// ByWalletTransactionID orders the results by the wallet_transaction_id field.
-func ByWalletTransactionID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldWalletTransactionID, opts...).ToFunc()
-}
-
 // ByPricingVersion orders the results by the pricing_version field.
 func ByPricingVersion(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPricingVersion, opts...).ToFunc()
 }
 
-// ByUsagePeriodEnd orders the results by the usage_period_end field.
-func ByUsagePeriodEnd(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldUsagePeriodEnd, opts...).ToFunc()
+// ByBillingOperationID orders the results by the billing_operation_id field.
+func ByBillingOperationID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBillingOperationID, opts...).ToFunc()
+}
+
+// ByBillingStateJSON orders the results by the billing_state_json field.
+func ByBillingStateJSON(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBillingStateJSON, opts...).ToFunc()
 }
 
 // ByMountPath orders the results by the mount_path field.
@@ -352,47 +272,7 @@ func ByMountPath(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMountPath, opts...).ToFunc()
 }
 
-// ByHoldAmountCents orders the results by the hold_amount_cents field.
-func ByHoldAmountCents(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldHoldAmountCents, opts...).ToFunc()
-}
-
-// ByHoldAmount orders the results by the hold_amount field.
-func ByHoldAmount(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldHoldAmount, opts...).ToFunc()
-}
-
 // BySizeGB orders the results by the size_gb field.
 func BySizeGB(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSizeGB, opts...).ToFunc()
-}
-
-// ByPriceSnapshotResourceType orders the results by the price_snapshot_resource_type field.
-func ByPriceSnapshotResourceType(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotResourceType, opts...).ToFunc()
-}
-
-// ByPriceSnapshotCurrency orders the results by the price_snapshot_currency field.
-func ByPriceSnapshotCurrency(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotCurrency, opts...).ToFunc()
-}
-
-// ByPriceSnapshotSource orders the results by the price_snapshot_source field.
-func ByPriceSnapshotSource(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotSource, opts...).ToFunc()
-}
-
-// ByPriceSnapshotUnitPriceCents orders the results by the price_snapshot_unit_price_cents field.
-func ByPriceSnapshotUnitPriceCents(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotUnitPriceCents, opts...).ToFunc()
-}
-
-// ByPriceSnapshotStorageGBMonth orders the results by the price_snapshot_storage_gb_month field.
-func ByPriceSnapshotStorageGBMonth(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotStorageGBMonth, opts...).ToFunc()
-}
-
-// ByPriceSnapshotSizeGB orders the results by the price_snapshot_size_gb field.
-func ByPriceSnapshotSizeGB(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldPriceSnapshotSizeGB, opts...).ToFunc()
 }

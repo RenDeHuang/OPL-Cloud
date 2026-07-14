@@ -10,7 +10,7 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for account login, wallet, compute allocations, storage volumes, attachments, stable Workspace URL, Ledger entries, Fabric operations, admin audit, and support mappings.",
+  "currentSlice": "Business-chain closure for account login, live Sub2API balance, monthly compute and storage entitlements, attachments, stable Workspace URL, Ledger receipts, Fabric operations, admin audit, and support mappings.",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -29,14 +29,16 @@
     "RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity.",
     "Destroying compute suspends the Workspace URL and retains storage; rebuilding compute reuses the same Workspace URL and StorageVolume.",
     "Destroying storage makes the Workspace unrecoverable because the file body is gone.",
-    "Ledger owns wallet, top-up, hold, release, settlement, reconciliation, and LedgerEntry money facts.",
+    "Sub2API owns the only spendable balance, API keys, AI usage, and real-time API debits.",
+    "Control Plane owns the account-to-Sub2API mapping, monthly charge operations, price snapshots, entitlement, renewal, and expiry policy.",
+    "Ledger owns append-only evidence receipts, review evidence, and reconciliation reports; it does not own a spendable balance.",
     "Fabric owns provider execution evidence and FabricOperation facts.",
-    "Console owns Account, User, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and read DTO orchestration.",
+    "Console owns Account, User, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and product presentation; it calls only Control Plane product APIs.",
     "Frontend displays backend DTOs and must not derive pricing, billing, lifecycle, or provider state locally.",
     "Future approval, policy, raw provider diagnostics, snapshot/recovery, payment orders, usage logs, and retired runtime lifecycle objects live outside the active contract until implemented."
   ],
   "repoBoundaryRules": [
-    "Console owns UI, auth, route contracts, and read-model orchestration.",
+    "Console owns UI, auth, route contracts, and product presentation through Control Plane APIs only.",
     "Fabric owns runtime, storage, connector, and agent resource execution boundaries.",
     "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
   ],
@@ -57,7 +59,7 @@
         "audit"
       ],
       "evidenceRequired": true,
-      "boundary": "Billing and ownership account for users, resources, wallets, workspaces, audit, and support mappings."
+      "boundary": "Ownership account for users, resources, Sub2API identity mapping, workspaces, audit, and support mappings."
     },
     {
       "kind": "User",
@@ -113,6 +115,15 @@
         "destroyedAt",
         "lastProviderSyncAt"
       ],
+      "requiredBillingFields": [
+        "billingStatus",
+        "pricingVersion",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "periodStart",
+        "paidThrough",
+        "autoRenew"
+      ],
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",
@@ -136,7 +147,16 @@
         "evidence"
       ],
       "evidenceRequired": true,
-      "boundary": "Account-owned storage that can exist without compute and can attach to one active ComputeAllocation at a time."
+      "boundary": "Account-owned storage with a monthly entitlement that can exist without compute and can attach to one active ComputeAllocation at a time.",
+      "requiredBillingFields": [
+        "billingStatus",
+        "pricingVersion",
+        "monthlyPriceCnyCents",
+        "chargeUsdMicros",
+        "periodStart",
+        "paidThrough",
+        "autoRenew"
+      ]
     },
     {
       "kind": "StorageAttachment",
@@ -187,7 +207,7 @@
       ]
     },
     {
-      "kind": "Wallet",
+      "kind": "Balance",
       "ownerRepo": "opl-console",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -195,14 +215,13 @@
         "list",
         "detail",
         "read",
-        "action",
         "audit"
       ],
       "evidenceRequired": true,
-      "boundary": "Account wallet DTO sourced from Ledger wallet facts."
+      "boundary": "Read-only live USD balance projection sourced by Control Plane from the mapped Sub2API user."
     },
     {
-      "kind": "LedgerEntry",
+      "kind": "EvidenceReceipt",
       "ownerRepo": "opl-ledger",
       "routeKind": "read_model",
       "lifecycle": "current",
@@ -213,7 +232,7 @@
         "audit"
       ],
       "evidenceRequired": true,
-      "boundary": "Money fact for top-up, hold, release, settlement, reconciliation, and wallet transaction evidence."
+      "boundary": "Append-only billing, execution, review, and reconciliation evidence without spendable balance ownership."
     },
     {
       "kind": "FabricOperation",

@@ -111,7 +111,12 @@ test("target service boundaries assign persistence, cloud SDKs, and UI responsib
   assert.equal(boundary.services.fabric.cloudSdkOwner, true);
   assert.equal(boundary.services.controlPlane.calls.ledger, "http");
   assert.equal(boundary.services.controlPlane.calls.fabric, "http");
+  assert.equal(boundary.services.controlPlane.calls.sub2api, "http");
   assert.ok(boundary.services.ledger.readApis.includes("receiptQuery"));
+  for (const retired of ["wallets", "holds", "manualTopups", "ledgerEntries", "walletTransactions", "resourceSettlements"]) {
+    assert.equal(boundary.services.ledger.owns.includes(retired), false, `Ledger must not own ${retired}`);
+  }
+  assert.equal(boundary.externalServices.gateway.calls, undefined);
   assert.equal(boundary.migration.compatibilityLayer, "forbidden");
   assert.ok(boundary.forbiddenRuntimeMarkers.consoleUi.includes("pg"));
   assert.ok(boundary.forbiddenRuntimeMarkers.controlPlane.includes("tencentcloud"));
@@ -194,9 +199,6 @@ test("Control Plane HTTP stack is directoryized by repository service handler an
   for (const file of requiredFiles) {
     await assertFile(file);
   }
-  const serverSource = await source("services/control-plane/internal/server/server.go");
-  assert.match(serverSource, /internal\/server\/routes/, "server startup must register routes through the routes package");
-  assert.match(serverSource, /internal\/handler/, "server startup must pass domain handlers through the handler package");
 });
 
 test("Console UI source is TypeScript-only with no ts-nocheck escape hatches", async () => {

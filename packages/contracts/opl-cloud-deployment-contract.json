@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "owner": "OPL Fabric",
-  "purpose": "Deployment workflow, production image, TKE handoff, and diagnostics contract.",
+  "purpose": "Deployment workflow, production image, TKE handoff, and paid production verification contract.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, image release, and read-only diagnostics.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, image release, and one paid verifier.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -37,14 +37,21 @@
       "OPL_CONSOLE_TLS_SECRET_NAME",
       "OPL_WORKSPACE_TLS_SECRET_NAME",
       "OPL_INGRESS_CLASS",
-      "OPL_BASIC_COMPUTE_HOURLY_CNY",
-      "OPL_PRO_COMPUTE_HOURLY_CNY",
-      "OPL_STORAGE_GB_MONTH_CNY",
+      "OPL_WORKSPACE_WEBUI_PORT",
+      "OPL_WORKSPACE_DATA_DIR",
+      "OPL_WORKSPACE_PROJECTS_DIR",
+      "OPL_MONTHLY_BILLING_WORKER_ENABLED",
+      "OPL_MONTHLY_BILLING_INTERVAL_MS",
       "OPL_BASIC_COMPUTE_INSTANCE_TYPE",
       "OPL_PRO_COMPUTE_INSTANCE_TYPE",
       "OPL_CODEX_MODEL",
       "OPL_CODEX_REASONING_EFFORT",
       "OPL_CODEX_BASE_URL",
+      "OPL_SUB2API_BASE_URL",
+      "OPL_SUB2API_SUPPORTED_VERSIONS",
+      "OPL_SUB2API_REQUEST_TIMEOUT_MS",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENTCLOUD_SECRET_ID",
       "TENCENTCLOUD_SECRET_KEY",
       "TENCENTCLOUD_REGION",
@@ -70,6 +77,8 @@
       "OPL_CONSOLE_USERS_JSON",
       "OPL_OPERATOR_SUMMARY_TOKEN",
       "OPL_CODEX_API_KEY",
+      "OPL_SUB2API_ADMIN_EMAIL",
+      "OPL_SUB2API_ADMIN_PASSWORD",
       "TENCENTCLOUD_SECRET_ID",
       "TENCENTCLOUD_SECRET_KEY",
       "TCR_USERNAME",
@@ -87,7 +96,8 @@
       "Install Kubernetes secrets",
       "Install and verify TLS secret",
       "Render and apply manifest",
-      "Show ingress target"
+      "Show ingress target",
+      "Remove deployment secrets"
     ],
     "orderedSteps": [
       [
@@ -97,6 +107,10 @@
       [
         "Render and apply manifest",
         "Show ingress target"
+      ],
+      [
+        "Show ingress target",
+        "Remove deployment secrets"
       ]
     ],
     "requiredCommandsByStep": {
@@ -114,6 +128,8 @@
         "--from-file=OPL_INTERNAL_SERVICE_TOKEN=\"$secret_dir/internal-service-token\"",
         "--from-file=OPL_CONSOLE_USERS_JSON=\"$secret_dir/auth-users-json\"",
         "--from-file=OPL_CODEX_API_KEY=\"$secret_dir/codex-api-key\"",
+        "--from-file=OPL_SUB2API_ADMIN_EMAIL=\"$secret_dir/sub2api-admin-email\"",
+        "--from-file=OPL_SUB2API_ADMIN_PASSWORD=\"$secret_dir/sub2api-admin-password\"",
         "--from-file=TENCENTCLOUD_SECRET_ID=\"$secret_dir/tencentcloud-secret-id\"",
         "--from-file=TENCENTCLOUD_SECRET_KEY=\"$secret_dir/tencentcloud-secret-key\"",
         "--from-file=.dockerconfigjson=\"$docker_config\"",
@@ -131,6 +147,11 @@
         "opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric",
         "rollout restart \"deployment/$deployment\"",
         "rollout status \"deployment/$deployment\""
+      ],
+      "Remove deployment secrets": [
+        "always()",
+        "find \"$secret_dir\" -mindepth 1 -delete",
+        "rmdir \"$secret_dir\""
       ]
     },
     "forbiddenRunTokens": [
@@ -138,154 +159,65 @@
       "--from-literal=OPL_INTERNAL_SERVICE_TOKEN",
       "--from-literal=OPL_CONSOLE_USERS_JSON",
       "--from-literal=OPL_OPERATOR_SUMMARY_TOKEN",
-      "--docker-password",
-      "OPL_GPU_COMPUTE_HOURLY_CNY"
+      "--docker-password"
     ]
   },
-  "productionExecutionWorkflow": {
+  "productionVerificationWorkflow": {
     "file": ".github/workflows/verify-production-chain.yml",
-    "job": "verify-execution",
+    "job": "verify",
     "runner": [
-      "self-hosted",
-      "tencent-cloud",
-      "opl-cloud",
-      "tke-vpc"
+      "ubuntu-latest"
     ],
     "inputs": [
-      "run_id"
+      "run_id",
+      "account_id",
+      "url_attempts",
+      "retry_delay_ms",
+      "paid_confirmation"
     ],
     "requiredEnv": [
-      "OPL_K8S_NAMESPACE",
-      "TENCENT_DEPLOY_KUBECONFIG_PATH",
-      "TENCENT_DEPLOY_KUBECONFIG_B64",
-      "TENCENT_DEPLOY_KUBECONFIG",
-      "OPL_EXECUTION_CONTROL_PLANE_ORIGIN",
-      "OPL_EXECUTION_LEDGER_ORIGIN",
-      "OPL_EXECUTION_FABRIC_ORIGIN",
-      "OPL_EXECUTION_OPERATOR_TOKEN",
-      "OPL_EXECUTION_RUN_ID"
+      "OPL_CONSOLE_ORIGIN",
+      "OPL_VERIFY_AUTH_USERS_JSON",
+      "OPL_VERIFY_PAID_CONFIRMATION",
+      "OPL_VERIFY_ACCOUNT_ID",
+      "OPL_VERIFY_PACKAGE_ID",
+      "OPL_VERIFY_URL_ATTEMPTS",
+      "OPL_VERIFY_RETRY_DELAY_MS",
+      "OPL_VERIFY_RUN_ID",
+      "OPL_VERIFY_SCREENSHOT_DIR",
+      "OPL_VERIFY_MANIFEST_PATH",
+      "OPL_VERIFY_MODEL_ACCESS_KEY"
     ],
     "secretEnv": [
-      "TENCENT_DEPLOY_KUBECONFIG_B64",
-      "TENCENT_DEPLOY_KUBECONFIG",
-      "OPL_EXECUTION_OPERATOR_TOKEN"
+      "OPL_VERIFY_AUTH_USERS_JSON",
+      "OPL_VERIFY_MODEL_ACCESS_KEY"
     ],
     "steps": [
       "Checkout",
       "Set up Node",
-      "Prepare kubeconfig",
-      "Verify production execution evidence chain"
-    ],
-    "orderedSteps": [
-      [
-        "Prepare kubeconfig",
-        "Verify production execution evidence chain"
-      ]
+      "Install dependencies",
+      "Install browser",
+      "Verify production monthly billing chain",
+      "Upload browser E2E screenshots and manifest"
     ],
     "requiredCommandsByStep": {
       "Set up Node": [
         "node-version",
         "22"
       ],
-      "Prepare kubeconfig": [
-        "TENCENT_DEPLOY_KUBECONFIG_PATH",
-        "TENCENT_DEPLOY_KUBECONFIG_B64",
-        "TENCENT_DEPLOY_KUBECONFIG"
+      "Install dependencies": [
+        "npm ci"
       ],
-      "Verify production execution evidence chain": [
-        "port-forward service/opl-cloud-control-plane 18787:8787",
-        "port-forward service/opl-cloud-ledger 18081:8081",
-        "port-forward service/opl-cloud-fabric 18082:8082",
-        "get secret opl-cloud-internal-service",
-        "OPL_EXECUTION_INTERNAL_SERVICE_TOKEN",
-        "node tools/production-execution-verifier.ts"
+      "Install browser": [
+        "playwright install --with-deps chromium"
+      ],
+      "Verify production monthly billing chain": [
+        "node tools/production-verifier.ts --browser-e2e",
+        "workspace_id=",
+        "workspace_url="
       ]
     },
-    "forbiddenRunTokens": [
-      "x-opl-operator-token"
-    ]
-  },
-  "diagnosticsWorkflow": {
-    "file": ".github/workflows/diagnose-tke-production.yml",
-    "job": "diagnose",
-    "inputs": [
-      "account_id",
-      "compute_allocation_id"
-    ],
-    "requiredEnv": [
-      "OPL_K8S_NAMESPACE",
-      "TENCENT_DEPLOY_KUBECONFIG_PATH",
-      "TENCENT_DEPLOY_KUBECONFIG_B64",
-      "TENCENT_DEPLOY_KUBECONFIG",
-      "OPL_OPERATOR_SUMMARY_TOKEN",
-      "OPL_DIAG_ACCOUNT_ID",
-      "OPL_DIAG_COMPUTE_ALLOCATION_ID"
-    ],
-    "secretEnv": [
-      "TENCENT_DEPLOY_KUBECONFIG_B64",
-      "TENCENT_DEPLOY_KUBECONFIG",
-      "OPL_OPERATOR_SUMMARY_TOKEN"
-    ],
-    "steps": [
-      "Prepare kubeconfig",
-      "Show workload status",
-      "Show cluster node capacity",
-      "Show namespace resource requests",
-      "Describe pending workspace pods",
-      "Describe control plane deployment",
-      "Describe ingress and service endpoints",
-      "Show TLS secret inventory",
-      "Show ingress TLS usage",
-      "Check external HTTP and HTTPS entrypoints",
-      "Describe control plane pods",
-      "Show recent namespace events",
-      "Show control plane logs",
-      "Show ledger schema columns",
-      "Show previous control plane crash logs",
-      "Show control plane container status",
-      "Check control plane API through port-forward",
-      "Show redacted console resource state"
-    ],
-    "requiredCommandsByStep": {
-      "Show workload status": [
-        "get deploy,rs,pod,svc,ingress -o wide"
-      ],
-      "Describe pending workspace pods": [
-        "oplcloud.cn/compute-allocation-id=$OPL_DIAG_COMPUTE_ALLOCATION_ID",
-        "describe \"$pod\"",
-        "logs \"$pod\" --all-containers=true --previous"
-      ],
-      "Show TLS secret inventory": [
-        "qcloud_cert_id",
-        "HAS_QCLOUD_CERT_ID"
-      ],
-      "Show previous control plane crash logs": [
-        "logs \"$pod\" --all-containers=true --previous",
-        "--tail=300"
-      ],
-      "Show control plane container status": [
-        "containerStatuses",
-        "lastState"
-      ],
-      "Check control plane API through port-forward": [
-        "port-forward service/opl-cloud-control-plane 18787:8787",
-        "http://127.0.0.1:18787/api/state",
-        "http://127.0.0.1:18787/api/production/readiness"
-      ],
-      "Show redacted console resource state": [
-        "/api/auth/operator-login",
-        "/api/management/state",
-        "computeAllocationId",
-        "runtimeOperations",
-        "providerData"
-      ]
-    },
-    "forbiddenRunTokens": [],
-    "forbiddenRunPatterns": [
-      "kubectl .* apply ",
-      "kubectl .* create ",
-      "kubectl .* delete "
-    ]
+    "forbiddenRunTokens": []
   },
   "imageReleaseWorkflow": {
     "file": ".github/workflows/release-opl-cloud-image.yml",

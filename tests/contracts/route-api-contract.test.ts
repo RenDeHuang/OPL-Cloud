@@ -29,8 +29,8 @@ test("OPL Cloud route/API contract is the current commercial Console truth", asy
   assert.deepEqual(contract.statuses, ["implemented", "folded_into_parent", "external"]);
   assert.deepEqual(contract.routeKinds, ["static_content", "auth_flow", "read_model", "business_object", "external_integration"]);
   assert.deepEqual(contract.contractLifecycles, ["current", "folded_parent"]);
-  assert.ok(contract.boundaryRules.includes("Console may call Fabric only through package boundary exports or published service APIs."));
-  assert.ok(contract.boundaryRules.includes("Console may call Ledger only through package boundary exports or published service APIs."));
+  assert.ok(contract.boundaryRules.includes("Console calls only Control Plane product APIs."));
+  assert.ok(contract.boundaryRules.includes("Control Plane orchestrates typed Fabric, Ledger, and Sub2API clients without exposing generic proxy routes."));
   assert.ok(contract.boundaryRules.includes("Active route contract contains only current commercial truth; future, reserved, and prune candidates live in route backlog."));
   assert.ok(contract.boundaryRules.includes("Every enabled route has a stable route id used by menus, actions, and routeTo()."));
 });
@@ -64,6 +64,7 @@ test("active route contract excludes future, reserved, prune, and retired route 
 
   assert.deepEqual([...new Set(activeRoutes.flatMap((route) => route.apiRoutes || []))].sort(), [
     "GET /api/auth/me",
+    "GET /api/billing/receipts/:id",
     "GET /api/compute-allocations",
     "GET /api/compute-allocations/:id",
     "GET /api/compute-pools",
@@ -79,8 +80,6 @@ test("active route contract excludes future, reserved, prune, and retired route 
     "POST /api/auth/logout",
     "POST /api/auth/operator-login",
     "POST /api/billing/reconciliation",
-    "POST /api/billing/resource-settlements",
-    "POST /api/billing/topups",
     "POST /api/compute-allocations",
     "POST /api/compute-allocations/:id/destroy",
     "POST /api/operator/archive-terminal-resources",
@@ -88,6 +87,8 @@ test("active route contract excludes future, reserved, prune, and retired route 
     "POST /api/organizations",
     "POST /api/organizations/members",
     "POST /api/pricing/preview",
+    "POST /api/resources/:id/auto-renew",
+    "POST /api/resources/:id/renew",
     "POST /api/storage-attachments",
     "POST /api/storage-attachments/detach",
     "POST /api/storage-volumes",
@@ -149,8 +150,9 @@ test("active route contract models compute pools before account compute allocati
 	    "POST /api/operator/cleanup-workspace-access",
 	    "POST /api/organizations",
 	    "POST /api/organizations/members",
-	    "POST /api/billing/resource-settlements",
 	    "POST /api/billing/reconciliation",
+	    "POST /api/resources/:id/renew",
+	    "POST /api/resources/:id/auto-renew",
 	    "POST /api/users/disable",
     "POST /api/users/delete"
   ]) {
@@ -252,21 +254,22 @@ test("resource route contract declares dynamic fields, billing fields, and visib
 
   assert.deepEqual(computeDetail.operationProtocol.visibleStages, [
     "已提交",
-    "冻结余额",
-    "云资源创建中",
+    "云资源准备中",
+    "余额扣款中",
+    "月度权益已激活",
     "Runtime 部署中",
-    "存储挂载中",
     "URL 可用"
   ]);
   assert.deepEqual(storageCreate.operationProtocol.visibleStages, [
     "已提交",
-    "冻结余额",
-    "存储创建中",
+    "存储准备中",
+    "余额扣款中",
+    "月度权益已激活",
     "可挂载"
   ], "storage create must not claim compute Runtime or URL stages");
   assert.deepEqual(storageDetail.operationProtocol.visibleStages, [
     "已提交",
-    "释放冻结",
+    "停止续费",
     "销毁存储",
     "已删除"
   ], "storage destroy stages must reflect data deletion risk");
@@ -283,10 +286,12 @@ test("resource route contract declares dynamic fields, billing fields, and visib
   assert.deepEqual(computeDetail.operationProtocol.pollQuery, ["accountId"], "compute detail polling must preserve account scope");
   assert.ok(storageDetail.dynamicFields?.includes("providerResourceId"), "storage detail must expose provider storage handle");
   assert.ok(storageDetail.dynamicFields?.includes("ownerAccountId"), "storage detail must expose the owning account");
-  assert.ok(storageDetail.dynamicFields?.includes("hourlyEstimate"), "storage detail must expose the storage hourly estimate field");
+  for (const field of ["monthlyPriceCnyCents", "chargeUsdMicros", "paidThrough", "autoRenew"]) {
+    assert.ok(storageDetail.dynamicFields?.includes(field), `storage detail must expose ${field}`);
+  }
   assert.ok(storageDetail.dynamicFields?.includes("billingStatus"), "storage detail must expose billing status");
 
-  for (const field of ["availableBalance", "frozenBalance", "activeHourlyEstimate", "nextSettlementAt", "runningDuration"]) {
+  for (const field of ["balanceUsdMicros", "balanceSource", "pricingVersion", "monthlyEntitlements", "paidThrough", "autoRenew", "manualReview"]) {
     assert.ok(billingOverview.dynamicFields?.includes(field), `billing overview must declare ${field}`);
   }
 });

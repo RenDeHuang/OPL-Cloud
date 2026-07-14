@@ -1,118 +1,49 @@
 # OPL Console Workspace Product V1
 
-## Target User
-
-Target users are Lab Owners and administrators who create, fund, operate, and distribute OPL Workspace URL entries backed by independently purchased compute and storage resources.
-
-The primary Lab Owner job is:
+## User Job
 
 ```text
-sign in -> open compute allocation -> open or select storage -> attach storage -> create Workspace URL -> copy URL -> share URL with members
+sign in -> buy compute -> buy/select storage -> attach -> create Workspace URL
+        -> open/copy/share URL
 ```
 
-OPL Workspace is the stable URL entry and lifecycle record. The running application is a runtime template image deployed behind that URL. The default runtime template is `one-person-lab-app`, but that image is not a billing object and does not own the Workspace, compute allocation, storage volume, or attachment.
+The owner can repeat this flow for multiple Workspaces. Sharing is the Workspace
+URL capability itself; it does not require an organization resource-pool model.
 
-## Commercial Information Architecture
+## Owner Surface
 
-Public:
+Console shows:
 
-- Home
-- Pricing
-- Docs
-- Status
-- Login
-- Register
-- Email verify
-- Forgot password
-- Reset password
+- live Sub2API USD balance;
+- fixed CNY monthly reference prices;
+- Basic and Pro compute;
+- storage in 10 GB steps;
+- resource status, `paidThrough`, auto-renew, and manual-review state;
+- attachment and Workspace URL actions;
+- billing receipts, support, and account settings.
 
-Lab Owner Console:
-
-- Overview
-- Workspaces
-- Compute
-- Storage
-- Attachments
-- Create Workspace URL
-- Workspace access
-- Gateway usage summary
-- Billing wallet
-- Account and Lab
-- Support
-- Alerts
-- Human-readable receipts
-
-Admin:
-
-- Overview
-- Users
-- User wallet
-- Manual top-ups
-- Governance policies
-- Audit
-- Runtime readiness
-- Fabric catalog internals
-- Ledger events and receipts
-- External support ticket mappings
-
-## Lab Owner Surface
-
-Lab Owner sees:
-
-- Workspace list.
-- Workspace URL copy, open, reset, and delete.
-- Workspace URL state and runtime readiness.
-- Package, ComputePool, ComputeAllocation state, storage state, hourly estimate, and seven-day hold estimate.
-- Compute creation flow: package, hourly price, hold, balance sufficiency, provisioning status, and failure details.
-- Storage creation flow: capacity, GB-month price, hourly estimate, hold, balance sufficiency, provisioning status, and failure details.
-- Attachment flow: selected compute allocation, selected storage volume, mount path, runtime template, and Workspace URL behavior.
-- Billing: balance, frozen amount, available balance, recent charges, usage, and top-ups.
-- Support ticket mappings and alerts.
-
-Lab Owner must not see:
-
-- request fingerprint;
-- dedup rows;
-- raw runtime evidence;
-- production readiness;
-- manual settlement;
-- raw Ledger events.
+Console does not show raw request fingerprints, provider credentials, generic
+Fabric/Ledger APIs, or Sub2API admin operations.
 
 ## Admin Surface
 
-Admin sees:
+Admin sees account mappings, roles, resource/provider facts, receipt and review
+evidence, reconciliation reports, readiness, and explicit cleanup operations.
+Admin does not mutate balance through Console.
 
-- users and disabled status;
-- roles and ownership;
-- manual recharge;
-- wallet transaction history;
-- manual top-up audit;
-- runtime and production readiness;
-- Fabric resource catalog internals;
-- raw Ledger evidence;
-- external support ticket mapping queue.
+## Purchase Confirmation
 
-## Resource Creation
+Compute confirmation shows the selected package, fixed monthly price, exact USD
+charge, current balance, and entitlement period. Storage confirmation also shows
+the 10 GB block count.
 
-Creation flow:
+The operation is resumable. Provider preparation failure makes no charge.
+Insufficient balance cleans the prepared resource. Ambiguous external results
+enter manual review. Confirmed charge activates the entitlement and emits a
+Ledger receipt.
 
-1. Select package and open one dedicated CVM ComputeAllocation from its ComputePool.
-2. Open or select a StorageVolume.
-3. Attach the StorageVolume to the ComputeAllocation.
-4. Create the Workspace URL entry.
+## Workspace And Storage
 
-Confirm shows:
-
-- compute hourly price;
-- storage price;
-- seven-day hold;
-- current balance;
-- frozen balance;
-- available balance;
-- provisioning status and whether the Workspace URL can be opened.
-
-## Billing Explanation
-
-Billing UI explains wallet state, holds, recent debits, usage, and top-ups.
-
-Raw ledger and dedup internals are not primary Lab Owner UI.
+A Workspace is a stable URL backed by one StorageVolume and the current runtime
+pointer. Compute can be replaced without changing the Workspace URL or deleting
+storage. Storage deletion is explicit and irreversible.

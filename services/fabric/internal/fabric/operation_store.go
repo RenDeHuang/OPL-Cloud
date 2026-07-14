@@ -67,6 +67,9 @@ func (s *MemoryOperationStore) ClaimMachine(_ context.Context, ownership Machine
 	defer s.mu.Unlock()
 	if existing, ok := s.machineOwnerships[ownership.ResourceID]; ok {
 		if existing.Status == "released" {
+			if !sameMachineOwnershipResource(existing, ownership) {
+				return MachineOwnership{}, false, ErrMachineOwnershipConflict
+			}
 			for resourceID, candidate := range s.machineOwnerships {
 				if resourceID != ownership.ResourceID && (candidate.MachineID == ownership.MachineID || (ownership.InstanceID != "" && candidate.InstanceID == ownership.InstanceID)) {
 					return MachineOwnership{}, false, ErrMachineOwnershipConflict
@@ -76,7 +79,7 @@ func (s *MemoryOperationStore) ClaimMachine(_ context.Context, ownership Machine
 			s.machineOwnerships[ownership.ResourceID] = ownership
 			return ownership, true, nil
 		}
-		if existing.MachineID != ownership.MachineID || existing.InstanceID != ownership.InstanceID {
+		if !sameMachineOwnershipReplay(existing, ownership) {
 			return MachineOwnership{}, false, ErrMachineOwnershipConflict
 		}
 		return existing, false, nil
@@ -88,6 +91,14 @@ func (s *MemoryOperationStore) ClaimMachine(_ context.Context, ownership Machine
 	}
 	s.machineOwnerships[ownership.ResourceID] = ownership
 	return ownership, true, nil
+}
+
+func sameMachineOwnershipResource(existing, requested MachineOwnership) bool {
+	return existing.ResourceID == requested.ResourceID && existing.AccountID == requested.AccountID && existing.WorkspaceID == requested.WorkspaceID && existing.PackageID == requested.PackageID
+}
+
+func sameMachineOwnershipReplay(existing, requested MachineOwnership) bool {
+	return sameMachineOwnershipResource(existing, requested) && existing.MachineID == requested.MachineID && existing.InstanceID == requested.InstanceID
 }
 
 func (s *MemoryOperationStore) SaveMachineOwnership(_ context.Context, ownership MachineOwnership) error {
@@ -367,13 +378,16 @@ func (s *PostgresOperationStore) ClaimMachine(ctx context.Context, ownership Mac
 	if err == nil {
 		result := machineOwnershipFromEnt(existing)
 		if result.Status == "released" {
+			if !sameMachineOwnershipResource(result, ownership) {
+				return MachineOwnership{}, false, ErrMachineOwnershipConflict
+			}
 			ownership.ID = result.ID
 			if err := s.SaveMachineOwnership(ctx, ownership); err != nil {
 				return MachineOwnership{}, false, err
 			}
 			return ownership, true, nil
 		}
-		if result.MachineID != ownership.MachineID || result.InstanceID != ownership.InstanceID {
+		if !sameMachineOwnershipReplay(result, ownership) {
 			return MachineOwnership{}, false, ErrMachineOwnershipConflict
 		}
 		return result, false, nil

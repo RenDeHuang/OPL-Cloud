@@ -113,9 +113,6 @@ func (app *controlPlaneServer) managementState(includeDeleted bool, computePools
 		"storageVolumes":         rowsAsAnyFromMaps(app.listStorages("")),
 		"storageAttachments":     rowsAsAnyFromMaps(app.listAttachments("")),
 		"resourceLedgerEvidence": app.resourceLedgerEvidenceLocked(),
-		"billingLedger":          rowsAsAnyFromMaps(app.listLedger("")),
-		"walletTransactions":     rowsAsAnyFromMaps(app.listWalletTransactions("")),
-		"manualTopups":           rowsAsAnyFromMaps(app.listManualTopups("")),
 		"runtimeOperations":      rowsAsAnyFromMaps(app.listRuntimeOperations()),
 		"auditEvents":            rowsAsAnyFromMaps(app.listAuditEvents("")),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
@@ -130,7 +127,7 @@ func (app *controlPlaneServer) operatorSummary() map[string]any {
 	defer app.mu.Unlock()
 	computes := app.computeRecordSet("")
 	workspaces := app.workspaceRecordSet("")
-	ledger := rowsAsAnyFromMaps(app.listLedger(""))
+	evidence := app.resourceLedgerEvidenceLocked()
 	runtimeOperations := app.listRuntimeOperations()
 	running := countStatus(computes, "running")
 	accounts := app.accountsLocked()
@@ -138,14 +135,14 @@ func (app *controlPlaneServer) operatorSummary() map[string]any {
 		"product":                "OPL Console",
 		"generatedAt":            time.Now().UTC().Format(time.RFC3339),
 		"accountScope":           "all",
-		"accounts":               map[string]any{"total": len(accounts), "frozen": totalAccountField(accounts, "frozen"), "balance": totalAccountField(accounts, "balance"), "totalSpent": totalAccountField(accounts, "totalSpent")},
+		"accounts":               map[string]any{"total": len(accounts)},
 		"workspaces":             map[string]any{"total": len(workspaces), "running": countStatus(workspaces, "running"), "urlActive": countActiveURLs(workspaces), "destroyed": countStatus(workspaces, "destroyed"), "needsAttention": 0},
 		"computeAllocations":     map[string]any{"total": len(computes), "running": running, "failed": countStatus(computes, "failed")},
 		"notifications":          map[string]any{"total": 0, "error": 0, "warning": 0, "recent": []any{}},
 		"runtimeOperations":      runtimeOperationSummary(runtimeOperations),
 		"failedOperations":       failedRuntimeOperations(runtimeOperations),
 		"resourceAnomalies":      app.resourceAnomaliesLocked(),
-		"resourceLedgerEvidence": map[string]any{"total": len(ledger), "recent": ledger},
+		"resourceLedgerEvidence": map[string]any{"total": len(evidence), "recent": evidence},
 		"productionE2E":          productionE2ESummary(nil),
 		"billingReconciliation":  app.reconciliationProjectionLocked(),
 		"retentionPolicy":        currentRetentionPolicy().dto(),
@@ -212,30 +209,32 @@ func (app *controlPlaneServer) rememberRuntimeOperationResource(operation map[st
 	}
 	switch stringValue(operation["resourceKind"]) {
 	case "compute_allocation":
-		row := computeResponse(cloneMap(resource))
+		row := cloneMap(resource)
 		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
 		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
 		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
 		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
 		if id := stringValue(row["id"]); id != "" {
 			if existing, ok := app.getCompute(id); ok {
-				row = computeResponse(mergeMaps(existing, row))
+				row = mergeMaps(existing, row)
 			}
+			row = computeResponse(row)
 			if stringValue(row["accountId"]) == "" {
 				return nil
 			}
 			return app.tables.SaveCompute(context.Background(), row)
 		}
 	case "storage_volume":
-		row := storageResponse(cloneMap(resource))
+		row := cloneMap(resource)
 		row["id"] = firstNonEmpty(stringValue(row["id"]), stringValue(operation["resourceId"]))
 		row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]), stringValue(operation["accountId"]))
 		row["accountId"] = firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
 		row["workspaceId"] = firstNonEmpty(stringValue(row["workspaceId"]), stringValue(operation["workspaceId"]))
 		if id := stringValue(row["id"]); id != "" {
 			if existing, ok := app.getStorage(id); ok {
-				row = storageResponse(mergeMaps(existing, row))
+				row = mergeMaps(existing, row)
 			}
+			row = storageResponse(row)
 			if stringValue(row["accountId"]) == "" {
 				return nil
 			}
@@ -267,24 +266,15 @@ func runtimeOperationSummary(operations []map[string]any) map[string]any {
 }
 
 func (app *controlPlaneServer) accountsLocked() []any {
-	accountIDs := app.activeBusinessAccountIDsLocked()
-	if len(accountIDs) == 0 {
-		for accountID := range app.walletRecordSet("") {
-			accountIDs[accountID] = true
-		}
+	accounts, err := app.tables.ListAccounts(context.Background())
+	if err != nil {
+		return []any{}
 	}
-	keys := make([]string, 0, len(accountIDs))
-	for accountID := range accountIDs {
-		keys = append(keys, accountID)
-	}
-	sort.Strings(keys)
-	rows := make([]any, 0, len(keys))
-	for _, accountID := range keys {
-		row := app.wallet(accountID)
-		row["totalRecharged"] = totalTopupsForAccount(rowsToRecords(app.listManualTopups(accountID)), accountID)
-		if number(row["totalSpent"]) == 0 {
-			row["totalSpent"] = totalDebitsForAccount(accountID, rowsToRecords(app.listWalletTransactions(accountID)), rowsToRecords(app.listLedger(accountID)))
-		}
+	sort.Slice(accounts, func(i, j int) bool { return stringValue(accounts[i]["id"]) < stringValue(accounts[j]["id"]) })
+	rows := make([]any, 0, len(accounts))
+	for _, account := range accounts {
+		row := cloneMap(account)
+		accountID := stringValue(row["id"])
 		for _, user := range app.userRecordSet(true) {
 			if stringValue(user["accountId"]) == accountID && stringValue(user["status"]) != "deleted" {
 				row["userId"] = firstNonEmpty(stringValue(row["userId"]), stringValue(user["id"]))
@@ -294,48 +284,6 @@ func (app *controlPlaneServer) accountsLocked() []any {
 		rows = append(rows, row)
 	}
 	return rows
-}
-
-func (app *controlPlaneServer) activeBusinessAccountIDsLocked() map[string]bool {
-	accountIDs := map[string]bool{}
-	for _, user := range app.userRecordSet(true) {
-		if stringValue(user["status"]) != "deleted" {
-			if accountID := stringValue(user["accountId"]); accountID != "" {
-				accountIDs[accountID] = true
-			}
-		}
-	}
-	for _, compute := range app.listComputes("") {
-		if stringValue(compute["status"]) != "destroyed" {
-			if accountID := firstNonEmpty(stringValue(compute["ownerAccountId"]), stringValue(compute["accountId"])); accountID != "" {
-				accountIDs[accountID] = true
-			}
-		}
-	}
-	for _, storage := range app.listStorages("") {
-		if stringValue(storage["status"]) != "destroyed" && stringValue(storage["billingStatus"]) != "stopped" {
-			if accountID := firstNonEmpty(stringValue(storage["ownerAccountId"]), stringValue(storage["accountId"])); accountID != "" {
-				accountIDs[accountID] = true
-			}
-		}
-	}
-	for _, attachment := range app.listAttachments("") {
-		if stringValue(attachment["status"]) != "detached" {
-			if accountID := firstNonEmpty(stringValue(attachment["ownerAccountId"]), stringValue(attachment["accountId"])); accountID != "" {
-				accountIDs[accountID] = true
-			}
-		}
-	}
-	for _, workspace := range app.listWorkspaces("") {
-		state := stringValue(workspace["state"])
-		if state != "destroyed" && state != "data_deleted" {
-			accountID := firstNonEmpty(stringValue(workspace["ownerAccountId"]), stringValue(workspace["accountId"]))
-			if accountID != "" {
-				accountIDs[accountID] = true
-			}
-		}
-	}
-	return accountIDs
 }
 
 func (app *controlPlaneServer) cleanupWorkspaceAccess(input map[string]any) (map[string]any, error) {

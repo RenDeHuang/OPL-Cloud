@@ -48,7 +48,6 @@ test("commercial Console route contract covers current public, auth, owner, and 
     ["workspace.detail", "implemented"],
     ["gateway.external", "external"],
     ["billing.overview", "implemented"],
-    ["billing.wallet", "folded_into_parent"],
     ["account.overview", "implemented"],
     ["support.list", "implemented"],
     ["support.create", "implemented"],

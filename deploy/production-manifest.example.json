@@ -1,39 +1,115 @@
 {
   "env": {
-    "OPL_RUNTIME_PROVIDER": { "value": "tencent-tke" },
-    "DATABASE_URL": { "secretRef": "opl-cloud/database-url" },
-    "OPL_INTERNAL_SERVICE_TOKEN": { "secretRef": "opl-cloud/internal-service-token" },
-    "OPL_CONSOLE_USERS_JSON": { "secretRef": "opl-cloud/auth-users-json" },
-    "OPL_AIONUI_ADMIN_PASSWORD_SEED": { "secretRef": "opl-cloud/aionui-admin-password-seed" },
-    "OPL_PUBLIC_URL": { "value": "https://cloud.medopl.cn" },
-    "OPL_CONSOLE_DOMAIN": { "value": "cloud.medopl.cn" },
-    "OPL_WORKSPACE_DOMAIN": { "value": "workspace.medopl.cn" },
-    "OPL_CLOUD_IMAGE": { "value": "registry.example.com/opl/opl-cloud:2026-07-01" },
-    "OPL_WORKSPACE_IMAGE": { "value": "registry.example.com/opl/one-person-lab-app:2026-07-01" },
-    "OPL_WORKSPACE_WEBUI_PORT": { "value": "3000" },
-    "OPL_WORKSPACE_DATA_DIR": { "value": "/data" },
-    "OPL_WORKSPACE_PROJECTS_DIR": { "value": "/projects" },
-    "OPL_K8S_NAMESPACE": { "value": "opl-cloud" },
-    "OPL_INGRESS_CLASS": { "value": "qcloud" },
-    "OPL_IMAGE_PULL_SECRET_NAME": { "value": "tcr-pull-secret" },
-    "OPL_WORKSPACE_STORAGE_CLASS": { "value": "cbs" },
-    "OPL_BASIC_COMPUTE_HOURLY_CNY": { "value": "0.468" },
-    "OPL_PRO_COMPUTE_HOURLY_CNY": { "value": "1.38" },
-    "OPL_STORAGE_GB_MONTH_CNY": { "value": "0.432" },
-    "OPL_RESOURCE_BILLING_WORKER_ENABLED": { "value": "1" },
-    "OPL_RESOURCE_BILLING_INTERVAL_MS": { "value": "3600000" },
-    "OPL_BASIC_COMPUTE_INSTANCE_TYPE": { "value": "SA5.MEDIUM4" },
-    "OPL_BASIC_COMPUTE_NODE_POOL_ID": { "value": "np-basic-package" },
-    "OPL_PRO_COMPUTE_INSTANCE_TYPE": { "value": "SA5.2XLARGE16" },
-    "OPL_PRO_COMPUTE_NODE_POOL_ID": { "value": "np-pro-package" },
-    "OPL_CODEX_MODEL": { "value": "gpt-5.5" },
-    "OPL_CODEX_REASONING_EFFORT": { "value": "xhigh" },
-    "OPL_CODEX_BASE_URL": { "value": "https://gflabtoken.cn/v1" },
-    "OPL_CODEX_API_KEY": { "secretRef": "opl-cloud/codex-api-key" },
-    "TENCENT_DEPLOY_KUBECONFIG_REF": { "secretRef": "opl-cloud/tencent-deploy-kubeconfig-ref" },
-    "TENCENT_DEPLOY_CLUSTER_ID": { "value": "cls-xxxxxxxx" },
-    "TENCENT_TCR_REGISTRY": { "value": "registry.example.com" },
-    "TENCENT_TCR_NAMESPACE": { "value": "opl" },
-    "TENCENT_TCR_REGION": { "value": "ap-guangzhou" }
+    "OPL_RUNTIME_PROVIDER": {
+      "value": "tencent-tke"
+    },
+    "DATABASE_URL": {
+      "secretRef": "opl-cloud/database-url"
+    },
+    "OPL_INTERNAL_SERVICE_TOKEN": {
+      "secretRef": "opl-cloud/internal-service-token"
+    },
+    "OPL_SUB2API_BASE_URL": {
+      "value": "https://gflabtoken.cn"
+    },
+    "OPL_SUB2API_ADMIN_EMAIL": {
+      "secretRef": "opl-cloud/sub2api-admin-email"
+    },
+    "OPL_SUB2API_ADMIN_PASSWORD": {
+      "secretRef": "opl-cloud/sub2api-admin-password"
+    },
+    "OPL_SUB2API_SUPPORTED_VERSIONS": {
+      "value": "0.1.153"
+    },
+    "OPL_SUB2API_REQUEST_TIMEOUT_MS": {
+      "value": "5000"
+    },
+    "OPL_CONSOLE_USERS_JSON": {
+      "secretRef": "opl-cloud/auth-users-json"
+    },
+    "OPL_AIONUI_ADMIN_PASSWORD_SEED": {
+      "secretRef": "opl-cloud/aionui-admin-password-seed"
+    },
+    "OPL_PUBLIC_URL": {
+      "value": "https://cloud.medopl.cn"
+    },
+    "OPL_CONSOLE_DOMAIN": {
+      "value": "cloud.medopl.cn"
+    },
+    "OPL_WORKSPACE_DOMAIN": {
+      "value": "workspace.medopl.cn"
+    },
+    "OPL_CLOUD_IMAGE": {
+      "value": "registry.example.com/opl/opl-cloud:2026-07-01"
+    },
+    "OPL_WORKSPACE_IMAGE": {
+      "value": "registry.example.com/opl/one-person-lab-app:2026-07-01"
+    },
+    "OPL_WORKSPACE_WEBUI_PORT": {
+      "value": "3000"
+    },
+    "OPL_WORKSPACE_DATA_DIR": {
+      "value": "/data"
+    },
+    "OPL_WORKSPACE_PROJECTS_DIR": {
+      "value": "/projects"
+    },
+    "OPL_K8S_NAMESPACE": {
+      "value": "opl-cloud"
+    },
+    "OPL_INGRESS_CLASS": {
+      "value": "qcloud"
+    },
+    "OPL_IMAGE_PULL_SECRET_NAME": {
+      "value": "tcr-pull-secret"
+    },
+    "OPL_WORKSPACE_STORAGE_CLASS": {
+      "value": "cbs"
+    },
+    "OPL_BASIC_COMPUTE_INSTANCE_TYPE": {
+      "value": "SA5.MEDIUM4"
+    },
+    "OPL_BASIC_COMPUTE_NODE_POOL_ID": {
+      "value": "np-basic-package"
+    },
+    "OPL_PRO_COMPUTE_INSTANCE_TYPE": {
+      "value": "SA5.2XLARGE16"
+    },
+    "OPL_PRO_COMPUTE_NODE_POOL_ID": {
+      "value": "np-pro-package"
+    },
+    "OPL_CODEX_MODEL": {
+      "value": "gpt-5.5"
+    },
+    "OPL_CODEX_REASONING_EFFORT": {
+      "value": "xhigh"
+    },
+    "OPL_CODEX_BASE_URL": {
+      "value": "https://gflabtoken.cn/v1"
+    },
+    "OPL_CODEX_API_KEY": {
+      "secretRef": "opl-cloud/codex-api-key"
+    },
+    "TENCENT_DEPLOY_KUBECONFIG_REF": {
+      "secretRef": "opl-cloud/tencent-deploy-kubeconfig-ref"
+    },
+    "TENCENT_DEPLOY_CLUSTER_ID": {
+      "value": "cls-xxxxxxxx"
+    },
+    "TENCENT_TCR_REGISTRY": {
+      "value": "registry.example.com"
+    },
+    "TENCENT_TCR_NAMESPACE": {
+      "value": "opl"
+    },
+    "TENCENT_TCR_REGION": {
+      "value": "ap-guangzhou"
+    },
+    "OPL_MONTHLY_BILLING_WORKER_ENABLED": {
+      "value": "1"
+    },
+    "OPL_MONTHLY_BILLING_INTERVAL_MS": {
+      "value": "3600000"
+    }
   }
 }

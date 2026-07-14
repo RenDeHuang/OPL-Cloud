@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"opl-cloud/services/control-plane/internal/clients"
-	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 type transferFabricClient struct {
@@ -40,7 +39,7 @@ func (f *recoveryFabricClient) DestroyStorageSnapshot(_ context.Context, id, _ s
 }
 
 func TestWorkspaceBackupRestoreCloneAndExportKeepBackendTruth(t *testing.T) {
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &recoveryFabricClient{fakeFabricClient: &fakeFabricClient{}}))
+	server := NewServer(newTestService(fakeLedgerClient{}, &recoveryFabricClient{fakeFabricClient: &fakeFabricClient{}}))
 	admin := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
 	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
@@ -118,7 +117,7 @@ func (f *transferFabricClient) Content(_ context.Context, _ string, digest strin
 
 func TestWorkspaceContentTransferIsAuthorizedAndStreamedThroughFabric(t *testing.T) {
 	fabricClient := &transferFabricClient{fakeFabricClient: &fakeFabricClient{}}
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, fabricClient))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, fabricClient))
 	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
@@ -173,7 +172,7 @@ func decodeSyncPayload(t *testing.T, rec *httptest.ResponseRecorder) map[string]
 }
 
 func TestWorkspaceSyncAcceptsMutationAndPullsByCursor(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha","localAliasId":"local-project-alpha"}`)
 	projectID := stringValue(project["projectId"])
@@ -210,7 +209,7 @@ func TestWorkspaceSyncAcceptsMutationAndPullsByCursor(t *testing.T) {
 }
 
 func TestWorkspaceSyncPersistsStaleReplaceConflictWithoutOverwrite(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
@@ -245,7 +244,7 @@ func TestWorkspaceSyncPersistsStaleReplaceConflictWithoutOverwrite(t *testing.T)
 }
 
 func TestWorkspaceSyncResolvesConflictByAppendingEvent(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])
@@ -282,7 +281,7 @@ func TestWorkspaceSyncResolvesConflictByAppendingEvent(t *testing.T) {
 }
 
 func TestWorkspaceSyncReplaysSameMutationAndRejectsChangedFingerprint(t *testing.T) {
-	server := newExecutionTestServer(t, controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	server := newExecutionTestServer(t, newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := tenantAdminSessionForTest(t, server)
 	project := createResourceWithSession(t, server, admin, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	projectID := stringValue(project["projectId"])

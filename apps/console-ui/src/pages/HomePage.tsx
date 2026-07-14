@@ -34,13 +34,13 @@ export default function HomePage({ session }: any) {
               <span>生产控制台</span>
             </div>
             <div className="publicMetrics">
-              <PublicMetric icon={<WalletCards />} label="钱包" value="余额与冻结" />
+              <PublicMetric icon={<WalletCards />} label="余额" value="Sub2API USD" />
               <PublicMetric icon={<Server />} label="工作区" value="计算与存储" />
               <PublicMetric icon={<KeyRound />} label="访问入口" value="授权 URL" />
-              <PublicMetric icon={<Database />} label="账本" value="用量证据" />
+              <PublicMetric icon={<Database />} label="资源" value="月度权益" />
             </div>
             <div className="publicFlow">
-              <span>充值</span>
+              <span>查看余额</span>
               <span>开通</span>
               <span>分发 URL</span>
               <span>计费</span>
@@ -57,12 +57,12 @@ export default function HomePage({ session }: any) {
           <article>
             <WalletCards />
             <h2>账单</h2>
-            <p>充值、冻结、小时扣费。</p>
+            <p>统一 USD 余额、包月计算与存储。</p>
           </article>
           <article>
             <Headphones />
             <h2>运维</h2>
-            <p>用户、充值、资源状态。</p>
+            <p>用户映射、资源状态、人工复核。</p>
           </article>
         </section>
       </main>

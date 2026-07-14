@@ -272,76 +272,6 @@ func (cau *ComputeAllocationUpdate) SetNillableBillingStatus(s *string) *Compute
 	return cau
 }
 
-// SetHoldID sets the "hold_id" field.
-func (cau *ComputeAllocationUpdate) SetHoldID(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetHoldID(s)
-	return cau
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableHoldID(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetHoldID(*s)
-	}
-	return cau
-}
-
-// SetHoldReleaseID sets the "hold_release_id" field.
-func (cau *ComputeAllocationUpdate) SetHoldReleaseID(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetHoldReleaseID(s)
-	return cau
-}
-
-// SetNillableHoldReleaseID sets the "hold_release_id" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableHoldReleaseID(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetHoldReleaseID(*s)
-	}
-	return cau
-}
-
-// SetSettlementID sets the "settlement_id" field.
-func (cau *ComputeAllocationUpdate) SetSettlementID(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetSettlementID(s)
-	return cau
-}
-
-// SetNillableSettlementID sets the "settlement_id" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableSettlementID(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetSettlementID(*s)
-	}
-	return cau
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (cau *ComputeAllocationUpdate) SetLedgerEntryID(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetLedgerEntryID(s)
-	return cau
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableLedgerEntryID(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetLedgerEntryID(*s)
-	}
-	return cau
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (cau *ComputeAllocationUpdate) SetWalletTransactionID(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetWalletTransactionID(s)
-	return cau
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableWalletTransactionID(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetWalletTransactionID(*s)
-	}
-	return cau
-}
-
 // SetPricingVersion sets the "pricing_version" field.
 func (cau *ComputeAllocationUpdate) SetPricingVersion(s string) *ComputeAllocationUpdate {
 	cau.mutation.SetPricingVersion(s)
@@ -356,16 +286,30 @@ func (cau *ComputeAllocationUpdate) SetNillablePricingVersion(s *string) *Comput
 	return cau
 }
 
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (cau *ComputeAllocationUpdate) SetUsagePeriodEnd(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetUsagePeriodEnd(s)
+// SetBillingOperationID sets the "billing_operation_id" field.
+func (cau *ComputeAllocationUpdate) SetBillingOperationID(s string) *ComputeAllocationUpdate {
+	cau.mutation.SetBillingOperationID(s)
 	return cau
 }
 
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableUsagePeriodEnd(s *string) *ComputeAllocationUpdate {
+// SetNillableBillingOperationID sets the "billing_operation_id" field if the given value is not nil.
+func (cau *ComputeAllocationUpdate) SetNillableBillingOperationID(s *string) *ComputeAllocationUpdate {
 	if s != nil {
-		cau.SetUsagePeriodEnd(*s)
+		cau.SetBillingOperationID(*s)
+	}
+	return cau
+}
+
+// SetBillingStateJSON sets the "billing_state_json" field.
+func (cau *ComputeAllocationUpdate) SetBillingStateJSON(s string) *ComputeAllocationUpdate {
+	cau.mutation.SetBillingStateJSON(s)
+	return cau
+}
+
+// SetNillableBillingStateJSON sets the "billing_state_json" field if the given value is not nil.
+func (cau *ComputeAllocationUpdate) SetNillableBillingStateJSON(s *string) *ComputeAllocationUpdate {
+	if s != nil {
+		cau.SetBillingStateJSON(*s)
 	}
 	return cau
 }
@@ -440,48 +384,6 @@ func (cau *ComputeAllocationUpdate) SetNillableMachineName(s *string) *ComputeAl
 	return cau
 }
 
-// SetHoldAmountCents sets the "hold_amount_cents" field.
-func (cau *ComputeAllocationUpdate) SetHoldAmountCents(i int64) *ComputeAllocationUpdate {
-	cau.mutation.ResetHoldAmountCents()
-	cau.mutation.SetHoldAmountCents(i)
-	return cau
-}
-
-// SetNillableHoldAmountCents sets the "hold_amount_cents" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableHoldAmountCents(i *int64) *ComputeAllocationUpdate {
-	if i != nil {
-		cau.SetHoldAmountCents(*i)
-	}
-	return cau
-}
-
-// AddHoldAmountCents adds i to the "hold_amount_cents" field.
-func (cau *ComputeAllocationUpdate) AddHoldAmountCents(i int64) *ComputeAllocationUpdate {
-	cau.mutation.AddHoldAmountCents(i)
-	return cau
-}
-
-// SetHoldAmount sets the "hold_amount" field.
-func (cau *ComputeAllocationUpdate) SetHoldAmount(f float64) *ComputeAllocationUpdate {
-	cau.mutation.ResetHoldAmount()
-	cau.mutation.SetHoldAmount(f)
-	return cau
-}
-
-// SetNillableHoldAmount sets the "hold_amount" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillableHoldAmount(f *float64) *ComputeAllocationUpdate {
-	if f != nil {
-		cau.SetHoldAmount(*f)
-	}
-	return cau
-}
-
-// AddHoldAmount adds f to the "hold_amount" field.
-func (cau *ComputeAllocationUpdate) AddHoldAmount(f float64) *ComputeAllocationUpdate {
-	cau.mutation.AddHoldAmount(f)
-	return cau
-}
-
 // SetCPU sets the "cpu" field.
 func (cau *ComputeAllocationUpdate) SetCPU(f float64) *ComputeAllocationUpdate {
 	cau.mutation.ResetCPU()
@@ -542,118 +444,6 @@ func (cau *ComputeAllocationUpdate) SetNillableDiskGB(f *float64) *ComputeAlloca
 // AddDiskGB adds f to the "disk_gb" field.
 func (cau *ComputeAllocationUpdate) AddDiskGB(f float64) *ComputeAllocationUpdate {
 	cau.mutation.AddDiskGB(f)
-	return cau
-}
-
-// SetPriceSnapshotPackageID sets the "price_snapshot_package_id" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotPackageID(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetPriceSnapshotPackageID(s)
-	return cau
-}
-
-// SetNillablePriceSnapshotPackageID sets the "price_snapshot_package_id" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotPackageID(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetPriceSnapshotPackageID(*s)
-	}
-	return cau
-}
-
-// SetPriceSnapshotResourceType sets the "price_snapshot_resource_type" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotResourceType(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetPriceSnapshotResourceType(s)
-	return cau
-}
-
-// SetNillablePriceSnapshotResourceType sets the "price_snapshot_resource_type" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotResourceType(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetPriceSnapshotResourceType(*s)
-	}
-	return cau
-}
-
-// SetPriceSnapshotCurrency sets the "price_snapshot_currency" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotCurrency(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetPriceSnapshotCurrency(s)
-	return cau
-}
-
-// SetNillablePriceSnapshotCurrency sets the "price_snapshot_currency" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotCurrency(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetPriceSnapshotCurrency(*s)
-	}
-	return cau
-}
-
-// SetPriceSnapshotSource sets the "price_snapshot_source" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotSource(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetPriceSnapshotSource(s)
-	return cau
-}
-
-// SetNillablePriceSnapshotSource sets the "price_snapshot_source" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotSource(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetPriceSnapshotSource(*s)
-	}
-	return cau
-}
-
-// SetPriceSnapshotSku sets the "price_snapshot_sku" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotSku(s string) *ComputeAllocationUpdate {
-	cau.mutation.SetPriceSnapshotSku(s)
-	return cau
-}
-
-// SetNillablePriceSnapshotSku sets the "price_snapshot_sku" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotSku(s *string) *ComputeAllocationUpdate {
-	if s != nil {
-		cau.SetPriceSnapshotSku(*s)
-	}
-	return cau
-}
-
-// SetPriceSnapshotUnitPriceCents sets the "price_snapshot_unit_price_cents" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotUnitPriceCents(i int64) *ComputeAllocationUpdate {
-	cau.mutation.ResetPriceSnapshotUnitPriceCents()
-	cau.mutation.SetPriceSnapshotUnitPriceCents(i)
-	return cau
-}
-
-// SetNillablePriceSnapshotUnitPriceCents sets the "price_snapshot_unit_price_cents" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotUnitPriceCents(i *int64) *ComputeAllocationUpdate {
-	if i != nil {
-		cau.SetPriceSnapshotUnitPriceCents(*i)
-	}
-	return cau
-}
-
-// AddPriceSnapshotUnitPriceCents adds i to the "price_snapshot_unit_price_cents" field.
-func (cau *ComputeAllocationUpdate) AddPriceSnapshotUnitPriceCents(i int64) *ComputeAllocationUpdate {
-	cau.mutation.AddPriceSnapshotUnitPriceCents(i)
-	return cau
-}
-
-// SetPriceSnapshotComputeHourly sets the "price_snapshot_compute_hourly" field.
-func (cau *ComputeAllocationUpdate) SetPriceSnapshotComputeHourly(f float64) *ComputeAllocationUpdate {
-	cau.mutation.ResetPriceSnapshotComputeHourly()
-	cau.mutation.SetPriceSnapshotComputeHourly(f)
-	return cau
-}
-
-// SetNillablePriceSnapshotComputeHourly sets the "price_snapshot_compute_hourly" field if the given value is not nil.
-func (cau *ComputeAllocationUpdate) SetNillablePriceSnapshotComputeHourly(f *float64) *ComputeAllocationUpdate {
-	if f != nil {
-		cau.SetPriceSnapshotComputeHourly(*f)
-	}
-	return cau
-}
-
-// AddPriceSnapshotComputeHourly adds f to the "price_snapshot_compute_hourly" field.
-func (cau *ComputeAllocationUpdate) AddPriceSnapshotComputeHourly(f float64) *ComputeAllocationUpdate {
-	cau.mutation.AddPriceSnapshotComputeHourly(f)
 	return cau
 }
 
@@ -774,26 +564,14 @@ func (cau *ComputeAllocationUpdate) sqlSave(ctx context.Context) (n int, err err
 	if value, ok := cau.mutation.BillingStatus(); ok {
 		_spec.SetField(computeallocation.FieldBillingStatus, field.TypeString, value)
 	}
-	if value, ok := cau.mutation.HoldID(); ok {
-		_spec.SetField(computeallocation.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.HoldReleaseID(); ok {
-		_spec.SetField(computeallocation.FieldHoldReleaseID, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.SettlementID(); ok {
-		_spec.SetField(computeallocation.FieldSettlementID, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.LedgerEntryID(); ok {
-		_spec.SetField(computeallocation.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.WalletTransactionID(); ok {
-		_spec.SetField(computeallocation.FieldWalletTransactionID, field.TypeString, value)
-	}
 	if value, ok := cau.mutation.PricingVersion(); ok {
 		_spec.SetField(computeallocation.FieldPricingVersion, field.TypeString, value)
 	}
-	if value, ok := cau.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(computeallocation.FieldUsagePeriodEnd, field.TypeString, value)
+	if value, ok := cau.mutation.BillingOperationID(); ok {
+		_spec.SetField(computeallocation.FieldBillingOperationID, field.TypeString, value)
+	}
+	if value, ok := cau.mutation.BillingStateJSON(); ok {
+		_spec.SetField(computeallocation.FieldBillingStateJSON, field.TypeString, value)
 	}
 	if value, ok := cau.mutation.EvidenceID(); ok {
 		_spec.SetField(computeallocation.FieldEvidenceID, field.TypeString, value)
@@ -809,18 +587,6 @@ func (cau *ComputeAllocationUpdate) sqlSave(ctx context.Context) (n int, err err
 	}
 	if value, ok := cau.mutation.MachineName(); ok {
 		_spec.SetField(computeallocation.FieldMachineName, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.HoldAmountCents(); ok {
-		_spec.SetField(computeallocation.FieldHoldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := cau.mutation.AddedHoldAmountCents(); ok {
-		_spec.AddField(computeallocation.FieldHoldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := cau.mutation.HoldAmount(); ok {
-		_spec.SetField(computeallocation.FieldHoldAmount, field.TypeFloat64, value)
-	}
-	if value, ok := cau.mutation.AddedHoldAmount(); ok {
-		_spec.AddField(computeallocation.FieldHoldAmount, field.TypeFloat64, value)
 	}
 	if value, ok := cau.mutation.CPU(); ok {
 		_spec.SetField(computeallocation.FieldCPU, field.TypeFloat64, value)
@@ -839,33 +605,6 @@ func (cau *ComputeAllocationUpdate) sqlSave(ctx context.Context) (n int, err err
 	}
 	if value, ok := cau.mutation.AddedDiskGB(); ok {
 		_spec.AddField(computeallocation.FieldDiskGB, field.TypeFloat64, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotPackageID(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotPackageID, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotResourceType(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotResourceType, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotCurrency(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotCurrency, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotSource(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotSource, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotSku(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotSku, field.TypeString, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotUnitPriceCents(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotUnitPriceCents, field.TypeInt64, value)
-	}
-	if value, ok := cau.mutation.AddedPriceSnapshotUnitPriceCents(); ok {
-		_spec.AddField(computeallocation.FieldPriceSnapshotUnitPriceCents, field.TypeInt64, value)
-	}
-	if value, ok := cau.mutation.PriceSnapshotComputeHourly(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotComputeHourly, field.TypeFloat64, value)
-	}
-	if value, ok := cau.mutation.AddedPriceSnapshotComputeHourly(); ok {
-		_spec.AddField(computeallocation.FieldPriceSnapshotComputeHourly, field.TypeFloat64, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, cau.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -1131,76 +870,6 @@ func (cauo *ComputeAllocationUpdateOne) SetNillableBillingStatus(s *string) *Com
 	return cauo
 }
 
-// SetHoldID sets the "hold_id" field.
-func (cauo *ComputeAllocationUpdateOne) SetHoldID(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetHoldID(s)
-	return cauo
-}
-
-// SetNillableHoldID sets the "hold_id" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableHoldID(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetHoldID(*s)
-	}
-	return cauo
-}
-
-// SetHoldReleaseID sets the "hold_release_id" field.
-func (cauo *ComputeAllocationUpdateOne) SetHoldReleaseID(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetHoldReleaseID(s)
-	return cauo
-}
-
-// SetNillableHoldReleaseID sets the "hold_release_id" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableHoldReleaseID(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetHoldReleaseID(*s)
-	}
-	return cauo
-}
-
-// SetSettlementID sets the "settlement_id" field.
-func (cauo *ComputeAllocationUpdateOne) SetSettlementID(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetSettlementID(s)
-	return cauo
-}
-
-// SetNillableSettlementID sets the "settlement_id" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableSettlementID(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetSettlementID(*s)
-	}
-	return cauo
-}
-
-// SetLedgerEntryID sets the "ledger_entry_id" field.
-func (cauo *ComputeAllocationUpdateOne) SetLedgerEntryID(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetLedgerEntryID(s)
-	return cauo
-}
-
-// SetNillableLedgerEntryID sets the "ledger_entry_id" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableLedgerEntryID(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetLedgerEntryID(*s)
-	}
-	return cauo
-}
-
-// SetWalletTransactionID sets the "wallet_transaction_id" field.
-func (cauo *ComputeAllocationUpdateOne) SetWalletTransactionID(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetWalletTransactionID(s)
-	return cauo
-}
-
-// SetNillableWalletTransactionID sets the "wallet_transaction_id" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableWalletTransactionID(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetWalletTransactionID(*s)
-	}
-	return cauo
-}
-
 // SetPricingVersion sets the "pricing_version" field.
 func (cauo *ComputeAllocationUpdateOne) SetPricingVersion(s string) *ComputeAllocationUpdateOne {
 	cauo.mutation.SetPricingVersion(s)
@@ -1215,16 +884,30 @@ func (cauo *ComputeAllocationUpdateOne) SetNillablePricingVersion(s *string) *Co
 	return cauo
 }
 
-// SetUsagePeriodEnd sets the "usage_period_end" field.
-func (cauo *ComputeAllocationUpdateOne) SetUsagePeriodEnd(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetUsagePeriodEnd(s)
+// SetBillingOperationID sets the "billing_operation_id" field.
+func (cauo *ComputeAllocationUpdateOne) SetBillingOperationID(s string) *ComputeAllocationUpdateOne {
+	cauo.mutation.SetBillingOperationID(s)
 	return cauo
 }
 
-// SetNillableUsagePeriodEnd sets the "usage_period_end" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableUsagePeriodEnd(s *string) *ComputeAllocationUpdateOne {
+// SetNillableBillingOperationID sets the "billing_operation_id" field if the given value is not nil.
+func (cauo *ComputeAllocationUpdateOne) SetNillableBillingOperationID(s *string) *ComputeAllocationUpdateOne {
 	if s != nil {
-		cauo.SetUsagePeriodEnd(*s)
+		cauo.SetBillingOperationID(*s)
+	}
+	return cauo
+}
+
+// SetBillingStateJSON sets the "billing_state_json" field.
+func (cauo *ComputeAllocationUpdateOne) SetBillingStateJSON(s string) *ComputeAllocationUpdateOne {
+	cauo.mutation.SetBillingStateJSON(s)
+	return cauo
+}
+
+// SetNillableBillingStateJSON sets the "billing_state_json" field if the given value is not nil.
+func (cauo *ComputeAllocationUpdateOne) SetNillableBillingStateJSON(s *string) *ComputeAllocationUpdateOne {
+	if s != nil {
+		cauo.SetBillingStateJSON(*s)
 	}
 	return cauo
 }
@@ -1299,48 +982,6 @@ func (cauo *ComputeAllocationUpdateOne) SetNillableMachineName(s *string) *Compu
 	return cauo
 }
 
-// SetHoldAmountCents sets the "hold_amount_cents" field.
-func (cauo *ComputeAllocationUpdateOne) SetHoldAmountCents(i int64) *ComputeAllocationUpdateOne {
-	cauo.mutation.ResetHoldAmountCents()
-	cauo.mutation.SetHoldAmountCents(i)
-	return cauo
-}
-
-// SetNillableHoldAmountCents sets the "hold_amount_cents" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableHoldAmountCents(i *int64) *ComputeAllocationUpdateOne {
-	if i != nil {
-		cauo.SetHoldAmountCents(*i)
-	}
-	return cauo
-}
-
-// AddHoldAmountCents adds i to the "hold_amount_cents" field.
-func (cauo *ComputeAllocationUpdateOne) AddHoldAmountCents(i int64) *ComputeAllocationUpdateOne {
-	cauo.mutation.AddHoldAmountCents(i)
-	return cauo
-}
-
-// SetHoldAmount sets the "hold_amount" field.
-func (cauo *ComputeAllocationUpdateOne) SetHoldAmount(f float64) *ComputeAllocationUpdateOne {
-	cauo.mutation.ResetHoldAmount()
-	cauo.mutation.SetHoldAmount(f)
-	return cauo
-}
-
-// SetNillableHoldAmount sets the "hold_amount" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillableHoldAmount(f *float64) *ComputeAllocationUpdateOne {
-	if f != nil {
-		cauo.SetHoldAmount(*f)
-	}
-	return cauo
-}
-
-// AddHoldAmount adds f to the "hold_amount" field.
-func (cauo *ComputeAllocationUpdateOne) AddHoldAmount(f float64) *ComputeAllocationUpdateOne {
-	cauo.mutation.AddHoldAmount(f)
-	return cauo
-}
-
 // SetCPU sets the "cpu" field.
 func (cauo *ComputeAllocationUpdateOne) SetCPU(f float64) *ComputeAllocationUpdateOne {
 	cauo.mutation.ResetCPU()
@@ -1401,118 +1042,6 @@ func (cauo *ComputeAllocationUpdateOne) SetNillableDiskGB(f *float64) *ComputeAl
 // AddDiskGB adds f to the "disk_gb" field.
 func (cauo *ComputeAllocationUpdateOne) AddDiskGB(f float64) *ComputeAllocationUpdateOne {
 	cauo.mutation.AddDiskGB(f)
-	return cauo
-}
-
-// SetPriceSnapshotPackageID sets the "price_snapshot_package_id" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotPackageID(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetPriceSnapshotPackageID(s)
-	return cauo
-}
-
-// SetNillablePriceSnapshotPackageID sets the "price_snapshot_package_id" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotPackageID(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetPriceSnapshotPackageID(*s)
-	}
-	return cauo
-}
-
-// SetPriceSnapshotResourceType sets the "price_snapshot_resource_type" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotResourceType(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetPriceSnapshotResourceType(s)
-	return cauo
-}
-
-// SetNillablePriceSnapshotResourceType sets the "price_snapshot_resource_type" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotResourceType(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetPriceSnapshotResourceType(*s)
-	}
-	return cauo
-}
-
-// SetPriceSnapshotCurrency sets the "price_snapshot_currency" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotCurrency(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetPriceSnapshotCurrency(s)
-	return cauo
-}
-
-// SetNillablePriceSnapshotCurrency sets the "price_snapshot_currency" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotCurrency(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetPriceSnapshotCurrency(*s)
-	}
-	return cauo
-}
-
-// SetPriceSnapshotSource sets the "price_snapshot_source" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotSource(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetPriceSnapshotSource(s)
-	return cauo
-}
-
-// SetNillablePriceSnapshotSource sets the "price_snapshot_source" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotSource(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetPriceSnapshotSource(*s)
-	}
-	return cauo
-}
-
-// SetPriceSnapshotSku sets the "price_snapshot_sku" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotSku(s string) *ComputeAllocationUpdateOne {
-	cauo.mutation.SetPriceSnapshotSku(s)
-	return cauo
-}
-
-// SetNillablePriceSnapshotSku sets the "price_snapshot_sku" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotSku(s *string) *ComputeAllocationUpdateOne {
-	if s != nil {
-		cauo.SetPriceSnapshotSku(*s)
-	}
-	return cauo
-}
-
-// SetPriceSnapshotUnitPriceCents sets the "price_snapshot_unit_price_cents" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotUnitPriceCents(i int64) *ComputeAllocationUpdateOne {
-	cauo.mutation.ResetPriceSnapshotUnitPriceCents()
-	cauo.mutation.SetPriceSnapshotUnitPriceCents(i)
-	return cauo
-}
-
-// SetNillablePriceSnapshotUnitPriceCents sets the "price_snapshot_unit_price_cents" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotUnitPriceCents(i *int64) *ComputeAllocationUpdateOne {
-	if i != nil {
-		cauo.SetPriceSnapshotUnitPriceCents(*i)
-	}
-	return cauo
-}
-
-// AddPriceSnapshotUnitPriceCents adds i to the "price_snapshot_unit_price_cents" field.
-func (cauo *ComputeAllocationUpdateOne) AddPriceSnapshotUnitPriceCents(i int64) *ComputeAllocationUpdateOne {
-	cauo.mutation.AddPriceSnapshotUnitPriceCents(i)
-	return cauo
-}
-
-// SetPriceSnapshotComputeHourly sets the "price_snapshot_compute_hourly" field.
-func (cauo *ComputeAllocationUpdateOne) SetPriceSnapshotComputeHourly(f float64) *ComputeAllocationUpdateOne {
-	cauo.mutation.ResetPriceSnapshotComputeHourly()
-	cauo.mutation.SetPriceSnapshotComputeHourly(f)
-	return cauo
-}
-
-// SetNillablePriceSnapshotComputeHourly sets the "price_snapshot_compute_hourly" field if the given value is not nil.
-func (cauo *ComputeAllocationUpdateOne) SetNillablePriceSnapshotComputeHourly(f *float64) *ComputeAllocationUpdateOne {
-	if f != nil {
-		cauo.SetPriceSnapshotComputeHourly(*f)
-	}
-	return cauo
-}
-
-// AddPriceSnapshotComputeHourly adds f to the "price_snapshot_compute_hourly" field.
-func (cauo *ComputeAllocationUpdateOne) AddPriceSnapshotComputeHourly(f float64) *ComputeAllocationUpdateOne {
-	cauo.mutation.AddPriceSnapshotComputeHourly(f)
 	return cauo
 }
 
@@ -1663,26 +1192,14 @@ func (cauo *ComputeAllocationUpdateOne) sqlSave(ctx context.Context) (_node *Com
 	if value, ok := cauo.mutation.BillingStatus(); ok {
 		_spec.SetField(computeallocation.FieldBillingStatus, field.TypeString, value)
 	}
-	if value, ok := cauo.mutation.HoldID(); ok {
-		_spec.SetField(computeallocation.FieldHoldID, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.HoldReleaseID(); ok {
-		_spec.SetField(computeallocation.FieldHoldReleaseID, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.SettlementID(); ok {
-		_spec.SetField(computeallocation.FieldSettlementID, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.LedgerEntryID(); ok {
-		_spec.SetField(computeallocation.FieldLedgerEntryID, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.WalletTransactionID(); ok {
-		_spec.SetField(computeallocation.FieldWalletTransactionID, field.TypeString, value)
-	}
 	if value, ok := cauo.mutation.PricingVersion(); ok {
 		_spec.SetField(computeallocation.FieldPricingVersion, field.TypeString, value)
 	}
-	if value, ok := cauo.mutation.UsagePeriodEnd(); ok {
-		_spec.SetField(computeallocation.FieldUsagePeriodEnd, field.TypeString, value)
+	if value, ok := cauo.mutation.BillingOperationID(); ok {
+		_spec.SetField(computeallocation.FieldBillingOperationID, field.TypeString, value)
+	}
+	if value, ok := cauo.mutation.BillingStateJSON(); ok {
+		_spec.SetField(computeallocation.FieldBillingStateJSON, field.TypeString, value)
 	}
 	if value, ok := cauo.mutation.EvidenceID(); ok {
 		_spec.SetField(computeallocation.FieldEvidenceID, field.TypeString, value)
@@ -1698,18 +1215,6 @@ func (cauo *ComputeAllocationUpdateOne) sqlSave(ctx context.Context) (_node *Com
 	}
 	if value, ok := cauo.mutation.MachineName(); ok {
 		_spec.SetField(computeallocation.FieldMachineName, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.HoldAmountCents(); ok {
-		_spec.SetField(computeallocation.FieldHoldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := cauo.mutation.AddedHoldAmountCents(); ok {
-		_spec.AddField(computeallocation.FieldHoldAmountCents, field.TypeInt64, value)
-	}
-	if value, ok := cauo.mutation.HoldAmount(); ok {
-		_spec.SetField(computeallocation.FieldHoldAmount, field.TypeFloat64, value)
-	}
-	if value, ok := cauo.mutation.AddedHoldAmount(); ok {
-		_spec.AddField(computeallocation.FieldHoldAmount, field.TypeFloat64, value)
 	}
 	if value, ok := cauo.mutation.CPU(); ok {
 		_spec.SetField(computeallocation.FieldCPU, field.TypeFloat64, value)
@@ -1728,33 +1233,6 @@ func (cauo *ComputeAllocationUpdateOne) sqlSave(ctx context.Context) (_node *Com
 	}
 	if value, ok := cauo.mutation.AddedDiskGB(); ok {
 		_spec.AddField(computeallocation.FieldDiskGB, field.TypeFloat64, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotPackageID(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotPackageID, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotResourceType(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotResourceType, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotCurrency(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotCurrency, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotSource(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotSource, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotSku(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotSku, field.TypeString, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotUnitPriceCents(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotUnitPriceCents, field.TypeInt64, value)
-	}
-	if value, ok := cauo.mutation.AddedPriceSnapshotUnitPriceCents(); ok {
-		_spec.AddField(computeallocation.FieldPriceSnapshotUnitPriceCents, field.TypeInt64, value)
-	}
-	if value, ok := cauo.mutation.PriceSnapshotComputeHourly(); ok {
-		_spec.SetField(computeallocation.FieldPriceSnapshotComputeHourly, field.TypeFloat64, value)
-	}
-	if value, ok := cauo.mutation.AddedPriceSnapshotComputeHourly(); ok {
-		_spec.AddField(computeallocation.FieldPriceSnapshotComputeHourly, field.TypeFloat64, value)
 	}
 	_node = &ComputeAllocation{config: cauo.config}
 	_spec.Assign = _node.assignValues

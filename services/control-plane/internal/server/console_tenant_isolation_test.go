@@ -16,12 +16,10 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/lib/pq"
-
-	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 func TestBootstrapUsersUseOnlyFixedRoles(t *testing.T) {
-	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"email":"owner@example.com","password":"correct horse battery staple"}]`)
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"email":"owner@example.com","password":"correct horse battery staple","sub2apiUserId":41}]`)
 	users, err := bootstrapUsersFromEnv()
 	if err != nil {
 		t.Fatalf("bootstrap users: %v", err)
@@ -30,15 +28,15 @@ func TestBootstrapUsersUseOnlyFixedRoles(t *testing.T) {
 		t.Fatalf("default role = %q, want owner", got)
 	}
 
-	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"email":"pi@example.com","password":"correct horse battery staple","role":"pi"}]`)
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"email":"pi@example.com","password":"correct horse battery staple","role":"pi","sub2apiUserId":41}]`)
 	if _, err := bootstrapUsersFromEnv(); err == nil || !strings.Contains(err.Error(), "invalid_role") {
 		t.Fatalf("invalid explicit role error = %v, want invalid_role", err)
 	}
 }
 
 func TestBootstrapOwnerGetsAnActiveTenantMembership(t *testing.T) {
-	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-seed-owner","email":"seed-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-seed"}]`)
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}))
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-seed-owner","email":"seed-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-seed","sub2apiUserId":41}]`)
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	session := loginForTest(t, server, "seed-owner@example.com", "correct horse battery staple")
 	req := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-seed", nil)
 	addSessionCookies(req, session)
@@ -101,7 +99,7 @@ func TestMissingComputeReadReturnsNotFoundWithoutFabric(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	calls := []string{}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +117,7 @@ func TestOwnedProvisioningComputeMayRefreshFromFabric(t *testing.T) {
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "status": "provisioning"}))
 	calls := []string{}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &provisioningComputeFabricClient{fakeFabricClient{calls: &calls}}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &provisioningComputeFabricClient{fakeFabricClient{calls: &calls}}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +140,7 @@ func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-beta", "accountId": "acct-beta", "status": "available"}))
 	mustStore(t, store.SaveRuntimeOperation(context.Background(), map[string]any{"id": "operation-beta", "operationId": "operation-beta", "accountId": "acct-beta", "workspaceId": "workspace-beta", "status": "succeeded"}))
 	mustStore(t, store.SaveBillingReconciliation(context.Background(), map[string]any{"id": "global", "status": "mismatch", "guardStatus": "blocked", "guardReason": "global-secret", "guardBlockNewWorkspaces": true}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +166,7 @@ func TestUnknownCustomerResourceMutationsNeverReachFabric(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	calls := []string{}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +196,7 @@ func TestReconciliationBlockedCustomerMutationsDoNotLeakGlobalProjection(t *test
 		"guard":   map[string]any{"status": "blocked", "reason": "private-operator-reason", "blockNewWorkspaces": true},
 		"message": map[string]any{"author": "operator-secret", "text": "cross-tenant-private-report"},
 	}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +222,7 @@ func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	mustStore(t, store.SaveSupportMapping(context.Background(), map[string]any{"id": "support-alpha", "accountId": "acct-alpha", "externalTicketId": "ALPHA-1"}))
 	mustStore(t, store.SaveSupportMapping(context.Background(), map[string]any{"id": "support-beta", "accountId": "acct-beta", "externalTicketId": "BETA-1"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +235,7 @@ func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 
 func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, organizationID, userID, email string) {
 	t.Helper()
-	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active"}))
+	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": int64(41)}))
 	mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": organizationID, "billingAccountId": accountID, "status": "active"}))
 	hash, err := hashPassword("CorrectHorseBatteryStaple!")
 	if err != nil {
@@ -283,7 +281,7 @@ func TestRevokeMembershipImmediatelyDeniesCustomerEndpoints(t *testing.T) {
 	}
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-member", "email": "member@alpha.example", "accountId": "acct-alpha", "role": "member", "status": "active", "passwordHash": hash}))
 	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-member", "organizationId": "org-alpha", "userId": "usr-member", "accountId": "acct-alpha", "role": "member", "status": "active"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +321,7 @@ func TestRevokeMembershipRequiresGlobalAdminAndExistingMembership(t *testing.T) 
 	store := newMemoryTableStore()
 	mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}))
 	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-admin", "organizationId": "org-alpha", "userId": "usr-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +348,7 @@ func TestTenantAdminRequiresMembershipAndCannotUseOperatorRoutes(t *testing.T) {
 	}
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-tenant-admin", "email": "tenant-admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
 	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-tenant-admin", "organizationId": "org-alpha", "userId": "usr-tenant-admin", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +370,7 @@ func TestTenantAdminRequiresMembershipAndCannotUseOperatorRoutes(t *testing.T) {
 func TestOperatorLoginNeverAdoptsTenantAdmin(t *testing.T) {
 	store := newMemoryTableStore()
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-tenant-admin", "email": "tenant-admin@example.com", "accountId": "acct-alpha", "role": "admin", "status": "active"}))
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,6 +506,15 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 		_, _ = admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1`, database)
 		_, _ = admin.Exec(`DROP DATABASE ` + database)
 	})
+	legacy, err := sql.Open("postgres", "host=/var/run/postgresql dbname="+database+" sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE control_plane_wallet_projections (id text PRIMARY KEY)`); err != nil {
+		_ = legacy.Close()
+		t.Fatal(err)
+	}
+	_ = legacy.Close()
 
 	store, err := NewPostgresEntStateStore("host=/var/run/postgresql dbname=" + database + " sslmode=disable")
 	if err != nil {
@@ -517,6 +524,15 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	accounts, err := store.ListAccounts(context.Background())
 	if err != nil || len(accounts) != 0 {
 		t.Fatalf("fresh account table = %v, err=%v", accounts, err)
+	}
+	check, err := sql.Open("postgres", "host=/var/run/postgresql dbname="+database+" sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	var retiredTable sql.NullString
+	if err := check.QueryRow(`SELECT to_regclass('public.control_plane_wallet_projections')`).Scan(&retiredTable); err != nil || retiredTable.Valid {
+		t.Fatalf("retired wallet projection survived startup: table=%v err=%v", retiredTable, err)
 	}
 }
 
