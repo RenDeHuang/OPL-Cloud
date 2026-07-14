@@ -163,6 +163,22 @@ func newMonthlyBillingTest(t *testing.T, balances []int64) (*controlPlaneServer,
 	return app, controlplane.NewService(ledger, fabric, sub2API), sub2API, fabric, ledger, events
 }
 
+func TestMonthlyRedeemCodeFitsSub2API(t *testing.T) {
+	code := monthlyRedeemCode("production", "billing-7913c4a1dc0c690180")
+	if code != "opl:7fbd9eece4373eb56bee0f788969" {
+		t.Fatalf("redeem code = %q", code)
+	}
+	if len(code) > 32 {
+		t.Fatalf("redeem code length = %d, want <= 32", len(code))
+	}
+	if code != monthlyRedeemCode("production", "billing-7913c4a1dc0c690180") {
+		t.Fatal("redeem code is not stable")
+	}
+	if code == monthlyRedeemCode("staging", "billing-7913c4a1dc0c690180") || code == monthlyRedeemCode("production", "billing-different") {
+		t.Fatal("redeem code must include environment and operation identity")
+	}
+}
+
 func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 	now := time.Date(2026, 7, 14, 8, 30, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -190,7 +206,7 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 			if result["billingStatus"] != "active" || int64(numberField(result, "chargeUsdMicros", 0)) != tc.charge || int64(numberField(result, "monthlyPriceCnyCents", 0)) != tc.cnyCents || result["paidThrough"] != "2026-08-14T08:30:00Z" {
 				t.Fatalf("monthly result = %#v", result)
 			}
-			if len(sub2API.charges) != 1 || sub2API.charges[0].Code != "opl:test:billing-"+tc.name+":charge:v1" || sub2API.charges[0].ChargeUSDMicros != tc.charge {
+			if len(sub2API.charges) != 1 || sub2API.charges[0].Code != monthlyRedeemCode("test", "billing-"+tc.name) || sub2API.charges[0].ChargeUSDMicros != tc.charge {
 				t.Fatalf("charges = %#v", sub2API.charges)
 			}
 			if len(ledger.receipts) != 1 || int64(numberField(ledger.receipts[0].Cost, "chargeUsdMicros", 0)) != tc.charge {

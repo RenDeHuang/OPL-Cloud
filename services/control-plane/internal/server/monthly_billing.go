@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -393,7 +392,7 @@ func monthlyRedeemCode(environment, operationID string) string {
 	if environment == "" {
 		environment = "local"
 	}
-	return fmt.Sprintf("opl:%s:%s:charge:v1", environment, operationID)
+	return "opl:" + stableID("sub2api-monthly-charge-v1", environment, operationID)[:28]
 }
 
 func monthlyDesiredStatus(resourceType string) string {
