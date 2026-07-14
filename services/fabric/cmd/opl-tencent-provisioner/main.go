@@ -1628,7 +1628,6 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 		AutoRepair:         common.BoolPtr(false),
 		EnableAutoscaling:  common.BoolPtr(false),
 		Replicas:           common.Int64Ptr(0),
-		InternetAccessible: &tke2022.InternetAccessible{MaxBandwidthOut: common.Int64Ptr(0), ChargeType: common.StringPtr("TRAFFIC_POSTPAID_BY_HOUR")},
 		MachineType:        common.StringPtr("NativeCVM"),
 		AutomationService:  common.BoolPtr(true),
 		RuntimeRootDir:     common.StringPtr("/var/lib/containerd"),

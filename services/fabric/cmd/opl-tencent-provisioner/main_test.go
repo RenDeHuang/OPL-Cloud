@@ -407,6 +407,9 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if createRequest.Native.AutoRepair == nil || *createRequest.Native.AutoRepair {
 		t.Fatalf("Fabric-managed package node pools must disable TKE autorepair so Console owns every replacement CVM: %#v", createRequest.Native.AutoRepair)
 	}
+	if createRequest.Native.InternetAccessible != nil {
+		t.Fatalf("zero-bandwidth package nodes must omit legacy public network settings: %#v", createRequest.Native.InternetAccessible)
+	}
 	if len(createRequest.Native.InstanceTypes) != 1 || *createRequest.Native.InstanceTypes[0] != "SA5.LARGE4" {
 		t.Fatalf("unexpected instance types: %#v", createRequest.Native.InstanceTypes)
 	}
