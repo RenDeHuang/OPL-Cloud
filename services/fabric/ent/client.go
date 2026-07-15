@@ -11,10 +11,8 @@ import (
 
 	"opl-cloud/services/fabric/ent/migrate"
 
-	"opl-cloud/services/fabric/ent/connector"
 	"opl-cloud/services/fabric/ent/contenttransfer"
 	"opl-cloud/services/fabric/ent/contenttransferchunk"
-	"opl-cloud/services/fabric/ent/environmenttemplate"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/machineownership"
 
@@ -28,14 +26,10 @@ type Client struct {
 	config
 	// Schema is the client for creating, migrating and dropping schema.
 	Schema *migrate.Schema
-	// Connector is the client for interacting with the Connector builders.
-	Connector *ConnectorClient
 	// ContentTransfer is the client for interacting with the ContentTransfer builders.
 	ContentTransfer *ContentTransferClient
 	// ContentTransferChunk is the client for interacting with the ContentTransferChunk builders.
 	ContentTransferChunk *ContentTransferChunkClient
-	// EnvironmentTemplate is the client for interacting with the EnvironmentTemplate builders.
-	EnvironmentTemplate *EnvironmentTemplateClient
 	// FabricOperation is the client for interacting with the FabricOperation builders.
 	FabricOperation *FabricOperationClient
 	// MachineOwnership is the client for interacting with the MachineOwnership builders.
@@ -51,10 +45,8 @@ func NewClient(opts ...Option) *Client {
 
 func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
-	c.Connector = NewConnectorClient(c.config)
 	c.ContentTransfer = NewContentTransferClient(c.config)
 	c.ContentTransferChunk = NewContentTransferChunkClient(c.config)
-	c.EnvironmentTemplate = NewEnvironmentTemplateClient(c.config)
 	c.FabricOperation = NewFabricOperationClient(c.config)
 	c.MachineOwnership = NewMachineOwnershipClient(c.config)
 }
@@ -149,10 +141,8 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	return &Tx{
 		ctx:                  ctx,
 		config:               cfg,
-		Connector:            NewConnectorClient(cfg),
 		ContentTransfer:      NewContentTransferClient(cfg),
 		ContentTransferChunk: NewContentTransferChunkClient(cfg),
-		EnvironmentTemplate:  NewEnvironmentTemplateClient(cfg),
 		FabricOperation:      NewFabricOperationClient(cfg),
 		MachineOwnership:     NewMachineOwnershipClient(cfg),
 	}, nil
@@ -174,10 +164,8 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	return &Tx{
 		ctx:                  ctx,
 		config:               cfg,
-		Connector:            NewConnectorClient(cfg),
 		ContentTransfer:      NewContentTransferClient(cfg),
 		ContentTransferChunk: NewContentTransferChunkClient(cfg),
-		EnvironmentTemplate:  NewEnvironmentTemplateClient(cfg),
 		FabricOperation:      NewFabricOperationClient(cfg),
 		MachineOwnership:     NewMachineOwnershipClient(cfg),
 	}, nil
@@ -186,7 +174,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 // Debug returns a new debug-client. It's used to get verbose logging on specific operations.
 //
 //	client.Debug().
-//		Connector.
+//		ContentTransfer.
 //		Query().
 //		Count(ctx)
 func (c *Client) Debug() *Client {
@@ -208,175 +196,34 @@ func (c *Client) Close() error {
 // Use adds the mutation hooks to all the entity clients.
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
-	for _, n := range []interface{ Use(...Hook) }{
-		c.Connector, c.ContentTransfer, c.ContentTransferChunk, c.EnvironmentTemplate,
-		c.FabricOperation, c.MachineOwnership,
-	} {
-		n.Use(hooks...)
-	}
+	c.ContentTransfer.Use(hooks...)
+	c.ContentTransferChunk.Use(hooks...)
+	c.FabricOperation.Use(hooks...)
+	c.MachineOwnership.Use(hooks...)
 }
 
 // Intercept adds the query interceptors to all the entity clients.
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
-	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Connector, c.ContentTransfer, c.ContentTransferChunk, c.EnvironmentTemplate,
-		c.FabricOperation, c.MachineOwnership,
-	} {
-		n.Intercept(interceptors...)
-	}
+	c.ContentTransfer.Intercept(interceptors...)
+	c.ContentTransferChunk.Intercept(interceptors...)
+	c.FabricOperation.Intercept(interceptors...)
+	c.MachineOwnership.Intercept(interceptors...)
 }
 
 // Mutate implements the ent.Mutator interface.
 func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 	switch m := m.(type) {
-	case *ConnectorMutation:
-		return c.Connector.mutate(ctx, m)
 	case *ContentTransferMutation:
 		return c.ContentTransfer.mutate(ctx, m)
 	case *ContentTransferChunkMutation:
 		return c.ContentTransferChunk.mutate(ctx, m)
-	case *EnvironmentTemplateMutation:
-		return c.EnvironmentTemplate.mutate(ctx, m)
 	case *FabricOperationMutation:
 		return c.FabricOperation.mutate(ctx, m)
 	case *MachineOwnershipMutation:
 		return c.MachineOwnership.mutate(ctx, m)
 	default:
 		return nil, fmt.Errorf("ent: unknown mutation type %T", m)
-	}
-}
-
-// ConnectorClient is a client for the Connector schema.
-type ConnectorClient struct {
-	config
-}
-
-// NewConnectorClient returns a client for the Connector from the given config.
-func NewConnectorClient(c config) *ConnectorClient {
-	return &ConnectorClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `connector.Hooks(f(g(h())))`.
-func (c *ConnectorClient) Use(hooks ...Hook) {
-	c.hooks.Connector = append(c.hooks.Connector, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `connector.Intercept(f(g(h())))`.
-func (c *ConnectorClient) Intercept(interceptors ...Interceptor) {
-	c.inters.Connector = append(c.inters.Connector, interceptors...)
-}
-
-// Create returns a builder for creating a Connector entity.
-func (c *ConnectorClient) Create() *ConnectorCreate {
-	mutation := newConnectorMutation(c.config, OpCreate)
-	return &ConnectorCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of Connector entities.
-func (c *ConnectorClient) CreateBulk(builders ...*ConnectorCreate) *ConnectorCreateBulk {
-	return &ConnectorCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *ConnectorClient) MapCreateBulk(slice any, setFunc func(*ConnectorCreate, int)) *ConnectorCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &ConnectorCreateBulk{err: fmt.Errorf("calling to ConnectorClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*ConnectorCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &ConnectorCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for Connector.
-func (c *ConnectorClient) Update() *ConnectorUpdate {
-	mutation := newConnectorMutation(c.config, OpUpdate)
-	return &ConnectorUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *ConnectorClient) UpdateOne(co *Connector) *ConnectorUpdateOne {
-	mutation := newConnectorMutation(c.config, OpUpdateOne, withConnector(co))
-	return &ConnectorUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *ConnectorClient) UpdateOneID(id string) *ConnectorUpdateOne {
-	mutation := newConnectorMutation(c.config, OpUpdateOne, withConnectorID(id))
-	return &ConnectorUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for Connector.
-func (c *ConnectorClient) Delete() *ConnectorDelete {
-	mutation := newConnectorMutation(c.config, OpDelete)
-	return &ConnectorDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *ConnectorClient) DeleteOne(co *Connector) *ConnectorDeleteOne {
-	return c.DeleteOneID(co.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *ConnectorClient) DeleteOneID(id string) *ConnectorDeleteOne {
-	builder := c.Delete().Where(connector.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &ConnectorDeleteOne{builder}
-}
-
-// Query returns a query builder for Connector.
-func (c *ConnectorClient) Query() *ConnectorQuery {
-	return &ConnectorQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeConnector},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a Connector entity by its id.
-func (c *ConnectorClient) Get(ctx context.Context, id string) (*Connector, error) {
-	return c.Query().Where(connector.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *ConnectorClient) GetX(ctx context.Context, id string) *Connector {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *ConnectorClient) Hooks() []Hook {
-	return c.hooks.Connector
-}
-
-// Interceptors returns the client interceptors.
-func (c *ConnectorClient) Interceptors() []Interceptor {
-	return c.inters.Connector
-}
-
-func (c *ConnectorClient) mutate(ctx context.Context, m *ConnectorMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&ConnectorCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&ConnectorUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&ConnectorUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&ConnectorDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown Connector mutation op: %q", m.Op())
 	}
 }
 
@@ -643,139 +490,6 @@ func (c *ContentTransferChunkClient) mutate(ctx context.Context, m *ContentTrans
 		return (&ContentTransferChunkDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown ContentTransferChunk mutation op: %q", m.Op())
-	}
-}
-
-// EnvironmentTemplateClient is a client for the EnvironmentTemplate schema.
-type EnvironmentTemplateClient struct {
-	config
-}
-
-// NewEnvironmentTemplateClient returns a client for the EnvironmentTemplate from the given config.
-func NewEnvironmentTemplateClient(c config) *EnvironmentTemplateClient {
-	return &EnvironmentTemplateClient{config: c}
-}
-
-// Use adds a list of mutation hooks to the hooks stack.
-// A call to `Use(f, g, h)` equals to `environmenttemplate.Hooks(f(g(h())))`.
-func (c *EnvironmentTemplateClient) Use(hooks ...Hook) {
-	c.hooks.EnvironmentTemplate = append(c.hooks.EnvironmentTemplate, hooks...)
-}
-
-// Intercept adds a list of query interceptors to the interceptors stack.
-// A call to `Intercept(f, g, h)` equals to `environmenttemplate.Intercept(f(g(h())))`.
-func (c *EnvironmentTemplateClient) Intercept(interceptors ...Interceptor) {
-	c.inters.EnvironmentTemplate = append(c.inters.EnvironmentTemplate, interceptors...)
-}
-
-// Create returns a builder for creating a EnvironmentTemplate entity.
-func (c *EnvironmentTemplateClient) Create() *EnvironmentTemplateCreate {
-	mutation := newEnvironmentTemplateMutation(c.config, OpCreate)
-	return &EnvironmentTemplateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// CreateBulk returns a builder for creating a bulk of EnvironmentTemplate entities.
-func (c *EnvironmentTemplateClient) CreateBulk(builders ...*EnvironmentTemplateCreate) *EnvironmentTemplateCreateBulk {
-	return &EnvironmentTemplateCreateBulk{config: c.config, builders: builders}
-}
-
-// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
-// a builder and applies setFunc on it.
-func (c *EnvironmentTemplateClient) MapCreateBulk(slice any, setFunc func(*EnvironmentTemplateCreate, int)) *EnvironmentTemplateCreateBulk {
-	rv := reflect.ValueOf(slice)
-	if rv.Kind() != reflect.Slice {
-		return &EnvironmentTemplateCreateBulk{err: fmt.Errorf("calling to EnvironmentTemplateClient.MapCreateBulk with wrong type %T, need slice", slice)}
-	}
-	builders := make([]*EnvironmentTemplateCreate, rv.Len())
-	for i := 0; i < rv.Len(); i++ {
-		builders[i] = c.Create()
-		setFunc(builders[i], i)
-	}
-	return &EnvironmentTemplateCreateBulk{config: c.config, builders: builders}
-}
-
-// Update returns an update builder for EnvironmentTemplate.
-func (c *EnvironmentTemplateClient) Update() *EnvironmentTemplateUpdate {
-	mutation := newEnvironmentTemplateMutation(c.config, OpUpdate)
-	return &EnvironmentTemplateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOne returns an update builder for the given entity.
-func (c *EnvironmentTemplateClient) UpdateOne(et *EnvironmentTemplate) *EnvironmentTemplateUpdateOne {
-	mutation := newEnvironmentTemplateMutation(c.config, OpUpdateOne, withEnvironmentTemplate(et))
-	return &EnvironmentTemplateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// UpdateOneID returns an update builder for the given id.
-func (c *EnvironmentTemplateClient) UpdateOneID(id string) *EnvironmentTemplateUpdateOne {
-	mutation := newEnvironmentTemplateMutation(c.config, OpUpdateOne, withEnvironmentTemplateID(id))
-	return &EnvironmentTemplateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// Delete returns a delete builder for EnvironmentTemplate.
-func (c *EnvironmentTemplateClient) Delete() *EnvironmentTemplateDelete {
-	mutation := newEnvironmentTemplateMutation(c.config, OpDelete)
-	return &EnvironmentTemplateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
-}
-
-// DeleteOne returns a builder for deleting the given entity.
-func (c *EnvironmentTemplateClient) DeleteOne(et *EnvironmentTemplate) *EnvironmentTemplateDeleteOne {
-	return c.DeleteOneID(et.ID)
-}
-
-// DeleteOneID returns a builder for deleting the given entity by its id.
-func (c *EnvironmentTemplateClient) DeleteOneID(id string) *EnvironmentTemplateDeleteOne {
-	builder := c.Delete().Where(environmenttemplate.ID(id))
-	builder.mutation.id = &id
-	builder.mutation.op = OpDeleteOne
-	return &EnvironmentTemplateDeleteOne{builder}
-}
-
-// Query returns a query builder for EnvironmentTemplate.
-func (c *EnvironmentTemplateClient) Query() *EnvironmentTemplateQuery {
-	return &EnvironmentTemplateQuery{
-		config: c.config,
-		ctx:    &QueryContext{Type: TypeEnvironmentTemplate},
-		inters: c.Interceptors(),
-	}
-}
-
-// Get returns a EnvironmentTemplate entity by its id.
-func (c *EnvironmentTemplateClient) Get(ctx context.Context, id string) (*EnvironmentTemplate, error) {
-	return c.Query().Where(environmenttemplate.ID(id)).Only(ctx)
-}
-
-// GetX is like Get, but panics if an error occurs.
-func (c *EnvironmentTemplateClient) GetX(ctx context.Context, id string) *EnvironmentTemplate {
-	obj, err := c.Get(ctx, id)
-	if err != nil {
-		panic(err)
-	}
-	return obj
-}
-
-// Hooks returns the client hooks.
-func (c *EnvironmentTemplateClient) Hooks() []Hook {
-	return c.hooks.EnvironmentTemplate
-}
-
-// Interceptors returns the client interceptors.
-func (c *EnvironmentTemplateClient) Interceptors() []Interceptor {
-	return c.inters.EnvironmentTemplate
-}
-
-func (c *EnvironmentTemplateClient) mutate(ctx context.Context, m *EnvironmentTemplateMutation) (Value, error) {
-	switch m.Op() {
-	case OpCreate:
-		return (&EnvironmentTemplateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdate:
-		return (&EnvironmentTemplateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpUpdateOne:
-		return (&EnvironmentTemplateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
-	case OpDelete, OpDeleteOne:
-		return (&EnvironmentTemplateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
-	default:
-		return nil, fmt.Errorf("ent: unknown EnvironmentTemplate mutation op: %q", m.Op())
 	}
 }
 
@@ -1048,11 +762,11 @@ func (c *MachineOwnershipClient) mutate(ctx context.Context, m *MachineOwnership
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Connector, ContentTransfer, ContentTransferChunk, EnvironmentTemplate,
-		FabricOperation, MachineOwnership []ent.Hook
+		ContentTransfer, ContentTransferChunk, FabricOperation,
+		MachineOwnership []ent.Hook
 	}
 	inters struct {
-		Connector, ContentTransfer, ContentTransferChunk, EnvironmentTemplate,
-		FabricOperation, MachineOwnership []ent.Interceptor
+		ContentTransfer, ContentTransferChunk, FabricOperation,
+		MachineOwnership []ent.Interceptor
 	}
 )

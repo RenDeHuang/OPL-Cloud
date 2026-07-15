@@ -14,9 +14,6 @@ var ErrMachineOwnershipConflict = errors.New("machine_ownership_conflict")
 var ErrMachineOwnershipNotFound = errors.New("machine_ownership_not_found")
 var ErrUnsupportedComputePackage = errors.New("unsupported_compute_package")
 var ErrInvalidStorageSize = errors.New("invalid_storage_size")
-var ErrCatalogRecordNotFound = errors.New("catalog_record_not_found")
-var ErrCatalogVersionConflict = errors.New("catalog_version_conflict")
-var ErrInvalidPubMedQuery = errors.New("invalid_pubmed_query")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
 var ErrRuntimeOperationInProgress = errors.New("runtime_operation_in_progress")
 var ErrRuntimeOperationFailed = errors.New("runtime_operation_failed")
@@ -52,78 +49,6 @@ type IngressDomain struct {
 	Host        string `json:"host"`
 	PathPattern string `json:"pathPattern"`
 	Available   bool   `json:"available"`
-}
-
-type Connector struct {
-	ID              string                    `json:"id"`
-	Version         string                    `json:"version"`
-	VersionIdentity string                    `json:"versionIdentity"`
-	Digest          string                    `json:"digest"`
-	Name            string                    `json:"name"`
-	Status          string                    `json:"status"`
-	ReadOnly        bool                      `json:"readOnly"`
-	Provider        string                    `json:"provider"`
-	Resources       ConnectorResourceMetadata `json:"resources"`
-	Runtime         ConnectorRuntimeMetadata  `json:"runtime"`
-	CreatedAt       time.Time                 `json:"createdAt"`
-}
-
-type ConnectorResourceMetadata struct {
-	MaxQueryLength int `json:"maxQueryLength"`
-	MaxPageSize    int `json:"maxPageSize"`
-}
-
-type ConnectorRuntimeMetadata struct {
-	Protocol       string `json:"protocol"`
-	BaseURL        string `json:"baseUrl"`
-	TimeoutSeconds int    `json:"timeoutSeconds"`
-}
-
-type EnvironmentTemplate struct {
-	ID              string                      `json:"id"`
-	Version         string                      `json:"version"`
-	VersionIdentity string                      `json:"versionIdentity"`
-	Digest          string                      `json:"digest"`
-	Name            string                      `json:"name"`
-	Status          string                      `json:"status"`
-	Resources       EnvironmentResourceMetadata `json:"resources"`
-	Runtime         EnvironmentRuntimeMetadata  `json:"runtime"`
-	CreatedAt       time.Time                   `json:"createdAt"`
-}
-
-type EnvironmentResourceMetadata struct {
-	CPU      int `json:"cpu"`
-	MemoryMB int `json:"memoryMb"`
-	GPU      int `json:"gpu"`
-}
-
-type EnvironmentRuntimeMetadata struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Image   string `json:"image"`
-}
-
-type PubMedQuery struct {
-	Query    string `json:"query"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"pageSize"`
-}
-
-type PubMedResult struct {
-	Page     int             `json:"page"`
-	PageSize int             `json:"pageSize"`
-	Total    int             `json:"total"`
-	Articles []PubMedArticle `json:"articles"`
-}
-
-type PubMedArticle struct {
-	PMID    string   `json:"pmid"`
-	Title   string   `json:"title"`
-	Authors []string `json:"authors"`
-	Journal string   `json:"journal"`
-	Year    string   `json:"year"`
-	DOI     string   `json:"doi,omitempty"`
-	URL     string   `json:"url"`
 }
 
 type ComputeAllocationInput struct {

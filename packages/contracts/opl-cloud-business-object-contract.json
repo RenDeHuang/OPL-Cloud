@@ -39,7 +39,7 @@
   ],
   "repoBoundaryRules": [
     "Console owns UI, auth, route contracts, and product presentation through Control Plane APIs only.",
-    "Fabric owns runtime, storage, connector, and agent resource execution boundaries.",
+    "Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries.",
     "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
   ],
   "objectKinds": [

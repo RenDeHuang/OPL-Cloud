@@ -30,32 +30,6 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 	mux.HandleFunc("GET /fabric/catalog", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, service.Catalog(r.Context()))
 	})
-	mux.HandleFunc("GET /fabric/catalog/connectors", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := service.ListConnectors(r.Context())
-		writeCatalogResult(w, rows, err)
-	})
-	mux.HandleFunc("GET /fabric/catalog/connectors/{id}/versions/{version}", func(w http.ResponseWriter, r *http.Request) {
-		row, err := service.Connector(r.Context(), strings.TrimSpace(r.PathValue("id")), strings.TrimSpace(r.PathValue("version")))
-		writeCatalogResult(w, row, err)
-	})
-	mux.HandleFunc("GET /fabric/catalog/environment-templates", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := service.ListEnvironmentTemplates(r.Context())
-		writeCatalogResult(w, rows, err)
-	})
-	mux.HandleFunc("GET /fabric/catalog/environment-templates/{id}/versions/{version}", func(w http.ResponseWriter, r *http.Request) {
-		row, err := service.EnvironmentTemplate(r.Context(), strings.TrimSpace(r.PathValue("id")), strings.TrimSpace(r.PathValue("version")))
-		writeCatalogResult(w, row, err)
-	})
-	mux.HandleFunc("GET /fabric/catalog/connectors/pubmed/versions/{version}/query", func(w http.ResponseWriter, r *http.Request) {
-		page, pageErr := queryInt(r, "page", 1)
-		pageSize, sizeErr := queryInt(r, "pageSize", 20)
-		if pageErr != nil || sizeErr != nil {
-			writeError(w, http.StatusBadRequest, fabric.ErrInvalidPubMedQuery.Error())
-			return
-		}
-		result, err := service.QueryPubMed(r.Context(), strings.TrimSpace(r.PathValue("version")), fabric.PubMedQuery{Query: r.URL.Query().Get("q"), Page: page, PageSize: pageSize})
-		writeCatalogResult(w, result, err)
-	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
 		operations, err := service.ListOperations(r.Context())
 		if err != nil {
@@ -383,27 +357,6 @@ func writeTransferResult(w http.ResponseWriter, status int, body fabric.Transfer
 	default:
 		writeJSON(w, status, body)
 	}
-}
-
-func writeCatalogResult(w http.ResponseWriter, body any, err error) {
-	switch {
-	case errors.Is(err, fabric.ErrInvalidPubMedQuery):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, fabric.ErrCatalogRecordNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	case err != nil:
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-	default:
-		writeJSON(w, http.StatusOK, body)
-	}
-}
-
-func queryInt(r *http.Request, name string, fallback int) (int, error) {
-	value := r.URL.Query().Get(name)
-	if value == "" {
-		return fallback, nil
-	}
-	return strconv.Atoi(value)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

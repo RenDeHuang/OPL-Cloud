@@ -1,4 +1,3 @@
-import React from "react";
 import { ArrowRight, Database, Headphones, KeyRound, Server, ShieldCheck, WalletCards } from "lucide-react";
 import OplAppLogo from "./shared/OplAppLogo.tsx";
 

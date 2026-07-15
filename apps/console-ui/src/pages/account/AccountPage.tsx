@@ -1,4 +1,3 @@
-import React from "react";
 import { CreditCard, Headphones, Server, ShieldCheck, UserRound, WalletCards } from "lucide-react";
 import { navigate, routeTo } from "../../consoleRoutes.ts";
 import {

@@ -30,23 +30,20 @@ type OperationStore interface {
 	MachineOwnership(ctx context.Context, resourceID string) (MachineOwnership, error)
 	ListMachineOwnerships(ctx context.Context) ([]MachineOwnership, error)
 	WithPoolLock(ctx context.Context, poolKey string, fn func(context.Context) error) error
-	CatalogStore
 }
 
 type MemoryOperationStore struct {
-	mu                   sync.Mutex
-	operation            []FabricOperation
-	transferSessions     map[string]Transfer
-	transferKeys         map[string]string
-	transferChunks       map[string]map[int]TransferChunk
-	connectors           map[string]Connector
-	environmentTemplates map[string]EnvironmentTemplate
-	machineOwnerships    map[string]MachineOwnership
-	poolLocks            map[string]*sync.Mutex
+	mu                sync.Mutex
+	operation         []FabricOperation
+	transferSessions  map[string]Transfer
+	transferKeys      map[string]string
+	transferChunks    map[string]map[int]TransferChunk
+	machineOwnerships map[string]MachineOwnership
+	poolLocks         map[string]*sync.Mutex
 }
 
 func NewMemoryOperationStore() *MemoryOperationStore {
-	return &MemoryOperationStore{transferSessions: map[string]Transfer{}, transferKeys: map[string]string{}, transferChunks: map[string]map[int]TransferChunk{}, connectors: map[string]Connector{}, environmentTemplates: map[string]EnvironmentTemplate{}, machineOwnerships: map[string]MachineOwnership{}, poolLocks: map[string]*sync.Mutex{}}
+	return &MemoryOperationStore{transferSessions: map[string]Transfer{}, transferKeys: map[string]string{}, transferChunks: map[string]map[int]TransferChunk{}, machineOwnerships: map[string]MachineOwnership{}, poolLocks: map[string]*sync.Mutex{}}
 }
 
 func (s *MemoryOperationStore) WithPoolLock(ctx context.Context, poolKey string, fn func(context.Context) error) error {

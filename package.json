@@ -13,17 +13,16 @@
     "start": "cd services/control-plane && go run ./cmd/control-plane",
     "test": "node --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc -p apps/console-ui/tsconfig.json --noEmit",
+    "lint": "tsc -p apps/console-ui/tsconfig.json --noEmit --noUnusedLocals --noUnusedParameters",
     "build": "vite build",
     "verify:production": "node tools/production-verifier.ts",
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {
-    "@ant-design/icons": "^6.3.2",
     "@ant-design/pro-components": "^2.7.17",
     "@vitejs/plugin-react": "^4.3.4",
     "antd": "^5.29.3",
     "lucide-react": "^0.468.0",
-    "pg": "^8.22.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.2",

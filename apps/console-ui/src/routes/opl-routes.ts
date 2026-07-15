@@ -2,173 +2,8 @@ import { defaultLaunchConfig, isFeatureEnabled } from "../config/launch-config.t
 
 type AnyRecord = Record<string, any>;
 
-const computeAllocationStages = Object.freeze(["已提交", "云资源准备中", "余额扣款中", "月度权益已激活", "Runtime 部署中", "URL 可用"]);
-const storageCreateStages = Object.freeze(["已提交", "存储准备中", "余额扣款中", "月度权益已激活", "可挂载"]);
-const storageDestroyStages = Object.freeze(["已提交", "停止续费", "销毁存储", "已删除"]);
-const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
-const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
-const workspaceEntryStages = Object.freeze(["已提交", "生成 URL", "URL 可用"]);
-
-const computeCreateProtocol = Object.freeze({
-  mutation: true,
-  asyncProvisioning: true,
-  initialStatus: "provisioning",
-  readyStatus: "running",
-  pollRoute: "GET /api/compute-allocations/:id",
-  pollQuery: ["accountId"],
-  confirmation: "normal",
-  costImpact: "required",
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: computeAllocationStages
-});
-
-const normalMutationProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "normal",
-  operationTimeline: true,
-  failureVisible: true
-});
-
-const computeDestroyProtocol = Object.freeze({
-  mutation: true,
-  asyncProvisioning: true,
-  pollRoute: "GET /api/compute-allocations/:id",
-  pollQuery: ["accountId"],
-  confirmation: "normal",
-  destructive: true,
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: computeAllocationStages
-});
-
-const storageCreateProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "normal",
-  costImpact: "required",
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: storageCreateStages
-});
-
-const storageDestroyProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "strong",
-  destructive: true,
-  dataLoss: true,
-  confirmText: "确认删除数据",
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: storageDestroyStages
-});
-
-const attachmentCreateProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "normal",
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: attachmentCreateStages
-});
-
-const attachmentDetachProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "normal",
-  destructive: true,
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: attachmentDetachStages
-});
-
-const workspaceCreateProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "normal",
-  operationTimeline: true,
-  failureVisible: true,
-  visibleStages: workspaceEntryStages
-});
-
-const destructiveMutationProtocol = Object.freeze({
-  mutation: true,
-  confirmation: "normal",
-  destructive: true,
-  operationTimeline: true,
-  failureVisible: true
-});
-
-const computeAllocationFields = Object.freeze([
-  "id",
-  "ownerAccountId",
-  "name",
-  "packageId",
-  "spec",
-  "nodePoolId",
-  "cvmInstanceId",
-  "machineName",
-  "nodeName",
-  "privateIp",
-  "publicIp",
-  "billingStatus",
-  "monthlyPriceCnyCents",
-  "chargeUsdMicros",
-  "paidThrough",
-  "autoRenew",
-  "workspaceId",
-  "status",
-  "operationId",
-  "providerRequestId",
-  "safeMessage"
-]);
-
-const workspaceFields = Object.freeze([
-  "id",
-  "ownerAccountId",
-  "storageId",
-  "currentComputeAllocationId",
-  "currentAttachmentId",
-  "url",
-  "access.account",
-  "access.password",
-  "access.tokenStatus",
-  "access.credentialStatus",
-  "runtime.status",
-  "state"
-]);
-
-const storageVolumeFields = Object.freeze([
-  "id",
-  "ownerAccountId",
-  "name",
-  "sizeGb",
-  "storageClassId",
-  "providerResourceId",
-  "monthlyPriceCnyCents",
-  "chargeUsdMicros",
-  "paidThrough",
-  "autoRenew",
-  "billingStatus",
-  "status",
-  "operationId",
-  "providerRequestId",
-  "safeMessage"
-]);
-
-const billingFields = Object.freeze([
-  "balance.source",
-  "balance.currency",
-  "balance.usdMicros",
-  "monthlyPriceCnyCents",
-  "chargeUsdMicros",
-  "paidThrough",
-  "autoRenew",
-  "billingStatus"
-]);
-
 function currentRoute(route) {
   return Object.freeze({
-    status: "implemented",
-    contractLifecycle: "current",
-    ownerRepo: "opl-console",
-    capabilities: ["read"],
     ...route,
     requiresAdmin: route.role === "admin",
     requiresAuth: route.role === "lab_owner" || route.role === "admin"
@@ -181,75 +16,42 @@ export const oplRoutes = Object.freeze([
     path: "/",
     label: "首页",
     area: "public",
-    role: "public",
-    requiresAuth: false,
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/HomePage.tsx",
-    serviceBoundary: "StaticPublicContent"
+    role: "public"
   }),
   currentRoute({
     id: "public.pricing",
     path: "/pricing",
     label: "价格",
     area: "public",
-    role: "public",
-    status: "folded_into_parent",
-    contractLifecycle: "folded_parent",
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/HomePage.tsx",
-    serviceBoundary: "StaticPublicContent"
+    role: "public"
   }),
   currentRoute({
     id: "public.docs",
     path: "/docs",
     label: "文档",
     area: "public",
-    role: "public",
-    status: "folded_into_parent",
-    contractLifecycle: "folded_parent",
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/HomePage.tsx",
-    serviceBoundary: "StaticPublicContent"
+    role: "public"
   }),
   currentRoute({
     id: "public.status",
     path: "/status",
     label: "服务状态",
     area: "public",
-    role: "public",
-    status: "folded_into_parent",
-    contractLifecycle: "folded_parent",
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/HomePage.tsx",
-    serviceBoundary: "StaticPublicContent"
+    role: "public"
   }),
   currentRoute({
     id: "auth.login",
     path: "/login",
     label: "登录",
     area: "auth",
-    role: "public",
-    requiresAuth: false,
-    routeKind: "auth_flow",
-    pageModule: "apps/console-ui/src/pages/LoginPage.tsx",
-    apiClient: "apps/console-ui/src/api/auth-api.ts",
-    apiRoutes: ["POST /api/auth/login"],
-    serviceBoundary: "AuthController",
-    capabilities: ["read", "authenticate", "session"]
+    role: "public"
   }),
   currentRoute({
     id: "auth.logout",
     path: "/logout",
     label: "退出登录",
     area: "auth",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    routeKind: "auth_flow",
-    pageModule: "apps/console-ui/src/pages/LoginPage.tsx",
-    apiClient: "apps/console-ui/src/api/auth-api.ts",
-    apiRoutes: ["POST /api/auth/logout"],
-    serviceBoundary: "AuthController",
-    capabilities: ["read", "session"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "console.root",
@@ -257,12 +59,7 @@ export const oplRoutes = Object.freeze([
     label: "控制台",
     area: "console",
     role: "lab_owner",
-    redirectRouteId: "console.overview",
-    hiddenInMenu: true,
-    status: "folded_into_parent",
-    contractLifecycle: "folded_parent",
-    routeKind: "read_model",
-    serviceBoundary: "ConsoleRouter"
+    redirectRouteId: "console.overview"
   }),
   currentRoute({
     id: "console.overview",
@@ -270,202 +67,84 @@ export const oplRoutes = Object.freeze([
     label: "概览",
     area: "console",
     role: "lab_owner",
-    menu: true,
-    routeKind: "read_model",
-    pageModule: "apps/console-ui/src/pages/OverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state", "GET /api/support/tickets"],
-    serviceBoundary: "ConsoleReadModelService",
-    capabilities: ["read", "summary"]
+    menu: true
   }),
   currentRoute({
     id: "compute-pools.list",
     path: "/console/compute/pools",
     label: "计算资源池",
     area: "console",
-    role: "admin",
-    ownerRepo: "opl-console",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "read_model",
-    objectKind: "ComputeAllocation",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/compute-pools"],
-    serviceBoundary: "ComputePoolCatalogService",
-    capabilities: ["list", "read", "evidence"]
+    role: "admin"
   }),
   currentRoute({
     id: "compute-allocations.list",
     path: "/console/compute",
     label: "计算资源",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "ComputeAllocation",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state", "GET /api/compute-allocations"],
-    serviceBoundary: "ComputeAllocationService",
-    dynamicFields: computeAllocationFields,
-    capabilities: ["list", "read", "evidence"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "compute-allocations.create",
     path: "/console/compute/new",
     label: "开通计算资源",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "ComputeAllocation",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/compute-pools", "POST /api/compute-allocations"],
-    serviceBoundary: "ComputeAllocationService",
-    dynamicFields: computeAllocationFields,
-    capabilities: ["read", "write", "action", "evidence"],
-    operationProtocol: computeCreateProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "compute-allocations.detail",
     path: "/console/compute/:id",
     label: "计算资源详情",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "ComputeAllocation",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/compute-allocations/:id", "POST /api/compute-allocations/:id/sync", "POST /api/compute-allocations/:id/destroy"],
-    serviceBoundary: "ComputeAllocationService",
-    dynamicFields: computeAllocationFields,
-    capabilities: ["detail", "read", "action", "evidence"],
-    operationProtocol: computeDestroyProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "storage.list",
     path: "/console/storage",
     label: "存储资源",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "StorageVolume",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state"],
-    serviceBoundary: "ResourceProvisioningService",
-    dynamicFields: storageVolumeFields,
-    capabilities: ["list", "read", "action", "evidence"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "storage.create",
     path: "/console/storage/new",
     label: "开通存储资源",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "StorageVolume",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/storage-volumes"],
-    serviceBoundary: "ResourceProvisioningService",
-    dynamicFields: storageVolumeFields,
-    capabilities: ["read", "write", "action", "evidence"],
-    operationProtocol: storageCreateProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "storage.detail",
     path: "/console/storage/:id",
     label: "存储资源详情",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "StorageVolume",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/storage-volumes/:id/sync", "POST /api/storage-volumes/destroy"],
-    serviceBoundary: "ResourceProvisioningService",
-    dynamicFields: storageVolumeFields,
-    capabilities: ["detail", "read", "action", "evidence"],
-    operationProtocol: storageDestroyProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "attachment.list",
     path: "/console/attachments",
     label: "挂载关系",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "StorageAttachment",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state"],
-    serviceBoundary: "ResourceProvisioningService",
-    capabilities: ["list", "read", "action", "evidence"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "attachment.create",
     path: "/console/attachments/new",
     label: "挂载存储",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "StorageAttachment",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/storage-attachments"],
-    serviceBoundary: "ResourceProvisioningService",
-    capabilities: ["read", "write", "action", "evidence"],
-    operationProtocol: attachmentCreateProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "attachment.detail",
     path: "/console/attachments/:id",
     label: "挂载详情",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "StorageAttachment",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/resources-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/storage-attachments/detach"],
-    serviceBoundary: "ResourceProvisioningService",
-    capabilities: ["detail", "read", "action", "evidence"],
-    operationProtocol: attachmentDetachProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "resources.relationships",
     path: "/console/resources/relationships",
     label: "资源关系",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "read_model",
-    objectKind: "Workspace",
-    pageModule: "apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state"],
-    serviceBoundary: "ConsoleReadModelService",
-    capabilities: ["read", "summary", "evidence"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "workspace.list",
@@ -474,89 +153,35 @@ export const oplRoutes = Object.freeze([
     area: "console",
     role: "lab_owner",
     menu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "Workspace",
-    pageModule: "apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx",
-    apiClient: "apps/console-ui/src/api/workspaces-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/workspaces/reset-token", "POST /api/workspaces/delete-token"],
-    serviceBoundary: "WorkspaceLifecycleService",
-    dynamicFields: workspaceFields,
-    capabilities: ["list", "read", "action"]
+    featureFlag: "workspaces"
   }),
   currentRoute({
     id: "workspace.create",
     path: "/console/workspaces/new",
     label: "创建工作区入口",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "Workspace",
-    pageModule: "apps/console-ui/src/pages/workspaces/CreateWorkspacePage.tsx",
-    apiClient: "apps/console-ui/src/api/workspaces-api.ts",
-    apiRoutes: ["GET /api/state", "POST /api/workspaces"],
-    serviceBoundary: "WorkspaceLifecycleService",
-    dynamicFields: ["workspaceName", "attachmentId", "storageId", "currentComputeAllocationId", "currentAttachmentId", "url", "runtime.status"],
-    capabilities: ["read", "write"],
-    operationProtocol: workspaceCreateProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "workspace.detail",
     path: "/console/workspaces/:id",
     label: "工作区入口详情",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "workspaces",
-    routeKind: "business_object",
-    objectKind: "Workspace",
-    pageModule: "apps/console-ui/src/pages/workspaces/WorkspaceDetailPage.tsx",
-    apiClient: "apps/console-ui/src/api/workspaces-api.ts",
-    apiRoutes: [
-      "GET /api/state",
-      "POST /api/workspaces/reset-token",
-      "POST /api/workspaces/delete-token",
-      "POST /api/workspaces/runtime-status"
-    ],
-    serviceBoundary: "WorkspaceLifecycleService",
-    dynamicFields: workspaceFields,
-    capabilities: ["detail", "read", "action", "evidence"],
-    operationProtocol: destructiveMutationProtocol
+    role: "lab_owner"
   }),
   currentRoute({
     id: "gateway.external",
     path: "/console/gateway",
     label: "网关",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "gatewayExternalLink",
-    status: "external",
-    routeKind: "external_integration",
-    objectKind: "Workspace",
-    externalUrl: defaultLaunchConfig.gatewayExternalUrl,
-    pageModule: "apps/console-ui/src/pages/gateway/GatewayPage.tsx",
-    serviceBoundary: "OPLGatewayExternalIntegration",
-    capabilities: ["read", "external_link"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "billing.overview",
     path: "/console/billing",
     label: "账单",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "billing",
-    routeKind: "read_model",
-    objectKind: "MonthlyEntitlement",
-    pageModule: "apps/console-ui/src/pages/billing/BillingPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state"],
-    serviceBoundary: "ConsoleBillingProjection",
-    dynamicFields: billingFields,
-    capabilities: ["read", "list", "detail"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "account.overview",
@@ -564,78 +189,35 @@ export const oplRoutes = Object.freeze([
     label: "账号",
     area: "console",
     role: "lab_owner",
-    menu: true,
-    routeKind: "read_model",
-    objectKind: "User",
-    pageModule: "apps/console-ui/src/pages/account/AccountPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state", "GET /api/auth/me"],
-    serviceBoundary: "ManagementModel",
-    capabilities: ["read", "detail"]
+    menu: true
   }),
   currentRoute({
     id: "support.list",
     path: "/console/support",
     label: "工单",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "support",
-    routeKind: "external_integration",
-    objectKind: "SupportTicketMapping",
-    pageModule: "apps/console-ui/src/pages/support/SupportPage.tsx",
-    apiClient: "apps/console-ui/src/api/support-api.ts",
-    apiRoutes: ["GET /api/support/tickets"],
-    serviceBoundary: "ExternalSupportMappingService",
-    capabilities: ["list", "read", "audit"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "support.create",
     path: "/console/support/new",
     label: "登记外部工单",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "support",
-    routeKind: "external_integration",
-    objectKind: "SupportTicketMapping",
-    pageModule: "apps/console-ui/src/pages/support/SupportPage.tsx",
-    apiClient: "apps/console-ui/src/api/support-api.ts",
-    apiRoutes: ["GET /api/support/tickets", "POST /api/support/tickets"],
-    serviceBoundary: "ExternalSupportMappingService",
-    capabilities: ["read", "write", "audit"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "support.detail",
     path: "/console/support/:id",
     label: "外部工单详情",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "support",
-    routeKind: "external_integration",
-    objectKind: "SupportTicketMapping",
-    pageModule: "apps/console-ui/src/pages/support/SupportPage.tsx",
-    apiClient: "apps/console-ui/src/api/support-api.ts",
-    apiRoutes: ["GET /api/support/tickets"],
-    serviceBoundary: "ExternalSupportMappingService",
-    capabilities: ["detail", "read", "audit"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "alerts.list",
     path: "/console/alerts",
     label: "提醒",
     area: "console",
-    role: "lab_owner",
-    hiddenInMenu: true,
-    featureFlag: "alerts",
-    routeKind: "read_model",
-    objectKind: "AdminAuditEvent",
-    pageModule: "apps/console-ui/src/pages/catalog/FabricPages.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state", "GET /api/support/tickets"],
-    serviceBoundary: "ConsoleReadModelService",
-    capabilities: ["read", "list"]
+    role: "lab_owner"
   }),
   currentRoute({
     id: "admin.root",
@@ -643,12 +225,7 @@ export const oplRoutes = Object.freeze([
     label: "管理",
     area: "admin",
     role: "admin",
-    redirectRouteId: "admin.overview",
-    hiddenInMenu: true,
-    status: "folded_into_parent",
-    contractLifecycle: "folded_parent",
-    routeKind: "read_model",
-    serviceBoundary: "ConsoleRouter"
+    redirectRouteId: "admin.overview"
   }),
   currentRoute({
     id: "admin.overview",
@@ -656,13 +233,7 @@ export const oplRoutes = Object.freeze([
     label: "管理概览",
     area: "admin",
     role: "admin",
-    adminMenu: true,
-    routeKind: "read_model",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state", "GET /api/operator/summary"],
-    serviceBoundary: "ConsoleReadModelService",
-    capabilities: ["read", "summary"]
+    adminMenu: true
   }),
   currentRoute({
     id: "admin.users",
@@ -670,14 +241,7 @@ export const oplRoutes = Object.freeze([
     label: "用户",
     area: "admin",
     role: "admin",
-    adminMenu: true,
-    routeKind: "read_model",
-    objectKind: "User",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/management/state", "POST /api/organizations", "POST /api/organizations/members", "POST /api/users", "POST /api/users/disable", "POST /api/users/delete"],
-    serviceBoundary: "ManagementModel",
-    capabilities: ["list", "read", "write", "action", "audit"]
+    adminMenu: true
   }),
   currentRoute({
     id: "admin.billing",
@@ -685,14 +249,7 @@ export const oplRoutes = Object.freeze([
     label: "账单运营",
     area: "admin",
     role: "admin",
-    adminMenu: true,
-    routeKind: "read_model",
-    objectKind: "MonthlyEntitlement",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state", "GET /api/management/state"],
-    serviceBoundary: "ConsoleBillingProjection",
-    capabilities: ["read", "list", "audit"]
+    adminMenu: true
   }),
   currentRoute({
     id: "admin.ledger",
@@ -700,16 +257,8 @@ export const oplRoutes = Object.freeze([
     label: "账本",
     area: "admin",
     role: "admin",
-    ownerRepo: "opl-ledger",
     adminMenu: true,
-    featureFlag: "ledgerAdmin",
-    routeKind: "read_model",
-    objectKind: "EvidenceReceipt",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/state"],
-    serviceBoundary: "LedgerEvidenceService",
-    capabilities: ["read", "list", "evidence", "audit"]
+    featureFlag: "ledgerAdmin"
   }),
   currentRoute({
     id: "admin.runtime",
@@ -718,15 +267,7 @@ export const oplRoutes = Object.freeze([
     area: "admin",
     role: "admin",
     adminMenu: true,
-    featureFlag: "runtimeAdmin",
-    routeKind: "read_model",
-    ownerRepo: "opl-fabric",
-    objectKind: "FabricOperation",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/runtime/readiness", "GET /api/production/readiness", "GET /api/operator/summary"],
-    serviceBoundary: "RuntimeOperationService",
-    capabilities: ["list", "read", "detail", "audit"]
+    featureFlag: "runtimeAdmin"
   }),
   currentRoute({
     id: "admin.diagnostics",
@@ -735,15 +276,7 @@ export const oplRoutes = Object.freeze([
     area: "admin",
     role: "admin",
     adminMenu: true,
-    featureFlag: "runtimeAdmin",
-    routeKind: "read_model",
-    ownerRepo: "opl-fabric",
-    objectKind: "FabricOperation",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/runtime/readiness", "GET /api/production/readiness", "GET /api/operator/summary"],
-    serviceBoundary: "RuntimeOperationService",
-    capabilities: ["read", "detail", "audit", "evidence"]
+    featureFlag: "runtimeAdmin"
   }),
   currentRoute({
     id: "admin.e2e",
@@ -752,14 +285,7 @@ export const oplRoutes = Object.freeze([
     area: "admin",
     role: "admin",
     adminMenu: true,
-    featureFlag: "runtimeAdmin",
-    routeKind: "read_model",
-    objectKind: "AdminAuditEvent",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["POST /api/auth/operator-login", "GET /api/operator/summary"],
-    serviceBoundary: "RuntimeOperationService",
-    capabilities: ["read", "list", "audit", "evidence"]
+    featureFlag: "runtimeAdmin"
   }),
   currentRoute({
     id: "admin.cleanup",
@@ -768,15 +294,7 @@ export const oplRoutes = Object.freeze([
     area: "admin",
     role: "admin",
     adminMenu: true,
-    featureFlag: "runtimeAdmin",
-    routeKind: "read_model",
-    objectKind: "AdminAuditEvent",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/console-read-api.ts",
-    apiRoutes: ["GET /api/management/state", "GET /api/operator/summary", "GET /api/operator/archive", "POST /api/operator/cleanup-workspace-access", "POST /api/operator/archive-terminal-resources"],
-    serviceBoundary: "WorkspaceLifecycleService",
-    capabilities: ["read", "list", "action", "audit"],
-    operationProtocol: destructiveMutationProtocol
+    featureFlag: "runtimeAdmin"
   }),
   currentRoute({
     id: "admin.support",
@@ -785,47 +303,28 @@ export const oplRoutes = Object.freeze([
     area: "admin",
     role: "admin",
     adminMenu: true,
-    featureFlag: "support",
-    routeKind: "external_integration",
-    objectKind: "SupportTicketMapping",
-    pageModule: "apps/console-ui/src/pages/admin/AdminOverviewPage.tsx",
-    apiClient: "apps/console-ui/src/api/support-api.ts",
-    apiRoutes: ["GET /api/support/tickets"],
-    serviceBoundary: "ExternalSupportMappingService",
-    capabilities: ["list", "read", "audit"]
+    featureFlag: "support"
   }),
   currentRoute({
     id: "error.forbidden",
     path: "/403",
     label: "无权限",
     area: "error",
-    role: "public",
-    hiddenInMenu: true,
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/shared/page-widgets.tsx",
-    serviceBoundary: "ConsoleRouter"
+    role: "public"
   }),
   currentRoute({
     id: "error.notFound",
     path: "/404",
     label: "未找到",
     area: "error",
-    role: "public",
-    hiddenInMenu: true,
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/shared/page-widgets.tsx",
-    serviceBoundary: "ConsoleRouter"
+    role: "public"
   }),
   currentRoute({
     id: "error.server",
     path: "/500",
     label: "错误",
     area: "error",
-    role: "public",
-    hiddenInMenu: true,
-    routeKind: "static_content",
-    pageModule: "apps/console-ui/src/pages/shared/page-widgets.tsx",
-    serviceBoundary: "ConsoleRouter"
+    role: "public"
   })
 ]);
 
@@ -847,8 +346,7 @@ export function normalizePath(pathname) {
 export function routeTo(id, params: AnyRecord = {}, options: AnyRecord = {}) {
   const route = routesById.get(id);
   if (!route) throw new Error(`unknown route id: ${id}`);
-  const actorRole = options.role;
-  if (actorRole === "lab_owner" && route.role === "admin") {
+  if (options.role === "lab_owner" && route.role === "admin") {
     throw new Error(`route ${id} not allowed for lab_owner`);
   }
   return route.path.replace(/:([^/]+)/g, (_, key) => {

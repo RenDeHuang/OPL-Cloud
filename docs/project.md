@@ -6,7 +6,7 @@ This repository implements the OPL Cloud product defined by
 
 ## Owned Here
 
-- Console UI and its product route contract.
+- Console UI and its runtime route registry.
 - Control Plane auth, account mapping, organizations, Workspaces, monthly
   entitlement, purchase recovery, support, and product projections.
 - Fabric resource catalog, Tencent CVM/CBS, attachments, runtime operations,

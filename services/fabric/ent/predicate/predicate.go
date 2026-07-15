@@ -6,17 +6,11 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
-// Connector is the predicate function for connector builders.
-type Connector func(*sql.Selector)
-
 // ContentTransfer is the predicate function for contenttransfer builders.
 type ContentTransfer func(*sql.Selector)
 
 // ContentTransferChunk is the predicate function for contenttransferchunk builders.
 type ContentTransferChunk func(*sql.Selector)
-
-// EnvironmentTemplate is the predicate function for environmenttemplate builders.
-type EnvironmentTemplate func(*sql.Selector)
 
 // FabricOperation is the predicate function for fabricoperation builders.
 type FabricOperation func(*sql.Selector)

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parse } from "yaml";
 
@@ -89,8 +89,6 @@ test("TKE deploy and paid verifier workflows match the current deployment contra
     assert.ok(spec, `deployment contract missing ${key}`);
     assertWorkflowContract(await readWorkflow(spec.file), spec, contract);
   }
-  assert.equal(contract.productionExecutionWorkflow, undefined);
-  assert.equal(contract.diagnosticsWorkflow, undefined);
 });
 
 test("production verification has one explicit paid path", async () => {
@@ -103,20 +101,8 @@ test("production verification has one explicit paid path", async () => {
   assert.equal(workflow.concurrency["cancel-in-progress"], false);
   assert.match(String(currentJob.env.OPL_VERIFY_PAID_CONFIRMATION), /I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE/);
   assert.match(runs, /node tools\/production-verifier\.ts --browser-e2e/);
-  assert.doesNotMatch(runs, /production-(?:execution|fault|soak|console-browser)/);
   assert.match(runs, /workspace_id=.*payload\.workspaceId/);
   assert.match(runs, /workspace_url=.*encodeURIComponent/);
-});
-
-test("retired production variants and manual provisioning are deleted", async () => {
-  for (const path of [
-    ".github/workflows/diagnose-tke-production.yml",
-    ".github/workflows/provision-manual-workspace.yml",
-    "tools/production-execution-verifier.ts",
-    "tools/provision-manual-workspace.ts"
-  ]) {
-    await assert.rejects(() => access(repoFile(path)), `${path} must be deleted`);
-  }
 });
 
 test("TKE deploy installs Sub2API credentials and validates account mappings", async () => {

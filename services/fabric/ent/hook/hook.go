@@ -8,18 +8,6 @@ import (
 	"opl-cloud/services/fabric/ent"
 )
 
-// The ConnectorFunc type is an adapter to allow the use of ordinary
-// function as Connector mutator.
-type ConnectorFunc func(context.Context, *ent.ConnectorMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f ConnectorFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.ConnectorMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ConnectorMutation", m)
-}
-
 // The ContentTransferFunc type is an adapter to allow the use of ordinary
 // function as ContentTransfer mutator.
 type ContentTransferFunc func(context.Context, *ent.ContentTransferMutation) (ent.Value, error)
@@ -42,18 +30,6 @@ func (f ContentTransferChunkFunc) Mutate(ctx context.Context, m ent.Mutation) (e
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ContentTransferChunkMutation", m)
-}
-
-// The EnvironmentTemplateFunc type is an adapter to allow the use of ordinary
-// function as EnvironmentTemplate mutator.
-type EnvironmentTemplateFunc func(context.Context, *ent.EnvironmentTemplateMutation) (ent.Value, error)
-
-// Mutate calls f(ctx, m).
-func (f EnvironmentTemplateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
-	if mv, ok := m.(*ent.EnvironmentTemplateMutation); ok {
-		return f(ctx, mv)
-	}
-	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.EnvironmentTemplateMutation", m)
 }
 
 // The FabricOperationFunc type is an adapter to allow the use of ordinary

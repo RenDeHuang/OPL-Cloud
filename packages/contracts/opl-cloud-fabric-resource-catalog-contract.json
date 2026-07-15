@@ -1,77 +1,29 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "OPL Fabric",
   "purpose": "Expose productized resource choices to OPL Console without making Console own cloud resource inventory.",
   "state": "current",
-  "machineBoundary": "Workspace package catalog, compute/storage classes, workspace image entries, ingress domains, and availability flags.",
+  "machineBoundary": "Workspace packages, storage classes, ingress domains, and availability flags.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
+  "endpoint": "GET /fabric/catalog",
   "catalogSections": [
     "workspacePackages",
-    "computeProfiles",
     "storageClasses",
-    "workspaceImages",
-    "ingressDomains",
-    "environmentTemplates",
-    "connectors",
-    "agentPackages"
+    "ingressDomains"
   ],
   "workspacePackageRules": {
     "consoleSelectableOnlyWhen": "available=true",
-    "gpuPackageDefault": "unavailable_until_gpu_node_pool_verified",
     "unavailableError": "package_unavailable:<packageId>:<reason>"
   },
   "currentAvailablePackages": [
     "basic",
     "pro"
   ],
-  "currentUnavailablePackages": [
-    {
-      "id": "gpu",
-      "reason": "gpu_node_pool_not_verified"
-    }
-  ],
   "readinessSurface": {
     "endpoint": "GET /api/runtime/readiness",
     "field": "resourceCatalog"
-  },
-  "versionedCatalog": {
-    "identity": ["id", "version", "digest"],
-    "identityRule": "id, version, and digest are immutable after creation",
-    "statuses": ["approved", "disabled"],
-    "connectors": {
-      "endpoints": [
-        "GET /fabric/catalog/connectors",
-        "GET /fabric/catalog/connectors/{id}/versions/{version}"
-      ]
-    },
-    "environmentTemplates": {
-      "endpoints": [
-        "GET /fabric/catalog/environment-templates",
-        "GET /fabric/catalog/environment-templates/{id}/versions/{version}"
-      ]
-    }
-  },
-  "pubMed": {
-    "connector": "pubmed@1.0.0",
-    "endpoint": "GET /fabric/catalog/connectors/pubmed/versions/{version}/query",
-    "credentials": "none",
-    "upstream": "NCBI E-utilities ESearch and EFetch",
-    "normalizedFields": ["pmid", "title", "authors", "journal", "year", "doi", "url"],
-    "operationEvidence": "query digest, bounded pagination, result count, and PMIDs only; never raw upstream response"
-  },
-  "seededEnvironmentTemplates": [
-    {"id": "python-minimal", "version": "1.0.0", "runtimeVersion": "3.12.4"},
-    {"id": "r-minimal", "version": "1.0.0", "runtimeVersion": "4.4.1"},
-    {"id": "quarto-minimal", "version": "1.0.0", "runtimeVersion": "1.5.57"},
-    {"id": "latex-minimal", "version": "1.0.0", "runtimeVersion": "texlive-2024"}
-  ],
-  "nonGoals": [
-    "full OPL Connect implementation",
-    "full OPL Environments service",
-    "full OPL Agent Registry service",
-    "GPU package exposure before verified node pool capacity"
-  ]
+  }
 }

@@ -9,39 +9,6 @@ import (
 )
 
 var (
-	// FabricConnectorsColumns holds the columns for the "fabric_connectors" table.
-	FabricConnectorsColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "connector_id", Type: field.TypeString},
-		{Name: "version", Type: field.TypeString},
-		{Name: "version_identity", Type: field.TypeString, Unique: true},
-		{Name: "digest", Type: field.TypeString},
-		{Name: "name", Type: field.TypeString},
-		{Name: "status", Type: field.TypeString},
-		{Name: "read_only", Type: field.TypeBool, Default: true},
-		{Name: "provider", Type: field.TypeString},
-		{Name: "resource_metadata", Type: field.TypeString},
-		{Name: "runtime_metadata", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// FabricConnectorsTable holds the schema information for the "fabric_connectors" table.
-	FabricConnectorsTable = &schema.Table{
-		Name:       "fabric_connectors",
-		Columns:    FabricConnectorsColumns,
-		PrimaryKey: []*schema.Column{FabricConnectorsColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "connector_connector_id_version",
-				Unique:  true,
-				Columns: []*schema.Column{FabricConnectorsColumns[1], FabricConnectorsColumns[2]},
-			},
-			{
-				Name:    "connector_status",
-				Unique:  false,
-				Columns: []*schema.Column{FabricConnectorsColumns[6]},
-			},
-		},
-	}
 	// FabricContentTransfersColumns holds the columns for the "fabric_content_transfers" table.
 	FabricContentTransfersColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -99,37 +66,6 @@ var (
 			},
 		},
 	}
-	// FabricEnvironmentTemplatesColumns holds the columns for the "fabric_environment_templates" table.
-	FabricEnvironmentTemplatesColumns = []*schema.Column{
-		{Name: "id", Type: field.TypeString, Unique: true},
-		{Name: "template_id", Type: field.TypeString},
-		{Name: "version", Type: field.TypeString},
-		{Name: "version_identity", Type: field.TypeString, Unique: true},
-		{Name: "digest", Type: field.TypeString},
-		{Name: "name", Type: field.TypeString},
-		{Name: "status", Type: field.TypeString},
-		{Name: "resource_metadata", Type: field.TypeString},
-		{Name: "runtime_metadata", Type: field.TypeString},
-		{Name: "created_at", Type: field.TypeTime},
-	}
-	// FabricEnvironmentTemplatesTable holds the schema information for the "fabric_environment_templates" table.
-	FabricEnvironmentTemplatesTable = &schema.Table{
-		Name:       "fabric_environment_templates",
-		Columns:    FabricEnvironmentTemplatesColumns,
-		PrimaryKey: []*schema.Column{FabricEnvironmentTemplatesColumns[0]},
-		Indexes: []*schema.Index{
-			{
-				Name:    "environmenttemplate_template_id_version",
-				Unique:  true,
-				Columns: []*schema.Column{FabricEnvironmentTemplatesColumns[1], FabricEnvironmentTemplatesColumns[2]},
-			},
-			{
-				Name:    "environmenttemplate_status",
-				Unique:  false,
-				Columns: []*schema.Column{FabricEnvironmentTemplatesColumns[6]},
-			},
-		},
-	}
 	// FabricOperationsColumns holds the columns for the "fabric_operations" table.
 	FabricOperationsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeString, Unique: true},
@@ -182,26 +118,18 @@ var (
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
-		FabricConnectorsTable,
 		FabricContentTransfersTable,
 		FabricContentTransferChunksTable,
-		FabricEnvironmentTemplatesTable,
 		FabricOperationsTable,
 		MachineOwnershipsTable,
 	}
 )
 
 func init() {
-	FabricConnectorsTable.Annotation = &entsql.Annotation{
-		Table: "fabric_connectors",
-	}
 	FabricContentTransfersTable.Annotation = &entsql.Annotation{
 		Table: "fabric_content_transfers",
 	}
 	FabricContentTransferChunksTable.Annotation = &entsql.Annotation{
 		Table: "fabric_content_transfer_chunks",
-	}
-	FabricEnvironmentTemplatesTable.Annotation = &entsql.Annotation{
-		Table: "fabric_environment_templates",
 	}
 }

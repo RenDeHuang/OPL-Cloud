@@ -1,4 +1,3 @@
-import React from "react";
 import { PageContainer, ProCard } from "@ant-design/pro-components";
 import { Empty, List, Space, Tag, Typography } from "antd";
 import { AlertTriangle } from "lucide-react";
@@ -7,14 +6,6 @@ type AnyRecord = Record<string, any>;
 
 export function ForbiddenPage() {
   return <PageContainer title="无权限"><Empty description="当前账号无权访问该页面" /></PageContainer>;
-}
-
-export function CatalogCard({ title, items }: any) {
-  return (
-    <ProCard title={title} colSpan={{ xs: 24, xl: 8 }}>
-      <List size="small" dataSource={items} renderItem={(item) => <List.Item><Tag color="blue">Approved</Tag>{String(item)}</List.Item>} />
-    </ProCard>
-  );
 }
 
 export function AlertList({ events = [] }: any) {

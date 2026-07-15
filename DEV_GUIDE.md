@@ -94,12 +94,11 @@ unit/contract tests pass
 - `OPL_SUB2API_SUPPORTED_VERSIONS`: versions approved by the Gateway update gate.
 - `OPL_MONTHLY_BILLING_WORKER_ENABLED`: enables renewal and expiration processing.
 
-## Route Contract Rules
+## Route Registry Rules
 
-- `packages/contracts/opl-cloud-route-api-contract.json` contains only current commercial truth.
-- Future routes live in route backlog or product docs, not active contract.
+- `apps/console-ui/src/routes/opl-routes.ts` contains only current runtime routes.
+- Speculative routes do not belong in the runtime registry.
 - Every enabled UI route must have a stable route id and routeTo path.
-- Every implemented route must bind page module, API client, server route, permission, object kind, and service boundary.
 - Lab Owner routes do not expose operator/Fabric/Ledger raw evidence.
 
 ## Compute Storage Billing Semantics
@@ -115,7 +114,6 @@ unit/contract tests pass
 ## Pre-Commit Checklist
 
 ```bash
-node --test tests/contracts/route-api-contract.test.ts
 node --test tests/domain/resource-provisioning.test.ts
 cd services/fabric && go test ./...
 node --test tests/ui/commercial-console-routes.test.ts tests/ui/commercial-console-surface.test.ts tests/ui/console-clickability-contract.test.ts

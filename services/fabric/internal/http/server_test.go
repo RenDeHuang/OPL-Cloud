@@ -209,53 +209,6 @@ func TestCatalogHTTP(t *testing.T) {
 	}
 }
 
-func TestVersionedCatalogAndPubMedHTTP(t *testing.T) {
-	ncbi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/esearch.fcgi":
-			_, _ = w.Write([]byte(`{"esearchresult":{"count":"1","idlist":["123"]}}`))
-		case "/efetch.fcgi":
-			_, _ = w.Write([]byte(`<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>123</PMID><Article><ArticleTitle>HTTP result</ArticleTitle><Journal><Title>Journal</Title><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal></Article></MedlineCitation></PubmedArticle></PubmedArticleSet>`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer ncbi.Close()
-	service := fabric.NewServiceWithPubMed(testProvider{}, fabric.NewMemoryOperationStore(), ncbi.Client(), ncbi.URL)
-	server := NewServer(service, "internal-secret")
-
-	for _, tt := range []struct {
-		path string
-		body any
-	}{
-		{path: "/fabric/catalog/connectors", body: &[]fabric.Connector{}},
-		{path: "/fabric/catalog/connectors/pubmed/versions/1.0.0", body: &fabric.Connector{}},
-		{path: "/fabric/catalog/environment-templates", body: &[]fabric.EnvironmentTemplate{}},
-		{path: "/fabric/catalog/environment-templates/python-minimal/versions/1.0.0", body: &fabric.EnvironmentTemplate{}},
-		{path: "/fabric/catalog/connectors/pubmed/versions/1.0.0/query?q=cancer&page=1&pageSize=10", body: &fabric.PubMedResult{}},
-	} {
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, testRequest(http.MethodGet, tt.path, nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET %s status=%d body=%s", tt.path, rec.Code, rec.Body.String())
-		}
-		if err := json.NewDecoder(rec.Body).Decode(tt.body); err != nil {
-			t.Fatalf("GET %s decode: %v", tt.path, err)
-		}
-	}
-
-	bad := httptest.NewRecorder()
-	server.ServeHTTP(bad, testRequest(http.MethodGet, "/fabric/catalog/connectors/pubmed/versions/1.0.0/query?q=x&pageSize=101", nil))
-	if bad.Code != http.StatusBadRequest {
-		t.Fatalf("invalid query status=%d body=%s", bad.Code, bad.Body.String())
-	}
-	missing := httptest.NewRecorder()
-	server.ServeHTTP(missing, testRequest(http.MethodGet, "/fabric/catalog/connectors/missing/versions/1.0.0", nil))
-	if missing.Code != http.StatusNotFound {
-		t.Fatalf("missing connector status=%d body=%s", missing.Code, missing.Body.String())
-	}
-}
-
 func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	server := NewServer(service, "internal-secret")

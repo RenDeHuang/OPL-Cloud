@@ -1,4 +1,3 @@
-import React from "react";
 import { ProLayout } from "@ant-design/pro-components";
 import { Button, Tag } from "antd";
 import { LogOut, UserRound } from "lucide-react";

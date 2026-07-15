@@ -1,19 +1,17 @@
-import React from "react";
 import { AccountPage } from "../pages/account/AccountPage.tsx";
 import {
   AdminBillingPage,
   AdminCleanupPage,
   AdminDiagnosticsPage,
   AdminE2EPage,
-  AdminFabricPage,
   AdminLedgerPage,
   AdminOverviewPage,
   AdminRuntimePage,
   AdminSupportPage,
   AdminUsersPage
 } from "../pages/admin/AdminOverviewPage.tsx";
+import { AlertsPage } from "../pages/AlertsPage.tsx";
 import { BillingPage } from "../pages/billing/BillingPage.tsx";
-import { AlertsPage, ApprovalsPage, ReceiptsPage, ResourcesPage } from "../pages/catalog/FabricPages.tsx";
 import { GatewayPage } from "../pages/gateway/GatewayPage.tsx";
 import { OverviewPage } from "../pages/OverviewPage.tsx";
 import {
@@ -39,14 +37,12 @@ export function renderConsoleRoute(ctx) {
   if (route.area === "admin" && !isAdmin) return <ForbiddenPage />;
   if (path.startsWith("/admin/users")) return <AdminUsersPage {...ctx} />;
   if (path.startsWith("/admin/billing")) return <AdminBillingPage {...ctx} />;
-  if (path.startsWith("/admin/fabric")) return <AdminFabricPage {...ctx} />;
   if (path.startsWith("/admin/ledger")) return <AdminLedgerPage {...ctx} />;
   if (path.startsWith("/admin/runtime")) return <AdminRuntimePage {...ctx} />;
   if (path.startsWith("/admin/diagnostics")) return <AdminDiagnosticsPage {...ctx} />;
   if (path.startsWith("/admin/e2e")) return <AdminE2EPage {...ctx} />;
   if (path.startsWith("/admin/cleanup")) return <AdminCleanupPage {...ctx} />;
   if (path.startsWith("/admin/support")) return <AdminSupportPage {...ctx} />;
-  if (path.startsWith("/admin/workspaces/")) return <WorkspaceDetailPage {...ctx} />;
   if (path.startsWith("/admin")) return <AdminOverviewPage {...ctx} />;
   if (path.startsWith("/console/compute/new")) return <CreateComputeAllocationPage {...ctx} />;
   if (path.startsWith("/console/compute/")) return <ComputeAllocationDetailPage {...ctx} />;
@@ -67,10 +63,6 @@ export function renderConsoleRoute(ctx) {
   if (path.startsWith("/console/support/new")) return <NewSupportMappingPage {...ctx} />;
   if (path.startsWith("/console/support/")) return <SupportMappingPage {...ctx} />;
   if (path.startsWith("/console/support")) return <SupportPage {...ctx} />;
-  if (path.startsWith("/console/resources")) return <ResourcesPage {...ctx} />;
-  if (path.startsWith("/console/approvals")) return <ApprovalsPage {...ctx} />;
-  if (path.startsWith("/console/receipts")) return <ReceiptsPage {...ctx} />;
   if (path.startsWith("/console/alerts")) return <AlertsPage {...ctx} />;
-  if (path === "/403") return <ForbiddenPage />;
   return <OverviewPage {...ctx} />;
 }

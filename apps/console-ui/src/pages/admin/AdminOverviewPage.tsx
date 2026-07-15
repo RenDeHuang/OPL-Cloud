@@ -392,20 +392,6 @@ export function AdminBillingPage({ state, managementState = {}, adminOps }: any)
   );
 }
 
-export function AdminFabricPage() {
-  return (
-    <ConsoleSurface title="OPL Fabric" eyebrow="管理" subtitle="运行资源边界">
-      <ResourceSplit
-        items={[
-          { label: "计算", value: "标准 CPU", meta: "GPU 验证前不进入当前上线范围", status: "可用", tone: "good" },
-          { label: "存储", value: "存储资源", meta: "账号范围数据盘", status: "可用", tone: "good" },
-          { label: "环境", value: "one-person-lab-app", meta: "当前 WebUI 运行时", status: "当前", tone: "info" }
-        ]}
-      />
-    </ConsoleSurface>
-  );
-}
-
 export function AdminLedgerPage({ state }: any) {
   const receipts = state.billingReceipts || [];
   return (

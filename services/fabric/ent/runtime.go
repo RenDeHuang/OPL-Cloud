@@ -3,10 +3,8 @@
 package ent
 
 import (
-	"opl-cloud/services/fabric/ent/connector"
 	"opl-cloud/services/fabric/ent/contenttransfer"
 	"opl-cloud/services/fabric/ent/contenttransferchunk"
-	"opl-cloud/services/fabric/ent/environmenttemplate"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/machineownership"
 	"opl-cloud/services/fabric/ent/schema"
@@ -17,56 +15,6 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
-	connectorFields := schema.Connector{}.Fields()
-	_ = connectorFields
-	// connectorDescConnectorID is the schema descriptor for connector_id field.
-	connectorDescConnectorID := connectorFields[1].Descriptor()
-	// connector.ConnectorIDValidator is a validator for the "connector_id" field. It is called by the builders before save.
-	connector.ConnectorIDValidator = connectorDescConnectorID.Validators[0].(func(string) error)
-	// connectorDescVersion is the schema descriptor for version field.
-	connectorDescVersion := connectorFields[2].Descriptor()
-	// connector.VersionValidator is a validator for the "version" field. It is called by the builders before save.
-	connector.VersionValidator = connectorDescVersion.Validators[0].(func(string) error)
-	// connectorDescVersionIdentity is the schema descriptor for version_identity field.
-	connectorDescVersionIdentity := connectorFields[3].Descriptor()
-	// connector.VersionIdentityValidator is a validator for the "version_identity" field. It is called by the builders before save.
-	connector.VersionIdentityValidator = connectorDescVersionIdentity.Validators[0].(func(string) error)
-	// connectorDescDigest is the schema descriptor for digest field.
-	connectorDescDigest := connectorFields[4].Descriptor()
-	// connector.DigestValidator is a validator for the "digest" field. It is called by the builders before save.
-	connector.DigestValidator = connectorDescDigest.Validators[0].(func(string) error)
-	// connectorDescName is the schema descriptor for name field.
-	connectorDescName := connectorFields[5].Descriptor()
-	// connector.NameValidator is a validator for the "name" field. It is called by the builders before save.
-	connector.NameValidator = connectorDescName.Validators[0].(func(string) error)
-	// connectorDescStatus is the schema descriptor for status field.
-	connectorDescStatus := connectorFields[6].Descriptor()
-	// connector.StatusValidator is a validator for the "status" field. It is called by the builders before save.
-	connector.StatusValidator = connectorDescStatus.Validators[0].(func(string) error)
-	// connectorDescReadOnly is the schema descriptor for read_only field.
-	connectorDescReadOnly := connectorFields[7].Descriptor()
-	// connector.DefaultReadOnly holds the default value on creation for the read_only field.
-	connector.DefaultReadOnly = connectorDescReadOnly.Default.(bool)
-	// connectorDescProvider is the schema descriptor for provider field.
-	connectorDescProvider := connectorFields[8].Descriptor()
-	// connector.ProviderValidator is a validator for the "provider" field. It is called by the builders before save.
-	connector.ProviderValidator = connectorDescProvider.Validators[0].(func(string) error)
-	// connectorDescResourceMetadata is the schema descriptor for resource_metadata field.
-	connectorDescResourceMetadata := connectorFields[9].Descriptor()
-	// connector.ResourceMetadataValidator is a validator for the "resource_metadata" field. It is called by the builders before save.
-	connector.ResourceMetadataValidator = connectorDescResourceMetadata.Validators[0].(func(string) error)
-	// connectorDescRuntimeMetadata is the schema descriptor for runtime_metadata field.
-	connectorDescRuntimeMetadata := connectorFields[10].Descriptor()
-	// connector.RuntimeMetadataValidator is a validator for the "runtime_metadata" field. It is called by the builders before save.
-	connector.RuntimeMetadataValidator = connectorDescRuntimeMetadata.Validators[0].(func(string) error)
-	// connectorDescCreatedAt is the schema descriptor for created_at field.
-	connectorDescCreatedAt := connectorFields[11].Descriptor()
-	// connector.DefaultCreatedAt holds the default value on creation for the created_at field.
-	connector.DefaultCreatedAt = connectorDescCreatedAt.Default.(func() time.Time)
-	// connectorDescID is the schema descriptor for id field.
-	connectorDescID := connectorFields[0].Descriptor()
-	// connector.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	connector.IDValidator = connectorDescID.Validators[0].(func(string) error)
 	contenttransferFields := schema.ContentTransfer{}.Fields()
 	_ = contenttransferFields
 	// contenttransferDescOrganizationID is the schema descriptor for organization_id field.
@@ -127,48 +75,6 @@ func init() {
 	contenttransferchunkDescID := contenttransferchunkFields[0].Descriptor()
 	// contenttransferchunk.IDValidator is a validator for the "id" field. It is called by the builders before save.
 	contenttransferchunk.IDValidator = contenttransferchunkDescID.Validators[0].(func(string) error)
-	environmenttemplateFields := schema.EnvironmentTemplate{}.Fields()
-	_ = environmenttemplateFields
-	// environmenttemplateDescTemplateID is the schema descriptor for template_id field.
-	environmenttemplateDescTemplateID := environmenttemplateFields[1].Descriptor()
-	// environmenttemplate.TemplateIDValidator is a validator for the "template_id" field. It is called by the builders before save.
-	environmenttemplate.TemplateIDValidator = environmenttemplateDescTemplateID.Validators[0].(func(string) error)
-	// environmenttemplateDescVersion is the schema descriptor for version field.
-	environmenttemplateDescVersion := environmenttemplateFields[2].Descriptor()
-	// environmenttemplate.VersionValidator is a validator for the "version" field. It is called by the builders before save.
-	environmenttemplate.VersionValidator = environmenttemplateDescVersion.Validators[0].(func(string) error)
-	// environmenttemplateDescVersionIdentity is the schema descriptor for version_identity field.
-	environmenttemplateDescVersionIdentity := environmenttemplateFields[3].Descriptor()
-	// environmenttemplate.VersionIdentityValidator is a validator for the "version_identity" field. It is called by the builders before save.
-	environmenttemplate.VersionIdentityValidator = environmenttemplateDescVersionIdentity.Validators[0].(func(string) error)
-	// environmenttemplateDescDigest is the schema descriptor for digest field.
-	environmenttemplateDescDigest := environmenttemplateFields[4].Descriptor()
-	// environmenttemplate.DigestValidator is a validator for the "digest" field. It is called by the builders before save.
-	environmenttemplate.DigestValidator = environmenttemplateDescDigest.Validators[0].(func(string) error)
-	// environmenttemplateDescName is the schema descriptor for name field.
-	environmenttemplateDescName := environmenttemplateFields[5].Descriptor()
-	// environmenttemplate.NameValidator is a validator for the "name" field. It is called by the builders before save.
-	environmenttemplate.NameValidator = environmenttemplateDescName.Validators[0].(func(string) error)
-	// environmenttemplateDescStatus is the schema descriptor for status field.
-	environmenttemplateDescStatus := environmenttemplateFields[6].Descriptor()
-	// environmenttemplate.StatusValidator is a validator for the "status" field. It is called by the builders before save.
-	environmenttemplate.StatusValidator = environmenttemplateDescStatus.Validators[0].(func(string) error)
-	// environmenttemplateDescResourceMetadata is the schema descriptor for resource_metadata field.
-	environmenttemplateDescResourceMetadata := environmenttemplateFields[7].Descriptor()
-	// environmenttemplate.ResourceMetadataValidator is a validator for the "resource_metadata" field. It is called by the builders before save.
-	environmenttemplate.ResourceMetadataValidator = environmenttemplateDescResourceMetadata.Validators[0].(func(string) error)
-	// environmenttemplateDescRuntimeMetadata is the schema descriptor for runtime_metadata field.
-	environmenttemplateDescRuntimeMetadata := environmenttemplateFields[8].Descriptor()
-	// environmenttemplate.RuntimeMetadataValidator is a validator for the "runtime_metadata" field. It is called by the builders before save.
-	environmenttemplate.RuntimeMetadataValidator = environmenttemplateDescRuntimeMetadata.Validators[0].(func(string) error)
-	// environmenttemplateDescCreatedAt is the schema descriptor for created_at field.
-	environmenttemplateDescCreatedAt := environmenttemplateFields[9].Descriptor()
-	// environmenttemplate.DefaultCreatedAt holds the default value on creation for the created_at field.
-	environmenttemplate.DefaultCreatedAt = environmenttemplateDescCreatedAt.Default.(func() time.Time)
-	// environmenttemplateDescID is the schema descriptor for id field.
-	environmenttemplateDescID := environmenttemplateFields[0].Descriptor()
-	// environmenttemplate.IDValidator is a validator for the "id" field. It is called by the builders before save.
-	environmenttemplate.IDValidator = environmenttemplateDescID.Validators[0].(func(string) error)
 	fabricoperationFields := schema.FabricOperation{}.Fields()
 	_ = fabricoperationFields
 	// fabricoperationDescOperationID is the schema descriptor for operation_id field.

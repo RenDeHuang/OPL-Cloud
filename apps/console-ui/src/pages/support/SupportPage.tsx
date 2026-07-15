@@ -1,4 +1,3 @@
-import React from "react";
 import { Button, Empty, Form, Input, Select, message } from "antd";
 import { Plus } from "lucide-react";
 import { navigate, routeTo } from "../../consoleRoutes.ts";

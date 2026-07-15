@@ -1,4 +1,3 @@
-import React from "react";
 import { Button, Empty, Typography } from "antd";
 import { Cable, HardDrive, Link as LinkIcon, Plus, Server, Settings2, WalletCards } from "lucide-react";
 import { navigate, routeTo } from "../../consoleRoutes.ts";

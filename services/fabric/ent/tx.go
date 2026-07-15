@@ -12,14 +12,10 @@ import (
 // Tx is a transactional client that is created by calling Client.Tx().
 type Tx struct {
 	config
-	// Connector is the client for interacting with the Connector builders.
-	Connector *ConnectorClient
 	// ContentTransfer is the client for interacting with the ContentTransfer builders.
 	ContentTransfer *ContentTransferClient
 	// ContentTransferChunk is the client for interacting with the ContentTransferChunk builders.
 	ContentTransferChunk *ContentTransferChunkClient
-	// EnvironmentTemplate is the client for interacting with the EnvironmentTemplate builders.
-	EnvironmentTemplate *EnvironmentTemplateClient
 	// FabricOperation is the client for interacting with the FabricOperation builders.
 	FabricOperation *FabricOperationClient
 	// MachineOwnership is the client for interacting with the MachineOwnership builders.
@@ -155,10 +151,8 @@ func (tx *Tx) Client() *Client {
 }
 
 func (tx *Tx) init() {
-	tx.Connector = NewConnectorClient(tx.config)
 	tx.ContentTransfer = NewContentTransferClient(tx.config)
 	tx.ContentTransferChunk = NewContentTransferChunkClient(tx.config)
-	tx.EnvironmentTemplate = NewEnvironmentTemplateClient(tx.config)
 	tx.FabricOperation = NewFabricOperationClient(tx.config)
 	tx.MachineOwnership = NewMachineOwnershipClient(tx.config)
 }
@@ -170,7 +164,7 @@ func (tx *Tx) init() {
 // of them in order to commit or rollback the transaction.
 //
 // If a closed transaction is embedded in one of the generated entities, and the entity
-// applies a query, for example: Connector.QueryXXX(), the query will be executed
+// applies a query, for example: ContentTransfer.QueryXXX(), the query will be executed
 // through the driver which created this transaction.
 //
 // Note that txDriver is not goroutine safe.
