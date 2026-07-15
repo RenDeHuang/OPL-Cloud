@@ -18,6 +18,7 @@ import (
 	"opl-cloud/services/fabric/ent/contenttransferchunk"
 	"opl-cloud/services/fabric/ent/fabricoperation"
 	"opl-cloud/services/fabric/ent/machineownership"
+	"opl-cloud/services/internal/postgresmigrate"
 )
 
 type OperationStore interface {
@@ -181,21 +182,41 @@ type PostgresOperationStore struct {
 //go:embed ent_migrations/*.sql
 var fabricMigrations embed.FS
 
-func PostgresOperationSchemaSQL() string {
+type embeddedMigration struct {
+	version string
+	query   string
+}
+
+func fabricEmbeddedMigrations() ([]embeddedMigration, error) {
 	entries, err := fabricMigrations.ReadDir("ent_migrations")
 	if err != nil {
-		return ""
+		return nil, err
 	}
-	var out strings.Builder
+	migrations := make([]embeddedMigration, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
 		data, err := fabricMigrations.ReadFile("ent_migrations/" + entry.Name())
 		if err != nil {
-			return ""
+			return nil, err
 		}
-		out.Write(data)
+		migrations = append(migrations, embeddedMigration{
+			version: strings.TrimSuffix(entry.Name(), ".sql"),
+			query:   string(data),
+		})
+	}
+	return migrations, nil
+}
+
+func PostgresOperationSchemaSQL() string {
+	migrations, err := fabricEmbeddedMigrations()
+	if err != nil {
+		return ""
+	}
+	var out strings.Builder
+	for _, migration := range migrations {
+		out.WriteString(migration.query)
 		out.WriteByte('\n')
 	}
 	return out.String()
@@ -218,8 +239,22 @@ func NewPostgresOperationStore(databaseURL string) (*PostgresOperationStore, err
 }
 
 func (s *PostgresOperationStore) Install(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, PostgresOperationSchemaSQL())
-	return err
+	embedded, err := fabricEmbeddedMigrations()
+	if err != nil {
+		return err
+	}
+	migrations := make([]postgresmigrate.Migration, 0, len(embedded))
+	for _, migration := range embedded {
+		migration := migration
+		migrations = append(migrations, postgresmigrate.Migration{
+			Version: migration.version,
+			Run: func(ctx context.Context) error {
+				_, err := s.db.ExecContext(ctx, migration.query)
+				return err
+			},
+		})
+	}
+	return postgresmigrate.Apply(ctx, s.db, "fabric", migrations)
 }
 
 func (s *PostgresOperationStore) CreateTransfer(ctx context.Context, transfer Transfer) (Transfer, error) {

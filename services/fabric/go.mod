@@ -11,6 +11,7 @@ require (
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke v1.3.123
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc v1.3.127
 	k8s.io/client-go v0.31.4
+	opl-cloud/services/internal/postgresmigrate v0.0.0
 )
 
 require (
@@ -19,6 +20,8 @@ require (
 	github.com/hashicorp/hcl/v2 v2.13.0 // indirect
 	github.com/mitchellh/go-wordwrap v0.0.0-20150314170334-ad45545899c7 // indirect
 )
+
+replace opl-cloud/services/internal/postgresmigrate => ../internal/postgresmigrate
 
 require (
 	ariga.io/atlas v0.19.1-0.20240203083654-5948b60a8e43 // indirect

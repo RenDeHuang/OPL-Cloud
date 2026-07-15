@@ -74,6 +74,35 @@ func TestFormalAndEmbeddedMigrationTreesMatch(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
+	db := openLedgerTestPostgres(t)
+	first := NewPostgresStore(db)
+	if err := first.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var migrationCount int
+	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'ledger'`).Scan(&migrationCount); err != nil {
+		t.Fatalf("read Ledger migration journal: %v", err)
+	}
+	if migrationCount != 1 {
+		t.Fatalf("Ledger migration count = %d, want 1", migrationCount)
+	}
+	if _, err := db.Exec(`DROP TABLE evidence_receipts`); err != nil {
+		t.Fatal(err)
+	}
+	second := NewPostgresStore(db)
+	if err := second.Install(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var table sql.NullString
+	if err := db.QueryRow(`SELECT to_regclass('evidence_receipts')`).Scan(&table); err != nil {
+		t.Fatal(err)
+	}
+	if table.Valid {
+		t.Fatal("second Ledger startup repeated embedded DDL")
+	}
+}
+
 func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var db *sql.DB
 	var _ Store = NewPostgresStore(db)

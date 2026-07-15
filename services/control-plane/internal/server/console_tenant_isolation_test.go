@@ -520,10 +520,12 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start store on fresh database: %v", err)
 	}
-	defer store.(*postgresEntStateStore).client.Close()
 	accounts, err := store.ListAccounts(context.Background())
 	if err != nil || len(accounts) != 0 {
 		t.Fatalf("fresh account table = %v, err=%v", accounts, err)
+	}
+	if err := store.(*postgresEntStateStore).client.Close(); err != nil {
+		t.Fatal(err)
 	}
 	check, err := sql.Open("postgres", "host=/var/run/postgresql dbname="+database+" sslmode=disable")
 	if err != nil {
@@ -533,6 +535,38 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	var retiredTable sql.NullString
 	if err := check.QueryRow(`SELECT to_regclass('public.control_plane_wallet_projections')`).Scan(&retiredTable); err != nil || retiredTable.Valid {
 		t.Fatalf("retired wallet projection survived startup: table=%v err=%v", retiredTable, err)
+	}
+	var migrationCount int
+	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
+		t.Fatalf("read control-plane migration journal: %v", err)
+	}
+	if migrationCount != 5 {
+		t.Fatalf("control-plane migration count = %d, want 5", migrationCount)
+	}
+	if _, err := check.Exec(`CREATE TABLE control_plane_startup_probe (id text PRIMARY KEY, probe text); INSERT INTO control_plane_startup_probe VALUES ('probe', NULL)`); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := NewPostgresEntStateStore("host=/var/run/postgresql dbname=" + database + " sslmode=disable")
+	if err != nil {
+		t.Fatalf("start store a second time: %v", err)
+	}
+	if err := second.(*postgresEntStateStore).client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var probe sql.NullString
+	if err := check.QueryRow(`SELECT probe FROM control_plane_startup_probe WHERE id = 'probe'`).Scan(&probe); err != nil {
+		t.Fatal(err)
+	}
+	if probe.Valid {
+		t.Fatalf("second startup repeated backfill: probe=%q", probe.String)
+	}
+	var addedColumns int
+	if err := check.QueryRow(`SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'control_plane_startup_probe' AND column_name IN ('created_at', 'updated_at')`).Scan(&addedColumns); err != nil {
+		t.Fatal(err)
+	}
+	if addedColumns != 0 {
+		t.Fatalf("second startup repeated DDL: added columns=%d", addedColumns)
 	}
 }
 

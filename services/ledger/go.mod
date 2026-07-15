@@ -5,7 +5,10 @@ go 1.22
 require (
 	entgo.io/ent v0.13.1
 	github.com/lib/pq v1.10.9
+	opl-cloud/services/internal/postgresmigrate v0.0.0
 )
+
+replace opl-cloud/services/internal/postgresmigrate => ../internal/postgresmigrate
 
 require (
 	ariga.io/atlas v0.19.1-0.20240203083654-5948b60a8e43 // indirect

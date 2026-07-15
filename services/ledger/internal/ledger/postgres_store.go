@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 
+	"opl-cloud/services/internal/postgresmigrate"
 	ledgerent "opl-cloud/services/ledger/ent"
 	"opl-cloud/services/ledger/ent/evidencereceipt"
 	"opl-cloud/services/ledger/ent/predicate"
@@ -23,27 +24,47 @@ import (
 //go:embed ent_migrations/*.sql
 var ledgerMigrations embed.FS
 
+type embeddedMigration struct {
+	version string
+	query   string
+}
+
 type PostgresStore struct {
 	client *ledgerent.Client
 	db     *sql.DB
 	now    func() time.Time
 }
 
-func PostgresSchemaSQL() string {
+func ledgerEmbeddedMigrations() ([]embeddedMigration, error) {
 	entries, err := ledgerMigrations.ReadDir("ent_migrations")
 	if err != nil {
-		return ""
+		return nil, err
 	}
-	var out strings.Builder
+	migrations := make([]embeddedMigration, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
 		data, err := ledgerMigrations.ReadFile("ent_migrations/" + entry.Name())
 		if err != nil {
-			return ""
+			return nil, err
 		}
-		out.Write(data)
+		migrations = append(migrations, embeddedMigration{
+			version: strings.TrimSuffix(entry.Name(), ".sql"),
+			query:   string(data),
+		})
+	}
+	return migrations, nil
+}
+
+func PostgresSchemaSQL() string {
+	migrations, err := ledgerEmbeddedMigrations()
+	if err != nil {
+		return ""
+	}
+	var out strings.Builder
+	for _, migration := range migrations {
+		out.WriteString(migration.query)
 		out.WriteByte('\n')
 	}
 	return out.String()
@@ -58,8 +79,22 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) Install(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, PostgresSchemaSQL())
-	return err
+	embedded, err := ledgerEmbeddedMigrations()
+	if err != nil {
+		return err
+	}
+	migrations := make([]postgresmigrate.Migration, 0, len(embedded))
+	for _, migration := range embedded {
+		migration := migration
+		migrations = append(migrations, postgresmigrate.Migration{
+			Version: migration.version,
+			Run: func(ctx context.Context) error {
+				_, err := s.db.ExecContext(ctx, migration.query)
+				return err
+			},
+		})
+	}
+	return postgresmigrate.Apply(ctx, s.db, "ledger", migrations)
 }
 
 func (s *PostgresStore) RecordReceipt(ctx context.Context, input ReceiptInput) (Receipt, error) {

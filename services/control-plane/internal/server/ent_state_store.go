@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"opl-cloud/services/control-plane/ent/workspacebackup"
 	"opl-cloud/services/control-plane/ent/workspacesyncevent"
 	controlplanemigrations "opl-cloud/services/control-plane/migrations"
+	"opl-cloud/services/internal/postgresmigrate"
 )
 
 const singletonFactID = "default"
@@ -52,28 +54,30 @@ type postgresEntStateStore struct {
 }
 
 func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
-	driver, err := entsql.Open(dialect.Postgres, databaseURL)
+	db, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		return nil, err
 	}
-	if err := controlplanemigrations.Apply(context.Background(), driver); err != nil {
-		_ = driver.Close()
-		return nil, err
-	}
-	if err := validateAndNormalizeLegacyMemberships(context.Background(), driver); err != nil {
-		_ = driver.Close()
-		return nil, err
-	}
-	if err := backfillControlPlaneMigrationNulls(context.Background(), driver); err != nil {
-		_ = driver.Close()
-		return nil, err
-	}
+	driver := entsql.OpenDB(dialect.Postgres, db)
 	client := controlplaneent.NewClient(controlplaneent.Driver(driver))
-	if err := client.Schema.Create(context.Background()); err != nil {
-		_ = client.Close()
-		return nil, err
-	}
-	if err := backfillControlPlaneMigrationNulls(context.Background(), driver); err != nil {
+	ctx := context.Background()
+	if err := postgresmigrate.Apply(ctx, db, "control-plane", []postgresmigrate.Migration{
+		{Version: "202607140001_sub2api_monthly_hard_cut", Run: func(ctx context.Context) error {
+			return controlplanemigrations.Apply(ctx, driver)
+		}},
+		{Version: "202607150001_legacy_membership_normalize", Run: func(ctx context.Context) error {
+			return validateAndNormalizeLegacyMemberships(ctx, driver)
+		}},
+		{Version: "202607150002_pre_schema_backfill", Run: func(ctx context.Context) error {
+			return backfillControlPlaneMigrationNulls(ctx, driver)
+		}},
+		{Version: "202607150003_ent_schema", Run: func(ctx context.Context) error {
+			return client.Schema.Create(ctx)
+		}},
+		{Version: "202607150004_post_schema_backfill", Run: func(ctx context.Context) error {
+			return backfillControlPlaneMigrationNulls(ctx, driver)
+		}},
+	}); err != nil {
 		_ = client.Close()
 		return nil, err
 	}

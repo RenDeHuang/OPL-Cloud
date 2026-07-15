@@ -103,7 +103,13 @@
     "compatibilityLayer": "forbidden",
     "allowedBridge": "none_fresh_database",
     "retireNodeApi": true,
-    "retireNodeStore": true
+    "retireNodeStore": true,
+    "startupProtocol": {
+      "lock": "database_wide_postgresql_advisory_lock",
+      "journal": "opl_schema_migrations_service_version",
+      "successRule": "record_after_success_only",
+      "repeatStart": "skip_completed_versions"
+    }
   },
   "forbiddenRuntimeMarkers": {
     "consoleUi": [

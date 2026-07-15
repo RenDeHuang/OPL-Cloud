@@ -1,6 +1,7 @@
 FROM golang:1.22-bookworm AS provisioner-build
 
 WORKDIR /src/services/fabric
+COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
 COPY services/fabric/go.mod services/fabric/go.sum ./
 RUN go mod download
 COPY services/fabric ./
@@ -9,6 +10,7 @@ RUN go build -o /out/opl-tencent-provisioner ./cmd/opl-tencent-provisioner
 FROM golang:1.22-bookworm AS control-plane-build
 
 WORKDIR /src/services/control-plane
+COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
 COPY services/control-plane/go.mod ./
 COPY services/control-plane ./
 RUN CGO_ENABLED=0 go build -o /out/opl-control-plane ./cmd/control-plane
@@ -16,6 +18,7 @@ RUN CGO_ENABLED=0 go build -o /out/opl-control-plane ./cmd/control-plane
 FROM golang:1.22-bookworm AS ledger-build
 
 WORKDIR /src/services/ledger
+COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
 COPY services/ledger/go.mod services/ledger/go.sum ./
 RUN go mod download
 COPY services/ledger ./
@@ -24,6 +27,7 @@ RUN go build -o /out/opl-ledger ./cmd/ledger
 FROM golang:1.22-bookworm AS fabric-build
 
 WORKDIR /src/services/fabric
+COPY services/internal/postgresmigrate /src/services/internal/postgresmigrate
 COPY services/fabric/go.mod services/fabric/go.sum ./
 RUN go mod download
 COPY services/fabric ./

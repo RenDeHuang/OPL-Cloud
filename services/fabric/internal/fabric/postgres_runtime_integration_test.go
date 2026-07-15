@@ -12,22 +12,9 @@ import (
 )
 
 func TestPostgresRuntimeClaimAcrossServiceInstances(t *testing.T) {
-	databaseURL := os.Getenv("FABRIC_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("FABRIC_TEST_DATABASE_URL is not set")
-	}
+	databaseURL := fabricTestDatabaseURL(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	suffix := make([]byte, 8)
-	if _, err := rand.Read(suffix); err != nil {
-		t.Fatalf("random schema suffix: %v", err)
-	}
-	schema := "fabric_test_" + hex.EncodeToString(suffix)
-	admin, err := sql.Open("postgres", databaseURL)
-	if err != nil {
-		t.Fatalf("open postgres admin: %v", err)
-	}
 	var firstStore, secondStore *PostgresOperationStore
 	t.Cleanup(func() {
 		if secondStore != nil {
@@ -40,34 +27,14 @@ func TestPostgresRuntimeClaimAcrossServiceInstances(t *testing.T) {
 				t.Errorf("close first operation store: %v", err)
 			}
 		}
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cleanupCancel()
-		if _, err := admin.ExecContext(cleanupCtx, "DROP SCHEMA IF EXISTS "+schema+" CASCADE"); err != nil {
-			t.Errorf("drop test schema: %v", err)
-		}
-		if err := admin.Close(); err != nil {
-			t.Errorf("close postgres admin: %v", err)
-		}
 	})
-	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
-		t.Fatalf("create test schema: %v", err)
-	}
 
-	testURL, err := url.Parse(databaseURL)
-	if err != nil {
-		t.Fatalf("parse database URL: %v", err)
-	}
-	query := testURL.Query()
-	query.Set("search_path", schema)
-	query.Set("connect_timeout", "5")
-	query.Set("statement_timeout", "10000")
-	testURL.RawQuery = query.Encode()
-
-	firstStore, err = NewPostgresOperationStore(testURL.String())
+	var err error
+	firstStore, err = NewPostgresOperationStore(databaseURL)
 	if err != nil {
 		t.Fatalf("open first operation store: %v", err)
 	}
-	secondStore, err = NewPostgresOperationStore(testURL.String())
+	secondStore, err = NewPostgresOperationStore(databaseURL)
 	if err != nil {
 		t.Fatalf("open second operation store: %v", err)
 	}
@@ -101,4 +68,88 @@ func TestPostgresRuntimeClaimAcrossServiceInstances(t *testing.T) {
 	if err != nil || replayed.ID != "runtime-alpha" || provider.calls.Load() != 1 {
 		t.Fatalf("postgres restart replay = %#v err=%v providerCalls=%d", replayed, err, provider.calls.Load())
 	}
+}
+
+func TestPostgresOperationStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	first, err := NewPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var migrationCount int
+	if err := db.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'fabric'`).Scan(&migrationCount); err != nil {
+		t.Fatalf("read Fabric migration journal: %v", err)
+	}
+	if migrationCount != 4 {
+		t.Fatalf("Fabric migration count = %d, want 4", migrationCount)
+	}
+	if _, err := db.Exec(`DROP TABLE machine_ownerships`); err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var table sql.NullString
+	if err := db.QueryRow(`SELECT to_regclass('machine_ownerships')`).Scan(&table); err != nil {
+		t.Fatal(err)
+	}
+	if table.Valid {
+		t.Fatal("second Fabric startup repeated embedded DDL")
+	}
+}
+
+func fabricTestDatabaseURL(t *testing.T) string {
+	t.Helper()
+	databaseURL := os.Getenv("FABRIC_TEST_DATABASE_URL")
+	optional := false
+	if databaseURL == "" {
+		databaseURL = "host=/var/run/postgresql dbname=postgres sslmode=disable"
+		optional = true
+	}
+	admin, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.Ping(); err != nil {
+		_ = admin.Close()
+		if optional {
+			t.Skipf("local PostgreSQL unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	schema := "fabric_test_" + hex.EncodeToString(suffix)
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	if parsed, err := url.Parse(databaseURL); err == nil && parsed.Scheme != "" {
+		query := parsed.Query()
+		query.Set("search_path", schema)
+		query.Set("connect_timeout", "5")
+		query.Set("statement_timeout", "10000")
+		parsed.RawQuery = query.Encode()
+		return parsed.String()
+	}
+	return databaseURL + " search_path=" + schema + " connect_timeout=5 statement_timeout=10000"
 }

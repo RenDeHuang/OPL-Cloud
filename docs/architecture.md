@@ -41,6 +41,12 @@ Control Plane, Fabric, and Ledger each own their PostgreSQL schema. Cross-servic
 writes go through typed HTTP clients; no service writes another service's tables.
 Sub2API data remains in Sub2API.
 
+All three services serialize startup migrations with one database-wide PostgreSQL
+advisory lock. A migration is journaled in `opl_schema_migrations` by service and
+version only after it succeeds. Completed hard cuts, backfills, Ent schema changes,
+and embedded SQL are skipped on every later start; a failed migration has no success
+record and is retried on the next start.
+
 This deployment starts from a fresh database. There is no compatibility layer,
 dual write, historical billing schema, or old-state importer.
 

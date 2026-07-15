@@ -6,7 +6,10 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/mattn/go-sqlite3 v1.14.16
 	golang.org/x/crypto v0.24.0
+	opl-cloud/services/internal/postgresmigrate v0.0.0
 )
+
+replace opl-cloud/services/internal/postgresmigrate => ../internal/postgresmigrate
 
 require (
 	github.com/agext/levenshtein v1.2.1 // indirect

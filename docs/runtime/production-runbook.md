@@ -27,6 +27,26 @@ npm run validate:production-manifest -- \
 Secrets must be GitHub/Kubernetes secrets. Never place credentials in the
 manifest, command arguments, logs, or verifier artifacts.
 
+## Database Startup Migrations
+
+Control Plane, Fabric, and Ledger share a database-wide advisory lock during
+startup migration and record successful versions in `opl_schema_migrations`.
+Later starts perform version reads only; they do not replay completed DDL or
+backfills. A failed version is not recorded as successful.
+
+After a release that adds a migration, inspect the journal with read-only SQL:
+
+```sql
+SELECT service, version, applied_at
+FROM opl_schema_migrations
+ORDER BY service, version;
+```
+
+For a no-migration restart, capture the result before and after rollout. The row
+set and `applied_at` values must remain unchanged. Correlate the same window with
+PostgreSQL CPU, WAL generation, and storage metrics; a repeated DDL, bulk UPDATE,
+or migration-related WAL spike is a failed rollout.
+
 ## Deploy
 
 Use the `Deploy TKE Production` workflow with immutable image references. It
