@@ -31,7 +31,7 @@ func TestEntitlementConsumersWaitForResourceMutation(t *testing.T) {
 	registerWorkspaceRoutes(mux, app, service)
 	session := tenantAdminSessionForTest(t, mux)
 	compute := createResourceWithSession(t, mux, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, mux, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
+	storage := createResourceWithSession(t, mux, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 
 	assertWaits := func(path, body string) map[string]any {
 		t.Helper()

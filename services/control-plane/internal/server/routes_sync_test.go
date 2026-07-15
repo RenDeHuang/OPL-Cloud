@@ -42,7 +42,7 @@ func TestWorkspaceBackupRestoreCloneAndExportKeepBackendTruth(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &recoveryFabricClient{fakeFabricClient: &fakeFabricClient{}}))
 	admin := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`)
+	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
 	workspace := createResourceWithSession(t, server, admin, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-alpha","attachmentId":"`+stringValue(attachment["id"])+`","name":"Alpha"}`)
 	workspaceID := stringValue(workspace["id"])

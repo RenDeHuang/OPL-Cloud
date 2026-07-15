@@ -47,6 +47,95 @@ func TestFabricHTTPClientGatewaySecretErrorDoesNotLeakKey(t *testing.T) {
 	}
 }
 
+func TestFabricHTTPClientPreflightsMonthlyResourceWithoutIdempotencyKey(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/monthly-preflight" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if _, ok := r.Header["Idempotency-Key"]; ok {
+			t.Fatalf("read-only preflight sent Idempotency-Key: %#v", r.Header.Values("Idempotency-Key"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 4 || input["resourceType"] != "storage" || input["packageId"] != "pro" || input["sizeGb"] != float64(100) || input["zone"] != "ap-guangzhou-3" {
+			t.Fatalf("monthly preflight input = %#v", input)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resourceType": "storage", "packageId": "pro", "sizeGb": 100, "zone": "ap-guangzhou-3",
+			"available": true, "chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+			"providerPriceCny": 12.34, "providerRequestIds": map[string]string{"quota": "quota-request", "price": "price-request"},
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricMonthlyPreflightClient)
+	result, err := client.MonthlyPreflight(context.Background(), MonthlyPreflightInput{ResourceType: "storage", PackageID: "pro", SizeGB: 100, Zone: "ap-guangzhou-3"})
+	if err != nil || !result.Available || result.ProviderPriceCNY != 12.34 || result.ProviderRequestIDs["quota"] != "quota-request" {
+		t.Fatalf("monthly preflight = %#v err=%v", result, err)
+	}
+}
+
+func TestFabricHTTPClientCreatesZonedPrepaidStorage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/storage-volumes" || r.Header.Get("Idempotency-Key") != "storage-once" {
+			t.Fatalf("unexpected request: %s %s key=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if input["computeId"] != "compute-alpha" || input["zone"] != "ap-shanghai-2" {
+			t.Fatalf("storage placement input = %#v", input)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "storage-alpha", "status": "available", "providerResourceId": "disk-alpha",
+			"zone": "ap-shanghai-2", "diskType": "CLOUD_PREMIUM", "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+			"deadline": "2026-08-16T00:00:00Z", "cbsStatus": "UNATTACHED", "providerData": map[string]any{"chargeType": "PREPAID"},
+		})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	volume, err := client.CreateStorageVolume(context.Background(), StorageVolumeInput{ID: "storage-alpha", AccountID: "acct-alpha", ComputeID: "compute-alpha", Zone: "ap-shanghai-2", SizeGB: 10}, "storage-once")
+	if err != nil || volume.Zone != "ap-shanghai-2" || volume.DiskType != "CLOUD_PREMIUM" || volume.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || volume.Deadline != "2026-08-16T00:00:00Z" || volume.CBSStatus != "UNATTACHED" || volume.ProviderData["chargeType"] != "PREPAID" {
+		t.Fatalf("storage readback = %#v err=%v", volume, err)
+	}
+}
+
+func TestFabricHTTPClientRenewsMonthlyResourcesWithReadback(t *testing.T) {
+	paths := []string{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.Method != http.MethodPost || r.Header.Get("Idempotency-Key") != "renew-once" {
+			t.Fatalf("unexpected renewal request: %s %s key=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"))
+		}
+		switch r.URL.Path {
+		case "/fabric/compute-allocations/compute-alpha/renew":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "compute-alpha", "status": "running", "providerRequestId": "compute-renew", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-16T00:00:00Z", "providerData": map[string]any{"renewalResult": "renewed"}})
+		case "/fabric/storage-volumes/storage-alpha/renew":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "storage-alpha", "status": "available", "providerRequestId": "storage-renew", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-16T00:00:00Z", "cbsStatus": "UNATTACHED", "providerData": map[string]any{"chargeType": "PREPAID", "renewalResult": "already_renewed"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricRenewalClient)
+	compute, err := client.RenewComputeAllocation(context.Background(), "compute-alpha", "renew-once")
+	if err != nil || compute.ProviderRequestID != "compute-renew" || compute.ChargeType != "PREPAID" || compute.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || compute.Deadline != "2026-09-16T00:00:00Z" || compute.ProviderData["renewalResult"] != "renewed" {
+		t.Fatalf("compute renewal = %#v err=%v", compute, err)
+	}
+	storage, err := client.RenewStorageVolume(context.Background(), "storage-alpha", "renew-once")
+	if err != nil || storage.ProviderRequestID != "storage-renew" || storage.Deadline != "2026-09-16T00:00:00Z" || storage.ProviderData["renewalResult"] != "already_renewed" {
+		t.Fatalf("storage renewal = %#v err=%v", storage, err)
+	}
+	if strings.Join(paths, ",") != "/fabric/compute-allocations/compute-alpha/renew,/fabric/storage-volumes/storage-alpha/renew" {
+		t.Fatalf("renewal paths = %#v", paths)
+	}
+}
+
 func TestFabricTransferClientStreamsChunksAndContent(t *testing.T) {
 	body := []byte("content")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

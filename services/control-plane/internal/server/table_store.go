@@ -86,6 +86,13 @@ func billingOperationIdentityMatches(existing, requested map[string]any) bool {
 			return false
 		}
 	}
+	if numberField(existing, "sizeGb", 0) > 0 || numberField(requested, "sizeGb", 0) > 0 {
+		for _, field := range []string{"computeAllocationId", "zone"} {
+			if stringValue(existing[field]) != stringValue(requested[field]) {
+				return false
+			}
+		}
+	}
 	for _, field := range []string{"monthlyPriceCnyCents", "chargeUsdMicros", "sizeGb"} {
 		if numberField(existing, field, 0) != numberField(requested, field, 0) {
 			return false
@@ -96,7 +103,7 @@ func billingOperationIdentityMatches(existing, requested map[string]any) bool {
 
 func billingOperationInProgress(status string) bool {
 	switch status {
-	case "preparing", "charge_pending", "renewal_pending", "manual_review":
+	case "preparing", "charge_pending", "refund_pending", "renewal_pending", "manual_review":
 		return true
 	default:
 		return false

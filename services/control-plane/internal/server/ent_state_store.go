@@ -306,6 +306,7 @@ func billingJSONField(entityField, setter string) entRecordField {
 var monthlyBillingStateKeys = []string{
 	"billingOperationStartedAt",
 	"sub2apiRedeemCode",
+	"sub2apiRefundCode",
 	"monthlyPriceCnyCents",
 	"chargeUsdMicros",
 	"billingAnchorDay",
@@ -317,6 +318,14 @@ var monthlyBillingStateKeys = []string{
 	"lastReceiptId",
 	"postChargeBalanceUsdMicros",
 	"postChargeBalanceKnown",
+	"computeAllocationId",
+	"zone",
+	"chargeType",
+	"renewFlag",
+	"deadline",
+	"cbsStatus",
+	"diskType",
+	"providerData",
 }
 
 var (

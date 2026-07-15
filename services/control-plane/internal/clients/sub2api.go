@@ -20,7 +20,8 @@ const (
 	maxSub2APIResponseBytes  = 1 << 20
 	maxSub2APIRequestTimeout = 30 * time.Second
 	sub2APIKeyPageSize       = 1000
-	maxSub2APIKeyPages       = 1000
+	maxSub2APIKeyPages       = 10
+	maxSub2APIKeys           = sub2APIKeyPageSize * maxSub2APIKeyPages
 )
 
 var (
@@ -40,6 +41,10 @@ type Sub2APIClient interface {
 
 type Sub2APIWorkspaceKeyClient interface {
 	WorkspaceKey(context.Context, int64) (Sub2APIWorkspaceKey, error)
+}
+
+type Sub2APIRefundClient interface {
+	Refund(context.Context, Sub2APIRefundInput) (Sub2APIRefund, error)
 }
 
 type Sub2APIConfig struct {
@@ -81,6 +86,20 @@ type Sub2APICharge struct {
 	Code            string
 	UserID          int64
 	ChargeUSDMicros int64
+	Status          string
+}
+
+type Sub2APIRefundInput struct {
+	UserID          int64
+	Code            string
+	RefundUSDMicros int64
+	Notes           string
+}
+
+type Sub2APIRefund struct {
+	Code            string
+	UserID          int64
+	RefundUSDMicros int64
 	Status          string
 }
 
@@ -210,11 +229,12 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 			Page     int `json:"page"`
 			PageSize int `json:"page_size"`
 			Pages    int `json:"pages"`
+			Total    int `json:"total"`
 		}
 		if err := decodeSub2APIEnvelope(body, &data); err != nil {
 			return Sub2APIWorkspaceKey{}, err
 		}
-		if data.Page != page || data.PageSize <= 0 || data.Pages < page || data.Pages > maxSub2APIKeyPages {
+		if data.Page != page || data.PageSize <= 0 || data.Pages < page || data.Pages > maxSub2APIKeyPages || data.Total < 0 || data.Total > maxSub2APIKeys {
 			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
 		}
 		for _, item := range data.Items {
@@ -261,12 +281,31 @@ func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput
 	if input.UserID <= 0 || strings.TrimSpace(input.Code) == "" || input.ChargeUSDMicros <= 0 {
 		return Sub2APICharge{}, errors.New("sub2api charge identity and positive amount are required")
 	}
-	version, err := c.Version(ctx)
+	status, err := c.redeemBalance(ctx, input.UserID, input.Code, -input.ChargeUSDMicros, input.Notes)
 	if err != nil {
 		return Sub2APICharge{}, err
 	}
+	return Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: input.ChargeUSDMicros, Status: status}, nil
+}
+
+func (c *Sub2APIHTTPClient) Refund(ctx context.Context, input Sub2APIRefundInput) (Sub2APIRefund, error) {
+	if input.UserID <= 0 || strings.TrimSpace(input.Code) == "" || input.RefundUSDMicros <= 0 {
+		return Sub2APIRefund{}, errors.New("sub2api refund identity and positive amount are required")
+	}
+	status, err := c.redeemBalance(ctx, input.UserID, input.Code, input.RefundUSDMicros, input.Notes)
+	if err != nil {
+		return Sub2APIRefund{}, err
+	}
+	return Sub2APIRefund{Code: input.Code, UserID: input.UserID, RefundUSDMicros: input.RefundUSDMicros, Status: status}, nil
+}
+
+func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, code string, valueUSDMicros int64, notes string) (string, error) {
+	version, err := c.Version(ctx)
+	if err != nil {
+		return "", err
+	}
 	if _, ok := c.supportedVersions[version]; !ok {
-		return Sub2APICharge{}, fmt.Errorf("%w: %s", ErrSub2APIUnsupportedVersion, version)
+		return "", fmt.Errorf("%w: %s", ErrSub2APIUnsupportedVersion, version)
 	}
 	payload := struct {
 		Code   string          `json:"code"`
@@ -275,18 +314,18 @@ func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput
 		UserID int64           `json:"user_id"`
 		Notes  string          `json:"notes,omitempty"`
 	}{
-		Code: input.Code, Type: "balance", Value: negativeUSDMicrosJSON(input.ChargeUSDMicros), UserID: input.UserID, Notes: input.Notes,
+		Code: code, Type: "balance", Value: usdMicrosJSON(valueUSDMicros), UserID: userID, Notes: notes,
 	}
-	body, err := c.doAuthenticated(ctx, http.MethodPost, "/api/v1/admin/redeem-codes/create-and-redeem", payload, input.Code)
+	body, err := c.doAuthenticated(ctx, http.MethodPost, "/api/v1/admin/redeem-codes/create-and-redeem", payload, code)
 	if err != nil {
 		var httpErr *Sub2APIHTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
-			return Sub2APICharge{}, fmt.Errorf("%w: redeem code rejected", ErrSub2APIChargeConflict)
+			return "", fmt.Errorf("%w: redeem code rejected", ErrSub2APIChargeConflict)
 		}
 		if !errors.As(err, &httpErr) || httpErr.StatusCode >= http.StatusInternalServerError || errors.Is(err, ErrSub2APIResponseTooLarge) {
-			return Sub2APICharge{}, fmt.Errorf("%w: request did not produce a confirmed response", ErrSub2APIChargeUnknown)
+			return "", fmt.Errorf("%w: request did not produce a confirmed response", ErrSub2APIChargeUnknown)
 		}
-		return Sub2APICharge{}, err
+		return "", err
 	}
 	var data struct {
 		RedeemCode struct {
@@ -298,16 +337,16 @@ func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput
 		} `json:"redeem_code"`
 	}
 	if err := decodeSub2APIEnvelope(body, &data); err != nil {
-		return Sub2APICharge{}, fmt.Errorf("%w: response could not be confirmed", ErrSub2APIChargeUnknown)
+		return "", fmt.Errorf("%w: response could not be confirmed", ErrSub2APIChargeUnknown)
 	}
 	valueMicros, err := decimalUSDMicros(data.RedeemCode.Value)
 	if err != nil {
-		return Sub2APICharge{}, fmt.Errorf("%w: response amount could not be confirmed", ErrSub2APIChargeUnknown)
+		return "", fmt.Errorf("%w: response amount could not be confirmed", ErrSub2APIChargeUnknown)
 	}
-	if data.RedeemCode.Code != input.Code || data.RedeemCode.Type != "balance" || data.RedeemCode.Status != "used" || data.RedeemCode.UsedBy == nil || *data.RedeemCode.UsedBy != input.UserID || valueMicros != -input.ChargeUSDMicros {
-		return Sub2APICharge{}, fmt.Errorf("%w: redeem record differs from requested charge", ErrSub2APIChargeConflict)
+	if data.RedeemCode.Code != code || data.RedeemCode.Type != "balance" || data.RedeemCode.Status != "used" || data.RedeemCode.UsedBy == nil || *data.RedeemCode.UsedBy != userID || valueMicros != valueUSDMicros {
+		return "", fmt.Errorf("%w: redeem record differs from requested balance adjustment", ErrSub2APIChargeConflict)
 	}
-	return Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: input.ChargeUSDMicros, Status: data.RedeemCode.Status}, nil
+	return data.RedeemCode.Status, nil
 }
 
 func (c *Sub2APIHTTPClient) doAuthenticated(ctx context.Context, method, path string, input any, idempotencyKey string) ([]byte, error) {
@@ -439,6 +478,10 @@ func decimalUSDMicros(value json.Number) (int64, error) {
 	return rational.Num().Int64(), nil
 }
 
-func negativeUSDMicrosJSON(micros int64) json.RawMessage {
-	return json.RawMessage(fmt.Sprintf("-%d.%06d", micros/1_000_000, micros%1_000_000))
+func usdMicrosJSON(micros int64) json.RawMessage {
+	sign := ""
+	if micros < 0 {
+		sign, micros = "-", -micros
+	}
+	return json.RawMessage(fmt.Sprintf("%s%d.%06d", sign, micros/1_000_000, micros%1_000_000))
 }

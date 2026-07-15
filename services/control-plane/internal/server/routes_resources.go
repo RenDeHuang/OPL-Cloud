@@ -45,11 +45,12 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		resourceID := resourceIDForMutation("ca", accountID, key)
+		workspaceID := resourceIDForMutation("ws", accountID, key)
 		unlock := app.lockResource("compute", resourceID)
 		defer unlock()
 		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{
 			ResourceType: "compute", ResourceID: resourceID, BillingOperationID: "billing-" + stableID("compute", accountID, key)[:18],
-			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: stringField(input, "workspaceId", ""),
+			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: workspaceID,
 			Name: stringField(input, "name", ""), PackageID: packageID, Environment: monthlyEnvironment(),
 		})
 		if err != nil {
@@ -124,7 +125,13 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusConflict, "billing_reconciliation_blocked")
 			return
 		}
+		computeID := strings.TrimSpace(stringField(input, "computeAllocationId", ""))
+		if computeID == "" {
+			writeError(w, http.StatusBadRequest, "compute_allocation_required")
+			return
+		}
 		resourceID := resourceIDForMutation("vol", accountID, key)
+		var retained map[string]any
 		if requestedID := strings.TrimSpace(stringField(input, "id", "")); requestedID != "" {
 			existing, exists := app.getStorage(requestedID)
 			if !exists {
@@ -140,14 +147,37 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 				return
 			}
 			resourceID = requestedID
+			retained = existing
 		}
-		unlock := app.lockResource("storage", resourceID)
+		unlock := app.lockEntitlementResources(computeID, resourceID, "")
 		defer unlock()
+		compute, exists := app.getCompute(computeID)
+		if !exists {
+			writeError(w, http.StatusBadRequest, "compute_allocation_required")
+			return
+		}
+		if !app.resourceBelongsToAccount(compute, accountID) || !app.canAccessResource(r, compute) {
+			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		workspaceID := stringValue(compute["workspaceId"])
+		if workspaceID == "" || (retained != nil && stringValue(retained["workspaceId"]) != workspaceID) {
+			writeError(w, http.StatusConflict, "compute_storage_workspace_mismatch")
+			return
+		}
+		if !ensureMonthlyEntitlements(w, time.Now(), compute) {
+			return
+		}
+		zone := stringValue(mapField(compute, "providerData")["zone"])
+		if zone == "" {
+			writeError(w, http.StatusConflict, "compute_zone_unavailable")
+			return
+		}
 		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{
 			ResourceType: "storage", ResourceID: resourceID, BillingOperationID: "billing-" + stableID("storage", accountID, key)[:18],
-			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: stringField(input, "workspaceId", ""),
+			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: workspaceID,
 			Name: stringField(input, "name", ""), PackageID: stringField(input, "packageId", "basic"),
-			SizeGB: int(sizeGB), Environment: monthlyEnvironment(),
+			SizeGB: int(sizeGB), ComputeID: computeID, Zone: zone, Environment: monthlyEnvironment(),
 		})
 		if err != nil {
 			writeMonthlyPurchaseError(w, err)
@@ -262,9 +292,10 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
-		workspaceID := stringField(input, "workspaceId", "")
-		if (stringValue(compute["workspaceId"]) != "" && stringValue(compute["workspaceId"]) != workspaceID) || (stringValue(storage["workspaceId"]) != "" && stringValue(storage["workspaceId"]) != workspaceID) {
-			writeError(w, http.StatusForbidden, "workspace_scope_forbidden")
+		workspaceID := stringValue(compute["workspaceId"])
+		packageID := stringValue(compute["packageId"])
+		if workspaceID == "" || stringValue(storage["workspaceId"]) != workspaceID || packageID == "" || stringValue(storage["packageId"]) != packageID {
+			writeError(w, http.StatusConflict, "compute_storage_workspace_mismatch")
 			return
 		}
 		if !ensureMonthlyEntitlements(w, time.Now(), compute, storage) {
@@ -277,8 +308,13 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeUpstreamError(w, err)
 			return
 		}
+		if attachment.WorkspaceID != workspaceID || attachment.ComputeID != computeID || attachment.VolumeID != storageID {
+			writeError(w, http.StatusBadGateway, "fabric_attachment_identity_mismatch")
+			return
+		}
+		input["workspaceId"], input["packageId"] = workspaceID, packageID
 		body := attachmentResponse(structToMap(attachment), input)
-		body["accountId"] = accountID
+		body["accountId"], body["packageId"] = accountID, packageID
 		if err := app.saveAttachmentFact(body, input); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return

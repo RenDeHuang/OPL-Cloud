@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	pricingCatalogVersion        = "2026-07-14-opl-monthly-v1"
+	pricingCatalogVersion        = "2026-07-16-opl-monthly-v2"
 	pricingCurrency              = "CNY"
 	pricingWalletCurrency        = "USD"
 	pricingBillingUnit           = "calendar_month"
@@ -48,6 +48,7 @@ func defaultPricingCatalog() pricingCatalogData {
 		BillingUnit: pricingBillingUnit, ExchangeRate: pricingExchangeRateCNYPerUSD,
 		Packages: []pricingPackageData{
 			{ID: "basic", Name: "Basic", Available: true, CPU: 2, MemoryGB: 4, DiskGB: 10, Server: "2c4g", MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
+			{ID: "pro", Name: "Pro", Available: true, CPU: 8, MemoryGB: 16, DiskGB: 100, Server: "8c16g", MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214285715},
 		},
 	}
 }

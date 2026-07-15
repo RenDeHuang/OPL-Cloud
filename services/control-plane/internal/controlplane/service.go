@@ -107,6 +107,7 @@ func (s *Service) Content(ctx context.Context, workspaceID, digest string) (clie
 }
 
 type CreateWorkspaceInput struct {
+	WorkspaceID   string `json:"workspaceId"`
 	AccountID     string `json:"accountId"`
 	Sub2APIUserID int64  `json:"-"`
 	OwnerID       string `json:"ownerId"`
@@ -414,10 +415,10 @@ func (s *Service) DetachStorageAttachment(ctx context.Context, id string, idempo
 }
 
 func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
-	if input.ComputeID == "" || input.VolumeID == "" || input.AttachmentID == "" {
+	if input.WorkspaceID == "" || input.ComputeID == "" || input.VolumeID == "" || input.AttachmentID == "" {
 		return domain.WorkspaceProjection{}, fmt.Errorf("attached_compute_storage_required")
 	}
-	workspaceID := fmt.Sprintf("ws_%d", time.Now().UTC().UnixNano())
+	workspaceID := input.WorkspaceID
 	gatewaySecretRef, err := s.gatewaySecretRef(ctx, input.AccountID, input.Sub2APIUserID, idempotencyKey)
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
@@ -426,7 +427,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInpu
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
 	}
-	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: workspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID}, OutputRefs: map[string]any{"redactedUrl": runtime.URL}}, idempotencyKey+":receipt")
+	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: input.AccountID, WorkspaceID: workspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID}, OutputRefs: map[string]any{"redactedUrl": runtime.URL}}, idempotencyKey+":receipt")
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workspaceCompensationTimeout)
 		defer cancel()

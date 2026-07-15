@@ -24,6 +24,8 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 		"monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000), "billingAnchorDay": int64(paidThrough.Day()),
 		"periodStart": paidThrough.AddDate(0, -1, 0).Format(time.RFC3339), "paidThrough": paidThrough.Format(time.RFC3339),
 		"autoRenew": true, "lastReceiptId": "receipt-purchase-" + id, "postChargeBalanceKnown": true, "postChargeBalanceUsdMicros": int64(100_000_000),
+		"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339),
+		"providerData": map[string]any{"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339)},
 	}
 	if resourceType == "storage" {
 		row["sizeGb"] = 10
@@ -46,36 +48,59 @@ func TestBillingMonthClampsWithoutChangingAnchor(t *testing.T) {
 
 func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 	paidThrough := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
-	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{50_000_000, 0})
-	row := monthlyActiveResource("compute", "compute-renew", paidThrough)
-	row["billingAnchorDay"] = int64(31)
-	if err := app.tables.SaveCompute(context.Background(), row); err != nil {
-		t.Fatal(err)
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			charge := int64(50_000_000)
+			if resourceType == "storage" {
+				charge = 2_571_429
+			}
+			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{charge, 0})
+			id := resourceType + "-renew"
+			row := monthlyActiveResource(resourceType, id, paidThrough)
+			row["billingAnchorDay"] = int64(31)
+			if resourceType == "storage" {
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+			} else {
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+			}
+			if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour-time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if len(*events) != 0 {
+				t.Fatalf("renewed before lead time: %#v", *events)
+			}
+			if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			renewed, _ := app.monthlyResource(resourceType, id)
+			if renewed["billingStatus"] != "active" || renewed["postChargeBalanceUsdMicros"] != int64(0) || renewed["periodStart"] != paidThrough.Format(time.RFC3339) || renewed["paidThrough"] != "2026-09-30T09:30:00Z" || stringValue(renewed["deadline"]) != "2026-09-30T09:30:00Z" {
+				t.Fatalf("renewed row = %#v", renewed)
+			}
+			if len(sub2API.charges) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {
+				t.Fatalf("renewed=%#v charges=%#v receipts=%#v events=%#v", renewed, sub2API.charges, ledger.receipts, *events)
+			}
+			renewKeys, renewEvent := fabric.computeRenewKeys, "fabric.compute.renew"
+			if resourceType == "storage" {
+				renewKeys, renewEvent = fabric.storageRenewKeys, "fabric.storage.renew"
+			}
+			operationID := "renewal-" + stableID(resourceType, id, paidThrough.Format(time.RFC3339))[:18]
+			wantEvents := []string{"sub2api.balance", "sub2api.charge", "sub2api.balance", renewEvent, "ledger.receipt"}
+			if len(renewKeys) != 1 || renewKeys[0] != operationID+":provider-renew" || strings.Join(*events, ",") != strings.Join(wantEvents, ",") {
+				t.Fatalf("renewal keys=%#v events=%#v", renewKeys, *events)
+			}
+			if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if len(sub2API.charges) != 1 || len(renewKeys) != 1 || len(ledger.receipts) != 1 {
+				t.Fatalf("duplicate renewal: charges=%d renewals=%d receipts=%d", len(sub2API.charges), len(renewKeys), len(ledger.receipts))
+			}
+		})
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour-time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if len(*events) != 0 {
-		t.Fatalf("renewed before lead time: %#v", *events)
-	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	renewed, _ := app.getCompute("compute-renew")
-	if renewed["billingStatus"] != "active" || renewed["postChargeBalanceUsdMicros"] != int64(0) || renewed["periodStart"] != paidThrough.Format(time.RFC3339) || renewed["paidThrough"] != "2026-09-30T09:30:00Z" {
-		t.Fatalf("renewed row = %#v", renewed)
-	}
-	if len(sub2API.charges) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {
-		t.Fatalf("charges=%#v receipts=%#v", sub2API.charges, ledger.receipts)
-	}
-	if len(fabric.computeIDs) != 0 || len(fabric.storageIDs) != 0 || strings.Contains(strings.Join(*events, ","), "fabric.") {
-		t.Fatalf("renewal touched Fabric: %#v", *events)
-	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
-		t.Fatalf("duplicate renewal: charges=%d receipts=%d", len(sub2API.charges), len(ledger.receipts))
+}
+
+func TestMonthlyAutoRenewDefaultsOff(t *testing.T) {
+	if monthlyAutoRenew(map[string]any{}) {
+		t.Fatal("missing autoRenew must default to false")
 	}
 }
 
@@ -109,6 +134,44 @@ func TestMonthlyRenewalUnknownChargeRequiresReview(t *testing.T) {
 	row, _ := app.getCompute("compute-review-renewal")
 	if row["billingStatus"] != "manual_review" || row["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(ledger.receipts) != 0 {
 		t.Fatalf("unknown renewal row=%#v charges=%#v receipts=%#v", row, sub2API.charges, ledger.receipts)
+	}
+}
+
+func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(24 * time.Hour)
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			charge, postCharge := int64(50_000_000), int64(50_000_000)
+			if resourceType == "storage" {
+				charge, postCharge = 2_571_429, 97_428_571
+			}
+			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
+			id := resourceType + "-provider-review"
+			row := monthlyActiveResource(resourceType, id, paidThrough)
+			row["chargeUsdMicros"] = charge
+			if resourceType == "storage" {
+				fabric.storageRenew = clients.StorageVolume{ID: id, Status: "available", ProviderRequestID: "partial-" + id, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: paidThrough.Format(time.RFC3339), ProviderData: map[string]string{"chargeType": "PREPAID"}}
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+			} else {
+				fabric.computeRenewErr = errors.New("renew readback unavailable")
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+			}
+			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+				t.Fatal(err)
+			}
+			review, _ := app.monthlyResource(resourceType, id)
+			if review["billingStatus"] != "manual_review" || review["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+				t.Fatalf("provider review row=%#v charges=%#v refunds=%#v receipts=%#v", review, sub2API.charges, sub2API.refunds, ledger.receipts)
+			}
+			before := len(*events)
+			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+				t.Fatal(err)
+			}
+			if len(*events) != before || len(sub2API.charges) != 1 {
+				t.Fatalf("manual review retried provider: events=%#v charges=%#v", *events, sub2API.charges)
+			}
+		})
 	}
 }
 
@@ -166,8 +229,9 @@ func TestMonthlyExpiryDestroysComputeAndRetainsStorage(t *testing.T) {
 func TestRetainedStorageReactivatesFromCurrentTimeOnly(t *testing.T) {
 	now := time.Date(2026, 8, 3, 10, 15, 0, 0, time.UTC)
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 92_285_714}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_285_714}}
 	fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
+	fabric.storageInput = clients.StorageVolumeInput{ID: "storage-retained", AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", ComputeID: "compute-retained", Zone: "ap-shanghai-2", SizeGB: 30}
 	ledger := &monthlyLedger{events: events}
 	app := newControlPlaneAppEmpty()
 	if err := app.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-monthly", "status": "active", "sub2apiUserId": int64(41)}); err != nil {
@@ -176,6 +240,7 @@ func TestRetainedStorageReactivatesFromCurrentTimeOnly(t *testing.T) {
 	retained := monthlyActiveResource("storage", "storage-retained", now.Add(-time.Hour))
 	retained["billingStatus"] = "retained"
 	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_714_286)
+	retained["computeAllocationId"], retained["zone"] = "compute-retained", "ap-shanghai-2"
 	if err := app.tables.SaveStorage(context.Background(), retained); err != nil {
 		t.Fatal(err)
 	}

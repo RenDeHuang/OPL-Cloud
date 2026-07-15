@@ -173,6 +173,35 @@ func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSub2APIClientWorkspaceKeyRejectsExcessivePaginationWithoutContinuing(t *testing.T) {
+	for name, pagination := range map[string]map[string]any{
+		"pages": {"total": 1, "page": 1, "page_size": 1000, "pages": 11},
+		"total": {"total": 10_001, "page": 1, "page_size": 1000, "pages": 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			keyRequests := 0
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/users/41/api-keys":
+					keyRequests++
+					pagination["items"] = []any{}
+					writeSub2APISuccess(t, w, pagination)
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, []string{"0.1.155"}, time.Second)
+			if _, err := client.WorkspaceKey(context.Background(), 41); err == nil || !strings.Contains(err.Error(), "pagination") {
+				t.Fatalf("workspace key pagination error = %v", err)
+			}
+			if keyRequests != 1 {
+				t.Fatalf("key requests = %d, want 1", keyRequests)
+			}
+		})
+	}
+}
+
 func TestSub2APIClientWorkspaceKeyRejectsCrossUserAndDoesNotLeakKey(t *testing.T) {
 	const secret = "workspace-key-secret"
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +292,50 @@ func TestSub2APIClientChargesWithExactNegativeMicrosAndReplays(t *testing.T) {
 	}
 	if chargeCalls != 2 {
 		t.Fatalf("charge calls = %d, want 2", chargeCalls)
+	}
+}
+
+func TestSub2APIClientRefundsWithExactPositiveMicrosAndReplays(t *testing.T) {
+	refundCalls := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/system/version":
+			writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
+		case "/api/v1/admin/redeem-codes/create-and-redeem":
+			refundCalls++
+			if r.Header.Get("Idempotency-Key") != "opl:production:op-41:refund:v1" {
+				t.Errorf("idempotency key = %q", r.Header.Get("Idempotency-Key"))
+			}
+			var body map[string]any
+			decoder := json.NewDecoder(r.Body)
+			decoder.UseNumber()
+			if err := decoder.Decode(&body); err != nil {
+				t.Errorf("decode refund request: %v", err)
+			}
+			if body["code"] != "opl:production:op-41:refund:v1" || body["type"] != "balance" || body["user_id"] != json.Number("41") || body["value"] != json.Number("50.000000") {
+				t.Errorf("refund request = %#v", body)
+			}
+			writeSub2APISuccess(t, w, json.RawMessage(`{"redeem_code":{"code":"opl:production:op-41:refund:v1","type":"balance","value":50.000000,"status":"used","used_by":41}}`))
+		default:
+			t.Errorf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}, []string{"0.1.155"}, time.Second)
+
+	input := Sub2APIRefundInput{UserID: 41, Code: "opl:production:op-41:refund:v1", RefundUSDMicros: 50_000_000}
+	for i := 0; i < 2; i++ {
+		refund, err := client.Refund(context.Background(), input)
+		if err != nil {
+			t.Fatalf("refund attempt %d: %v", i+1, err)
+		}
+		if refund.Code != input.Code || refund.UserID != 41 || refund.RefundUSDMicros != 50_000_000 {
+			t.Fatalf("refund = %#v", refund)
+		}
+	}
+	if refundCalls != 2 {
+		t.Fatalf("refund calls = %d, want 2", refundCalls)
 	}
 }
 

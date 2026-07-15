@@ -279,20 +279,41 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			}
 			return
 		}
+		workspaceID := stringValue(attachment["workspaceId"])
+		packageID := stringValue(compute["packageId"])
+		if workspaceID == "" || stringValue(compute["workspaceId"]) != workspaceID || stringValue(storage["workspaceId"]) != workspaceID ||
+			packageID == "" || stringValue(storage["packageId"]) != packageID || (stringValue(attachment["packageId"]) != "" && stringValue(attachment["packageId"]) != packageID) {
+			writeError(w, http.StatusConflict, "compute_storage_workspace_mismatch")
+			return
+		}
+		ownerID := firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", ""))
+		name := firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace"))
+		if existing, exists := app.getWorkspace(workspaceID); exists {
+			if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
+				stringValue(existing["attachmentId"]) != attachmentID || stringValue(existing["computeAllocationId"]) != computeID ||
+				stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
+				firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
+				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+				return
+			}
+			writeJSON(w, http.StatusCreated, workspaceResponse(existing))
+			return
+		}
 		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
 		if !ok {
 			return
 		}
 		workspace, err := service.CreateWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
+			WorkspaceID:   workspaceID,
 			AccountID:     accountID,
 			Sub2APIUserID: sub2APIUserID,
-			OwnerID:       firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", "")),
-			Name:          firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace")),
-			PackageID:     firstNonEmpty(stringField(input, "packageId", ""), stringValue(attachment["packageId"]), "basic"),
+			OwnerID:       ownerID,
+			Name:          name,
+			PackageID:     packageID,
 			AttachmentID:  attachmentID,
 			ComputeID:     computeID,
 			VolumeID:      storageID,
-		}, mutationKey(r, input))
+		}, "workspace-create:"+workspaceID)
 		if err != nil {
 			writeUpstreamError(w)
 			return
