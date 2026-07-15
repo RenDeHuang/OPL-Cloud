@@ -11,6 +11,7 @@ import { useTickets } from "../pages/support/useTickets.ts";
 
 export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
   const [state, setState] = useState<any>(null);
+  const [loadError, setLoadError] = useState("");
   const [managementState, setManagementState] = useState<any>({ users: [], accounts: [] });
   const [adminOps, setAdminOps] = useState<any>({ operator: null, runtime: null, launch: null, error: "" });
   const [createPackageId, setCreatePackageId] = useState("basic");
@@ -19,12 +20,19 @@ export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
   const tickets = useTickets({ csrfToken, all: isAdmin && path.startsWith("/admin/support") });
 
   async function refresh() {
-    const [next, management] = await Promise.all([
-      getConsoleState(accountId),
-      isAdmin ? getManagementState() : Promise.resolve(null)
-    ]);
-    setState(next);
-    if (management) setManagementState(management);
+    setLoadError("");
+    try {
+      if (isAdmin) {
+        const management = await getManagementState();
+        setManagementState(management);
+        setState(management);
+        return;
+      }
+      setState(await getConsoleState(accountId));
+    } catch (err) {
+      setLoadError(err.message);
+      throw err;
+    }
   }
 
   async function refreshAdminOps() {
@@ -130,6 +138,7 @@ export function useConsoleState({ isAdmin, path, csrfToken, accountId }: any) {
 
   return {
     state,
+    loadError,
     balance,
     selected,
     selectedPlan,

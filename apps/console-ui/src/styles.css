@@ -27,6 +27,15 @@ a {
   font-size: 14px;
 }
 
+.loadFailure {
+  display: grid;
+  max-width: 420px;
+  gap: 12px;
+  justify-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
 .publicShell,
 .loginShell {
   min-height: 100vh;

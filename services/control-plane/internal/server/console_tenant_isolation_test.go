@@ -48,6 +48,33 @@ func TestBootstrapOwnerGetsAnActiveTenantMembership(t *testing.T) {
 	}
 }
 
+func TestBootstrapAdminGetsAnActiveTenantMembership(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-seed-admin","email":"seed-admin@example.com","password":"correct horse battery staple","role":"admin","accountId":"acct-seed","sub2apiUserId":41}]`)
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	session := loginForTest(t, server, "seed-admin@example.com", "correct horse battery staple")
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookies(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap admin session status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["isOperator"] != false {
+		t.Fatalf("bootstrap admin isOperator = %#v, want false", payload["isOperator"])
+	}
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-seed", nil)
+	addSessionCookies(stateReq, session)
+	stateRec := httptest.NewRecorder()
+	server.ServeHTTP(stateRec, stateReq)
+	if stateRec.Code != http.StatusOK {
+		t.Fatalf("bootstrap admin state status = %d, want 200: %s", stateRec.Code, stateRec.Body.String())
+	}
+}
+
 func TestOrganizationRejectsMissingBillingAccount(t *testing.T) {
 	app := newControlPlaneApp()
 	if _, err := app.createOrganization(map[string]any{"name": "Orphan", "billingAccountId": "acct-missing"}); err == nil {
@@ -386,6 +413,25 @@ func TestOperatorLoginNeverAdoptsTenantAdmin(t *testing.T) {
 	}
 	if rec := requestWithSession(t, server, operator, http.MethodGet, "/api/management/state", ""); rec.Code != http.StatusOK {
 		t.Fatalf("explicit operator management status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReservedOperatorSessionReportsAuthority(t *testing.T) {
+	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
+	session := reservedOperatorSessionForTest(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookies(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("operator session status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["isOperator"] != true {
+		t.Fatalf("operator isOperator = %#v, want true", payload["isOperator"])
 	}
 }
 
