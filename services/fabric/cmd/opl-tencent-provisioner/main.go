@@ -1977,13 +1977,11 @@ func deadlineAfter(current, previous string) bool {
 }
 
 func normalizeTencentDeadline(value string) string {
-	value = strings.TrimSpace(value)
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed.UTC().Format(time.RFC3339)
-		}
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	if err != nil {
+		return ""
 	}
-	return ""
+	return parsed.UTC().Format(time.RFC3339)
 }
 
 func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*tke2022.CreateNodePoolRequest, *Response) {

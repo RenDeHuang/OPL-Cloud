@@ -550,6 +550,42 @@ func TestStorageCreateFailureRecordsPartialCBSIdentity(t *testing.T) {
 	}
 }
 
+func TestStorageCreateFailureKeepsPartialCBSIdentityForSameProcessSync(t *testing.T) {
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(&partialStorageProvider{}, store)
+	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", ProviderData: map[string]string{"zone": "ap-guangzhou-3"}}
+
+	created, err := service.CreateStorageVolume(context.Background(), StorageVolumeInput{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "partial-storage"})
+	stored, ok := service.GetStorageVolume(context.Background(), created.ID)
+	if err == nil || !ok || stored.Status != "quarantined" || stored.ProviderResourceID != "disk-storage-alpha" {
+		t.Fatalf("partial storage was not recoverable in process: created=%#v stored=%#v ok=%v err=%v", created, stored, ok, err)
+	}
+	recovered, err := service.SyncStorageVolume(context.Background(), created.ID)
+	if err != nil || recovered.Status != "ready" || recovered.ProviderResourceID != "disk-storage-alpha" {
+		t.Fatalf("same-process storage recovery=%#v err=%v", recovered, err)
+	}
+}
+
+func TestServiceReplaysPartialCBSIdentityFromFailedCreate(t *testing.T) {
+	store := NewMemoryOperationStore()
+	original := NewServiceWithOperationStore(&partialStorageProvider{}, store)
+	original.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", ProviderData: map[string]string{"zone": "ap-guangzhou-3"}}
+	created, err := original.CreateStorageVolume(context.Background(), StorageVolumeInput{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", Zone: "ap-guangzhou-3", SizeGB: 10, IdempotencyKey: "partial-storage"})
+	if err == nil || created.ProviderResourceID != "disk-storage-alpha" {
+		t.Fatalf("partial create=%#v err=%v", created, err)
+	}
+
+	replayed := NewServiceWithOperationStore(&partialStorageProvider{}, store)
+	stored, ok := replayed.GetStorageVolume(context.Background(), created.ID)
+	if !ok || stored.Status != "quarantined" || stored.ProviderResourceID != "disk-storage-alpha" || stored.AccountID != "acct-alpha" || stored.WorkspaceID != "ws-alpha" {
+		t.Fatalf("replayed partial storage=%#v ok=%v", stored, ok)
+	}
+	recovered, err := replayed.SyncStorageVolume(context.Background(), created.ID)
+	if err != nil || recovered.Status != "ready" || recovered.ProviderResourceID != "disk-storage-alpha" {
+		t.Fatalf("restarted storage recovery=%#v err=%v", recovered, err)
+	}
+}
+
 type failingStorageSyncProvider struct{ testProvider }
 
 func (*failingStorageSyncProvider) SyncStorageVolume(context.Context, StorageVolume) (StorageVolume, error) {
@@ -820,6 +856,55 @@ func (p *renewingProvider) RenewStorageVolume(_ context.Context, volume StorageV
 	volume.Deadline = "2026-09-16 00:00:00"
 	volume.ProviderRequestID = "req-renew-cbs"
 	return volume, nil
+}
+
+type retainedStorageProvider struct {
+	testProvider
+	syncCalls  int
+	renewCalls int
+}
+
+func (p *retainedStorageProvider) SyncStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
+	p.syncCalls++
+	volume.Status = "ready"
+	return volume, nil
+}
+
+func (p *retainedStorageProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
+	p.renewCalls++
+	volume.Deadline = "2026-09-16T00:00:00Z"
+	return volume, nil
+}
+
+func TestRetainedStorageRequiresSuccessfulRenewBeforeSyncReactivation(t *testing.T) {
+	provider := &retainedStorageProvider{}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running"}
+	service.volumes["storage-alpha"] = StorageVolume{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "retained",
+		ProviderResourceID: "disk-storage-alpha", Deadline: "2026-08-16T00:00:00Z",
+	}
+
+	retained, err := service.SyncStorageVolume(context.Background(), "storage-alpha")
+	if err != nil || retained.Status != "retained" || provider.syncCalls != 0 {
+		t.Fatalf("ordinary sync reactivated retained storage: volume=%#v err=%v syncCalls=%d", retained, err, provider.syncCalls)
+	}
+	if _, err := service.CreateStorageAttachment(context.Background(), StorageAttachmentInput{WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", IdempotencyKey: "attach-before-renew"}); err == nil || errorCode(err) != "resource_status_invalid" {
+		t.Fatalf("retained storage attachment error=%v", err)
+	}
+
+	renewed, err := service.RenewStorageVolume(context.Background(), "storage-alpha", "renew-retained")
+	if err != nil || renewed.Status != "pending" || provider.renewCalls != 1 {
+		t.Fatalf("renewed retained storage=%#v err=%v renewCalls=%d", renewed, err, provider.renewCalls)
+	}
+	recovered, err := service.SyncStorageVolume(context.Background(), "storage-alpha")
+	if err != nil || recovered.Status != "ready" || provider.syncCalls != 1 {
+		t.Fatalf("post-renew storage recovery=%#v err=%v syncCalls=%d", recovered, err, provider.syncCalls)
+	}
+	attached, err := service.CreateStorageAttachment(context.Background(), StorageAttachmentInput{WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", IdempotencyKey: "attach-after-renew"})
+	if err != nil || attached.Status != "attached" {
+		t.Fatalf("post-renew attachment=%#v err=%v", attached, err)
+	}
 }
 
 func TestRenewStorageVolumeReplaysWithoutSecondProviderMutation(t *testing.T) {

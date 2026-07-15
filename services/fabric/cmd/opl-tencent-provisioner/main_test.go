@@ -592,7 +592,7 @@ func (api *fakeNativeCbsAPI) CreateDisks(request *cbs2017.CreateDisksRequest) (*
 
 func (api *fakeNativeCbsAPI) RenewDisk(request *cbs2017.RenewDiskRequest) (*cbs2017.RenewDiskResponse, error) {
 	api.renewDiskRequests = append(api.renewDiskRequests, request)
-	api.deadline = firstNonEmpty(api.renewedDeadline, "2026-09-16 00:00:00")
+	api.deadline = firstNonEmpty(api.renewedDeadline, "2026-09-16T00:00:00Z")
 	return &cbs2017.RenewDiskResponse{Response: &cbs2017.RenewDiskResponseParams{RequestId: common.StringPtr("req-renew-cbs")}}, nil
 }
 
@@ -602,7 +602,7 @@ func (api *fakeNativeCbsAPI) DescribeDisks(request *cbs2017.DescribeDisksRequest
 		return nil, api.err
 	}
 	diskID := firstNonEmpty(api.diskID, stringValue(request.DiskIds[0]))
-	deadline := common.StringPtr(firstNonEmpty(api.deadline, "2026-08-16 00:00:00"))
+	deadline := common.StringPtr(firstNonEmpty(api.deadline, "2026-08-16T00:00:00Z"))
 	if api.omitDeadline {
 		deadline = nil
 	}
@@ -771,12 +771,21 @@ func TestTencentSDKStorageVolumeReadbackFailsClosedOnBillingOrIdentityMismatch(t
 	}
 }
 
-func TestTencentSDKSyncStorageVolumeNormalizesTencentDeadline(t *testing.T) {
+func TestNormalizeTencentDeadlineRequiresExplicitTimezone(t *testing.T) {
+	if got := normalizeTencentDeadline("2026-08-16 00:00:00"); got != "" {
+		t.Fatalf("timezone-less deadline was accepted as %q", got)
+	}
+	if got := normalizeTencentDeadline("2026-08-16T08:00:00+08:00"); got != "2026-08-16T00:00:00Z" {
+		t.Fatalf("RFC3339 deadline normalized to %q", got)
+	}
+}
+
+func TestTencentSDKSyncStorageVolumeRejectsTimezoneLessDeadline(t *testing.T) {
 	response := (&tencentSDKClient{nativeCbsClient: &fakeNativeCbsAPI{deadline: "2026-08-16 00:00:00"}}).SyncStorageVolume(Request{
 		Storage: StorageInput{Id: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD"},
 	}, nil)
-	if !response.Ok || response.ProviderData["deadline"] != "2026-08-16T00:00:00Z" {
-		t.Fatalf("CBS sync deadline was not normalized: %#v", response)
+	if response.Ok || response.ErrorCode != "tencent_cbs_readback_mismatch" || response.ProviderData["deadline"] != "" {
+		t.Fatalf("timezone-less CBS deadline did not fail closed: %#v", response)
 	}
 }
 
@@ -799,7 +808,7 @@ func TestTencentSDKSyncStorageVolumeReturnsOnlyExactConfirmedAbsence(t *testing.
 }
 
 func TestTencentSDKRenewStorageVolumeIsManualAndIdempotentAcrossLostResponse(t *testing.T) {
-	api := &fakeNativeCbsAPI{deadline: "2026-08-16 00:00:00"}
+	api := &fakeNativeCbsAPI{deadline: "2026-08-16T00:00:00Z"}
 	client := &tencentSDKClient{nativeCbsClient: api}
 	request := Request{Storage: StorageInput{Id: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16T00:00:00Z"}}
 
@@ -885,9 +894,9 @@ func TestTencentSDKRenewalsRejectNonIncreasingProviderDeadline(t *testing.T) {
 		}
 	})
 	t.Run("CBS", func(t *testing.T) {
-		api := &fakeNativeCbsAPI{deadline: "2026-08-16 00:00:00", renewedDeadline: "2026-07-16 00:00:00"}
+		api := &fakeNativeCbsAPI{deadline: "2026-08-16T00:00:00Z", renewedDeadline: "2026-07-16T00:00:00Z"}
 		client := &tencentSDKClient{nativeCbsClient: api}
-		response := client.RenewStorageVolume(Request{Storage: StorageInput{Id: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16 00:00:00"}}, nil)
+		response := client.RenewStorageVolume(Request{Storage: StorageInput{Id: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16T00:00:00Z"}}, nil)
 		if response.Ok {
 			t.Fatalf("CBS renewal must reject a non-increasing deadline: %#v", response)
 		}

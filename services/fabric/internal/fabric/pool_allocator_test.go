@@ -239,25 +239,25 @@ func (p *failedCreateCleanupProvider) ReconcileComputePool(_ context.Context, in
 
 type tagFailurePoolProvider struct {
 	testProvider
-	deleteCalls     int
-	deleteErr       error
-	deleteMachine   ProviderMachine
-	deleteOwnership MachineOwnership
+	tagCalls    int
+	deleteCalls int
 }
 
-func (*tagFailurePoolProvider) TagComputeMachine(context.Context, ProviderMachine, MachineOwnership) error {
-	return fmt.Errorf("node label failed")
+func (p *tagFailurePoolProvider) TagComputeMachine(context.Context, ProviderMachine, MachineOwnership) error {
+	p.tagCalls++
+	if p.tagCalls == 1 {
+		return fmt.Errorf("node label failed")
+	}
+	return nil
 }
 
-func (p *tagFailurePoolProvider) DeleteComputeMachine(_ context.Context, machine ProviderMachine, ownership MachineOwnership) error {
+func (p *tagFailurePoolProvider) DeleteComputeMachine(context.Context, ProviderMachine, MachineOwnership) error {
 	p.deleteCalls++
-	p.deleteMachine = machine
-	p.deleteOwnership = ownership
-	return p.deleteErr
+	return nil
 }
 
 func TestPoolAllocatorDoesNotReleaseHoldStateWhileMachineIsQuarantined(t *testing.T) {
-	provider := &tagFailurePoolProvider{deleteErr: fmt.Errorf("tencent delete failed")}
+	provider := &tagFailurePoolProvider{}
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(provider, store)
 	resource := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic", Status: "provisioning"}
@@ -272,12 +272,12 @@ func TestPoolAllocatorDoesNotReleaseHoldStateWhileMachineIsQuarantined(t *testin
 
 	service.reconcileComputePool("basic", false)
 	got, _ := service.GetComputeAllocation(context.Background(), resource.ID)
-	if got.Status != "quarantined" || got.MachineName == "" || got.InstanceID == "" || got.NodePoolID == "" {
-		t.Fatalf("resource with undeleted machine = %#v", got)
+	if got.Status != "quarantined" || got.MachineName == "" || got.InstanceID == "" || got.NodePoolID == "" || provider.deleteCalls != 0 {
+		t.Fatalf("resource with quarantined machine = %#v deletes=%d", got, provider.deleteCalls)
 	}
 }
 
-func TestPoolAllocatorDeletesPartiallyTaggedMachineBeforeReleasingClaim(t *testing.T) {
+func TestPoolAllocatorQuarantinesTagFailureWithoutDeletingPrepaidMachine(t *testing.T) {
 	provider := &tagFailurePoolProvider{}
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(provider, store)
@@ -290,12 +290,21 @@ func TestPoolAllocatorDeletesPartiallyTaggedMachineBeforeReleasingClaim(t *testi
 
 	_, _, _ = service.reconcileComputePoolOnce(context.Background(), "basic", false)
 	ownership, err := store.MachineOwnership(context.Background(), resource.ID)
-	if err != nil || ownership.Status != "released" || provider.deleteCalls != 1 {
-		t.Fatalf("partial claim cleanup ownership=%#v err=%v deletes=%d", ownership, err, provider.deleteCalls)
+	if err != nil || ownership.Status != "quarantined" || provider.deleteCalls != 0 {
+		t.Fatalf("partial claim quarantine ownership=%#v err=%v deletes=%d", ownership, err, provider.deleteCalls)
 	}
-	if provider.deleteOwnership.NodePoolID != "np-basic" || provider.deleteOwnership.ResourceID != resource.ID || provider.deleteOwnership.AccountID != resource.AccountID ||
-		provider.deleteOwnership.MachineID != provider.deleteMachine.MachineID || provider.deleteOwnership.InstanceID != provider.deleteMachine.InstanceID || provider.deleteOwnership.NodeName != provider.deleteMachine.NodeName {
-		t.Fatalf("partial claim cleanup lost ownership: machine=%#v ownership=%#v", provider.deleteMachine, provider.deleteOwnership)
+	if ownership.NodePoolID != "np-basic" || ownership.ResourceID != resource.ID || ownership.AccountID != resource.AccountID ||
+		ownership.MachineID == "" || ownership.InstanceID == "" || ownership.NodeName == "" {
+		t.Fatalf("partial claim quarantine lost ownership: %#v", ownership)
+	}
+	quarantined, ok := service.GetComputeAllocation(context.Background(), resource.ID)
+	if !ok || quarantined.Status != "quarantined" || quarantined.MachineName != ownership.MachineID || quarantined.InstanceID != ownership.InstanceID || quarantined.NodeName != ownership.NodeName {
+		t.Fatalf("quarantined compute lost provider identity: %#v ok=%v", quarantined, ok)
+	}
+	recovered, err := service.SyncComputeAllocation(context.Background(), resource.ID)
+	ownership, ownershipErr := store.MachineOwnership(context.Background(), resource.ID)
+	if err != nil || recovered.Status != "running" || ownershipErr != nil || ownership.Status != "active" || provider.tagCalls != 2 {
+		t.Fatalf("recovered compute=%#v err=%v ownership=%#v ownershipErr=%v tagCalls=%d", recovered, err, ownership, ownershipErr, provider.tagCalls)
 	}
 }
 

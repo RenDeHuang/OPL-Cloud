@@ -217,6 +217,30 @@ func (s *Service) SyncComputeAllocation(ctx context.Context, allocationID string
 			_ = s.recordOperation(ctx, operation, "failed", allocation, err)
 			return allocation, err
 		}
+	} else if isReadyResourceStatus(allocation.Status) {
+		ownership, ownershipErr := s.operations.MachineOwnership(ctx, allocationID)
+		if ownershipErr != nil && ownershipErr != ErrMachineOwnershipNotFound {
+			_ = s.recordOperation(ctx, operation, "failed", allocation, ownershipErr)
+			return allocation, ownershipErr
+		}
+		if ownershipErr == nil && ownership.Status == "quarantined" {
+			machine := ProviderMachine{
+				MachineID: firstNonEmpty(allocation.MachineName, ownership.MachineID), InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID, ownership.InstanceID),
+				NodeName: firstNonEmpty(allocation.NodeName, ownership.NodeName), PrivateIP: allocation.PrivateIP, PublicIP: allocation.PublicIP,
+				InstanceType: allocation.ProviderData["instanceType"], Zone: allocation.ProviderData["zone"], ChargeType: allocation.ChargeType,
+				RenewFlag: allocation.RenewFlag, Deadline: allocation.Deadline, Ready: true,
+			}
+			if err := s.provider.TagComputeMachine(ctx, machine, ownership); err != nil {
+				_ = s.recordOperation(ctx, operation, "failed", allocation, err)
+				return allocation, err
+			}
+			ownership.Status = "active"
+			ownership.ReleasedAt = nil
+			if err := s.operations.SaveMachineOwnership(ctx, ownership); err != nil {
+				_ = s.recordOperation(ctx, operation, "failed", allocation, err)
+				return allocation, err
+			}
+		}
 	}
 	if err := s.recordOperation(ctx, operation, "succeeded", allocation, nil); err != nil {
 		return allocation, err
@@ -475,8 +499,26 @@ func (s *Service) CreateStorageVolume(ctx context.Context, input StorageVolumeIn
 		}
 		volume, err = s.provider.CreateStorageVolume(lockCtx, input)
 		volume.ID = input.ID
+		volume.AccountID = firstNonEmpty(volume.AccountID, input.AccountID)
+		volume.WorkspaceID = firstNonEmpty(volume.WorkspaceID, input.WorkspaceID)
+		volume.Provider = firstNonEmpty(volume.Provider, "tencent-tke")
+		volume.Zone = firstNonEmpty(volume.Zone, input.Zone)
+		if volume.SizeGB == 0 {
+			volume.SizeGB = input.SizeGB
+		}
 		if err != nil {
-			_ = s.recordOperation(lockCtx, operation, "failed", volume, err)
+			knownCBS := strings.HasPrefix(volume.ProviderResourceID, "disk-")
+			if knownCBS {
+				volume.Status = "quarantined"
+			}
+			if recordErr := s.recordOperation(lockCtx, operation, "failed", volume, err); recordErr != nil {
+				return recordErr
+			}
+			if knownCBS {
+				s.mu.Lock()
+				s.volumes[volume.ID] = volume
+				s.mu.Unlock()
+			}
 			return err
 		}
 		if err := s.recordOperation(lockCtx, operation, "succeeded", volume, nil); err != nil {
@@ -675,6 +717,9 @@ func (s *Service) SyncStorageVolume(ctx context.Context, volumeID string) (Stora
 		_ = s.recordOperation(ctx, operation, "rejected", StorageVolume{ID: volumeID}, err)
 		return StorageVolume{}, err
 	}
+	if isRetainedStorageStatus(existing.Status) {
+		return existing, nil
+	}
 	operation := newOperation("sync_storage_volume", "storage_volume", volumeID, existing.AccountID, existing.WorkspaceID, "", hashInput(existing), time.Now().UTC())
 	if err := s.recordOperation(ctx, operation, "started", existing, nil); err != nil {
 		return StorageVolume{}, err
@@ -766,6 +811,9 @@ func (s *Service) RenewStorageVolume(ctx context.Context, volumeID, idempotencyK
 		if err != nil {
 			_ = s.recordOperation(lockCtx, operation, "failed", result, err)
 			return err
+		}
+		if isRetainedStorageStatus(existing.Status) {
+			result.Status = "pending"
 		}
 		if err := s.recordOperation(lockCtx, operation, "succeeded", result, nil); err != nil {
 			return err
@@ -1290,8 +1338,14 @@ func replayResourceState(ctx context.Context, operations OperationStore) (map[st
 			computes[resource.ID] = resource
 		case "storage_volume":
 			var resource StorageVolume
-			if operation.Status != "succeeded" || !decodeOperationResource(operation, &resource) {
+			if !decodeOperationResource(operation, &resource) {
 				continue
+			}
+			if operation.Status != "succeeded" {
+				if operation.Status != "failed" || operation.Action != "create_storage_volume" || !strings.HasPrefix(resource.ProviderResourceID, "disk-") {
+					continue
+				}
+				resource.Status = "quarantined"
 			}
 			volumes[resource.ID] = resource
 		case "storage_snapshot":
@@ -1468,6 +1522,15 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 func isReadyResourceStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "running", "ready", "active":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRetainedStorageStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "retained", "released":
 		return true
 	default:
 		return false

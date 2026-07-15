@@ -160,7 +160,7 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		if ownership.Status != "released" {
 			ownedMachines[ownership.MachineID] = true
 		}
-		if ownership.PackageID == packageID && (ownership.Status == "claimed" || ownership.Status == "active") {
+		if ownership.PackageID == packageID && (ownership.Status == "claimed" || ownership.Status == "active" || ownership.Status == "quarantined") {
 			active = append(active, ownership)
 		}
 	}
@@ -202,17 +202,6 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		if err != nil {
 			continue
 		}
-		if err := s.provider.TagComputeMachine(ctx, machine, claimed); err != nil {
-			if deleteErr := s.provider.DeleteComputeMachine(ctx, machine, claimed); deleteErr == nil {
-				now := s.now()
-				claimed.Status = "released"
-				claimed.ReleasedAt = &now
-			} else {
-				claimed.Status = "quarantined"
-			}
-			_ = s.operations.SaveMachineOwnership(ctx, claimed)
-			continue
-		}
 		resource.Status = "provisioning"
 		resource.Provider = "tencent-tke"
 		resource.ProviderRequestID = state.ProviderRequestID
@@ -230,6 +219,20 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		resource.Deadline = machine.Deadline
 		resource.ProviderData = map[string]string{"instanceType": machine.InstanceType, "zone": machine.Zone, "chargeType": machine.ChargeType, "renewFlag": machine.RenewFlag, "deadline": machine.Deadline, "machineName": machine.MachineID}
 		resource.CreatedAt = firstTime(resource.CreatedAt, s.now())
+		if tagErr := s.provider.TagComputeMachine(ctx, machine, claimed); tagErr != nil {
+			resource.Status = "quarantined"
+			claimed.Status = "quarantined"
+			if err := s.operations.SaveMachineOwnership(ctx, claimed); err != nil {
+				return false, i > 0, err
+			}
+			if err := s.recordOperation(ctx, operation, "failed", resource, tagErr); err != nil {
+				return false, i > 0, err
+			}
+			s.mu.Lock()
+			s.computes[resource.ID] = resource
+			s.mu.Unlock()
+			continue
+		}
 		verified, verifyErr := s.provider.SyncComputeAllocation(ctx, resource)
 		if verified.ID != "" {
 			resource = verified
