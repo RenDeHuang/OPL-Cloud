@@ -44,7 +44,7 @@ charges use exact integer USD micros at `1 USD = 7 CNY`.
 Storage must be at least 10 GB and divisible by 10 GB. Unknown compute plans and
 invalid storage sizes are rejected at both Control Plane and Fabric boundaries.
 
-The approved launch settlement reuses the deployed Sub2API v0.1.155 deterministic
+The approved launch settlement reuses the deployed Sub2API v0.1.156 deterministic
 Redeem Code and Idempotency-Key path:
 
 ```text

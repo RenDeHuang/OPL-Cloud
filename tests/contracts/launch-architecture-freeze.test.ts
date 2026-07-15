@@ -47,7 +47,8 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.providerProcurement.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
   assert.equal(freeze.workspaceRuntime.sourceImage.digest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
   assert.equal(freeze.gateway.sub2apiMutable, false);
-  assert.equal(freeze.gateway.backend, "Sub2API v0.1.155");
+  assert.equal(freeze.gateway.backend, "Sub2API v0.1.156");
+  assert.deepEqual(freeze.gateway.compatibleVersions, ["0.1.155", "0.1.156"]);
   assert.equal(freeze.productSurfaces.gateway.backend, freeze.gateway.backend);
   assert.equal(freeze.gateway.keyName, "opl-workspace");
   assert.equal(freeze.gateway.adminUsageEndpointAllowed, false);

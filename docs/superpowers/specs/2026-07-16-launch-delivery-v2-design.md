@@ -51,7 +51,7 @@ Sub2API 的代码、镜像、容器、数据库、配置和部署均不在本项
 正式实现前必须按用户提供的 `gateway.md` 服务器信息，对生产版本做只读路由和响应
 形状核对。核对不得登录主机修改文件、重启服务或执行数据库写入。
 
-`GET /api/v1/admin/users/:id/usage` 在锁定的 `v0.1.155` 中是全零 mock，禁止用作
+`GET /api/v1/admin/users/:id/usage` 在兼容的 `v0.1.155`/`v0.1.156` 中均禁止用作
 生产用量证据。管理员也不能代替目标用户创建 Key，因此受控开户和 Key 创建是一次性
 Operator Acceptance，不是 Console 请求期间的自动动作；Key 缺失时产品失败关闭。
 

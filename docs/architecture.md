@@ -54,7 +54,7 @@ dual write, historical billing schema, or old-state importer.
 
 ## Resource And Billing State
 
-Sub2API v0.1.155 has no generic hold/capture API. The approved launch path must
+Sub2API v0.1.156 has no generic hold/capture API. The approved launch path must
 validate the account and quote, run read-only provider preflight, confirm balance,
 and debit the exact monthly amount before Fabric mutates provider resources. It
 then claims every PREPAID CVM/CBS fact and may activate the entitlements. A

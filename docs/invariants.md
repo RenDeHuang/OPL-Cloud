@@ -41,17 +41,17 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 ## Gateway
 
-- OPL Gateway uses the externally deployed Sub2API v0.1.155 backend. Its code, image, container, database, configuration, and deployment are immutable from this repository.
+- OPL Gateway uses the externally deployed Sub2API v0.1.156 backend. Cloud accepts the API-compatible v0.1.155 rollback and v0.1.156 current versions; its code, image, container, database, configuration, and deployment are immutable from this repository.
 - Sub2API is the only owner of spendable USD balance, API keys, model routing, and request usage.
 - Control Plane maps the signed-in account through `sub2apiUserId` and selects exactly one active Key named `opl-workspace`; zero or multiple matches fail closed.
-- `GET /api/v1/admin/users/:id/usage` is a mock in v0.1.155 and is forbidden as evidence. Usage comes from the Key DTO fields `quota_used`, `usage_5h`, `usage_1d`, `usage_7d`, and `last_used_at`.
+- `GET /api/v1/admin/users/:id/usage` is not accepted as evidence in v0.1.155 or v0.1.156. Usage comes from the Key DTO fields `quota_used`, `usage_5h`, `usage_1d`, `usage_7d`, and `last_used_at`.
 - The owner may request the Key through a dedicated `private, no-store` endpoint. It is masked by default and never enters `/api/state`, browser storage, OPL PostgreSQL, Ledger, logs, caches, or operation payloads.
 - Kubernetes Secret is the only authorized Key persistence point. Fabric writes or rotates an account-scoped Secret, and Workspace runtime receives only its reference.
 - The global `OPL_CODEX_API_KEY` is forbidden for customer Workspaces.
 
 ## Monthly Settlement
 
-Sub2API v0.1.155 has no generic hold/capture API. The approved purchase protocol therefore reuses the already verified deterministic Redeem Code and Idempotency-Key path:
+Sub2API v0.1.156 has no generic hold/capture API. The approved purchase protocol therefore reuses the already verified deterministic Redeem Code and Idempotency-Key path:
 
 ```text
 validate account and quote

@@ -4,7 +4,7 @@
 
 **Goal:** Ship Basic and Pro monthly Workspaces on one-month Tencent PREPAID CVM/CBS, account-owned Sub2API keys, a recoverable Console flow, and a reusable production verification slot.
 
-**Architecture:** Control Plane remains the product orchestrator, Fabric remains the only Tencent/Kubernetes writer, deployed Sub2API v0.1.155 remains unchanged, and Ledger remains evidence-only. Three file-disjoint worker worktrees merge into one integration branch, which is shipped through one PR and one guarded rollout.
+**Architecture:** Control Plane remains the product orchestrator, Fabric remains the only Tencent/Kubernetes writer, deployed Sub2API v0.1.156 remains unchanged, and Ledger remains evidence-only. Cloud also accepts the API-compatible v0.1.155 rollback. Three file-disjoint worker worktrees merge into one integration branch, which is shipped through one PR and one guarded rollout.
 
 **Tech Stack:** Go 1.22, Node.js test runner, React 19, TypeScript, Ant Design, Tencent Cloud Go SDK, Kubernetes/Tencent CBS CSI, GitHub Actions, PostgreSQL.
 
@@ -72,7 +72,7 @@ Expected: FAIL on missing V2 fields and old slides.
 
 - [ ] **Step 3: Implement the machine and human contracts**
 
-Use PREPAID/period 1/manual renewal, debit -> provision -> claim -> activate, deterministic refund only after confirmed absence, manual review for ambiguous provider state, five product surfaces, four owner lanes, ten launch stages, six delivery phases, named opl-workspace Key, v0.1.155 Key DTO usage, and the pinned App source digest. Delete provision-before-charge and paid-per-run narratives.
+Use PREPAID/period 1/manual renewal, debit -> provision -> claim -> activate, deterministic refund only after confirmed absence, manual review for ambiguous provider state, five product surfaces, four owner lanes, ten launch stages, six delivery phases, named opl-workspace Key, v0.1.155/v0.1.156 Key DTO usage, and the pinned App source digest. Delete provision-before-charge and paid-per-run narratives.
 
 - [ ] **Step 4: Run GREEN**
 
