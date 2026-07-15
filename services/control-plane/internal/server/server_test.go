@@ -2127,6 +2127,7 @@ func TestWorkspaceGatewayBlocksInactiveWorkspace(t *testing.T) {
 	}{
 		{name: "suspended", row: map[string]any{"state": "suspended", "runtime": map[string]any{"serviceName": "runtime-alpha"}}, want: http.StatusConflict},
 		{name: "unready", row: map[string]any{"state": "unready", "runtime": map[string]any{"serviceName": "runtime-alpha", "status": "running"}}, want: http.StatusConflict},
+		{name: "running but not ready", row: map[string]any{"state": "running", "runtime": map[string]any{"serviceName": "runtime-alpha", "ready": false}}, want: http.StatusConflict},
 		{name: "data deleted", row: map[string]any{"state": "data_deleted", "runtime": map[string]any{"serviceName": "runtime-alpha"}}, want: http.StatusGone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

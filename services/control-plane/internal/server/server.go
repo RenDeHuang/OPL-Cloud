@@ -496,6 +496,9 @@ func workspaceResponse(row map[string]any) map[string]any {
 	}
 	state := stringValue(row["state"])
 	openable := state == "running" || state == "ready" || state == "available" || state == "active"
+	if ready, ok := runtime["ready"].(bool); ok && !ready {
+		openable = false
+	}
 	if state == "suspended" || state == "data_deleted" || state == "unrecoverable" || state == "storage_missing" || state == "destroyed" {
 		openable = false
 	}
