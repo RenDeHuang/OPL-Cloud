@@ -395,6 +395,13 @@ func TestBuildCreateNativeNodePoolRequestUsesCurrentPackageShape(t *testing.T) {
 	if createRequest.Native == nil {
 		t.Fatalf("expected native config")
 	}
+	if stringValue(createRequest.Native.InstanceChargeType) != "PREPAID" {
+		t.Fatalf("Fabric package pools must use prepaid CVMs: %#v", createRequest.Native.InstanceChargeType)
+	}
+	prepaid := createRequest.Native.InstanceChargePrepaid
+	if prepaid == nil || prepaid.Period == nil || *prepaid.Period != 1 || stringValue(prepaid.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" {
+		t.Fatalf("Fabric package pools must use one-month prepaid CVMs with manual renewal: %#v", prepaid)
+	}
 	if stringValue(createRequest.Native.MachineType) != "NativeCVM" {
 		t.Fatalf("Fabric package pools must provision CVMs, not CXM native machines: %#v", createRequest.Native.MachineType)
 	}
@@ -456,6 +463,9 @@ type fakeNativeTkeAPI struct {
 	poolType                    string
 	machineType                 string
 	instanceChargeType          string
+	omitInstanceChargePrepaid   bool
+	omitPrepaidPeriod           bool
+	prepaidRenewFlag            string
 	labelPoolId                 string
 	labelPackageId              string
 	labelInstanceType           string
@@ -570,7 +580,7 @@ func (api *fakeNativeCvmAPI) DescribeAccountQuota(request *cvm2017.DescribeAccou
 func (api *fakeNativeCvmAPI) DescribeZoneInstanceConfigInfos(request *cvm2017.DescribeZoneInstanceConfigInfosRequest) (*cvm2017.DescribeZoneInstanceConfigInfosResponse, error) {
 	api.describeZoneConfigRequests = append(api.describeZoneConfigRequests, request)
 	items := []*cvm2017.InstanceTypeQuotaItem{{
-		Zone: common.StringPtr("na-siliconvalley-1"), InstanceType: common.StringPtr("SA5.LARGE4"), InstanceChargeType: common.StringPtr(firstNonEmpty(api.zoneConfigChargeType, "POSTPAID_BY_HOUR")), Status: common.StringPtr(firstNonEmpty(api.zoneConfigStatus, "SELL")),
+		Zone: common.StringPtr("na-siliconvalley-1"), InstanceType: common.StringPtr("SA5.LARGE4"), InstanceChargeType: common.StringPtr(firstNonEmpty(api.zoneConfigChargeType, "PREPAID")), Status: common.StringPtr(firstNonEmpty(api.zoneConfigStatus, "SELL")),
 	}}
 	if api.omitZoneConfig {
 		items = nil
@@ -763,10 +773,20 @@ func fakeNativeNodePoolInfo(api *fakeNativeTkeAPI) *tke2022.NativeNodePoolInfo {
 	if len(instanceTypes) == 0 {
 		instanceTypes = []string{"SA5.LARGE4"}
 	}
+	prepaid := &tke2022.InstanceChargePrepaid{
+		Period: common.Uint64Ptr(1), RenewFlag: common.StringPtr(firstNonEmpty(api.prepaidRenewFlag, "NOTIFY_AND_MANUAL_RENEW")),
+	}
+	if api.omitPrepaidPeriod {
+		prepaid.Period = nil
+	}
+	if api.omitInstanceChargePrepaid {
+		prepaid = nil
+	}
 	return &tke2022.NativeNodePoolInfo{
 		Scaling: scaling, SubnetIds: []*string{common.StringPtr("subnet-basic")}, InstanceTypes: stringsToPtrs(instanceTypes), Replicas: replicas, ReadyReplicas: readyReplicas,
 		EnableAutoscaling: common.BoolPtr(api.enableAutoscaling), AutoRepair: common.BoolPtr(api.autoRepair),
-		MachineType: common.StringPtr(firstNonEmpty(api.machineType, "NativeCVM")), InstanceChargeType: common.StringPtr(firstNonEmpty(api.instanceChargeType, "POSTPAID_BY_HOUR")),
+		MachineType: common.StringPtr(firstNonEmpty(api.machineType, "NativeCVM")), InstanceChargeType: common.StringPtr(firstNonEmpty(api.instanceChargeType, "PREPAID")),
+		InstanceChargePrepaid: prepaid,
 	}
 }
 
@@ -782,14 +802,14 @@ func TestTencentSDKCapacityIsReadOnlyAndFailsClosedAcrossAllThreeSignals(t *test
 		Pool:      ComputePoolInput{Id: "basic", InstanceType: "SA5.LARGE4", DesiredReplicas: 5},
 	}, map[string]string{})
 
-	if !response.Ok || response.Status != "ready" || !response.InstanceAvailable || response.RemainingQuota != 8 || response.RequiredCapacity != 5 {
+	if !response.Ok || response.Status != "ready" || !response.InstanceAvailable || response.RemainingQuota != 0 || response.RequiredCapacity != 5 {
 		t.Fatalf("unexpected capacity response: %#v", response)
 	}
 	if response.NodePoolId != "np-basic" || response.CurrentReplicas != 2 || response.MaxReplicas != 10 || response.MachineType != "NativeCVM" || response.TargetReplicas != 7 {
 		t.Fatalf("unexpected node pool capacity: %#v", response)
 	}
-	if len(cvmAPI.describeAccountQuotaRequests) != 1 || len(cvmAPI.describeZoneConfigRequests) != 1 {
-		t.Fatalf("capacity must query CVM quota and availability exactly once: %#v", cvmAPI)
+	if len(cvmAPI.describeAccountQuotaRequests) != 0 || len(cvmAPI.describeZoneConfigRequests) != 1 {
+		t.Fatalf("prepaid capacity must query availability without using postpaid quota: %#v", cvmAPI)
 	}
 	if len(vpcAPI.describeSubnetsRequests) != 1 {
 		t.Fatalf("capacity must resolve the exact node pool subnets once: %#v", vpcAPI)
@@ -832,9 +852,7 @@ func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
 		vpc  *fakeNativeVpcAPI
 	}{
 		{name: "sold out", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{zoneConfigStatus: "SOLD_OUT"}},
-		{name: "missing exact zone type charge", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{zoneConfigChargeType: "PREPAID"}},
-		{name: "quota below five", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{quotaRemaining: 4}},
-		{name: "quota missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{omitQuotaRemaining: true}},
+		{name: "missing exact zone type charge", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{zoneConfigChargeType: "POSTPAID_BY_HOUR"}},
 		{name: "node pool missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-other", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}},
 		{name: "autoscaling enabled", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, enableAutoscaling: true}, cvm: &fakeNativeCvmAPI{}},
 		{name: "auto repair enabled", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, autoRepair: true}, cvm: &fakeNativeCvmAPI{}},
@@ -846,7 +864,10 @@ func TestTencentSDKCapacityPreflightFailsClosedWithoutMutation(t *testing.T) {
 		{name: "pool not running", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, lifeState: "Creating"}, cvm: &fakeNativeCvmAPI{}},
 		{name: "pool type is not native", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, poolType: "Managed"}, cvm: &fakeNativeCvmAPI{}},
 		{name: "pool machine type is CXM native", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, machineType: "Native"}, cvm: &fakeNativeCvmAPI{}},
-		{name: "pool is prepaid", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, instanceChargeType: "PREPAID"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "pool is postpaid", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, instanceChargeType: "POSTPAID_BY_HOUR"}, cvm: &fakeNativeCvmAPI{}},
+		{name: "prepaid config missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, omitInstanceChargePrepaid: true}, cvm: &fakeNativeCvmAPI{}},
+		{name: "prepaid period missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, omitPrepaidPeriod: true}, cvm: &fakeNativeCvmAPI{}},
+		{name: "prepaid auto renew", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, prepaidRenewFlag: "NOTIFY_AND_AUTO_RENEW"}, cvm: &fakeNativeCvmAPI{}},
 		{name: "pool ownership labels mismatch", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready, labelPackageId: "pro"}, cvm: &fakeNativeCvmAPI{}},
 		{name: "pool subnet missing", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}, vpc: &fakeNativeVpcAPI{omitSubnet: true}},
 		{name: "pool subnet lacks five ips", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", replicas: 2, maxReplicas: 10, readyReplicas: &ready}, cvm: &fakeNativeCvmAPI{}, vpc: &fakeNativeVpcAPI{availableIpCount: 4}},
@@ -1515,6 +1536,10 @@ func TestTencentSDKClientMutationRejectsConflictingPoolReadbackWithoutMutation(t
 		{name: "scaling missing", configure: func(api *fakeNativeTkeAPI) { api.omitScaling = true }},
 		{name: "max replicas insufficient", configure: func(api *fakeNativeTkeAPI) { api.maxReplicas = 1 }},
 		{name: "pool stopped", configure: func(api *fakeNativeTkeAPI) { api.lifeState = "Stopped" }},
+		{name: "pool is postpaid", configure: func(api *fakeNativeTkeAPI) { api.instanceChargeType = "POSTPAID_BY_HOUR" }},
+		{name: "prepaid config missing", configure: func(api *fakeNativeTkeAPI) { api.omitInstanceChargePrepaid = true }},
+		{name: "prepaid period missing", configure: func(api *fakeNativeTkeAPI) { api.omitPrepaidPeriod = true }},
+		{name: "prepaid auto renew", configure: func(api *fakeNativeTkeAPI) { api.prepaidRenewFlag = "NOTIFY_AND_AUTO_RENEW" }},
 	} {
 		for _, action := range []string{"create", "reconcile"} {
 			t.Run(testCase.name+"/"+action, func(t *testing.T) {
@@ -1577,7 +1602,7 @@ func TestTencentSDKClientMutationRejectsUnownedNodePoolWithoutMutation(t *testin
 		{name: "wrong instance type label", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", labelInstanceType: "SA5.2XLARGE16"}},
 		{name: "managed pool", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", poolType: "Managed"}},
 		{name: "legacy CXM native pool", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", machineType: "Native"}},
-		{name: "prepaid pool", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", instanceChargeType: "PREPAID"}},
+		{name: "postpaid pool", tke: &fakeNativeTkeAPI{nodePoolId: "np-basic", instanceChargeType: "POSTPAID_BY_HOUR"}},
 	}
 	for _, tc := range cases {
 		for _, action := range []string{"create", "reconcile"} {
@@ -2088,6 +2113,10 @@ func TestTencentSDKProviderTruthFailsClosedOnMissingOrMismatchedIdentity(t *test
 		}},
 		{name: "missing node pool", request: func() Request { request := providerTruthRequest(); request.Pool.NodePoolId = ""; return request }},
 		{name: "legacy CXM pool", request: providerTruthRequest, configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.machineType = "Native" }},
+		{name: "postpaid pool", request: providerTruthRequest, configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.instanceChargeType = "POSTPAID_BY_HOUR" }},
+		{name: "prepaid config missing", request: providerTruthRequest, configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.omitInstanceChargePrepaid = true }},
+		{name: "prepaid period missing", request: providerTruthRequest, configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.omitPrepaidPeriod = true }},
+		{name: "prepaid auto renew", request: providerTruthRequest, configure: func(tke *fakeNativeTkeAPI, _ *fakeNativeCvmAPI) { tke.prepaidRenewFlag = "NOTIFY_AND_AUTO_RENEW" }},
 		{name: "machine mismatch", request: func() Request {
 			request := providerTruthRequest()
 			request.Allocation.MachineName = "node-other"

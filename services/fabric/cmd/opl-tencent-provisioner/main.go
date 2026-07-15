@@ -271,13 +271,18 @@ func containsString(values []*string, expected string) bool {
 }
 
 func isCVMNativeNodePool(pool *tke2022.NodePool) bool {
-	return pool != nil && stringValue(pool.Type) == "Native" && pool.Native != nil &&
-		stringValue(pool.Native.MachineType) == "NativeCVM" && stringValue(pool.Native.InstanceChargeType) == "POSTPAID_BY_HOUR"
+	if pool == nil || pool.Native == nil || pool.Native.InstanceChargePrepaid == nil {
+		return false
+	}
+	prepaid := pool.Native.InstanceChargePrepaid
+	return stringValue(pool.Type) == "Native" && stringValue(pool.Native.MachineType) == "NativeCVM" &&
+		stringValue(pool.Native.InstanceChargeType) == "PREPAID" &&
+		prepaid.Period != nil && *prepaid.Period == 1 && stringValue(prepaid.RenewFlag) == "NOTIFY_AND_MANUAL_RENEW"
 }
 
 func mutationNodePoolFailure(pool *tke2022.NodePool, request Request, requestID string) *Response {
 	if !isCVMNativeNodePool(pool) {
-		return &Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Fabric compute requires a POSTPAID NativeCVM node pool.", ProviderRequestId: requestID, Retryable: false}
+		return &Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Fabric compute requires a one-month PREPAID NativeCVM node pool with manual renewal.", ProviderRequestId: requestID, Retryable: false}
 	}
 	lifeState := strings.TrimSpace(stringValue(pool.LifeState))
 	if strings.EqualFold(lifeState, "Creating") {
@@ -403,13 +408,12 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 	if len(foundSubnets) != len(subnetIds) {
 		return capacityFailure("tencent_capacity_subnet_unavailable", nil)
 	}
-	minimumRemainingQuota := ^uint64(0)
 	for _, zone := range zones {
 		availabilityRequest := cvm2017.NewDescribeZoneInstanceConfigInfosRequest()
 		availabilityRequest.Filters = []*cvm2017.Filter{
 			{Name: common.StringPtr("zone"), Values: []*string{common.StringPtr(zone)}},
 			{Name: common.StringPtr("instance-type"), Values: []*string{common.StringPtr(request.Pool.InstanceType)}},
-			{Name: common.StringPtr("instance-charge-type"), Values: []*string{common.StringPtr("POSTPAID_BY_HOUR")}},
+			{Name: common.StringPtr("instance-charge-type"), Values: []*string{common.StringPtr("PREPAID")}},
 		}
 		availability, err := client.nativeCvmClient.DescribeZoneInstanceConfigInfos(availabilityRequest)
 		if err != nil || availability == nil || availability.Response == nil {
@@ -418,7 +422,7 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		exactAvailability := 0
 		sell := false
 		for _, item := range availability.Response.InstanceTypeQuotaSet {
-			if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "POSTPAID_BY_HOUR" {
+			if item != nil && stringValue(item.Zone) == zone && stringValue(item.InstanceType) == request.Pool.InstanceType && stringValue(item.InstanceChargeType) == "PREPAID" {
 				exactAvailability++
 				sell = stringValue(item.Status) == "SELL"
 			}
@@ -426,34 +430,11 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		if exactAvailability != 1 || !sell {
 			return capacityFailure("tencent_capacity_instance_unavailable", nil)
 		}
-		quotaRequest := cvm2017.NewDescribeAccountQuotaRequest()
-		quotaRequest.Filters = []*cvm2017.Filter{
-			{Name: common.StringPtr("zone"), Values: []*string{common.StringPtr(zone)}},
-			{Name: common.StringPtr("quota-type"), Values: []*string{common.StringPtr("PostPaidQuotaSet")}},
-		}
-		quota, err := client.nativeCvmClient.DescribeAccountQuota(quotaRequest)
-		if err != nil || quota == nil || quota.Response == nil || quota.Response.AccountQuotaOverview == nil || quota.Response.AccountQuotaOverview.AccountQuota == nil {
-			return capacityFailure("tencent_capacity_quota_describe_failed", err)
-		}
-		remaining := (*uint64)(nil)
-		exactQuotas := 0
-		for _, item := range quota.Response.AccountQuotaOverview.AccountQuota.PostPaidQuotaSet {
-			if item != nil && stringValue(item.Zone) == zone {
-				exactQuotas++
-				remaining = item.RemainingQuota
-			}
-		}
-		if exactQuotas != 1 || remaining == nil || *remaining < uint64(required) {
-			return capacityFailure("tencent_capacity_quota_insufficient", nil)
-		}
-		if *remaining < minimumRemainingQuota {
-			minimumRemainingQuota = *remaining
-		}
 	}
 	return Response{
 		Ok: true, Status: "ready", ProviderRequestId: nodePoolRequestId, NodePoolId: stringValue(pool.NodePoolId),
 		InstanceType: request.Pool.InstanceType, InstanceAvailable: true, RequiredCapacity: required,
-		RemainingQuota: minimumRemainingQuota, CurrentReplicas: *native.Replicas, ReadyReplicas: *native.ReadyReplicas,
+		CurrentReplicas: *native.Replicas, ReadyReplicas: *native.ReadyReplicas,
 		MaxReplicas: *native.Scaling.MaxReplicas, TargetReplicas: *native.Replicas + required, MachineType: stringValue(native.MachineType), Zones: zones,
 	}
 }
@@ -1070,7 +1051,7 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 		return response
 	}
 	if !isCVMNativeNodePool(pool) {
-		return Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Provider truth requires a POSTPAID NativeCVM node pool.", ProviderRequestId: poolRequestID, Retryable: false}
+		return Response{Ok: false, ErrorCode: "tencent_cvm_node_pool_required", Message: "Provider truth requires a one-month PREPAID NativeCVM node pool with manual renewal.", ProviderRequestId: poolRequestID, Retryable: false}
 	}
 
 	machines, machineRequestID, err := client.describeClusterMachines(request.Pool.NodePoolId)
@@ -1618,19 +1599,22 @@ func buildCreateNativeNodePoolRequest(request Request, env map[string]string) (*
 			CreatePolicy: common.StringPtr("ZonePriority"),
 		},
 		SubnetIds:          stringsToPtrs(splitCsv(env["TENCENT_CVM_SUBNET_ID"])),
-		InstanceChargeType: common.StringPtr("POSTPAID_BY_HOUR"),
+		InstanceChargeType: common.StringPtr("PREPAID"),
+		InstanceChargePrepaid: &tke2022.InstanceChargePrepaid{
+			Period: common.Uint64Ptr(1), RenewFlag: common.StringPtr("NOTIFY_AND_MANUAL_RENEW"),
+		},
 		SystemDisk: &tke2022.Disk{
 			DiskType: common.StringPtr(defaultString(env["TENCENT_CVM_SYSTEM_DISK_TYPE"], "CLOUD_BSSD")),
 			DiskSize: common.Int64Ptr(int64(intFromEnv(env, "TENCENT_CVM_SYSTEM_DISK_SIZE_GB", 50))),
 		},
-		InstanceTypes:      []*string{common.StringPtr(request.Pool.InstanceType)},
-		SecurityGroupIds:   stringsToPtrs(splitCsv(env["TENCENT_CVM_SECURITY_GROUP_IDS"])),
-		AutoRepair:         common.BoolPtr(false),
-		EnableAutoscaling:  common.BoolPtr(false),
-		Replicas:           common.Int64Ptr(0),
-		MachineType:        common.StringPtr("NativeCVM"),
-		AutomationService:  common.BoolPtr(true),
-		RuntimeRootDir:     common.StringPtr("/var/lib/containerd"),
+		InstanceTypes:     []*string{common.StringPtr(request.Pool.InstanceType)},
+		SecurityGroupIds:  stringsToPtrs(splitCsv(env["TENCENT_CVM_SECURITY_GROUP_IDS"])),
+		AutoRepair:        common.BoolPtr(false),
+		EnableAutoscaling: common.BoolPtr(false),
+		Replicas:          common.Int64Ptr(0),
+		MachineType:       common.StringPtr("NativeCVM"),
+		AutomationService: common.BoolPtr(true),
+		RuntimeRootDir:    common.StringPtr("/var/lib/containerd"),
 	}
 	return createRequest, nil
 }
