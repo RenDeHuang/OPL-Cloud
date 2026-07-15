@@ -115,8 +115,12 @@ func fabricTestDatabaseURL(t *testing.T) string {
 	databaseURL := os.Getenv("FABRIC_TEST_DATABASE_URL")
 	optional := false
 	if databaseURL == "" {
-		databaseURL = "host=/var/run/postgresql dbname=postgres sslmode=disable"
-		optional = true
+		if os.Getenv("OPL_POSTGRES_TESTS") == "1" {
+			databaseURL = "connect_timeout=10"
+		} else {
+			databaseURL = "host=/var/run/postgresql dbname=postgres sslmode=disable"
+			optional = true
+		}
 	}
 	admin, err := sql.Open("postgres", databaseURL)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -431,21 +432,15 @@ func TestStoresRejectOrphanOrganizationAndMembershipWrites(t *testing.T) {
 }
 
 func TestPostgresLegacyMembershipMigrationIsLosslessAndFailClosed(t *testing.T) {
-	admin, err := sql.Open("postgres", "host=/var/run/postgresql dbname=postgres sslmode=disable")
-	if err != nil {
-		t.Skipf("open local postgres: %v", err)
-	}
+	admin := openControlPlaneTestPostgres(t)
 	defer admin.Close()
-	if err := admin.Ping(); err != nil {
-		t.Skipf("local postgres unavailable: %v", err)
-	}
 	schema := fmt.Sprintf("control_plane_membership_%d", time.Now().UnixNano())
 	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
 
-	db, err := sql.Open("postgres", "host=/var/run/postgresql dbname=postgres sslmode=disable search_path="+schema)
+	db, err := sql.Open("postgres", controlPlaneTestPostgresURL("postgres", schema))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,14 +485,8 @@ func TestPostgresLegacyMembershipMigrationIsLosslessAndFailClosed(t *testing.T) 
 }
 
 func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
-	admin, err := sql.Open("postgres", "host=/var/run/postgresql dbname=postgres sslmode=disable")
-	if err != nil {
-		t.Skipf("open local postgres: %v", err)
-	}
+	admin := openControlPlaneTestPostgres(t)
 	defer admin.Close()
-	if err := admin.Ping(); err != nil {
-		t.Skipf("local postgres unavailable: %v", err)
-	}
 	database := fmt.Sprintf("control_plane_fresh_%d", time.Now().UnixNano())
 	if _, err := admin.Exec(`CREATE DATABASE ` + database); err != nil {
 		t.Fatal(err)
@@ -506,7 +495,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 		_, _ = admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1`, database)
 		_, _ = admin.Exec(`DROP DATABASE ` + database)
 	})
-	legacy, err := sql.Open("postgres", "host=/var/run/postgresql dbname="+database+" sslmode=disable")
+	databaseURL := controlPlaneTestPostgresURL(database, "")
+	legacy, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +506,7 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	}
 	_ = legacy.Close()
 
-	store, err := NewPostgresEntStateStore("host=/var/run/postgresql dbname=" + database + " sslmode=disable")
+	store, err := NewPostgresEntStateStore(databaseURL)
 	if err != nil {
 		t.Fatalf("start store on fresh database: %v", err)
 	}
@@ -527,7 +517,7 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := store.(*postgresEntStateStore).client.Close(); err != nil {
 		t.Fatal(err)
 	}
-	check, err := sql.Open("postgres", "host=/var/run/postgresql dbname="+database+" sslmode=disable")
+	check, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +537,7 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := NewPostgresEntStateStore("host=/var/run/postgresql dbname=" + database + " sslmode=disable")
+	second, err := NewPostgresEntStateStore(databaseURL)
 	if err != nil {
 		t.Fatalf("start store a second time: %v", err)
 	}
@@ -568,6 +558,35 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if addedColumns != 0 {
 		t.Fatalf("second startup repeated DDL: added columns=%d", addedColumns)
 	}
+}
+
+func openControlPlaneTestPostgres(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("postgres", controlPlaneTestPostgresURL("postgres", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		if os.Getenv("OPL_POSTGRES_TESTS") != "1" {
+			t.Skipf("local PostgreSQL unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	return db
+}
+
+func controlPlaneTestPostgresURL(database, searchPath string) string {
+	var databaseURL string
+	if os.Getenv("OPL_POSTGRES_TESTS") == "1" {
+		databaseURL = "connect_timeout=10 dbname=" + database
+	} else {
+		databaseURL = "host=/var/run/postgresql dbname=" + database + " sslmode=disable"
+	}
+	if searchPath != "" {
+		databaseURL += " search_path=" + searchPath
+	}
+	return databaseURL
 }
 
 func assertMembershipRoles(t *testing.T, db *sql.DB, want []string) {
