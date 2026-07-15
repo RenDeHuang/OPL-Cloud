@@ -19,6 +19,7 @@
     "validate:production-manifest": "node tools/validate-production-manifest.ts"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.3.2",
     "@ant-design/pro-components": "^2.7.17",
     "@vitejs/plugin-react": "^4.3.4",
     "antd": "^5.29.3",
