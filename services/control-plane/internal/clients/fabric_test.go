@@ -10,6 +10,43 @@ import (
 	"testing"
 )
 
+func TestFabricHTTPClientWritesAccountGatewaySecret(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/fabric/gateway-secrets" || r.Header.Get("Idempotency-Key") != "workspace-once:gateway-secret" || r.Header.Get("Authorization") != "Bearer internal-secret" {
+			t.Fatalf("unexpected request: %s %s key=%q auth=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"), r.Header.Get("Authorization"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 2 || input["accountId"] != "acct-alpha" || input["gatewayApiKey"] != "workspace-key-secret" {
+			t.Fatalf("gateway secret input = %#v", input)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"secretRef": "opl-gateway-acct-alpha", "version": "v2", "fingerprint": "sha256:redacted"})
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	result, err := client.WriteGatewaySecret(context.Background(), GatewaySecretWriteInput{AccountID: "acct-alpha", GatewayAPIKey: "workspace-key-secret"}, "workspace-once:gateway-secret")
+	if err != nil || result.SecretRef != "opl-gateway-acct-alpha" || result.Version != "v2" || result.Fingerprint != "sha256:redacted" {
+		t.Fatalf("gateway secret result = %#v err=%v", result, err)
+	}
+}
+
+func TestFabricHTTPClientGatewaySecretErrorDoesNotLeakKey(t *testing.T) {
+	const secret = "workspace-key-secret"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, secret, http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client())
+	_, err := client.WriteGatewaySecret(context.Background(), GatewaySecretWriteInput{AccountID: "acct-alpha", GatewayAPIKey: secret}, "workspace-once:gateway-secret")
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("gateway secret error = %v", err)
+	}
+}
+
 func TestFabricTransferClientStreamsChunksAndContent(t *testing.T) {
 	body := []byte("content")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

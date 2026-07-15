@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ type FabricClient interface {
 	DestroyStorageVolume(ctx context.Context, id string, idempotencyKey string) (StorageVolume, error)
 	CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, idempotencyKey string) (StorageAttachment, error)
 	DetachStorageAttachment(ctx context.Context, id string, idempotencyKey string) (StorageAttachment, error)
+	WriteGatewaySecret(ctx context.Context, input GatewaySecretWriteInput, idempotencyKey string) (GatewaySecretWriteResult, error)
 	CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error)
 	DestroyWorkspaceRuntime(ctx context.Context, workspaceID string, idempotencyKey string) (WorkspaceRuntime, error)
 	WorkspaceRuntimeStatus(ctx context.Context, workspaceID string) (WorkspaceRuntime, error)
@@ -127,24 +129,24 @@ type ComputeAllocationInput struct {
 }
 
 type ComputeAllocation struct {
-	ID                  string `json:"id"`
-	AccountID           string `json:"accountId"`
-	WorkspaceID         string `json:"workspaceId"`
-	PackageID           string `json:"packageId"`
-	Status              string `json:"status"`
-	Provider            string `json:"provider"`
-	ProviderResourceID  string `json:"providerResourceId"`
-	ProviderRequestID   string `json:"providerRequestId"`
-	OperationID         string `json:"operationId,omitempty"`
-	ServiceName         string `json:"serviceName"`
-	PoolID              string `json:"poolId,omitempty"`
-	NodePoolID          string `json:"nodePoolId,omitempty"`
-	InstanceID          string `json:"instanceId,omitempty"`
-	CVMInstanceID       string `json:"cvmInstanceId,omitempty"`
-	NodeName            string `json:"nodeName,omitempty"`
-	MachineName         string `json:"machineName,omitempty"`
-	PrivateIP           string `json:"privateIp,omitempty"`
-	PublicIP            string `json:"publicIp,omitempty"`
+	ID                 string `json:"id"`
+	AccountID          string `json:"accountId"`
+	WorkspaceID        string `json:"workspaceId"`
+	PackageID          string `json:"packageId"`
+	Status             string `json:"status"`
+	Provider           string `json:"provider"`
+	ProviderResourceID string `json:"providerResourceId"`
+	ProviderRequestID  string `json:"providerRequestId"`
+	OperationID        string `json:"operationId,omitempty"`
+	ServiceName        string `json:"serviceName"`
+	PoolID             string `json:"poolId,omitempty"`
+	NodePoolID         string `json:"nodePoolId,omitempty"`
+	InstanceID         string `json:"instanceId,omitempty"`
+	CVMInstanceID      string `json:"cvmInstanceId,omitempty"`
+	NodeName           string `json:"nodeName,omitempty"`
+	MachineName        string `json:"machineName,omitempty"`
+	PrivateIP          string `json:"privateIp,omitempty"`
+	PublicIP           string `json:"publicIp,omitempty"`
 }
 
 type StorageVolumeInput struct {
@@ -155,15 +157,15 @@ type StorageVolumeInput struct {
 }
 
 type StorageVolume struct {
-	ID                  string `json:"id"`
-	AccountID           string `json:"accountId,omitempty"`
-	Provider            string `json:"provider,omitempty"`
-	ProviderResourceID  string `json:"providerResourceId,omitempty"`
-	ProviderRequestID   string `json:"providerRequestId"`
-	WorkspaceID         string `json:"workspaceId"`
-	Status              string `json:"status"`
-	SizeGB              int    `json:"sizeGb,omitempty"`
-	StorageClass        string `json:"storageClass,omitempty"`
+	ID                 string `json:"id"`
+	AccountID          string `json:"accountId,omitempty"`
+	Provider           string `json:"provider,omitempty"`
+	ProviderResourceID string `json:"providerResourceId,omitempty"`
+	ProviderRequestID  string `json:"providerRequestId"`
+	WorkspaceID        string `json:"workspaceId"`
+	Status             string `json:"status"`
+	SizeGB             int    `json:"sizeGb,omitempty"`
+	StorageClass       string `json:"storageClass,omitempty"`
 }
 
 type StorageSnapshotInput struct {
@@ -208,10 +210,22 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	WorkspaceID string `json:"workspaceId"`
-	ComputeID   string `json:"computeId"`
-	VolumeID    string `json:"volumeId"`
-	ImageID     string `json:"imageId"`
+	WorkspaceID      string `json:"workspaceId"`
+	ComputeID        string `json:"computeId"`
+	VolumeID         string `json:"volumeId"`
+	ImageID          string `json:"imageId"`
+	GatewaySecretRef string `json:"gatewaySecretRef"`
+}
+
+type GatewaySecretWriteInput struct {
+	AccountID     string `json:"accountId"`
+	GatewayAPIKey string `json:"gatewayApiKey"`
+}
+
+type GatewaySecretWriteResult struct {
+	SecretRef   string `json:"secretRef"`
+	Version     string `json:"version"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 type WorkspaceRuntime struct {
@@ -384,6 +398,21 @@ func (c *fabricHTTPClient) DetachStorageAttachment(ctx context.Context, id strin
 	var result StorageAttachment
 	err := c.post(ctx, "/fabric/storage-attachments/"+id+"/detach", map[string]string{}, idempotencyKey, &result)
 	return result, err
+}
+
+func (c *fabricHTTPClient) WriteGatewaySecret(ctx context.Context, input GatewaySecretWriteInput, idempotencyKey string) (GatewaySecretWriteResult, error) {
+	var result GatewaySecretWriteResult
+	if err := c.post(ctx, "/fabric/gateway-secrets", input, idempotencyKey, &result); err != nil {
+		var httpErr *FabricHTTPError
+		if errors.As(err, &httpErr) {
+			return result, &FabricHTTPError{StatusCode: httpErr.StatusCode}
+		}
+		return result, errors.New("fabric gateway secret request failed")
+	}
+	if result.SecretRef == "" || result.Version == "" || result.Fingerprint == "" {
+		return GatewaySecretWriteResult{}, errors.New("fabric gateway secret response invalid")
+	}
+	return result, nil
 }
 
 func (c *fabricHTTPClient) CreateWorkspaceRuntime(ctx context.Context, input WorkspaceRuntimeInput, idempotencyKey string) (WorkspaceRuntime, error) {

@@ -135,6 +135,10 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			break
 		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
 		storageID := stringValue(workspace["storageId"])
 		computeID := stringField(input, "computeAllocationId", "")
 		attachmentID := stringField(input, "attachmentId", "")
@@ -199,7 +203,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusConflict, "workspace_not_suspended")
 			return
 		}
-		resumed, err := service.ResumeWorkspace(r.Context(), controlplane.ResumeWorkspaceInput{WorkspaceID: workspaceID, AccountID: accountID, OwnerID: stringValue(workspace["ownerUserId"]), Name: stringValue(workspace["name"]), PackageID: stringValue(workspace["packageId"]), URL: stringValue(workspace["url"]), AttachmentID: attachmentID, ComputeID: computeID, VolumeID: storageID}, key)
+		resumed, err := service.ResumeWorkspace(r.Context(), controlplane.ResumeWorkspaceInput{WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID, OwnerID: stringValue(workspace["ownerUserId"]), Name: stringValue(workspace["name"]), PackageID: stringValue(workspace["packageId"]), URL: stringValue(workspace["url"]), AttachmentID: attachmentID, ComputeID: computeID, VolumeID: storageID}, key)
 		if err != nil {
 			if failErr := app.tables.FailWorkspaceResume(r.Context(), workspaceID, operationID, "fabric_resume_failed"); failErr != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
@@ -275,14 +279,19 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			}
 			return
 		}
+		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
 		workspace, err := service.CreateWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
-			AccountID:    accountID,
-			OwnerID:      firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", "")),
-			Name:         firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace")),
-			PackageID:    firstNonEmpty(stringField(input, "packageId", ""), stringValue(attachment["packageId"]), "basic"),
-			AttachmentID: attachmentID,
-			ComputeID:    computeID,
-			VolumeID:     storageID,
+			AccountID:     accountID,
+			Sub2APIUserID: sub2APIUserID,
+			OwnerID:       firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", "")),
+			Name:          firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace")),
+			PackageID:     firstNonEmpty(stringField(input, "packageId", ""), stringValue(attachment["packageId"]), "basic"),
+			AttachmentID:  attachmentID,
+			ComputeID:     computeID,
+			VolumeID:      storageID,
 		}, mutationKey(r, input))
 		if err != nil {
 			writeUpstreamError(w)

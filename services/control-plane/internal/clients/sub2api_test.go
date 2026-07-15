@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func writeSub2APISuccess(t *testing.T, w http.ResponseWriter, data any) {
 
 func rejectForbiddenSub2APIRoute(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
 	t.Helper()
-	for _, forbidden := range []string{"/balance", "/usage", "/api-keys"} {
+	for _, forbidden := range []string{"/balance", "/usage"} {
 		if strings.Contains(r.URL.Path, forbidden) {
 			t.Errorf("client called forbidden Sub2API route %s", r.URL.Path)
 			http.Error(w, "forbidden fixture route", http.StatusTeapot)
@@ -71,7 +72,7 @@ func TestSub2APIClientLogsInRefreshesOnceAndParsesDecimalBalance(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer access-two" {
 				t.Errorf("unexpected authorization header %q", r.Header.Get("Authorization"))
 			}
-			writeSub2APISuccess(t, w, json.RawMessage(`{"id":41,"balance":12.345678}`))
+			writeSub2APISuccess(t, w, json.RawMessage(`{"id":41,"balance":12.345678,"status":"active"}`))
 		default:
 			t.Errorf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -82,11 +83,139 @@ func TestSub2APIClientLogsInRefreshesOnceAndParsesDecimalBalance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read balance: %v", err)
 	}
-	if balance.UserID != 41 || balance.USDMicros != 12_345_678 {
+	if balance.UserID != 41 || balance.USDMicros != 12_345_678 || balance.Status != "active" {
 		t.Fatalf("balance = %#v", balance)
 	}
 	if loginCalls != 1 || refreshCalls != 1 || userCalls != 2 {
 		t.Fatalf("calls login=%d refresh=%d user=%d", loginCalls, refreshCalls, userCalls)
+	}
+}
+
+func TestSub2APIClientSelectsOneActiveWorkspaceKeyAcrossPages(t *testing.T) {
+	pages := []string{}
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41/api-keys":
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer access" || r.URL.Query().Get("page_size") != "1000" {
+				t.Fatalf("unexpected key request: %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
+			}
+			page := r.URL.Query().Get("page")
+			pages = append(pages, page)
+			if page == "1" {
+				writeSub2APISuccess(t, w, map[string]any{
+					"items": []any{
+						map[string]any{"id": 1, "user_id": 41, "name": "opl-workspace", "key": "inactive-key", "status": "disabled"},
+						map[string]any{"id": 2, "user_id": 41, "name": "other", "key": "other-key", "status": "active"},
+					},
+					"total": 3, "page": 1, "page_size": 1000, "pages": 2,
+				})
+				return
+			}
+			writeSub2APISuccess(t, w, map[string]any{
+				"items": []any{map[string]any{
+					"id": 9, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-secret", "status": "active",
+					"quota": 100.000001, "quota_used": 12.345678, "usage_5h": 1.000001, "usage_1d": 2.000002, "usage_7d": 3.000003,
+					"last_used_at": "2026-07-16T01:02:03Z",
+				}},
+				"total": 3, "page": 2, "page_size": 1000, "pages": 2,
+			})
+		default:
+			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
+		}
+	}, []string{"0.1.155"}, time.Second)
+
+	key, err := client.WorkspaceKey(context.Background(), 41)
+	if err != nil {
+		t.Fatalf("workspace key: %v", err)
+	}
+	if key.ID != 9 || key.UserID != 41 || key.Name != "opl-workspace" || key.Key != "workspace-key-secret" || key.Status != "active" {
+		t.Fatalf("workspace key identity = %#v", key)
+	}
+	if key.QuotaUSDMicros != 100_000_001 || key.QuotaUsedUSDMicros != 12_345_678 || key.Usage5hUSDMicros != 1_000_001 || key.Usage1dUSDMicros != 2_000_002 || key.Usage7dUSDMicros != 3_000_003 {
+		t.Fatalf("workspace key usage = %#v", key)
+	}
+	if key.LastUsedAt == nil || key.LastUsedAt.Format(time.RFC3339) != "2026-07-16T01:02:03Z" {
+		t.Fatalf("workspace key last used = %#v", key.LastUsedAt)
+	}
+	if !slices.Equal(pages, []string{"1", "2"}) {
+		t.Fatalf("key pages = %#v", pages)
+	}
+}
+
+func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		items []map[string]any
+		want  error
+	}{
+		"missing": {items: []map[string]any{{"id": 1, "user_id": 41, "name": "other", "key": "other-key", "status": "active"}}, want: ErrSub2APIWorkspaceKeyMissing},
+		"ambiguous": {items: []map[string]any{
+			{"id": 1, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-one", "status": "active"},
+			{"id": 2, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-two", "status": "active"},
+		}, want: ErrSub2APIWorkspaceKeyAmbiguous},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/users/41/api-keys":
+					writeSub2APISuccess(t, w, map[string]any{"items": tc.items, "total": len(tc.items), "page": 1, "page_size": 1000, "pages": 1})
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, []string{"0.1.155"}, time.Second)
+			if _, err := client.WorkspaceKey(context.Background(), 41); !errors.Is(err, tc.want) {
+				t.Fatalf("workspace key error = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSub2APIClientWorkspaceKeyRejectsCrossUserAndDoesNotLeakKey(t *testing.T) {
+	const secret = "workspace-key-secret"
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41/api-keys":
+			writeSub2APISuccess(t, w, map[string]any{"items": []map[string]any{{"id": 1, "user_id": 42, "name": "opl-workspace", "key": secret, "status": "active"}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, []string{"0.1.155"}, time.Second)
+	if _, err := client.WorkspaceKey(context.Background(), 41); err == nil || strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "identity mismatch") {
+		t.Fatalf("cross-user workspace key error = %v", err)
+	}
+}
+
+func TestSub2APIClientWorkspaceKeyBoundsAndRedactsUpstreamResponses(t *testing.T) {
+	const secret = "workspace-key-secret"
+	for name, handler := range map[string]http.HandlerFunc{
+		"too large": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprintf(w, `{"code":0,"data":{"items":[],"padding":"%s"}}`, strings.Repeat("x", maxSub2APIResponseBytes))
+		},
+		"upstream error": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, secret, http.StatusInternalServerError)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/auth/login" {
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+					return
+				}
+				handler(w, r)
+			}, []string{"0.1.155"}, time.Second)
+			_, err := client.WorkspaceKey(context.Background(), 41)
+			if err == nil || strings.Contains(err.Error(), secret) {
+				t.Fatalf("workspace key error = %v", err)
+			}
+			if name == "too large" && !errors.Is(err, ErrSub2APIResponseTooLarge) {
+				t.Fatalf("workspace key error = %v, want response too large", err)
+			}
+		})
 	}
 }
 

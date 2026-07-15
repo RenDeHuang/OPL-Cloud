@@ -253,7 +253,8 @@ func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testin
 
 func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	calls := []string{}
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	fabric := &fakeFabricClient{calls: &calls}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
 
 	compute := createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	storage := createResource(t, server, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
@@ -294,9 +295,21 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	if slices.Contains(calls[3:], "fabric.compute") || slices.Contains(calls[3:], "fabric.storage") {
 		t.Fatalf("workspace create must not allocate replacement resources: %#v", calls)
 	}
+	if len(calls) < 5 || !slices.Equal(calls[3:5], []string{"fabric.gateway-secret", "fabric.runtime"}) {
+		t.Fatalf("workspace must write account Gateway Secret before runtime: %#v", calls)
+	}
+	if len(fabric.gatewaySecretInputs) != 1 || fabric.gatewaySecretInputs[0].AccountID != "acct-alpha" || fabric.gatewaySecretInputs[0].GatewayAPIKey != "workspace-key-secret" {
+		t.Fatalf("workspace Gateway Secret input = %#v", fabric.gatewaySecretInputs)
+	}
+	if len(fabric.runtimeInputs) != 1 || fabric.runtimeInputs[0].GatewaySecretRef != "opl-gateway-acct-alpha" {
+		t.Fatalf("workspace runtime input = %#v", fabric.runtimeInputs)
+	}
+	if strings.Contains(rec.Body.String(), "workspace-key-secret") {
+		t.Fatalf("workspace response leaked Gateway key: %s", rec.Body.String())
+	}
 	management := requestWithSession(t, server, session, http.MethodGet, "/api/management/state", "")
-	if strings.Contains(management.Body.String(), "runtime-password-alpha") {
-		t.Fatalf("Control Plane persisted Workspace password in state or audit: %s", management.Body.String())
+	if strings.Contains(management.Body.String(), "runtime-password-alpha") || strings.Contains(management.Body.String(), "workspace-key-secret") {
+		t.Fatalf("Control Plane persisted Workspace credential in state or audit: %s", management.Body.String())
 	}
 }
 
@@ -336,7 +349,8 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-replacement", "storageId": "storage-alpha", "status": "attached"}))
 	mustStore(t, store.SaveProjectTaskSyncHead(context.Background(), map[string]any{"id": "project-alpha", "workspaceId": "workspace-alpha", "projectId": "project-alpha", "taskId": "task-alpha", "version": int64(7)}))
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	fabric := &fakeFabricClient{calls: &calls}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
 	if err != nil {
 		t.Fatalf("create resume server: %v", err)
 	}
@@ -401,11 +415,15 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 	if result["id"] != "workspace-alpha" || result["url"] != "https://workspace.medopl.cn/w/workspace-alpha/" || result["storageId"] != "storage-alpha" || result["currentComputeAllocationId"] != "compute-replacement" || result["currentAttachmentId"] != "attachment-replacement" {
 		t.Fatalf("resume changed stable identity or missed replacement resources: %#v", result)
 	}
-	if got := calls[before:]; !slices.Equal(got, []string{"fabric.runtime"}) {
+	if got := calls[before:]; !slices.Equal(got, []string{"fabric.gateway-secret", "fabric.runtime"}) {
 		t.Fatalf("resume Fabric calls = %#v", got)
 	}
+	if len(fabric.gatewaySecretInputs) != 1 || fabric.gatewaySecretInputs[0].AccountID != "acct-alpha" || fabric.gatewaySecretInputs[0].GatewayAPIKey != "workspace-key-secret" ||
+		len(fabric.runtimeInputs) != 1 || fabric.runtimeInputs[0].GatewaySecretRef != "opl-gateway-acct-alpha" {
+		t.Fatalf("resume Gateway Secret handoff = secret %#v runtime %#v", fabric.gatewaySecretInputs, fabric.runtimeInputs)
+	}
 	replayed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if replayed.Code != http.StatusOK || len(calls[before:]) != 1 {
+	if replayed.Code != http.StatusOK || len(calls[before:]) != 2 {
 		t.Fatalf("resume replay = %d calls=%#v body=%s", replayed.Code, calls[before:], replayed.Body.String())
 	}
 	var replayedResult map[string]any
@@ -413,7 +431,7 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 		t.Fatalf("resume replay changed prior result: first=%#v replay=%#v err=%v", result, replayedResult, err)
 	}
 	changed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-other","attachmentId":"attachment-replacement"}`)
-	if changed.Code != http.StatusConflict || !strings.Contains(changed.Body.String(), "idempotency_conflict") || len(calls[before:]) != 1 {
+	if changed.Code != http.StatusConflict || !strings.Contains(changed.Body.String(), "idempotency_conflict") || len(calls[before:]) != 2 {
 		t.Fatalf("changed resume replay = %d calls=%#v body=%s", changed.Code, calls[before:], changed.Body.String())
 	}
 	stored, _ := store.ListWorkspaces(context.Background(), "")
@@ -443,6 +461,7 @@ func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T
 		t.Fatal(err)
 	}
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
+	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": "acct-alpha", "status": "active", "sub2apiUserId": int64(41)}))
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
@@ -937,17 +956,33 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 type fakeLedgerClient struct{}
 
 type testSub2APIClient struct {
-	mu      sync.Mutex
-	balance int64
-	charges map[string]int64
+	mu                  sync.Mutex
+	balance             int64
+	charges             map[string]int64
+	workspaceKey        clients.Sub2APIWorkspaceKey
+	workspaceKeyErr     error
+	workspaceKeyUserIDs []int64
 }
 
-func (*testSub2APIClient) Version(context.Context) (string, error) { return "0.1.151", nil }
+func (*testSub2APIClient) Version(context.Context) (string, error) { return "0.1.155", nil }
 
 func (c *testSub2APIClient) Balance(_ context.Context, userID int64) (clients.Sub2APIBalance, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return clients.Sub2APIBalance{UserID: userID, USDMicros: c.balance}, nil
+	return clients.Sub2APIBalance{UserID: userID, USDMicros: c.balance, Status: "active"}, nil
+}
+
+func (c *testSub2APIClient) WorkspaceKey(_ context.Context, userID int64) (clients.Sub2APIWorkspaceKey, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.workspaceKeyUserIDs = append(c.workspaceKeyUserIDs, userID)
+	if c.workspaceKeyErr != nil {
+		return clients.Sub2APIWorkspaceKey{}, c.workspaceKeyErr
+	}
+	if c.workspaceKey.ID != 0 {
+		return c.workspaceKey, nil
+	}
+	return clients.Sub2APIWorkspaceKey{ID: 9, UserID: userID, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active"}, nil
 }
 
 func (c *testSub2APIClient) Charge(_ context.Context, input clients.Sub2APIChargeInput) (clients.Sub2APICharge, error) {
@@ -1043,9 +1078,12 @@ func (catalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 }
 
 type fakeFabricClient struct {
-	calls         *[]string
-	runtime       clients.WorkspaceRuntime
-	runtimeStatus clients.WorkspaceRuntime
+	calls               *[]string
+	runtime             clients.WorkspaceRuntime
+	runtimeStatus       clients.WorkspaceRuntime
+	gatewaySecret       clients.GatewaySecretWriteResult
+	gatewaySecretInputs []clients.GatewaySecretWriteInput
+	runtimeInputs       []clients.WorkspaceRuntimeInput
 }
 
 type provisioningComputeFabricClient struct{ fakeFabricClient }
@@ -1144,8 +1182,18 @@ func (f *fakeFabricClient) DetachStorageAttachment(_ context.Context, id string,
 	return clients.StorageAttachment{ID: id, Status: "detached", ProviderRequestID: "attachment-detach-from-fabric"}, nil
 }
 
+func (f *fakeFabricClient) WriteGatewaySecret(_ context.Context, input clients.GatewaySecretWriteInput, _ string) (clients.GatewaySecretWriteResult, error) {
+	f.record("fabric.gateway-secret")
+	f.gatewaySecretInputs = append(f.gatewaySecretInputs, input)
+	if f.gatewaySecret.SecretRef != "" {
+		return f.gatewaySecret, nil
+	}
+	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v1", Fingerprint: "sha256:redacted"}, nil
+}
+
 func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, _ string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime")
+	f.runtimeInputs = append(f.runtimeInputs, input)
 	if f.runtime.ID != "" {
 		return f.runtime, nil
 	}
