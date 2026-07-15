@@ -59,7 +59,7 @@ function App() {
       redirectToLogin(window.location.pathname);
       return;
     }
-    if (route.requiresAdmin && session?.user?.role !== "admin") {
+    if (route.requiresAdmin && session?.isOperator !== true) {
       navigate(routeTo("error.forbidden"));
     }
   }, [authChecked, route, session]);

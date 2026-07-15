@@ -2,6 +2,7 @@ import "antd/dist/reset.css";
 import { ProLayout } from "@ant-design/pro-components";
 import { Button, Tag } from "antd";
 import { LogOut, UserRound } from "lucide-react";
+import { useEffect } from "react";
 import { logout as logoutSession } from "../api/auth-api.ts";
 import { navigate, routeTo } from "../consoleRoutes.ts";
 import { renderConsoleRoute } from "../routes/route-registry.tsx";
@@ -10,7 +11,7 @@ import { buildMenu } from "./shared/console-menu.tsx";
 import OplAppLogo from "./shared/OplAppLogo.tsx";
 
 export default function ConsolePage({ route, session, onLogout }: any) {
-  const isAdmin = session.user.role === "admin";
+  const isAdmin = session.isOperator === true;
   const path = window.location.pathname;
   const consoleState = useConsoleState({ isAdmin, path, csrfToken: session.csrfToken, accountId: session.user?.accountId || "" });
 
@@ -21,6 +22,22 @@ export default function ConsolePage({ route, session, onLogout }: any) {
       onLogout();
       navigate(routeTo("public.home"));
     }
+  }
+
+  useEffect(() => {
+    if (consoleState.loadError === "not_authenticated") onLogout();
+  }, [consoleState.loadError, onLogout]);
+
+  if (!consoleState.state && consoleState.loadError) {
+    return (
+      <div className="loading">
+        <div className="loadFailure" role="alert">
+          <strong>无法加载 OPL Console</strong>
+          <span>{consoleState.loadError}</span>
+          <Button onClick={() => consoleState.refresh()}>重试</Button>
+        </div>
+      </div>
+    );
   }
 
   if (!consoleState.state) return <div className="loading">Loading OPL Console...</div>;

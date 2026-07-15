@@ -163,7 +163,7 @@ func (app *controlPlaneServer) importBootstrapUsers() error {
 		if err != nil {
 			return err
 		}
-		if err := app.ensureBootstrapOwnerMembership(stored); err != nil {
+		if err := app.ensureBootstrapMembership(stored); err != nil {
 			return err
 		}
 	}
@@ -216,8 +216,8 @@ func (app *controlPlaneServer) upsertBootstrapUser(seed map[string]any) (map[str
 	return cloneMap(seed), app.tables.SaveUser(context.Background(), seed)
 }
 
-func (app *controlPlaneServer) ensureBootstrapOwnerMembership(user map[string]any) error {
-	if stringValue(user["role"]) != "owner" {
+func (app *controlPlaneServer) ensureBootstrapMembership(user map[string]any) error {
+	if isOperatorUser(user) {
 		return nil
 	}
 	accountID := stringValue(user["accountId"])
@@ -257,7 +257,7 @@ func (app *controlPlaneServer) ensureBootstrapOwnerMembership(user map[string]an
 			return err
 		}
 	}
-	_, err = app.createMembership(map[string]any{"organizationId": stringValue(organization["id"]), "userId": stringValue(user["id"]), "accountId": accountID, "role": "owner"})
+	_, err = app.createMembership(map[string]any{"organizationId": stringValue(organization["id"]), "userId": stringValue(user["id"]), "accountId": accountID, "role": stringValue(user["role"])})
 	return err
 }
 
@@ -354,7 +354,7 @@ func (app *controlPlaneServer) createSession(user map[string]any) (map[string]an
 	if err := app.tables.SaveSession(context.Background(), map[string]any{"id": sessionKey, "userId": stringValue(user["id"]), "csrf": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}); err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"user": sanitizeUser(user), "csrfToken": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}, sessionID, nil
+	return map[string]any{"user": sanitizeUser(user), "isOperator": isOperatorUser(user), "csrfToken": csrf, "expiresAt": expiresAt.Format(time.RFC3339)}, sessionID, nil
 }
 
 func (app *controlPlaneServer) session(r *http.Request) (map[string]any, bool) {
@@ -386,7 +386,7 @@ func (app *controlPlaneServer) session(r *http.Request) (map[string]any, bool) {
 			return nil, false
 		}
 	}
-	return map[string]any{"user": sanitizeUser(user), "csrfToken": stringValue(session["csrf"]), "expiresAt": expiresAt.Format(time.RFC3339)}, true
+	return map[string]any{"user": sanitizeUser(user), "isOperator": isOperatorUser(user), "csrfToken": stringValue(session["csrf"]), "expiresAt": expiresAt.Format(time.RFC3339)}, true
 }
 
 func isOperatorUser(user map[string]any) bool {
