@@ -167,6 +167,10 @@ export async function productionReadiness({ env = process.env, commandExists = (
     const command = tool.startsWith("env:") ? env[tool.slice(4)] : tool;
     if (!command || !(await commandExists(command))) missingTools.push(command || tool);
   }
+  const providerEnvReady = providerConfig.requiredEnv.every(hasEnv) && (
+    provider !== PROVIDERS.TENCENT_TKE ||
+    String(env.OPL_TENCENT_ZONE).replace(/-\d+$/, "") === String(env.TENCENTCLOUD_REGION)
+  );
 
   const checks = [
     check("runtime_provider", provider === PROVIDERS.TENCENT_TKE, "OPL_RUNTIME_PROVIDER must be tencent-tke"),
@@ -181,7 +185,7 @@ export async function productionReadiness({ env = process.env, commandExists = (
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),
     check("auth_seed", hasProductionAuthSeed(env), "OPL_CONSOLE_USERS_JSON or explicit PI/Admin auth credentials are required for production"),
-    check("provider_env", providerConfig.requiredEnv.every(hasEnv), "Runtime provider environment is incomplete"),
+    check("provider_env", providerEnvReady, "Runtime provider environment is incomplete or its Tencent zone and region do not match"),
     check("live_mutation_guard", env.RUN_TENCENT_CREATE_RELEASE_EXECUTION === "1", "RUN_TENCENT_CREATE_RELEASE_EXECUTION must be 1 for production compute allocation"),
     check("tools", missingTools.length === 0, "Required production tools are missing")
   ];

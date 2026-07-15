@@ -267,6 +267,7 @@ test("TKE deploy installs Sub2API credentials and validates account mappings", a
   assert.match(install, /user\.sub2apiUserId > 0/);
   assert.equal(currentJob.env.OPL_SUB2API_SUPPORTED_VERSIONS, supportedSub2apiVersions);
   assert.equal(currentJob.env.OPL_TENCENT_ZONE, "${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}");
+  assert.equal(currentJob.env.TENCENTCLOUD_REGION, "${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}");
   assert.equal(Object.hasOwn(currentJob.env, "OPL_CODEX_API_KEY"), false);
   assert.doesNotMatch(install, /OPL_CODEX_API_KEY|opl-cloud-workspace-codex/);
   assert.doesNotMatch(install, /console\.log\([^)]*(?:password|auth-users-json)/i);
@@ -408,7 +409,11 @@ test("TKE live QA failure schedules a self-hosted rollback from the captured ima
   assert.deepEqual(rollback.needs, ["deploy", "live-qa"]);
   assert.match(String(rollback.if), /always\(\).*needs\.deploy\.outputs\.rollback_image_set != ''.*needs\.deploy\.result != 'success'.*needs\.live-qa\.result != 'success'/);
   assert.deepEqual(rollback["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(rollback.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
+  assert.equal(steps.get("Set up Node")?.uses, "actions/setup-node@v4");
+  assert.equal(steps.get("Set up Node")?.with?.["node-version"], "22");
   assert.equal(steps.get("Download rollback image set")?.uses, "actions/download-artifact@v4");
+  assert.equal(Object.hasOwn(rollback.env, "OPL_CLOUD_IMAGE"), false);
   assert.match(restore, /source tools\/tke-image-rollout\.sh/);
   assert.match(restore, /restore_previous_images/);
   assert.doesNotMatch(restore, /set \+e/);
@@ -435,13 +440,13 @@ test("TKE rollback functions restore, read back, and reapply every Cloud and App
       set -Eeuo pipefail
       rollback_dir="$TEST_ROOT/previous-images"
       workspace_images="$rollback_dir/workspace-images.tsv"
-      config_image="$OPL_WORKSPACE_IMAGE"
+      config_image="\${TEST_CURRENT_WORKSPACE_IMAGE:-$OPL_WORKSPACE_IMAGE}"
       declare -A images=(
-        [opl-cloud-control-plane]="$OPL_CLOUD_IMAGE"
-        [opl-cloud-ledger]="$OPL_CLOUD_IMAGE"
-        [opl-cloud-fabric]="$OPL_CLOUD_IMAGE"
-        [workspace-slot-1]="$OPL_WORKSPACE_IMAGE"
-        [workspace-late]="$OPL_WORKSPACE_IMAGE"
+        [opl-cloud-control-plane]="\${TEST_CURRENT_CLOUD_IMAGE:-$OPL_CLOUD_IMAGE}"
+        [opl-cloud-ledger]="\${TEST_CURRENT_CLOUD_IMAGE:-$OPL_CLOUD_IMAGE}"
+        [opl-cloud-fabric]="\${TEST_CURRENT_CLOUD_IMAGE:-$OPL_CLOUD_IMAGE}"
+        [workspace-slot-1]="\${TEST_CURRENT_WORKSPACE_IMAGE:-$OPL_WORKSPACE_IMAGE}"
+        [workspace-late]="\${TEST_CURRENT_WORKSPACE_IMAGE:-$OPL_WORKSPACE_IMAGE}"
       )
       : > "$TEST_ROOT/kubectl.log"
       kubectl() {
@@ -485,6 +490,10 @@ test("TKE rollback functions restore, read back, and reapply every Cloud and App
         esac
       }
 ${functions}
+      if [ "\${TEST_ROLLBACK_JOB_ONLY:-0}" = "1" ]; then
+        restore_previous_images
+        exit 0
+      fi
       if [ "\${TEST_FAILURE_MODE:-0}" = "1" ]; then
         set +e
         restore_previous_images
@@ -517,6 +526,24 @@ ${functions}
       assert.equal(log.match(new RegExp(`get deployment/${deployment}`, "g"))?.length, 2, `${deployment} must be read back after restore and reapply`);
     }
     assert.equal(log.match(/get configmap opl-cloud-config/g)?.length, 2, "candidate and previous ConfigMap values must both be read back");
+
+    const rollbackJobEnv = {
+      ...process.env,
+      KUBECONFIG: "/dev/null",
+      OPL_K8S_NAMESPACE: "opl-test",
+      TEST_CURRENT_CLOUD_IMAGE: candidateCloud,
+      TEST_CURRENT_WORKSPACE_IMAGE: candidateWorkspace,
+      TEST_ROLLBACK_JOB_ONLY: "1",
+      TEST_ROOT: root
+    };
+    delete rollbackJobEnv.OPL_CLOUD_IMAGE;
+    delete rollbackJobEnv.OPL_WORKSPACE_IMAGE;
+    const rollbackOnly = spawnSync("bash", ["-c", harness], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: rollbackJobEnv
+    });
+    assert.equal(rollbackOnly.status, 0, rollbackOnly.stderr);
 
     const failedRestore = spawnSync("bash", ["-c", harness], {
       cwd: fileURLToPath(repoFile(".")),

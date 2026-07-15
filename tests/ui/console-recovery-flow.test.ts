@@ -35,6 +35,12 @@ test("session bootstrap treats only HTTP 401 as signed out and sends a timeout s
 
   globalThis.fetch = async () => jsonResponse({ error: "auth_backend_unavailable" }, 503);
   await assert.rejects(currentSession(), /auth_backend_unavailable/);
+
+  globalThis.fetch = async () => jsonResponse({}, 200);
+  await assert.rejects(currentSession(), /session_check_failed/);
+
+  globalThis.fetch = async () => new Response("not-json", { status: 200 });
+  await assert.rejects(currentSession(), /session_check_failed/);
 });
 
 test("all Console requests use the native ten-second timeout", async () => {
@@ -63,7 +69,7 @@ test("auth, lazy route, and account state expose distinct recovery states", asyn
   assert.match(mainSource, /重试/);
   assert.match(mainSource, /正在加载 Console 界面/);
   assert.match(consoleSource, /正在加载账号数据/);
-  assert.match(mainSource, /redirectToLogin\(window\.location\.pathname\)/);
+  assert.match(mainSource, /redirectToLogin\(window\.location\.pathname \+ window\.location\.search \+ window\.location\.hash\)/);
   assert.match(mainSource, /authRedirectTarget\(\)/);
 });
 

@@ -67,7 +67,7 @@ jobs:
       OPL_SUB2API_REQUEST_TIMEOUT_MS: ${{ vars.OPL_SUB2API_REQUEST_TIMEOUT_MS || '5000' }}
       TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
       TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
-      TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || vars.TENCENT_TCR_REGION || 'na-siliconvalley' }}
+      TENCENTCLOUD_REGION: ${{ vars.TENCENTCLOUD_REGION || 'na-siliconvalley' }}
       TENCENT_DEPLOY_CLUSTER_ID: ${{ vars.TENCENT_DEPLOY_CLUSTER_ID }}
       TENCENT_CVM_SUBNET_ID: ${{ vars.TENCENT_CVM_SUBNET_ID }}
       TENCENT_CVM_SECURITY_GROUP_IDS: ${{ vars.TENCENT_CVM_SECURITY_GROUP_IDS }}
@@ -520,13 +520,18 @@ jobs:
     environment: production
     env:
       OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
-      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/var/run/opl-cloud/kubeconfig/kubeconfig' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
       TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
       TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Prepare rollback kubeconfig
         shell: bash

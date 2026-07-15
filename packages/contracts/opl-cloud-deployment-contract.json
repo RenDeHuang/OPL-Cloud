@@ -344,12 +344,17 @@
     ],
     "steps": [
       "Checkout",
+      "Set up Node",
       "Prepare rollback kubeconfig",
       "Download rollback image set",
       "Restore previous Cloud and App images",
       "Remove rollback kubeconfig"
     ],
     "requiredCommandsByStep": {
+      "Set up Node": [
+        "node-version",
+        "22"
+      ],
       "Prepare rollback kubeconfig": [
         "TENCENT_DEPLOY_KUBECONFIG_PATH",
         "TENCENT_DEPLOY_KUBECONFIG_B64",

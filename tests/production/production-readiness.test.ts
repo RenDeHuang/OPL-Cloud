@@ -47,7 +47,7 @@ const tkeProductionEnv = {
   ]),
   TENCENTCLOUD_SECRET_ID: "secret-id",
   TENCENTCLOUD_SECRET_KEY: "secret-key",
-  TENCENTCLOUD_REGION: "ap-guangzhou",
+  TENCENTCLOUD_REGION: "na-siliconvalley",
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig",
   TENCENT_DEPLOY_CLUSTER_ID: "cls-123",
   TENCENT_CVM_SUBNET_ID: "subnet-123",
@@ -176,6 +176,16 @@ test("productionReadiness rejects a blank service-side launch zone", async () =>
   });
 
   assert.ok(report.missingEnv.includes("OPL_TENCENT_ZONE"));
+  assert.ok(report.failedChecks.includes("provider_env"));
+});
+
+test("productionReadiness rejects a launch zone outside the configured Tencent region", async () => {
+  const report = await productionReadiness({
+    env: { ...tkeProductionEnv, OPL_TENCENT_ZONE: "ap-guangzhou-3" },
+    commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+  });
+
+  assert.equal(report.ready, false);
   assert.ok(report.failedChecks.includes("provider_env"));
 });
 

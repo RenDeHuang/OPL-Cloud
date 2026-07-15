@@ -148,10 +148,13 @@ wait_cloud_rollouts() {
   local deployment container expected_image current_image
   for deployment in opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric; do
     container="${deployment#opl-cloud-}"
-    expected_image="$OPL_CLOUD_IMAGE"
-    if [ "$mode" = "previous" ] && ! expected_image="$(cat "$rollback_dir/$deployment")"; then
-      expected_image=""
-      failed=1
+    if [ "$mode" = "previous" ]; then
+      if ! expected_image="$(cat "$rollback_dir/$deployment")"; then
+        expected_image=""
+        failed=1
+      fi
+    else
+      expected_image="$OPL_CLOUD_IMAGE"
     fi
     kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout restart "deployment/$deployment" || failed=1
     kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status "deployment/$deployment" --timeout=300s || failed=1
