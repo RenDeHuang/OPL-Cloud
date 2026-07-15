@@ -21,6 +21,7 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_SUB2API_BASE_URL, "https://gflabtoken.cn");
   assert.equal(config.data.OPL_SUB2API_SUPPORTED_VERSIONS, "0.1.156,0.1.155");
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "5000");
+  assert.equal(config.data.TENCENTCLOUD_REGION, "na-siliconvalley");
   assert.equal(config.data.OPL_TENCENT_ZONE, "na-siliconvalley-1");
   assert.match(config.data.OPL_CLOUD_IMAGE, /^[^:@]+(?:\/[^:@]+)+@sha256:[0-9a-f]{64}$/);
   assert.match(config.data.OPL_WORKSPACE_IMAGE, /^[^:@]+(?:\/[^:@]+)+@sha256:[0-9a-f]{64}$/);
@@ -60,15 +61,25 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
 });
 
 test("production env examples use the frozen Sub2API versions and launch zone", async () => {
-  for (const path of [
+  const paths = [
     ".env.example",
     "deploy/tke/opl-cloud-production.env.example",
     "deploy/tke/opl-cloud-staging.local.env.example"
-  ]) {
+  ];
+  for (const path of paths) {
     const source = await readFile(path, "utf8");
     assert.match(source, /^OPL_SUB2API_SUPPORTED_VERSIONS=0\.1\.156,0\.1\.155$/m, path);
     assert.match(source, /^OPL_TENCENT_ZONE=na-siliconvalley-1$/m, path);
+    assert.match(source, /^OPL_WORKSPACE_IMAGE=.*@sha256:/m, path);
+    assert.doesNotMatch(source, /^OPL_WORKSPACE_IMAGE=.*(?::latest|:<tag>)$/m, path);
   }
+  for (const path of paths.slice(1)) {
+    assert.match(await readFile(path, "utf8"), /^TENCENTCLOUD_REGION=na-siliconvalley$/m, path);
+  }
+  assert.match(
+    await readFile(".env.example", "utf8"),
+    /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76$/m
+  );
 });
 
 test("production manifest example uses the frozen Sub2API versions", async () => {

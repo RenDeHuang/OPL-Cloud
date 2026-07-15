@@ -3,7 +3,7 @@
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, and production-verification safety.",
   "state": "current",
-  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, grouped rollback, read-only fixed-slot verification, and post-rollout live QA.",
+  "machineBoundary": "GitHub workflow structure, runner isolation, deploy-time env sources, secret handling, immutable image release, grouped rollback, read-only fixed-slot verification, post-rollout live QA, and legacy global Secret retirement.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
@@ -321,6 +321,55 @@
       ]
     },
     "forbiddenRunTokens": []
+  },
+  "productionLegacySecretCleanupJob": {
+    "file": ".github/workflows/deploy-tke-production.yml",
+    "job": "retire-legacy-workspace-secret",
+    "trigger": "candidate_rollout_and_live_qa_successful",
+    "failureBehavior": "fail_workflow_without_image_rollback",
+    "legacySecretName": "opl-cloud-workspace-codex",
+    "accountScopedSecretDeletionForbidden": true,
+    "runner": [
+      "self-hosted",
+      "tencent-cloud",
+      "opl-cloud",
+      "tke-vpc"
+    ],
+    "requiredEnv": [
+      "OPL_K8S_NAMESPACE",
+      "TENCENT_DEPLOY_KUBECONFIG_PATH",
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "secretEnv": [
+      "TENCENT_DEPLOY_KUBECONFIG_B64",
+      "TENCENT_DEPLOY_KUBECONFIG"
+    ],
+    "steps": [
+      "Prepare cleanup kubeconfig",
+      "Retire legacy global Workspace secret",
+      "Remove cleanup kubeconfig"
+    ],
+    "requiredCommandsByStep": {
+      "Prepare cleanup kubeconfig": [
+        "TENCENT_DEPLOY_KUBECONFIG_PATH",
+        "TENCENT_DEPLOY_KUBECONFIG_B64",
+        "TENCENT_DEPLOY_KUBECONFIG"
+      ],
+      "Retire legacy global Workspace secret": [
+        "delete secret opl-cloud-workspace-codex --ignore-not-found",
+        "get secret opl-cloud-workspace-codex --ignore-not-found -o name"
+      ],
+      "Remove cleanup kubeconfig": [
+        "always()",
+        "find \"$secret_dir\" -mindepth 1 -delete",
+        "rmdir \"$secret_dir\""
+      ]
+    },
+    "forbiddenRunTokens": [
+      "--selector",
+      "delete secrets"
+    ]
   },
   "productionRollbackJob": {
     "file": ".github/workflows/deploy-tke-production.yml",

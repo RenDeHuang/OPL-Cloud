@@ -511,6 +511,70 @@ jobs:
           path: artifacts/production-live-qa
           if-no-files-found: ignore
 
+  retire-legacy-workspace-secret:
+    name: Retire legacy global Workspace secret
+    needs: [deploy, live-qa]
+    if: ${{ needs.deploy.result == 'success' && needs.live-qa.result == 'success' }}
+    runs-on: [self-hosted, tencent-cloud, opl-cloud, tke-vpc]
+    timeout-minutes: 10
+    environment: production
+    env:
+      OPL_K8S_NAMESPACE: ${{ vars.OPL_K8S_NAMESPACE || 'opl-cloud' }}
+      TENCENT_DEPLOY_KUBECONFIG_PATH: ${{ vars.TENCENT_DEPLOY_KUBECONFIG_PATH || '/home/actions/.secrets/medopl/v22/kubeconfig-package-d-deploy' }}
+      TENCENT_DEPLOY_KUBECONFIG_B64: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG_B64 }}
+      TENCENT_DEPLOY_KUBECONFIG: ${{ secrets.TENCENT_DEPLOY_KUBECONFIG }}
+
+    steps:
+      - name: Prepare cleanup kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          echo "OPL_LEGACY_SECRET_CLEANUP_DIR=$secret_dir" >> "$GITHUB_ENV"
+          chmod 700 "$secret_dir"
+          kubeconfig="$secret_dir/kubeconfig"
+          if [ -f "$TENCENT_DEPLOY_KUBECONFIG_PATH" ]; then
+            cp "$TENCENT_DEPLOY_KUBECONFIG_PATH" "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG_B64:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG_B64" | base64 -d > "$kubeconfig"
+          elif [ -n "${TENCENT_DEPLOY_KUBECONFIG:-}" ]; then
+            printf '%s' "$TENCENT_DEPLOY_KUBECONFIG" > "$kubeconfig"
+          else
+            echo "No deploy kubeconfig was provided for legacy Secret cleanup." >&2
+            exit 1
+          fi
+          chmod 600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Retire legacy global Workspace secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" delete secret opl-cloud-workspace-codex --ignore-not-found
+          remaining="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-workspace-codex --ignore-not-found -o name)"
+          if [ -n "$remaining" ]; then
+            echo "Legacy global Workspace Secret still exists after cleanup." >&2
+            exit 1
+          fi
+
+      - name: Remove cleanup kubeconfig
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_dir="${OPL_LEGACY_SECRET_CLEANUP_DIR:-}"
+          if [ -z "$secret_dir" ]; then
+            exit 0
+          fi
+          case "$secret_dir" in
+            "$RUNNER_TEMP"/*|/tmp/*) ;;
+            *) echo "Refusing to remove unexpected cleanup secret path." >&2; exit 1 ;;
+          esac
+          if [ -d "$secret_dir" ]; then
+            find "$secret_dir" -mindepth 1 -delete
+            rmdir "$secret_dir"
+          fi
+
   rollback-live-qa:
     name: Roll back images after live QA failure
     needs: [deploy, live-qa]

@@ -73,7 +73,7 @@
         "OPL_SUB2API_REQUEST_TIMEOUT_MS": "5000",
         "OPL_TENCENT_PROVISIONER_BIN": "/usr/local/bin/opl-tencent-provisioner",
         "OPL_TENCENT_ZONE": "na-siliconvalley-1",
-        "TENCENTCLOUD_REGION": "ap-guangzhou",
+        "TENCENTCLOUD_REGION": "na-siliconvalley",
         "TENCENT_CVM_SUBNET_ID": "subnet-xxxxxxxx",
         "TENCENT_CVM_SECURITY_GROUP_IDS": "sg-xxxxxxxx",
         "TENCENT_CVM_SYSTEM_DISK_TYPE": "CLOUD_BSSD",

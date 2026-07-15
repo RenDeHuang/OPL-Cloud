@@ -118,6 +118,7 @@ async function manifestFixture() {
       OPL_WORKSPACE_IMAGE: `registry.example.test/opl/workspace@${digestB}`,
       OPL_IMAGE_PULL_SECRET_NAME: "pull-test",
       OPL_TENCENT_ZONE: "ap-guangzhou-3",
+      TENCENTCLOUD_REGION: "ap-guangzhou",
       OPL_SUB2API_BASE_URL: "https://wallet.example.test",
       OPL_SUB2API_SUPPORTED_VERSIONS: supportedSub2apiVersions,
       OPL_SUB2API_REQUEST_TIMEOUT_MS: "7000",
@@ -140,6 +141,12 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.equal(contract.productionLiveQaJob.mode, "one_model_request_no_provider_mutation");
   assert.deepEqual(contract.productionLiveQaJob.slotDescriptor, fixedSlotDescriptor);
   assertWorkflowContract(deployWorkflow, contract.productionLiveQaJob, contract);
+  assert.ok(contract.productionLegacySecretCleanupJob);
+  assert.equal(contract.productionLegacySecretCleanupJob.trigger, "candidate_rollout_and_live_qa_successful");
+  assert.equal(contract.productionLegacySecretCleanupJob.legacySecretName, "opl-cloud-workspace-codex");
+  assert.equal(contract.productionLegacySecretCleanupJob.accountScopedSecretDeletionForbidden, true);
+  assert.equal(contract.productionLegacySecretCleanupJob.failureBehavior, "fail_workflow_without_image_rollback");
+  assertWorkflowContract(deployWorkflow, contract.productionLegacySecretCleanupJob, contract);
   assert.equal(contract.productionRollbackJob.trigger, "post_snapshot_deploy_or_live_qa_not_successful");
   assertWorkflowContract(deployWorkflow, contract.productionRollbackJob, contract);
   assert.doesNotMatch(JSON.stringify(contract), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
@@ -333,6 +340,61 @@ test("TKE manifest renderer rejects a whitespace-only launch zone before renderi
   );
 });
 
+test("TKE manifest renderer rejects Tencent region and zone mismatches in either direction", async () => {
+  const { manifest, values } = await manifestFixture();
+  for (const [region, zone] of [
+    ["na-siliconvalley", "ap-guangzhou-3"],
+    ["ap-guangzhou", "na-siliconvalley-1"]
+  ]) {
+    assert.throws(
+      () => renderTkeManifest({ manifest, values: { ...values, TENCENTCLOUD_REGION: region, OPL_TENCENT_ZONE: zone } }),
+      /tencent_zone_region_mismatch/
+    );
+  }
+});
+
+test("TKE deploy never applies a ConfigMap with a mismatched Tencent region and zone", async () => {
+  const root = await mkdtemp(join(tmpdir(), "opl-region-gate-"));
+  const rollbackDir = join(root, "previous-images");
+  const kubectlLog = join(root, "kubectl.log");
+  try {
+    const { values } = await manifestFixture();
+    const apply = stepsByName(workflowJob(await readWorkflow(".github/workflows/deploy-tke-production.yml"), "deploy")).get("Render and apply manifest")?.run;
+    await mkdir(rollbackDir);
+    await Promise.all([
+      ...["opl-cloud-control-plane", "opl-cloud-ledger", "opl-cloud-fabric"].map((name) => writeFile(join(rollbackDir, name), values.OPL_CLOUD_IMAGE)),
+      writeFile(join(rollbackDir, "OPL_WORKSPACE_IMAGE"), values.OPL_WORKSPACE_IMAGE),
+      writeFile(join(rollbackDir, "workspace-images.tsv"), "")
+    ]);
+    const result = spawnSync("bash", ["-c", `
+      kubectl() {
+        printf '%s\\n' "$*" >> "$TEST_KUBECTL_LOG"
+        return 1
+      }
+${apply}
+    `], {
+      cwd: fileURLToPath(repoFile(".")),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...values,
+        KUBECONFIG: "/dev/null",
+        OPL_DEPLOY_SECRET_DIR: root,
+        OPL_EXERCISE_ROLLBACK: "false",
+        OPL_TENCENT_ZONE: "na-siliconvalley-1",
+        TENCENTCLOUD_REGION: "ap-guangzhou",
+        TEST_KUBECTL_LOG: kubectlLog
+      }
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(await readFile(kubectlLog, "utf8"), /(?:^| )apply -f(?: |$)/m);
+    assert.match(result.stderr, /tencent_zone_region_mismatch/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("TKE manifest renderer rejects another whitespace-only required value before rendering", async () => {
   const { manifest, values } = await manifestFixture();
   assert.throws(
@@ -417,6 +479,75 @@ test("TKE live QA failure schedules a self-hosted rollback from the captured ima
   assert.match(restore, /source tools\/tke-image-rollout\.sh/);
   assert.match(restore, /restore_previous_images/);
   assert.doesNotMatch(restore, /set \+e/);
+});
+
+test("TKE retires the legacy global Workspace secret only after successful candidate live QA", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const deploy = workflowJob(workflow, "deploy");
+  const cleanup = workflowJob(workflow, "retire-legacy-workspace-secret");
+  const rollback = workflowJob(workflow, "rollback-live-qa");
+  const retire = serializedStep(stepsByName(cleanup).get("Retire legacy global Workspace secret"));
+
+  assert.deepEqual(cleanup.needs, ["deploy", "live-qa"]);
+  assert.equal(cleanup.if, "${{ needs.deploy.result == 'success' && needs.live-qa.result == 'success' }}");
+  assert.deepEqual(cleanup["runs-on"], ["self-hosted", "tencent-cloud", "opl-cloud", "tke-vpc"]);
+  assert.equal(cleanup.environment, "production");
+  assert.notEqual(cleanup["continue-on-error"], true);
+  assert.equal(cleanup.env.TENCENT_DEPLOY_KUBECONFIG_PATH, deploy.env.TENCENT_DEPLOY_KUBECONFIG_PATH);
+  assert.match(retire, /delete secret opl-cloud-workspace-codex --ignore-not-found/);
+  assert.match(retire, /get secret opl-cloud-workspace-codex --ignore-not-found -o name/);
+  assert.doesNotMatch(retire, /--selector|delete secrets|delete secret .*\*-env/);
+  assert.deepEqual(rollback.needs, ["deploy", "live-qa"]);
+  assert.doesNotMatch(String(rollback.if), /retire-legacy-workspace-secret|cleanup/);
+});
+
+test("legacy global Workspace secret retirement verifies absence and propagates every kubectl failure", async () => {
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  const retire = stepsByName(workflowJob(workflow, "retire-legacy-workspace-secret")).get("Retire legacy global Workspace secret")?.run;
+  const root = await mkdtemp(join(tmpdir(), "opl-legacy-secret-cleanup-"));
+  const kubectlLog = join(root, "kubectl.log");
+  const harness = `
+    kubectl() {
+      printf '%s\\n' "$*" >> "$TEST_KUBECTL_LOG"
+      case " $* " in
+        *" delete secret opl-cloud-workspace-codex --ignore-not-found "*)
+          [ "\${TEST_DELETE_FAIL:-0}" != "1" ] || return 42
+          ;;
+        *" get secret opl-cloud-workspace-codex --ignore-not-found -o name "*)
+          [ "\${TEST_GET_FAIL:-0}" != "1" ] || return 43
+          [ "\${TEST_SECRET_REMAINS:-0}" != "1" ] || printf 'secret/opl-cloud-workspace-codex\\n'
+          ;;
+        *) return 64 ;;
+      esac
+    }
+${retire}
+  `;
+  const runCleanup = (extraEnv = {}) => spawnSync("bash", ["-c", harness], {
+    cwd: fileURLToPath(repoFile(".")),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      KUBECONFIG: "/dev/null",
+      OPL_K8S_NAMESPACE: "opl-test",
+      TEST_KUBECTL_LOG: kubectlLog,
+      ...extraEnv
+    }
+  });
+
+  try {
+    await writeFile(kubectlLog, "");
+    const success = runCleanup();
+    assert.equal(success.status, 0, success.stderr);
+    assert.deepEqual((await readFile(kubectlLog, "utf8")).trim().split("\n"), [
+      "--kubeconfig /dev/null -n opl-test delete secret opl-cloud-workspace-codex --ignore-not-found",
+      "--kubeconfig /dev/null -n opl-test get secret opl-cloud-workspace-codex --ignore-not-found -o name"
+    ]);
+    assert.notEqual(runCleanup({ TEST_DELETE_FAIL: "1" }).status, 0);
+    assert.notEqual(runCleanup({ TEST_GET_FAIL: "1" }).status, 0);
+    assert.notEqual(runCleanup({ TEST_SECRET_REMAINS: "1" }).status, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("TKE rollback functions restore, read back, and reapply every Cloud and App image", async () => {

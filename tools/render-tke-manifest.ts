@@ -49,6 +49,9 @@ const OPTIONAL_DEPLOY_VALUE_KEYS = [
 function requiredValues(values) {
   const missing = DEPLOY_VALUE_KEYS.filter((key) => !String(values?.[key] ?? "").trim());
   if (missing.length) throw new Error(`missing_tke_manifest_values:${missing.join(",")}`);
+  if (String(values.OPL_TENCENT_ZONE).match(/^(.*)-\d+$/)?.[1] !== String(values.TENCENTCLOUD_REGION)) {
+    throw new Error("tencent_zone_region_mismatch");
+  }
   if (values.OPL_SUB2API_SUPPORTED_VERSIONS !== SUPPORTED_SUB2API_VERSIONS) throw new Error("unsupported_sub2api_versions");
 }
 
