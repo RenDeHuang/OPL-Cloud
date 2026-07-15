@@ -11,6 +11,11 @@ on:
         description: one-person-lab-app workspace runtime image ref pushed to TCR.
         required: true
         type: string
+      exercise_rollback:
+        description: Restore the previous Cloud/App image set, verify it, then reapply the candidate set.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -32,9 +37,11 @@ jobs:
       OPL_WORKSPACE_DOMAIN: ${{ vars.OPL_WORKSPACE_DOMAIN || 'workspace.medopl.cn' }}
       OPL_CLOUD_IMAGE: ${{ inputs.cloud_image }}
       OPL_WORKSPACE_IMAGE: ${{ inputs.workspace_image }}
+      OPL_EXERCISE_ROLLBACK: ${{ inputs.exercise_rollback }}
       OPL_IMAGE_PULL_SECRET_NAME: ${{ vars.OPL_IMAGE_PULL_SECRET_NAME || 'tcr-pull-secret' }}
       OPL_WORKSPACE_STORAGE_CLASS: ${{ vars.OPL_WORKSPACE_STORAGE_CLASS || 'cbs' }}
       OPL_TENCENT_PROVISIONER_BIN: ${{ vars.OPL_TENCENT_PROVISIONER_BIN || '/usr/local/bin/opl-tencent-provisioner' }}
+      OPL_TENCENT_ZONE: ${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}
       OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS: ${{ vars.OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS || '' }}
       OPL_CONSOLE_TLS_SECRET_NAME: ${{ vars.OPL_CONSOLE_TLS_SECRET_NAME || 'opl-cloud-console-medopl-cn-tls' }}
       OPL_WORKSPACE_TLS_SECRET_NAME: ${{ vars.OPL_WORKSPACE_TLS_SECRET_NAME || 'opl-cloud-workspace-medopl-cn-tls' }}
@@ -54,7 +61,7 @@ jobs:
       OPL_CODEX_REASONING_EFFORT: ${{ vars.OPL_CODEX_REASONING_EFFORT || 'xhigh' }}
       OPL_CODEX_BASE_URL: ${{ vars.OPL_CODEX_BASE_URL || 'https://gflabtoken.cn/v1' }}
       OPL_SUB2API_BASE_URL: ${{ vars.OPL_SUB2API_BASE_URL || 'https://gflabtoken.cn' }}
-      OPL_SUB2API_SUPPORTED_VERSIONS: ${{ vars.OPL_SUB2API_SUPPORTED_VERSIONS || '0.1.153' }}
+      OPL_SUB2API_SUPPORTED_VERSIONS: ${{ vars.OPL_SUB2API_SUPPORTED_VERSIONS || '0.1.155' }}
       OPL_SUB2API_REQUEST_TIMEOUT_MS: ${{ vars.OPL_SUB2API_REQUEST_TIMEOUT_MS || '5000' }}
       TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
       TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_MUTATION_SECRET_KEY }}
@@ -79,7 +86,6 @@ jobs:
       OPL_INTERNAL_SERVICE_TOKEN: ${{ secrets.OPL_INTERNAL_SERVICE_TOKEN }}
       OPL_OPERATOR_SUMMARY_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
       OPL_AIONUI_ADMIN_PASSWORD_SEED: ${{ secrets.OPL_AIONUI_ADMIN_PASSWORD_SEED }}
-      OPL_CODEX_API_KEY: ${{ secrets.OPL_CODEX_API_KEY }}
       TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
       TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
       OPL_TLS_CERT_ID: ${{ secrets.OPL_TLS_CERT_ID || vars.OPL_TLS_CERT_ID || '' }}
@@ -132,6 +138,7 @@ jobs:
             TENCENTCLOUD_SECRET_ID
             TENCENTCLOUD_SECRET_KEY
             TENCENTCLOUD_REGION
+            OPL_TENCENT_ZONE
             TENCENT_DEPLOY_CLUSTER_ID
             TENCENT_CVM_SUBNET_ID
             TENCENT_CVM_SECURITY_GROUP_IDS
@@ -154,9 +161,10 @@ jobs:
               "$TENCENT_TCR_REGISTRY"/*) ;;
               *) echo "$name must point to $TENCENT_TCR_REGISTRY." >&2; exit 1 ;;
             esac
-            tag="${image##*:}"
-            if [ "$tag" = "$image" ] || [ -z "$tag" ] || ! printf '%s' "$tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
-              echo "$name must include a non-empty container tag." >&2
+            repository="${image%@*}"
+            digest="${image#*@}"
+            if [ "$repository" = "$image" ] || [[ "${repository##*/}" == *:* ]] || ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "$name must use repository@sha256 with a 64-character digest." >&2
               exit 1
             fi
           }
@@ -273,17 +281,6 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-aionui \
             --from-file=OPL_AIONUI_ADMIN_PASSWORD_SEED="$secret_dir/aionui-admin-password-seed" \
             --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
-          if [ -n "${OPL_CODEX_API_KEY:-}" ]; then
-            printf '%s' "$OPL_CODEX_API_KEY" > "$secret_dir/codex-api-key"
-            chmod 600 "$secret_dir/codex-api-key"
-            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" create secret generic opl-cloud-workspace-codex \
-              --from-file=OPL_CODEX_API_KEY="$secret_dir/codex-api-key" \
-              --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
-          elif kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get secret opl-cloud-workspace-codex >/dev/null 2>&1; then
-            echo "Using existing opl-cloud-workspace-codex secret."
-          else
-            echo "No OPL_CODEX_API_KEY was provided; Workspace chat providers will need per-workspace configuration."
-          fi
           printf '%s' "$TENCENTCLOUD_SECRET_ID" > "$secret_dir/tencentcloud-secret-id"
           printf '%s' "$TENCENTCLOUD_SECRET_KEY" > "$secret_dir/tencentcloud-secret-key"
           chmod 600 "$secret_dir/tencentcloud-secret-id" "$secret_dir/tencentcloud-secret-key"
@@ -372,7 +369,130 @@ jobs:
       - name: Render and apply manifest
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          rollback_dir="$OPL_DEPLOY_SECRET_DIR/previous-images"
+          mkdir -p "$rollback_dir"
+          for item in \
+            "opl-cloud-control-plane:control-plane" \
+            "opl-cloud-ledger:ledger" \
+            "opl-cloud-fabric:fabric"; do
+            deployment="${item%%:*}"
+            container="${item##*:}"
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get "deployment/$deployment" \
+              -o "jsonpath={.spec.template.spec.containers[?(@.name=='$container')].image}" > "$rollback_dir/$deployment"
+            test -s "$rollback_dir/$deployment"
+          done
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get configmap opl-cloud-config \
+            -o jsonpath='{.data.OPL_WORKSPACE_IMAGE}' > "$rollback_dir/OPL_WORKSPACE_IMAGE"
+          test -s "$rollback_dir/OPL_WORKSPACE_IMAGE"
+
+          workspace_images="$rollback_dir/workspace-images.tsv"
+          kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" \
+            get deployment -l 'oplcloud.cn/workspace-id' -o json > "$rollback_dir/workspace-deployments.json"
+          node -e '
+            const fs = require("node:fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const lines = (payload.items || []).map((item) => {
+              const deployment = String(item?.metadata?.name || "");
+              const workspaceId = String(item?.metadata?.labels?.["oplcloud.cn/workspace-id"] || "");
+              const containers = (item?.spec?.template?.spec?.containers || []).filter((container) => container.name === "workspace");
+              if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(deployment) || !workspaceId || containers.length !== 1 || !containers[0].image) {
+                throw new Error("workspace_deployment_image_snapshot_ambiguous");
+              }
+              return [deployment, "workspace", containers[0].image].join("\t");
+            }).sort();
+            process.stdout.write(lines.length ? `${lines.join("\n")}\n` : "");
+          ' "$rollback_dir/workspace-deployments.json" > "$workspace_images"
+
+          patch_workspace_image() {
+            local image="$1"
+            local patch
+            patch="$(WORKSPACE_IMAGE="$image" node -e '
+              process.stdout.write(JSON.stringify({ data: { OPL_WORKSPACE_IMAGE: process.env.WORKSPACE_IMAGE } }));
+            ')"
+            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" patch configmap opl-cloud-config \
+              --type merge -p "$patch"
+          }
+
+          wait_workspace_rollouts() {
+            local mode="$1"
+            while IFS=$'\t' read -r deployment container previous_image; do
+              [ -n "$deployment" ] || continue
+              local expected_image="$OPL_WORKSPACE_IMAGE"
+              if [ "$mode" = "previous" ]; then
+                expected_image="$previous_image"
+              fi
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status "deployment/$deployment" --timeout=300s
+              current_image="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get "deployment/$deployment" \
+                -o "jsonpath={.spec.template.spec.containers[?(@.name=='$container')].image}")"
+              test "$current_image" = "$expected_image"
+            done < "$workspace_images"
+          }
+
+          wait_cloud_rollouts() {
+            local mode="$1"
+            local deployment container
+            for deployment in opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric; do
+              container="${deployment#opl-cloud-}"
+              local expected_image="$OPL_CLOUD_IMAGE"
+              if [ "$mode" = "previous" ]; then
+                expected_image="$(cat "$rollback_dir/$deployment")"
+              fi
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout restart "deployment/$deployment"
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status "deployment/$deployment" --timeout=300s
+              current_image="$(kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get "deployment/$deployment" \
+                -o "jsonpath={.spec.template.spec.containers[?(@.name=='$container')].image}")"
+              test "$current_image" = "$expected_image"
+            done
+          }
+
+          restore_previous_images() {
+            for item in \
+              "opl-cloud-control-plane:control-plane" \
+              "opl-cloud-ledger:ledger" \
+              "opl-cloud-fabric:fabric"; do
+              deployment="${item%%:*}"
+              container="${item##*:}"
+              previous_image="$(cat "$rollback_dir/$deployment")"
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" set image "deployment/$deployment" "$container=$previous_image"
+            done
+            previous_workspace_image="$(cat "$rollback_dir/OPL_WORKSPACE_IMAGE")"
+            patch_workspace_image "$previous_workspace_image"
+            while IFS=$'\t' read -r deployment container previous_image; do
+              [ -n "$deployment" ] || continue
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" set image "deployment/$deployment" "$container=$previous_image"
+            done < "$workspace_images"
+            wait_cloud_rollouts previous
+            wait_workspace_rollouts previous
+          }
+
+          apply_candidate_images() {
+            patch_workspace_image "$OPL_WORKSPACE_IMAGE"
+            for item in \
+              "opl-cloud-control-plane:control-plane" \
+              "opl-cloud-ledger:ledger" \
+              "opl-cloud-fabric:fabric"; do
+              deployment="${item%%:*}"
+              container="${item##*:}"
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" set image "deployment/$deployment" "$container=$OPL_CLOUD_IMAGE"
+            done
+            while IFS=$'\t' read -r deployment container previous_image; do
+              [ -n "$deployment" ] || continue
+              kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" set image "deployment/$deployment" "$container=$OPL_WORKSPACE_IMAGE"
+            done < "$workspace_images"
+            wait_cloud_rollouts candidate
+            wait_workspace_rollouts candidate
+          }
+
+          rollback_images() {
+            status="$?"
+            trap - ERR
+            set +e
+            restore_previous_images
+            exit "$status"
+          }
+          trap rollback_images ERR
+
           node tools/render-tke-manifest.ts --manifest deploy/tke/opl-cloud.k8s.json --out "$OPL_DEPLOY_SECRET_DIR/opl-cloud.ingress-bootstrap.json"
           node tools/render-tke-manifest.ts --manifest deploy/tke/opl-cloud.k8s.json --skip-shared-ingress --out "$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json"
           if ! kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" get ingress opl-cloud >/dev/null 2>&1; then
@@ -380,12 +500,12 @@ jobs:
           fi
           kubectl --kubeconfig "$KUBECONFIG" apply -f "$OPL_DEPLOY_SECRET_DIR/opl-cloud.rendered.json"
           kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" annotate ingress opl-cloud ingress.cloud.tencent.com/tke-service-config=opl-cloud-ingress-config --overwrite
-          for deployment in opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric; do
-            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout restart "deployment/$deployment"
-          done
-          for deployment in opl-cloud-control-plane opl-cloud-ledger opl-cloud-fabric; do
-            kubectl --kubeconfig "$KUBECONFIG" -n "$OPL_K8S_NAMESPACE" rollout status "deployment/$deployment" --timeout=300s
-          done
+          apply_candidate_images
+          if [ "$OPL_EXERCISE_ROLLBACK" = "true" ]; then
+            restore_previous_images
+            apply_candidate_images
+          fi
+          trap - ERR
 
       - name: Show ingress target
         shell: bash
@@ -411,3 +531,52 @@ jobs:
             find "$secret_dir" -mindepth 1 -delete
             rmdir "$secret_dir"
           fi
+
+  live-qa:
+    name: Verify real Workspace and dedicated Key after rollout
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      OPL_CONSOLE_ORIGIN: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
+      OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}
+      OPL_VERIFY_ACCOUNT_ID: ${{ vars.OPL_VERIFY_ACCOUNT_ID || '' }}
+      OPL_VERIFY_SLOT_ID: verification-slot-01
+      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: '{"id":"verification-slot-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW","storageSizeGb":10}'
+      OPL_VERIFY_PURCHASE_BUDGET_REMAINING: ${{ vars.OPL_VERIFY_PURCHASE_BUDGET_REMAINING || '1' }}
+      OPL_VERIFY_URL_ATTEMPTS: "90"
+      OPL_VERIFY_RETRY_DELAY_MS: "10000"
+      OPL_VERIFY_USAGE_ATTEMPTS: "36"
+      OPL_VERIFY_USAGE_RETRY_DELAY_MS: "5000"
+      OPL_VERIFY_BROWSER_TIMEOUT_MS: "60000"
+      OPL_VERIFY_MODEL_TIMEOUT_MS: "300000"
+      OPL_VERIFY_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      OPL_VERIFY_LIVE_QA_CONFIRMATION: I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST
+      OPL_VERIFY_MANIFEST_PATH: artifacts/production-live-qa/manifest.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify rollout with one Workspace model request
+        run: node tools/production-live-qa.ts
+
+      - name: Upload rollout QA manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-live-qa
+          path: artifacts/production-live-qa
+          if-no-files-found: ignore

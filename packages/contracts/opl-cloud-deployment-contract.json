@@ -33,6 +33,7 @@
       "OPL_IMAGE_PULL_SECRET_NAME",
       "OPL_WORKSPACE_STORAGE_CLASS",
       "OPL_TENCENT_PROVISIONER_BIN",
+      "OPL_TENCENT_ZONE",
       "OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS",
       "OPL_CONSOLE_TLS_SECRET_NAME",
       "OPL_WORKSPACE_TLS_SECRET_NAME",
@@ -244,7 +245,7 @@
         "docker login uswccr.ccs.tencentyun.com --username \"$TCR_ID\" --password-stdin",
         "docker login ghcr.io --username \"$GHCR_USERNAME\" --password-stdin",
         "docker buildx build --push -f Dockerfile -t \"$OPL_CLOUD_IMAGE_REF\" \"$OPL_CLOUD_IMAGE_CONTEXT\"",
-        "docker buildx imagetools create -t \"$OPL_WORKSPACE_IMAGE_REF\" \"$WORKSPACE_SOURCE_IMAGE\""
+        "docker buildx imagetools create --prefer-index=false -t \"$OPL_WORKSPACE_IMAGE_REF\" \"$WORKSPACE_SOURCE_IMAGE\""
       ]
     }
   },

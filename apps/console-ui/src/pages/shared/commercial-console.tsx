@@ -40,8 +40,10 @@ function statusText(value = "") {
 
 const resourceOperationStages = Object.freeze([
   "已提交",
-  "云资源准备中",
-  "余额扣款中",
+  "只读资源预检中",
+  "月费扣款中",
+  "PREPAID 开通中",
+  "资源认领中",
   "月度权益已激活",
   "Runtime 部署中",
   "存储挂载中",
@@ -182,7 +184,7 @@ export function OperationResultPanel({ result, pending = false }: any) {
         type="info"
         showIcon
         message="操作已提交"
-        description="正在创建云资源、完成月费扣款并部署 Runtime，通常需要 3-5 分钟。"
+        description="请求正在处理中，请稍候。"
       />
     );
   }

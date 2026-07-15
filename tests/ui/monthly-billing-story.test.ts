@@ -59,3 +59,15 @@ test("Workspace launch derives progress and pricing from one attached resource p
   assert.match(createSource, /item\.id === attachment\?\.computeAllocationId/);
   assert.match(createSource, /item\.id === attachment\?\.storageId/);
 });
+
+test("resource provisioning tells the debit-first PREPAID sequence", async () => {
+  const resourceSource = await source("apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx");
+  const sharedSource = await source("apps/console-ui/src/pages/shared/commercial-console.tsx");
+
+  assert.match(resourceSource, /computeAllocationStages = Object\.freeze\(\["已提交", "只读资源预检中", "月费扣款中", "PREPAID 开通中", "资源认领中", "月度权益已激活", "Runtime 部署中", "URL 可用"\]\)/);
+  assert.match(resourceSource, /storageCreateStages = Object\.freeze\(\["已提交", "只读资源预检中", "月费扣款中", "PREPAID 开通中", "资源认领中", "月度权益已激活", "可挂载"\]\)/);
+  assert.match(resourceSource, /只读资源预检和月费扣款；扣款成功后开通 PREPAID 资源、完成资源认领与权益激活，再部署 Runtime 并生成 URL/);
+  assert.match(resourceSource, /只读资源预检和月费扣款；扣款成功后开通 PREPAID 存储、完成资源认领与权益激活，再进入可挂载状态/);
+  assert.doesNotMatch(resourceSource, /云资源准备中.*余额扣款中|存储准备中.*余额扣款中|正在创建云资源、完成月费扣款|正在创建并准备挂载/);
+  assert.doesNotMatch(sharedSource, /云资源准备中.*余额扣款中|正在创建云资源、完成月费扣款/);
+});

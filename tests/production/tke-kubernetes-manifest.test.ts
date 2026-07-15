@@ -19,14 +19,18 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.equal(config.data.OPL_MONTHLY_BILLING_WORKER_ENABLED, "1");
   assert.equal(config.data.OPL_MONTHLY_BILLING_INTERVAL_MS, "3600000");
   assert.equal(config.data.OPL_SUB2API_BASE_URL, "https://gflabtoken.cn");
-  assert.equal(config.data.OPL_SUB2API_SUPPORTED_VERSIONS, "0.1.153");
+  assert.equal(config.data.OPL_SUB2API_SUPPORTED_VERSIONS, "0.1.155");
   assert.equal(config.data.OPL_SUB2API_REQUEST_TIMEOUT_MS, "5000");
+  assert.equal(config.data.OPL_TENCENT_ZONE, "na-siliconvalley-1");
+  assert.match(config.data.OPL_CLOUD_IMAGE, /^[^:@]+(?:\/[^:@]+)+@sha256:[0-9a-f]{64}$/);
+  assert.match(config.data.OPL_WORKSPACE_IMAGE, /^[^:@]+(?:\/[^:@]+)+@sha256:[0-9a-f]{64}$/);
   assert.equal(config.data.OPL_BASIC_COMPUTE_HOURLY_CNY, undefined);
   assert.equal(config.data.OPL_RESOURCE_BILLING_WORKER_ENABLED, undefined);
 
   const controlPlane = deployments.find((item) => item.metadata.name === "opl-cloud-control-plane");
   assert.equal(controlPlane.spec.strategy.type, "Recreate");
   const controlContainer = controlPlane.spec.template.spec.containers[0];
+  assert.deepEqual(controlContainer.envFrom, [{ configMapRef: { name: "opl-cloud-config" } }]);
   assert.equal(controlContainer.readinessProbe.httpGet.path, "/api/production/readiness");
   assert.equal(controlContainer.livenessProbe.httpGet.path, "/api/healthz");
   assert.deepEqual(controlContainer.env.filter((item) => item.valueFrom).map((item) => item.name), [
@@ -35,10 +39,10 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
     "OPL_CONSOLE_USERS_JSON",
     "OPL_OPERATOR_SUMMARY_TOKEN",
     "OPL_AIONUI_ADMIN_PASSWORD_SEED",
-    "OPL_CODEX_API_KEY",
     "OPL_SUB2API_ADMIN_EMAIL",
     "OPL_SUB2API_ADMIN_PASSWORD"
   ]);
+  assert.equal(source.includes("OPL_CODEX_API_KEY"), false);
 
   const ledger = deployments.find((item) => item.metadata.name === "opl-cloud-ledger");
   assert.equal(ledger.spec.template.spec.initContainers, undefined);
@@ -53,4 +57,14 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   const ingress = manifest.items.find((item) => item.kind === "Ingress");
   assert.equal(ingress.spec.ingressClassName, "qcloud");
   assert.deepEqual(ingress.spec.rules.map((rule) => rule.host), ["cloud.medopl.cn", "workspace.medopl.cn"]);
+});
+
+test("Tencent launch-zone examples use the one production default", async () => {
+  for (const path of [
+    ".env.example",
+    "deploy/tke/opl-cloud-production.env.example",
+    "deploy/tke/opl-cloud-staging.local.env.example"
+  ]) {
+    assert.match(await readFile(path, "utf8"), /^OPL_TENCENT_ZONE=na-siliconvalley-1$/m, path);
+  }
 });

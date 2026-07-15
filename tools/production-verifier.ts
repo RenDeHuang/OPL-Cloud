@@ -2,12 +2,19 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const PAID_CONFIRMATION = "I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE";
+export const FIXED_VERIFICATION_SLOT_ID = "verification-slot-01";
 
-const BASIC_COMPUTE_CHARGE_USD_MICROS = 50_000_000;
-const STORAGE_10_GB_CHARGE_USD_MICROS = 2_571_429;
-const DEFAULT_SLOT = "01";
-const DEFAULT_ATTEMPTS = 90;
+const FIXED_VERIFICATION_SLOT_DESCRIPTOR = {
+  id: FIXED_VERIFICATION_SLOT_ID,
+  customerProduct: false,
+  instanceType: "SA5.MEDIUM4",
+  chargeType: "PREPAID",
+  periodMonths: 1,
+  renewFlag: "NOTIFY_AND_MANUAL_RENEW",
+  storageSizeGb: 10
+};
+const DEFAULT_PURCHASE_BUDGET_REMAINING = 1;
+const DEFAULT_URL_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
 
 function sleep(ms) {
@@ -16,13 +23,6 @@ function sleep(ms) {
 
 function assertIdentity(value, pattern, error) {
   if (!pattern.test(String(value || ""))) throw new Error(error);
-}
-
-export function productionVerificationMutationKey(runId, slot = DEFAULT_SLOT, stage) {
-  assertIdentity(runId, /^[A-Za-z0-9._-]{1,80}$/, "production_verification_run_id_invalid");
-  assertIdentity(slot, /^[A-Za-z0-9._-]{1,16}$/, "production_verification_slot_invalid");
-  assertIdentity(stage, /^[A-Za-z0-9._-]{1,48}$/, "production_verification_stage_invalid");
-  return `production-verification:${runId}:${slot}:${stage}`;
 }
 
 function privateIpv4(hostname) {
@@ -59,15 +59,6 @@ export function assertPublicHttpsUrl(value, errorName, { hostname = "" } = {}) {
   return parsed;
 }
 
-function normalizeOrigin(origin, allowPrivateConsoleOrigin) {
-  if (allowPrivateConsoleOrigin) {
-    const parsed = new URL(origin);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error("public_console_origin_required");
-    return parsed.origin;
-  }
-  return assertPublicHttpsUrl(origin, "public_console_origin_required").origin;
-}
-
 export function verificationOwnerFromSeed(raw, accountId = "") {
   let users;
   try {
@@ -89,7 +80,7 @@ function withoutSecrets(value) {
   if (Array.isArray(value)) return value.map(withoutSecrets);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !/(cookie|password|secret|csrf|modelAccessKey)/i.test(key))
+    .filter(([key]) => !/(cookie|password|secret|csrf|apiKey|maskedValue)/i.test(key))
     .map(([key, nested]) => [key, withoutSecrets(nested)]));
 }
 
@@ -113,14 +104,13 @@ function responseCookie(headers) {
   return values.map((value) => value.split(";", 1)[0]).join("; ");
 }
 
-async function requestJson({ fetchImpl, origin, path, method = "GET", auth, idempotencyKey, body }) {
+export async function requestJson({ fetchImpl, origin, path, method = "GET", auth, body }) {
   const response = await fetchImpl(`${origin}${path}`, {
     method,
     headers: {
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
       ...(auth?.cookie ? { cookie: auth.cookie } : {}),
-      ...(auth?.csrf && method !== "GET" ? { "x-opl-csrf": auth.csrf } : {}),
-      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {})
+      ...(auth?.csrfToken ? { "x-opl-csrf": auth.csrfToken } : {})
     },
     body: body !== undefined ? JSON.stringify(body) : undefined
   });
@@ -135,59 +125,145 @@ async function requestJson({ fetchImpl, origin, path, method = "GET", auth, idem
   return { payload, response };
 }
 
-async function login({ fetchImpl, origin, email, password }) {
+export async function login({ fetchImpl, origin, email, password }) {
   const { payload, response } = await requestJson({ fetchImpl, origin, path: "/api/auth/login", method: "POST", body: { email, password } });
   const cookie = responseCookie(response.headers);
-  const csrf = response.headers.get("x-opl-csrf-token") || "";
-  if (!cookie || !csrf || payload?.user?.accountId === undefined) throw new Error("verification_login_failed");
-  return { cookie, csrf, user: payload.user };
+  if (!cookie || payload?.user?.accountId === undefined) throw new Error("verification_login_failed");
+  return { cookie, csrfToken: response.headers.get("x-opl-csrf-token") || "", user: payload.user };
 }
 
-function activeCompute(row) {
-  return row?.billingStatus === "active" && row?.status === "running" && row?.id;
+function verifyCatalog(checks, catalog) {
+  const basic = catalog?.packages?.find((row) => row.id === "basic");
+  const pro = catalog?.packages?.find((row) => row.id === "pro");
+  addCheck(checks, "basic_catalog_price", basic?.price?.monthlyPriceCnyCents === 35_000 && basic?.price?.chargeUsdMicros === 50_000_000);
+  addCheck(checks, "pro_catalog_price", pro?.price?.monthlyPriceCnyCents === 150_000 && pro?.price?.chargeUsdMicros === 214_285_715);
+  addCheck(checks, "storage_catalog_price", catalog?.storagePer10GbMonthly?.cnyCents === 1_800 && catalog?.storagePer10GbMonthly?.usdMicros === 2_571_429);
 }
 
-function activeStorage(row) {
-  return row?.billingStatus === "active" && ["available", "ready"].includes(row?.status) && row?.id;
+function providerFact(row, keys, optional = false) {
+  const values = [row, row?.providerData]
+    .flatMap((source) => keys.map((key) => source?.[key]))
+    .filter((value) => value !== undefined && value !== null && String(value).trim() !== "")
+    .map((value) => String(value).trim());
+  if (values.length === 0) return { ok: optional, value: "" };
+  return { ok: new Set(values).size === 1, value: values[0] };
 }
 
-function activeRuntime(row) {
-  return row?.ready === true && ["running", "ready", "available", "active"].includes(row?.status);
+function deadlineAfter(value, nowMs) {
+  const text = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(" ", "T")}Z`
+    : value;
+  const deadline = Date.parse(text);
+  return Number.isFinite(deadline) && deadline > nowMs;
 }
 
-async function waitForResource({ attempts, retryDelayMs, current, ready, refresh }) {
-  let resource = current;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    if (ready(resource)) return resource;
-    if (attempt < attempts) await sleep(retryDelayMs);
-    resource = await refresh();
+function verificationSlotDescriptor(raw) {
+  if (raw === undefined || raw === null || raw === "") throw new Error("verification_slot_descriptor_required");
+  let descriptor = raw;
+  if (typeof raw === "string") {
+    try {
+      descriptor = JSON.parse(raw);
+    } catch {
+      throw new Error("verification_slot_descriptor_invalid");
+    }
   }
-  throw new Error("monthly_resource_readiness_timeout");
+  if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor) || Object.entries(FIXED_VERIFICATION_SLOT_DESCRIPTOR).some(([key, value]) => !Object.hasOwn(descriptor, key) || descriptor[key] !== value)) {
+    throw new Error("verification_slot_descriptor_invalid");
+  }
+  return FIXED_VERIFICATION_SLOT_DESCRIPTOR;
 }
 
-function assertMonthlyResource(checks, row, { kind, chargeUsdMicros, monthlyPriceCnyCents }) {
-  addCheck(checks, `${kind}_monthly_entitlement_active`, row?.billingStatus === "active" && Boolean(row?.paidThrough));
-  addCheck(checks, `${kind}_monthly_charge_exact`, row?.chargeUsdMicros === chargeUsdMicros && row?.monthlyPriceCnyCents === monthlyPriceCnyCents);
-  addCheck(checks, `${kind}_redeem_code_present`, Boolean(row?.sub2apiRedeemCode));
-  addCheck(checks, `${kind}_receipt_present`, Boolean(row?.lastReceiptId));
-}
+function fixedSlotFromState(state, { slotId, slotDescriptor, purchaseBudgetRemaining, accountId, nowMs }) {
+  const workspaces = (state?.workspaces || []).filter((row) => row?.verificationSlotId === slotId || row?.id === slotId || row?.name === slotId);
+  if (workspaces.length === 0) {
+    if (purchaseBudgetRemaining === 0) throw new Error("verification_slot_purchase_budget_exhausted");
+    return null;
+  }
+  if (workspaces.length > 1) throw new Error("verification_slot_multiple");
 
-async function receiptForResource({ fetchImpl, origin, auth, accountId, resource, expectedCharge }) {
-  const { payload } = await requestJson({ fetchImpl, origin, auth, path: `/api/billing/receipts/${encodeURIComponent(resource.lastReceiptId)}` });
-  if (payload?.receiptId !== resource.lastReceiptId || payload?.accountId !== accountId || payload?.type !== "billing.resource_purchased.v1" || payload?.status !== "completed") {
-    throw new Error("billing_receipt_identity_mismatch");
+  const workspace = workspaces[0];
+  const workspaceCompute = providerFact(workspace, ["currentComputeAllocationId", "computeAllocationId"]);
+  const workspaceStorage = providerFact(workspace, ["storageId"]);
+  const computeId = workspaceCompute.value;
+  const storageId = workspaceStorage.value;
+  const computes = (state.computeAllocations || []).filter((row) => row?.id === computeId);
+  const storages = (state.storageVolumes || []).filter((row) => row?.id === storageId);
+  if (!workspaceCompute.ok || !workspaceStorage.ok || computes.length !== 1 || storages.length !== 1) {
+    throw new Error("verification_slot_ambiguous");
   }
-  if (payload?.cost?.chargeUsdMicros !== expectedCharge || payload?.cost?.sub2apiRedeemCode !== resource.sub2apiRedeemCode) {
-    throw new Error("billing_receipt_charge_mismatch");
-  }
-  return payload;
+
+  const compute = computes[0];
+  const storage = storages[0];
+  const computeProviderId = compute.cvmInstanceId || compute.instanceId || compute.providerResourceId;
+  const storageProviderId = storage.providerResourceId;
+  const computeInstanceType = providerFact(compute, ["instanceType"]);
+  const nodePoolId = providerFact(compute, ["nodePoolId"]);
+  const computeZone = providerFact(compute, ["zone"]);
+  const computeChargeType = providerFact(compute, ["chargeType"]);
+  const computePeriod = providerFact(compute, ["requestedPeriodMonths", "periodMonths"]);
+  const computeRenewFlag = providerFact(compute, ["renewFlag"]);
+  const computeDeadline = providerFact(compute, ["deadline"]);
+  const storageZone = providerFact(storage, ["zone"]);
+  const storageChargeType = providerFact(storage, ["chargeType", "diskChargeType"]);
+  const storagePeriod = providerFact(storage, ["requestedPeriodMonths", "periodMonths"]);
+  const storageRenewFlag = providerFact(storage, ["renewFlag"]);
+  const storageDeadline = providerFact(storage, ["deadline"]);
+  const storageSize = providerFact(storage, ["sizeGb"]);
+  const persistentVolumeId = providerFact(storage, ["pvName", "persistentVolumeName"]);
+  const computeTags = compute.costTags || {};
+  const storageTags = storage.costTags || {};
+
+  const compliant =
+    workspace.accountId === accountId &&
+    workspace.ownerAccountId === accountId &&
+    compute.accountId === accountId &&
+    storage.accountId === accountId &&
+    compute.workspaceId === workspace.id &&
+    storage.workspaceId === workspace.id &&
+    computeTags.opl_account_id === accountId &&
+    computeTags.opl_workspace_id === workspace.id &&
+    computeTags.opl_resource_id === compute.id &&
+    storageTags.opl_account_id === accountId &&
+    storageTags.opl_workspace_id === workspace.id &&
+    storageTags.opl_resource_id === storage.id &&
+    /^ins-/.test(computeProviderId || "") &&
+    nodePoolId.ok && /^np-/.test(nodePoolId.value) &&
+    /^disk-/.test(storageProviderId || "") &&
+    persistentVolumeId.ok && Boolean(persistentVolumeId.value) &&
+    ["running", "ready", "active"].includes(compute.status) &&
+    ["available", "ready", "active"].includes(storage.status) &&
+    workspace.openable === true &&
+    Boolean(workspace.url) &&
+    computeInstanceType.ok && computeInstanceType.value === slotDescriptor.instanceType &&
+    computeZone.ok && storageZone.ok && computeZone.value === storageZone.value &&
+    computeChargeType.ok && computeChargeType.value === slotDescriptor.chargeType &&
+    storageChargeType.ok && storageChargeType.value === slotDescriptor.chargeType &&
+    computePeriod.ok && Number(computePeriod.value) === slotDescriptor.periodMonths &&
+    storagePeriod.ok && Number(storagePeriod.value) === slotDescriptor.periodMonths &&
+    computeRenewFlag.ok && computeRenewFlag.value === slotDescriptor.renewFlag &&
+    storageRenewFlag.ok && storageRenewFlag.value === slotDescriptor.renewFlag &&
+    computeDeadline.ok && deadlineAfter(computeDeadline.value, nowMs) &&
+    storageDeadline.ok && deadlineAfter(storageDeadline.value, nowMs) &&
+    storageSize.ok && Number(storageSize.value) === slotDescriptor.storageSizeGb;
+  if (!compliant) throw new Error("verification_slot_ambiguous");
+
+  return {
+    id: slotId,
+    workspace,
+    compute,
+    storage,
+    computeProviderId,
+    storageProviderId,
+    nodePoolId: nodePoolId.value,
+    persistentVolumeId: persistentVolumeId.value
+  };
 }
 
 async function requestWorkspaceUrl({ fetchImpl, url, attempts, retryDelayMs }) {
   const parsed = assertPublicHttpsUrl(url, "public_workspace_url_required", { hostname: "workspace.medopl.cn" });
   let lastStatus = 0;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await fetchImpl(parsed.toString(), { redirect: "follow" });
+    const response = await fetchImpl(parsed.toString(), { method: "GET", redirect: "follow" });
     lastStatus = response.status;
     const body = response.ok ? await response.text() : "";
     if (response.ok && body.trim()) return { attempts: attempt, status: response.status };
@@ -215,249 +291,85 @@ async function verifyWorkspaceBrowser({ url, screenshotDir, browserFactory }) {
   }
 }
 
-function terminal(row) {
-  return ["destroyed", "external_deleted", "deleted", "missing"].includes(row?.status);
-}
-
-export async function cleanupVerificationResources({
-  fetchImpl,
-  origin,
-  auth,
-  computeAllocationId = "",
-  storageId = "",
-  attachmentId = "",
-  workspaceId = "",
-  attempts = DEFAULT_ATTEMPTS,
-  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
-  checks = null
-}) {
-  const errors = [];
-  if (attachmentId) {
-    try {
-      const { payload } = await requestJson({ fetchImpl, origin, auth, path: "/api/storage-attachments/detach", method: "POST", idempotencyKey: `cleanup:${attachmentId}:detach`, body: { attachmentId } });
-      if (payload?.id !== attachmentId || payload?.status !== "detached") throw new Error("attachment_not_detached");
-      checks?.push({ name: "verification_attachment_detached", ok: true });
-    } catch (error) {
-      errors.push(`detach:${attachmentId}:${error.message}`);
-    }
+export async function verifyProductionChain(options = {}) {
+  for (const key of ["paidConfirmation", "packageId", "workspaceName", "cleanupOnFailure"]) {
+    if (Object.hasOwn(options, key)) throw new Error("production_verifier_read_only");
   }
-  if (computeAllocationId) {
-    try {
-      let { payload } = await requestJson({ fetchImpl, origin, auth, path: `/api/compute-allocations/${encodeURIComponent(computeAllocationId)}/destroy`, method: "POST", idempotencyKey: `cleanup:${computeAllocationId}:destroy`, body: { confirm: true } });
-      for (let attempt = 1; !terminal(payload) && attempt <= attempts; attempt += 1) {
-        if (attempt < attempts) await sleep(retryDelayMs);
-        ({ payload } = await requestJson({ fetchImpl, origin, auth, path: `/api/compute-allocations/${encodeURIComponent(computeAllocationId)}` }));
-      }
-      if (payload?.id !== computeAllocationId || !terminal(payload)) throw new Error("compute_not_destroyed");
-      checks?.push({ name: "verification_compute_destroyed", ok: true });
-    } catch (error) {
-      errors.push(`compute:${computeAllocationId}:${error.message}`);
-    }
-  }
-  if (storageId) {
-    try {
-      let { payload } = await requestJson({ fetchImpl, origin, auth, path: "/api/storage-volumes/destroy", method: "POST", idempotencyKey: `cleanup:${storageId}:destroy`, body: { storageId, confirmDataLoss: true } });
-      for (let attempt = 1; !terminal(payload) && attempt <= attempts; attempt += 1) {
-        if (attempt < attempts) await sleep(retryDelayMs);
-        ({ payload } = await requestJson({ fetchImpl, origin, auth, path: `/api/storage-volumes/${encodeURIComponent(storageId)}/sync`, method: "POST", idempotencyKey: `cleanup:${storageId}:sync`, body: {} }));
-      }
-      if (payload?.id !== storageId || !terminal(payload)) throw new Error("storage_not_destroyed");
-      checks?.push({ name: "verification_storage_destroyed", ok: true });
-    } catch (error) {
-      errors.push(`storage:${storageId}:${error.message}`);
-    }
-  }
-  if (workspaceId) {
-    try {
-      const { payload } = await requestJson({ fetchImpl, origin, auth, path: "/api/state" });
-      const workspace = payload?.workspaces?.find((row) => row.id === workspaceId);
-      const runtimeRef = workspace?.runtimeId || workspace?.runtimeServiceName || workspace?.serviceName || workspace?.runtime?.serviceName;
-      if (runtimeRef) throw new Error("workspace_runtime_not_removed");
-      checks?.push({ name: "verification_workspace_runtime_removed", ok: true });
-    } catch (error) {
-      errors.push(`runtime:${workspaceId}:${error.message}`);
-    }
-  }
-  return errors;
-}
-
-export async function verifyProductionChain({
-  origin,
-  authUsersJson,
-  accountId = "",
-  runId,
-  slot = DEFAULT_SLOT,
-  packageId = "basic",
-  workspaceName = "Production Verification Lab",
-  paidConfirmation = "",
-  workspaceUrlAttempts = DEFAULT_ATTEMPTS,
-  retryDelayMs = DEFAULT_RETRY_DELAY_MS,
-  manifestPath = "",
-  browserE2E = false,
-  screenshotDir = "",
-  browserFactory,
-  cleanupOnFailure = true,
-  allowPrivateConsoleOrigin = false,
-  fetchImpl = globalThis.fetch
-} = {}) {
-  if (paidConfirmation !== PAID_CONFIRMATION) throw new Error("paid_confirmation_required");
-  const owner = verificationOwnerFromSeed(authUsersJson, accountId);
-  const normalizedOrigin = normalizeOrigin(origin, allowPrivateConsoleOrigin);
-  const effectiveRunId = runId || new Date().toISOString().replace(/[^0-9TZ]/g, "");
-  productionVerificationMutationKey(effectiveRunId, slot, "validate");
-  if (packageId !== "basic") throw new Error("production_verifier_basic_package_required");
+  const {
+    origin,
+    authUsersJson,
+    accountId = "",
+    runId = new Date().toISOString().replace(/[^0-9TZ]/g, ""),
+    slotId = FIXED_VERIFICATION_SLOT_ID,
+    slotDescriptor: rawSlotDescriptor,
+    purchaseBudgetRemaining = DEFAULT_PURCHASE_BUDGET_REMAINING,
+    now = new Date(),
+    workspaceUrlAttempts = DEFAULT_URL_ATTEMPTS,
+    retryDelayMs = DEFAULT_RETRY_DELAY_MS,
+    manifestPath = "",
+    browserE2E = false,
+    screenshotDir = "",
+    browserFactory,
+    fetchImpl = globalThis.fetch
+  } = options;
+  const slotDescriptor = verificationSlotDescriptor(rawSlotDescriptor);
+  if (slotId !== FIXED_VERIFICATION_SLOT_ID) throw new Error("verification_slot_id_fixed");
+  if (!Number.isInteger(purchaseBudgetRemaining) || purchaseBudgetRemaining < 0 || purchaseBudgetRemaining > 1) throw new Error("verification_slot_purchase_budget_invalid");
   if (!Number.isInteger(workspaceUrlAttempts) || workspaceUrlAttempts < 1 || !Number.isFinite(retryDelayMs) || retryDelayMs < 0) throw new Error("verification_retry_config_invalid");
+  const nowMs = new Date(now).getTime();
+  if (!Number.isFinite(nowMs)) throw new Error("verification_time_invalid");
+  assertIdentity(runId, /^[A-Za-z0-9._-]{1,80}$/, "production_verification_run_id_invalid");
 
+  const owner = verificationOwnerFromSeed(authUsersJson, accountId);
+  const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   const checks = [];
-  const manifest = { runId: effectiveRunId, slot, accountId: owner.accountId, sub2apiUserId: owner.sub2apiUserId, ids: {}, redeemCodes: {}, receiptIds: {} };
-  const persist = () => writeVerificationManifest(manifestPath, manifest);
-  let auth;
-  let compute;
-  let storage;
-  let attachment;
-  let workspace;
+  const readiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/production/readiness" });
+  addCheck(checks, "production_readiness", readiness.payload?.ready === true);
 
-  try {
-    const readiness = await requestJson({ fetchImpl, origin: normalizedOrigin, path: "/api/production/readiness" });
-    addCheck(checks, "production_readiness", readiness.payload?.ready === true);
-    auth = await login({ fetchImpl, origin: normalizedOrigin, email: owner.email, password: owner.password });
-    addCheck(checks, "console_login", auth.user?.accountId === owner.accountId);
+  const auth = await login({ fetchImpl, origin: normalizedOrigin, email: owner.email, password: owner.password });
+  addCheck(checks, "console_login", auth.user?.accountId === owner.accountId);
 
-    const initial = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/state" })).payload;
-    addCheck(checks, "live_sub2api_balance", initial?.balance?.source === "sub2api" && initial?.balance?.currency === "USD" && initial?.balance?.userId === owner.sub2apiUserId && Number.isSafeInteger(initial?.balance?.usdMicros));
-    const beforeUsdMicros = initial.balance.usdMicros;
+  const catalog = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/pricing/catalog" })).payload;
+  verifyCatalog(checks, catalog);
+  const state = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/state" })).payload;
+  addCheck(checks, "live_sub2api_balance", state?.balance?.source === "sub2api" && state?.balance?.currency === "USD" && state?.balance?.userId === owner.sub2apiUserId && Number.isSafeInteger(state?.balance?.usdMicros));
+  const gateway = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/gateway/summary" })).payload;
+  addCheck(checks, "gateway_key_masked", gateway?.apiKey?.revealed !== true && gateway?.apiKey?.value === undefined && Boolean(gateway?.apiKey?.maskedValue));
 
-    const computeKey = productionVerificationMutationKey(effectiveRunId, slot, "create-compute");
-    const computeBody = { accountId: owner.accountId, packageId, name: `${workspaceName} compute ${effectiveRunId}` };
-    compute = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/compute-allocations", method: "POST", idempotencyKey: computeKey, body: computeBody })).payload;
-    const computeReplay = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/compute-allocations", method: "POST", idempotencyKey: computeKey, body: computeBody })).payload;
-    if (computeReplay?.id !== compute?.id) throw new Error("compute_idempotency_mismatch");
-    compute = await waitForResource({
-      attempts: workspaceUrlAttempts,
-      retryDelayMs,
-      current: computeReplay,
-      ready: activeCompute,
-      refresh: async () => (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: `/api/compute-allocations/${encodeURIComponent(compute.id)}` })).payload
-    });
-    const computeStable = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/compute-allocations", method: "POST", idempotencyKey: computeKey, body: computeBody })).payload;
-    if (computeStable?.id !== compute.id || computeStable?.sub2apiRedeemCode !== compute.sub2apiRedeemCode) throw new Error("compute_redeem_replay_mismatch");
-    assertMonthlyResource(checks, compute, { kind: "compute", chargeUsdMicros: BASIC_COMPUTE_CHARGE_USD_MICROS, monthlyPriceCnyCents: 35_000 });
-    Object.assign(manifest.ids, { computeAllocationId: compute.id });
-    manifest.redeemCodes.compute = compute.sub2apiRedeemCode;
-    manifest.receiptIds.compute = compute.lastReceiptId;
-    await persist();
-
-    const storageKey = productionVerificationMutationKey(effectiveRunId, slot, "create-storage");
-    const storageBody = { accountId: owner.accountId, sizeGb: 10, name: `${workspaceName} storage ${effectiveRunId}` };
-    storage = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/storage-volumes", method: "POST", idempotencyKey: storageKey, body: storageBody })).payload;
-    const storageReplay = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/storage-volumes", method: "POST", idempotencyKey: storageKey, body: storageBody })).payload;
-    if (storageReplay?.id !== storage?.id) throw new Error("storage_idempotency_mismatch");
-    storage = await waitForResource({
-      attempts: workspaceUrlAttempts,
-      retryDelayMs,
-      current: storageReplay,
-      ready: activeStorage,
-      refresh: async () => (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: `/api/storage-volumes/${encodeURIComponent(storage.id)}/sync`, method: "POST", idempotencyKey: productionVerificationMutationKey(effectiveRunId, slot, "sync-storage"), body: {} })).payload
-    });
-    const storageStable = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/storage-volumes", method: "POST", idempotencyKey: storageKey, body: storageBody })).payload;
-    if (storageStable?.id !== storage.id || storageStable?.sub2apiRedeemCode !== storage.sub2apiRedeemCode) throw new Error("storage_redeem_replay_mismatch");
-    assertMonthlyResource(checks, storage, { kind: "storage", chargeUsdMicros: STORAGE_10_GB_CHARGE_USD_MICROS, monthlyPriceCnyCents: 1_800 });
-    Object.assign(manifest.ids, { storageId: storage.id });
-    manifest.redeemCodes.storage = storage.sub2apiRedeemCode;
-    manifest.receiptIds.storage = storage.lastReceiptId;
-    await persist();
-
-    const receipts = await Promise.all([
-      receiptForResource({ fetchImpl, origin: normalizedOrigin, auth, accountId: owner.accountId, resource: compute, expectedCharge: BASIC_COMPUTE_CHARGE_USD_MICROS }),
-      receiptForResource({ fetchImpl, origin: normalizedOrigin, auth, accountId: owner.accountId, resource: storage, expectedCharge: STORAGE_10_GB_CHARGE_USD_MICROS })
-    ]);
-    addCheck(checks, "monthly_billing_receipts_verified", receipts.length === 2);
-
-    attachment = (await requestJson({
-      fetchImpl, origin: normalizedOrigin, auth, path: "/api/storage-attachments", method: "POST",
-      idempotencyKey: productionVerificationMutationKey(effectiveRunId, slot, "create-attachment"),
-      body: { accountId: owner.accountId, computeAllocationId: compute.id, storageId: storage.id, mountPath: "/data" }
-    })).payload;
-    addCheck(checks, "storage_attachment_ready", attachment?.id && attachment?.computeAllocationId === compute.id && attachment?.storageId === storage.id && attachment?.status === "attached");
-    manifest.ids.attachmentId = attachment.id;
-    await persist();
-
-    workspace = (await requestJson({
-      fetchImpl, origin: normalizedOrigin, auth, path: "/api/workspaces", method: "POST",
-      idempotencyKey: productionVerificationMutationKey(effectiveRunId, slot, "create-workspace"),
-      body: { accountId: owner.accountId, workspaceName: `${workspaceName} ${effectiveRunId}`, attachmentId: attachment.id }
-    })).payload;
-    addCheck(checks, "workspace_created", workspace?.id && workspace?.url);
-    manifest.ids.workspaceId = workspace.id;
-    manifest.workspaceUrl = workspace.url;
-    await persist();
-
-    const runtimeStatus = async () => (await requestJson({
-      fetchImpl, origin: normalizedOrigin, auth, path: "/api/workspaces/runtime-status", method: "POST",
-      idempotencyKey: productionVerificationMutationKey(effectiveRunId, slot, "runtime-status"), body: { workspaceId: workspace.id }
-    })).payload;
-    const runtime = await waitForResource({ attempts: workspaceUrlAttempts, retryDelayMs, current: await runtimeStatus(), ready: activeRuntime, refresh: runtimeStatus });
-    addCheck(checks, "workspace_runtime_ready", activeRuntime(runtime));
-    const workspaceAccess = await requestWorkspaceUrl({ fetchImpl, url: workspace.url, attempts: workspaceUrlAttempts, retryDelayMs });
-    addCheck(checks, "workspace_url_ready", workspaceAccess.status >= 200 && workspaceAccess.status < 300, { attempts: workspaceAccess.attempts });
-    if (browserE2E) {
-      await verifyWorkspaceBrowser({ url: workspace.url, screenshotDir, browserFactory });
-      addCheck(checks, "workspace_browser_access", true);
-    }
-
-    const finalState = (await requestJson({ fetchImpl, origin: normalizedOrigin, auth, path: "/api/state" })).payload;
-    const afterUsdMicros = finalState?.balance?.usdMicros;
-    const expectedChargeUsdMicros = BASIC_COMPUTE_CHARGE_USD_MICROS + STORAGE_10_GB_CHARGE_USD_MICROS;
-    addCheck(checks, "balance_delta_matches_exact_monthly_charges", beforeUsdMicros - afterUsdMicros === expectedChargeUsdMicros, { beforeUsdMicros, afterUsdMicros, expectedChargeUsdMicros });
-    addCheck(checks, "stable_sub2api_redeem_codes", new Set([compute.sub2apiRedeemCode, storage.sub2apiRedeemCode]).size === 2);
-    addCheck(checks, "fabric_resources_visible", finalState.computeAllocations?.some((row) => row.id === compute.id && activeCompute(row)) && finalState.storageVolumes?.some((row) => row.id === storage.id && activeStorage(row)));
-
-    const cleanupErrors = await cleanupVerificationResources({
-      fetchImpl, origin: normalizedOrigin, auth, computeAllocationId: compute.id, storageId: storage.id, attachmentId: attachment.id, workspaceId: workspace.id,
-      attempts: workspaceUrlAttempts, retryDelayMs, checks
-    });
-    if (cleanupErrors.length) {
-      const error = new Error("production_verification_cleanup_failed");
-      error.cleanupErrors = cleanupErrors;
-      throw error;
-    }
-
-    const result = {
-      ok: true,
-      accountId: owner.accountId,
-      sub2apiUserId: owner.sub2apiUserId,
-      runId: effectiveRunId,
-      workspaceId: workspace.id,
-      url: redactSensitiveUrl(workspace.url),
-      balance: { beforeUsdMicros, afterUsdMicros, chargedUsdMicros: expectedChargeUsdMicros },
-      redeemCodes: [compute.sub2apiRedeemCode, storage.sub2apiRedeemCode],
-      receiptIds: [compute.lastReceiptId, storage.lastReceiptId],
-      resources: withoutSecrets(manifest.ids),
-      cleanup: { complete: true },
-      checks
-    };
-    manifest.result = result;
-    await persist();
+  const slot = fixedSlotFromState(state, { slotId, slotDescriptor, purchaseBudgetRemaining, accountId: owner.accountId, nowMs });
+  if (!slot) {
+    const result = { ok: false, status: "provider_acceptance_required", slotId, purchaseBudgetRemaining, runId, checks };
+    await writeVerificationManifest(manifestPath, result);
     return result;
-  } catch (error) {
-    error.accountId = owner.accountId;
-    error.runId = effectiveRunId;
-    error.resourceIds = withoutSecrets(manifest.ids);
-    error.checks = checks;
-    if (!cleanupOnFailure || !auth) throw error;
-    error.cleanupErrors = await cleanupVerificationResources({
-      fetchImpl,
-      origin: normalizedOrigin,
-      auth,
-      computeAllocationId: compute?.id,
-      storageId: storage?.id,
-      attachmentId: attachment?.id,
-      workspaceId: workspace?.id,
-      attempts: workspaceUrlAttempts,
-      retryDelayMs
-    });
-    throw error;
   }
+
+  const workspaceAccess = await requestWorkspaceUrl({ fetchImpl, url: slot.workspace.url, attempts: workspaceUrlAttempts, retryDelayMs });
+  addCheck(checks, "verification_slot_workspace_ready", workspaceAccess.status >= 200 && workspaceAccess.status < 300, { attempts: workspaceAccess.attempts });
+  if (browserE2E) {
+    await verifyWorkspaceBrowser({ url: slot.workspace.url, screenshotDir, browserFactory });
+    addCheck(checks, "workspace_browser_access", true);
+  }
+
+  const result = {
+    ok: true,
+    status: "reused",
+    runId,
+    accountId: owner.accountId,
+    workspaceId: slot.workspace.id,
+    url: redactSensitiveUrl(slot.workspace.url),
+    slot: {
+      id: slotId,
+      computeAllocationId: slot.compute.id,
+      computeProviderResourceId: slot.computeProviderId,
+      nodePoolId: slot.nodePoolId,
+      storageId: slot.storage.id,
+      storageProviderResourceId: slot.storageProviderId,
+      persistentVolumeId: slot.persistentVolumeId
+    },
+    checks
+  };
+  await writeVerificationManifest(manifestPath, result);
+  return result;
 }
 
 function cliArgs(argv) {
@@ -477,35 +389,28 @@ function defaultRunId() {
 
 function verifierOptionsFromArgs({ argv, env, fetchImpl }) {
   const args = cliArgs(argv);
+  if (["paid-confirmation", "package", "workspace"].some((key) => Object.hasOwn(args, key)) || env.OPL_VERIFY_PAID_CONFIRMATION || env.OPL_VERIFY_MODEL_ACCESS_KEY) {
+    throw new Error("production_verifier_read_only");
+  }
   return {
     origin: args.origin || env.OPL_CONSOLE_ORIGIN,
     authUsersJson: env.OPL_VERIFY_AUTH_USERS_JSON,
     accountId: args.account || env.OPL_VERIFY_ACCOUNT_ID || "",
     runId: args["run-id"] || env.OPL_VERIFY_RUN_ID || defaultRunId(),
-    slot: args.slot || env.OPL_VERIFY_SLOT || DEFAULT_SLOT,
-    packageId: args.package || env.OPL_VERIFY_PACKAGE_ID || "basic",
-    workspaceName: args.workspace || env.OPL_VERIFY_WORKSPACE_NAME || "Production Verification Lab",
-    paidConfirmation: args["paid-confirmation"] || env.OPL_VERIFY_PAID_CONFIRMATION || "",
-    workspaceUrlAttempts: Number(args["url-attempts"] || env.OPL_VERIFY_URL_ATTEMPTS || DEFAULT_ATTEMPTS),
+    slotId: args.slot || env.OPL_VERIFY_SLOT_ID || FIXED_VERIFICATION_SLOT_ID,
+    slotDescriptor: env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON,
+    purchaseBudgetRemaining: Number(env.OPL_VERIFY_PURCHASE_BUDGET_REMAINING ?? DEFAULT_PURCHASE_BUDGET_REMAINING),
+    workspaceUrlAttempts: Number(args["url-attempts"] || env.OPL_VERIFY_URL_ATTEMPTS || DEFAULT_URL_ATTEMPTS),
     retryDelayMs: Number(args["retry-delay-ms"] || env.OPL_VERIFY_RETRY_DELAY_MS || DEFAULT_RETRY_DELAY_MS),
     manifestPath: args["manifest-path"] || env.OPL_VERIFY_MANIFEST_PATH || "",
     browserE2E: ["1", "true", "yes"].includes(String(args["browser-e2e"] || env.OPL_VERIFY_BROWSER_E2E || "").toLowerCase()),
     screenshotDir: args["screenshot-dir"] || env.OPL_VERIFY_SCREENSHOT_DIR || "",
-    cleanupOnFailure: !["0", "false", "no"].includes(String(env.OPL_VERIFY_CLEANUP_ON_FAILURE || "true").toLowerCase()),
     fetchImpl
   };
 }
 
 function errorPayload(error) {
-  return withoutSecrets({
-    ok: false,
-    error: error.message,
-    accountId: error.accountId,
-    runId: error.runId,
-    resourceIds: error.resourceIds,
-    cleanupErrors: error.cleanupErrors,
-    checks: error.checks
-  });
+  return withoutSecrets({ ok: false, error: error.message, accountId: error.accountId, runId: error.runId, checks: error.checks });
 }
 
 export async function runProductionVerifierCli({
@@ -516,13 +421,13 @@ export async function runProductionVerifierCli({
   fetchImpl = globalThis.fetch
 } = {}) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    stdout.write(`Usage: npm run verify:production -- --origin <https-url> [--account <id>] [--run-id <id>] [--browser-e2e]\nRequired: OPL_VERIFY_AUTH_USERS_JSON and OPL_VERIFY_PAID_CONFIRMATION=${PAID_CONFIRMATION}\n`);
+    stdout.write(`Usage: npm run verify:production -- --origin <https-url> [--account <id>] [--run-id <id>] [--browser-e2e]\nRequires OPL_VERIFY_SLOT_DESCRIPTOR_JSON; read-only smoke reuses ${FIXED_VERIFICATION_SLOT_ID}.\n`);
     return 0;
   }
   try {
     const result = await verifyProductionChain(verifierOptionsFromArgs({ argv, env, fetchImpl }));
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return 0;
+    return result.ok ? 0 : 2;
   } catch (error) {
     stderr.write(`${JSON.stringify(errorPayload(error), null, 2)}\n`);
     return 1;

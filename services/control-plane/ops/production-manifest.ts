@@ -19,6 +19,7 @@ const REQUIRED_TKE_ENV = [
   "OPL_INGRESS_CLASS",
   "OPL_IMAGE_PULL_SECRET_NAME",
   "OPL_WORKSPACE_STORAGE_CLASS",
+  "OPL_TENCENT_ZONE",
   "TENCENT_DEPLOY_KUBECONFIG_REF",
   "TENCENT_DEPLOY_CLUSTER_ID",
   "TENCENT_TCR_REGISTRY",
@@ -61,17 +62,15 @@ function normalizeRegistry(registry) {
   return String(registry || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
-function hasContainerTag(image) {
-  const text = String(image || "");
-  const lastSlash = text.lastIndexOf("/");
-  const tagIndex = text.lastIndexOf(":");
-  const tag = tagIndex >= 0 ? text.slice(tagIndex + 1) : "";
-  return tagIndex > lastSlash && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag);
-}
-
 function looksLikeRegistryImage({ image, registry }) {
   const normalizedRegistry = normalizeRegistry(registry);
-  return Boolean(image && normalizedRegistry && image.startsWith(`${normalizedRegistry}/`) && hasContainerTag(image));
+  const match = String(image || "").match(/^([^@]+)@sha256:[0-9a-f]{64}$/);
+  const repository = match?.[1] || "";
+  return Boolean(
+    normalizedRegistry &&
+    repository.startsWith(`${normalizedRegistry}/`) &&
+    !repository.slice(repository.lastIndexOf("/") + 1).includes(":")
+  );
 }
 
 function looksLikeProductionDomain(domain) {
@@ -97,7 +96,7 @@ export function validateProductionManifest({ env = {} } = {}) {
     ...SECRET_COMMON_ENV,
     ...providerConfig.secretEnv
   ];
-  const missingEnv = requiredEnv.filter((key) => !env[key]);
+  const missingEnv = requiredEnv.filter((key) => !env[key] || (!hasSecretRef(env[key]) && !String(valueOf(env[key])).trim()));
   const inlineSecretEnv = secretEnv.filter((key) => env[key] && !hasSecretRef(env[key]));
   const checks = [
     check("required_env", missingEnv.length === 0, "Every production launch variable must be declared"),
@@ -107,7 +106,7 @@ export function validateProductionManifest({ env = {} } = {}) {
       "registry_images",
       looksLikeRegistryImage({ image: values.OPL_CLOUD_IMAGE, registry: values.TENCENT_TCR_REGISTRY }) &&
         looksLikeRegistryImage({ image: values.OPL_WORKSPACE_IMAGE, registry: values.TENCENT_TCR_REGISTRY }),
-      "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must point to TENCENT_TCR_REGISTRY"
+      "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must use TCR repository@sha256 references"
     ),
     check("workspace_domain", looksLikeProductionDomain(values.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain")
   ];
