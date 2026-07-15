@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
+	"opl-cloud/services/control-plane/internal/domain"
 )
 
 func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
@@ -132,6 +133,28 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				writeJSON(w, http.StatusOK, result.Response)
 				return
 			}
+			if stringValue(operation["status"]) == "receipt_pending" && result.Workspace != nil {
+				before := cloneMap(workspace)
+				resumed, err := service.RecordWorkspaceResumedReceipt(r.Context(), *result.Workspace, key)
+				if err != nil {
+					writeUpstreamError(w, err)
+					return
+				}
+				workspace = applyWorkspaceRuntimeProjection(workspace, resumed)
+				body := workspaceResponse(cloneMap(workspace))
+				result.LeaseExpiresAt = nil
+				result.Response, result.Workspace = body, &resumed
+				operation = cloneMap(operation)
+				operation["status"] = "succeeded"
+				operation["result"] = encodeWorkspaceResumeOperation(result)
+				audit := app.auditEvent(r, "workspace.resume", "workspace", workspaceID, firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])), before, body, "succeeded")
+				if err := app.tables.CommitWorkspaceResume(r.Context(), workspace, audit, operation); err != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
+				writeJSON(w, http.StatusOK, body)
+				return
+			}
 			break
 		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
@@ -203,7 +226,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusConflict, "workspace_not_suspended")
 			return
 		}
-		resumed, err := service.ResumeWorkspace(r.Context(), controlplane.ResumeWorkspaceInput{WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID, OwnerID: stringValue(workspace["ownerUserId"]), Name: stringValue(workspace["name"]), PackageID: stringValue(workspace["packageId"]), URL: stringValue(workspace["url"]), AttachmentID: attachmentID, ComputeID: computeID, VolumeID: storageID}, key)
+		resumed, err := service.PrepareWorkspaceResume(r.Context(), controlplane.ResumeWorkspaceInput{WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID, OwnerID: stringValue(workspace["ownerUserId"]), Name: stringValue(workspace["name"]), PackageID: stringValue(workspace["packageId"]), URL: stringValue(workspace["url"]), AttachmentID: attachmentID, ComputeID: computeID, VolumeID: storageID}, key)
 		if err != nil {
 			if failErr := app.tables.FailWorkspaceResume(r.Context(), workspaceID, operationID, "fabric_resume_failed"); failErr != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
@@ -212,32 +235,25 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeUpstreamError(w, err)
 			return
 		}
-		workspace["state"], workspace["status"] = resumed.Status, resumed.Status
-		workspace["computeAllocationId"], workspace["currentComputeAllocationId"] = resumed.ComputeID, resumed.ComputeID
-		workspace["attachmentId"], workspace["currentAttachmentId"] = resumed.AttachmentID, resumed.AttachmentID
-		workspace["runtimeId"] = resumed.RuntimeID
-		workspace["runtime"] = map[string]any{"serviceName": resumed.RuntimeServiceName, "status": resumed.Status, "ready": resumed.RuntimeReady}
-		workspace["runtimeServiceName"], workspace["serviceName"] = resumed.RuntimeServiceName, resumed.RuntimeServiceName
-		workspace["receiptId"] = resumed.ReceiptID
-		workspace["url"] = resumed.URL
-		access := cloneMap(mapField(workspace, "access"))
-		delete(access, "tokenStatus")
-		delete(access, "requiresLogin")
-		if resumed.RuntimeUsername != "" {
-			access["account"], access["username"] = resumed.RuntimeUsername, resumed.RuntimeUsername
+		resumed, err = service.RecordWorkspaceResumedReceipt(r.Context(), resumed, key)
+		if err != nil {
+			workspace = applyWorkspaceRuntimeProjection(workspace, resumed)
+			body := workspaceResponse(cloneMap(workspace))
+			operation := map[string]any{"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID, "resourceId": workspaceID, "resourceKind": "workspace_runtime", "action": "workspace.resume", "provider": stringValue(workspace["provider"]), "providerRequestId": resumed.RuntimeID, "status": "receipt_pending", "result": encodeWorkspaceResumeOperation(workspaceResumeOperationResult{RequestHash: requestHash, Response: body, Workspace: &resumed}), "computeAllocationId": resumed.ComputeID, "storageId": resumed.VolumeID, "attachmentId": resumed.AttachmentID, "runtimeServiceName": resumed.RuntimeServiceName}
+			if saveErr := app.tables.SaveRuntimeOperation(r.Context(), operation); saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			if saveErr := app.tables.SaveWorkspace(r.Context(), workspace); saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			writeUpstreamError(w, err)
+			return
 		}
-		if resumed.CredentialStatus != "" {
-			access["credentialStatus"] = resumed.CredentialStatus
-		}
-		if resumed.CredentialVersion != "" {
-			access["credentialVersion"] = resumed.CredentialVersion
-		}
-		if resumed.CredentialSecretRef != "" {
-			access["secretRef"] = resumed.CredentialSecretRef
-		}
-		workspace["access"] = access
+		workspace = applyWorkspaceRuntimeProjection(workspace, resumed)
 		body := workspaceResponse(cloneMap(workspace))
-		operation := map[string]any{"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID, "resourceId": workspaceID, "resourceKind": "workspace_runtime", "action": "workspace.resume", "provider": stringValue(workspace["provider"]), "providerRequestId": resumed.RuntimeID, "status": "succeeded", "result": encodeWorkspaceResumeOperation(workspaceResumeOperationResult{RequestHash: requestHash, Response: body}), "computeAllocationId": resumed.ComputeID, "storageId": resumed.VolumeID, "attachmentId": resumed.AttachmentID, "runtimeServiceName": resumed.RuntimeServiceName}
+		operation := map[string]any{"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID, "resourceId": workspaceID, "resourceKind": "workspace_runtime", "action": "workspace.resume", "provider": stringValue(workspace["provider"]), "providerRequestId": resumed.RuntimeID, "status": "succeeded", "result": encodeWorkspaceResumeOperation(workspaceResumeOperationResult{RequestHash: requestHash, Response: body, Workspace: &resumed}), "computeAllocationId": resumed.ComputeID, "storageId": resumed.VolumeID, "attachmentId": resumed.AttachmentID, "runtimeServiceName": resumed.RuntimeServiceName}
 		audit := app.auditEvent(r, "workspace.resume", "workspace", workspaceID, accountID, before, body, "succeeded")
 		if err := app.tables.CommitWorkspaceResume(r.Context(), workspace, audit, operation); err != nil {
 			_ = app.tables.FailWorkspaceResume(r.Context(), workspaceID, operationID, "resume_commit_failed")
@@ -288,34 +304,104 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		ownerID := firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", ""))
 		name := firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace"))
-		if existing, exists := app.getWorkspace(workspaceID); exists {
-			if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
-				stringValue(existing["attachmentId"]) != attachmentID || stringValue(existing["computeAllocationId"]) != computeID ||
-				stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
-				firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
+		requestHash := stableID(accountID, ownerID, name, packageID, attachmentID, computeID, storageID)
+		operationID := "create-" + stableID(workspaceID)[:18]
+		idempotencyKey := "workspace-create:" + workspaceID
+		operations, err := app.tables.ListRuntimeOperations(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		var workspace domain.WorkspaceProjection
+		retryReceipt := false
+		for _, operation := range operations {
+			if stringValue(operation["id"]) != operationID {
+				continue
+			}
+			result, err := decodeWorkspaceCreateOperation(operation)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			if result.RequestHash != requestHash {
 				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
 				return
 			}
-			writeJSON(w, http.StatusCreated, workspaceResponse(existing))
-			return
+			switch stringValue(operation["status"]) {
+			case "succeeded":
+				if err := app.saveWorkspaceProjection(result.Workspace); err != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
+				writeJSON(w, http.StatusCreated, workspaceResponse(structToMap(result.Workspace)))
+				return
+			case "receipt_pending":
+				workspace, retryReceipt = result.Workspace, true
+			default:
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			break
 		}
-		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
-		if !ok {
-			return
+		if retryReceipt {
+			if err := app.saveWorkspaceProjection(workspace); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			workspace, err = service.RecordWorkspaceCreatedReceipt(r.Context(), workspace, idempotencyKey)
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
+		} else {
+			if existing, exists := app.getWorkspace(workspaceID); exists {
+				if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
+					stringValue(existing["attachmentId"]) != attachmentID || firstNonEmpty(stringValue(existing["computeAllocationId"]), stringValue(existing["currentComputeAllocationId"])) != computeID ||
+					stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
+					firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
+					writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+					return
+				}
+				writeJSON(w, http.StatusCreated, workspaceResponse(existing))
+				return
+			}
+			sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+			if !ok {
+				return
+			}
+			workspace, err = service.PrepareWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
+				WorkspaceID:   workspaceID,
+				AccountID:     accountID,
+				Sub2APIUserID: sub2APIUserID,
+				OwnerID:       ownerID,
+				Name:          name,
+				PackageID:     packageID,
+				AttachmentID:  attachmentID,
+				ComputeID:     computeID,
+				VolumeID:      storageID,
+			}, idempotencyKey)
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
+			result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace}
+			if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "receipt_pending", result)); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			if err := app.saveWorkspaceProjection(workspace); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			workspace, err = service.RecordWorkspaceCreatedReceipt(r.Context(), workspace, idempotencyKey)
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
 		}
-		workspace, err := service.CreateWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
-			WorkspaceID:   workspaceID,
-			AccountID:     accountID,
-			Sub2APIUserID: sub2APIUserID,
-			OwnerID:       ownerID,
-			Name:          name,
-			PackageID:     packageID,
-			AttachmentID:  attachmentID,
-			ComputeID:     computeID,
-			VolumeID:      storageID,
-		}, "workspace-create:"+workspaceID)
-		if err != nil {
-			writeUpstreamError(w, err)
+		result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace}
+		if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "succeeded", result)); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.saveWorkspaceProjection(workspace); err != nil {
@@ -329,4 +415,42 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeJSON(w, http.StatusCreated, body)
 	}))
+}
+
+func workspaceCreateOperationRow(operationID, status string, result workspaceCreateOperationResult) map[string]any {
+	workspace := result.Workspace
+	return map[string]any{
+		"id": operationID, "operationId": operationID, "accountId": workspace.AccountID, "workspaceId": workspace.ID,
+		"resourceId": workspace.ID, "resourceKind": "workspace_runtime", "action": "workspace.create", "provider": workspace.Provider,
+		"providerRequestId": workspace.RuntimeID, "status": status, "result": encodeWorkspaceCreateOperation(result),
+		"computeAllocationId": workspace.ComputeID, "storageId": workspace.VolumeID, "attachmentId": workspace.AttachmentID, "runtimeServiceName": workspace.RuntimeServiceName,
+	}
+}
+
+func applyWorkspaceRuntimeProjection(workspace map[string]any, resumed domain.WorkspaceProjection) map[string]any {
+	workspace["state"], workspace["status"] = resumed.Status, resumed.Status
+	workspace["computeAllocationId"], workspace["currentComputeAllocationId"] = resumed.ComputeID, resumed.ComputeID
+	workspace["attachmentId"], workspace["currentAttachmentId"] = resumed.AttachmentID, resumed.AttachmentID
+	workspace["runtimeId"] = resumed.RuntimeID
+	workspace["runtime"] = map[string]any{"serviceName": resumed.RuntimeServiceName, "status": resumed.Status, "ready": resumed.RuntimeReady}
+	workspace["runtimeServiceName"], workspace["serviceName"] = resumed.RuntimeServiceName, resumed.RuntimeServiceName
+	workspace["receiptId"] = resumed.ReceiptID
+	workspace["url"] = resumed.URL
+	access := cloneMap(mapField(workspace, "access"))
+	delete(access, "tokenStatus")
+	delete(access, "requiresLogin")
+	if resumed.RuntimeUsername != "" {
+		access["account"], access["username"] = resumed.RuntimeUsername, resumed.RuntimeUsername
+	}
+	if resumed.CredentialStatus != "" {
+		access["credentialStatus"] = resumed.CredentialStatus
+	}
+	if resumed.CredentialVersion != "" {
+		access["credentialVersion"] = resumed.CredentialVersion
+	}
+	if resumed.CredentialSecretRef != "" {
+		access["secretRef"] = resumed.CredentialSecretRef
+	}
+	workspace["access"] = access
+	return workspace
 }

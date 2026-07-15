@@ -218,7 +218,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		body := storageResponse(mergeMaps(existing, structToMap(result)))
-		body["status"], body["desiredStatus"], body["billingStatus"] = "destroyed", "destroyed", "stopped"
+		body["desiredStatus"], body["billingStatus"] = "destroyed", "stopped"
 		if err := app.saveStorageFact(body); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return

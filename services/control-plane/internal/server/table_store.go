@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"opl-cloud/services/control-plane/internal/domain"
 )
 
 var errWorkspaceResumeInProgress = errors.New("workspace_resume_in_progress")
@@ -12,10 +14,29 @@ var errWorkspaceNotSuspended = errors.New("workspace_not_suspended")
 var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
 
 type workspaceResumeOperationResult struct {
-	RequestHash    string         `json:"requestHash"`
-	LeaseExpiresAt *time.Time     `json:"leaseExpiresAt,omitempty"`
-	Response       map[string]any `json:"response,omitempty"`
-	ErrorCode      string         `json:"errorCode,omitempty"`
+	RequestHash    string                      `json:"requestHash"`
+	LeaseExpiresAt *time.Time                  `json:"leaseExpiresAt,omitempty"`
+	Response       map[string]any              `json:"response,omitempty"`
+	Workspace      *domain.WorkspaceProjection `json:"workspace,omitempty"`
+	ErrorCode      string                      `json:"errorCode,omitempty"`
+}
+
+type workspaceCreateOperationResult struct {
+	RequestHash string                     `json:"requestHash"`
+	Workspace   domain.WorkspaceProjection `json:"workspace"`
+}
+
+func decodeWorkspaceCreateOperation(operation map[string]any) (workspaceCreateOperationResult, error) {
+	var result workspaceCreateOperationResult
+	if err := json.Unmarshal([]byte(stringValue(operation["result"])), &result); err != nil || result.RequestHash == "" || result.Workspace.ID == "" {
+		return workspaceCreateOperationResult{}, errors.New("invalid_workspace_create_operation")
+	}
+	return result, nil
+}
+
+func encodeWorkspaceCreateOperation(result workspaceCreateOperationResult) string {
+	payload, _ := json.Marshal(result)
+	return string(payload)
 }
 
 func decodeWorkspaceResumeOperation(operation map[string]any) (workspaceResumeOperationResult, error) {

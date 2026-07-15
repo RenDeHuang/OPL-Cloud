@@ -179,6 +179,9 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 	if userID <= 0 {
 		return Sub2APIBalance{}, errors.New("sub2api user ID must be positive")
 	}
+	if err := c.ensureSupportedVersion(ctx); err != nil {
+		return Sub2APIBalance{}, err
+	}
 	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10), nil, "")
 	if err != nil {
 		return Sub2APIBalance{}, err
@@ -204,6 +207,9 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub2APIWorkspaceKey, error) {
 	if userID <= 0 {
 		return Sub2APIWorkspaceKey{}, errors.New("sub2api user ID must be positive")
+	}
+	if err := c.ensureSupportedVersion(ctx); err != nil {
+		return Sub2APIWorkspaceKey{}, err
 	}
 	matches := make([]Sub2APIWorkspaceKey, 0, 1)
 	for page := 1; page <= maxSub2APIKeyPages; page++ {
@@ -300,12 +306,8 @@ func (c *Sub2APIHTTPClient) Refund(ctx context.Context, input Sub2APIRefundInput
 }
 
 func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, code string, valueUSDMicros int64, notes string) (string, error) {
-	version, err := c.Version(ctx)
-	if err != nil {
+	if err := c.ensureSupportedVersion(ctx); err != nil {
 		return "", err
-	}
-	if _, ok := c.supportedVersions[version]; !ok {
-		return "", fmt.Errorf("%w: %s", ErrSub2APIUnsupportedVersion, version)
 	}
 	payload := struct {
 		Code   string          `json:"code"`
@@ -347,6 +349,17 @@ func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, cod
 		return "", fmt.Errorf("%w: redeem record differs from requested balance adjustment", ErrSub2APIChargeConflict)
 	}
 	return data.RedeemCode.Status, nil
+}
+
+func (c *Sub2APIHTTPClient) ensureSupportedVersion(ctx context.Context) error {
+	version, err := c.Version(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := c.supportedVersions[version]; !ok {
+		return fmt.Errorf("%w: %s", ErrSub2APIUnsupportedVersion, version)
+	}
+	return nil
 }
 
 func (c *Sub2APIHTTPClient) doAuthenticated(ctx context.Context, method, path string, input any, idempotencyKey string) ([]byte, error) {

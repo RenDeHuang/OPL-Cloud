@@ -53,7 +53,8 @@ test("staging env validation requires Tencent mode, shared persistence, and clou
   assert.ok(report.missingEnv.includes("OPL_TENCENT_PROVISIONER_BIN"));
   assert.ok(report.missingEnv.includes("TENCENT_CVM_SUBNET_ID"));
   assert.ok(report.missingEnv.includes("TENCENT_CVM_SECURITY_GROUP_IDS"));
-  assert.ok(report.missingEnv.includes("OPL_COMPUTE_LAUNCH_ZONE"));
+  assert.ok(report.missingEnv.includes("OPL_TENCENT_ZONE"));
+  assert.equal(report.missingEnv.includes("OPL_COMPUTE_LAUNCH_ZONE"), false);
   assert.ok(report.missingEnv.includes("OPL_BASIC_COMPUTE_INSTANCE_TYPE"));
   assert.ok(report.failedChecks.includes("runtime_provider"));
   assert.ok(report.failedChecks.includes("workspace_domain"));

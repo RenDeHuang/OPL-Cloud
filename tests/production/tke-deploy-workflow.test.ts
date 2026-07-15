@@ -74,7 +74,7 @@ async function manifestFixture() {
       OPL_WORKSPACE_IMAGE: "registry.example.test/opl/workspace:test",
       OPL_IMAGE_PULL_SECRET_NAME: "pull-test",
       OPL_SUB2API_BASE_URL: "https://wallet.example.test",
-      OPL_SUB2API_SUPPORTED_VERSIONS: "0.1.153",
+      OPL_SUB2API_SUPPORTED_VERSIONS: "0.1.156,0.1.155",
       OPL_SUB2API_REQUEST_TIMEOUT_MS: "7000",
       OPL_MONTHLY_BILLING_WORKER_ENABLED: "1",
       OPL_MONTHLY_BILLING_INTERVAL_MS: "60000"
@@ -142,9 +142,14 @@ test("deployment inputs contain monthly and Sub2API config without retired billi
     "OPL_MONTHLY_BILLING_INTERVAL_MS",
     "OPL_SUB2API_BASE_URL",
     "OPL_SUB2API_SUPPORTED_VERSIONS",
-    "OPL_SUB2API_REQUEST_TIMEOUT_MS"
+    "OPL_SUB2API_REQUEST_TIMEOUT_MS",
+    "OPL_TENCENT_ZONE"
   ]) assert.match(joined, new RegExp(key));
   assert.doesNotMatch(joined, /OPL_(?:BASIC|PRO)_COMPUTE_HOURLY_CNY|OPL_STORAGE_GB_MONTH_CNY|OPL_RESOURCE_BILLING_/);
+  assert.doesNotMatch(joined, /OPL_COMPUTE_LAUNCH_ZONE/);
+
+  const workflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
+  assert.equal(workflowJob(workflow, "deploy").env.OPL_SUB2API_SUPPORTED_VERSIONS, "0.1.156,0.1.155");
 });
 
 test("TKE manifest renderer replaces current values and never renders secrets", async () => {

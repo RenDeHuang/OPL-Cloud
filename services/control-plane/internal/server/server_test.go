@@ -23,7 +23,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	_ = os.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	_ = os.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	_ = os.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
 	_ = os.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	os.Exit(m.Run())
@@ -703,32 +703,35 @@ func TestPricingPackageAvailabilityFollowsFabricComputePools(t *testing.T) {
 }
 
 func TestWorkspaceReceiptFailureKeepsSucceededRuntimeForReplay(t *testing.T) {
-	calls := []string{}
 	ledger := &flakyWorkspaceReceiptLedger{}
-	service := newTestService(ledger, &fakeFabricClient{calls: &calls})
-	input := controlplane.CreateWorkspaceInput{
-		WorkspaceID: "workspace-receipt-replay", AccountID: "acct-alpha", Sub2APIUserID: 41,
-		OwnerID: "usr-alpha", Name: "Receipt Replay", PackageID: "basic",
-		AttachmentID: "attachment-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
-	}
+	fabric := &fakeFabricClient{}
+	sub2API := &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}}
+	server := NewServer(controlplane.NewService(ledger, fabric, sub2API))
+	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+	body := `{"attachmentId":"` + stringValue(attachment["id"]) + `","workspaceName":"Receipt Replay"}`
 
-	if _, err := service.CreateWorkspace(context.Background(), input, "workspace-receipt-replay"); err == nil {
-		t.Fatal("first receipt outage should be returned")
+	first := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", body)
+	if first.Code != http.StatusBadGateway {
+		t.Fatalf("first receipt outage status=%d body=%s", first.Code, first.Body.String())
 	}
-	if slices.Contains(calls, "fabric.runtime-destroy") {
-		t.Fatalf("receipt outage destroyed succeeded runtime: %#v", calls)
+	state := requestWithSession(t, server, session, http.MethodGet, "/api/state?accountId=acct-alpha", "")
+	if state.Code != http.StatusOK || !strings.Contains(state.Body.String(), stringValue(attachment["workspaceId"])) || !strings.Contains(state.Body.String(), "runtime-from-fabric") {
+		t.Fatalf("receipt-pending workspace was not persisted: status=%d body=%s", state.Code, state.Body.String())
 	}
-	workspace, err := service.CreateWorkspace(context.Background(), input, "workspace-receipt-replay")
-	if err != nil || workspace.RuntimeID != "runtime-from-fabric" || workspace.ReceiptID != "receipt-from-ledger" {
-		t.Fatalf("replay workspace=%#v err=%v calls=%#v", workspace, err, calls)
+	second := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", body)
+	if second.Code != http.StatusCreated || !strings.Contains(second.Body.String(), "receipt-from-ledger") {
+		t.Fatalf("receipt replay status=%d body=%s", second.Code, second.Body.String())
 	}
-	if ledger.receiptCalls != 2 || slices.Contains(calls, "fabric.runtime-destroy") {
-		t.Fatalf("receipt replay calls=%d fabric=%#v", ledger.receiptCalls, calls)
+	if ledger.receiptCalls != 2 || len(sub2API.workspaceKeyUserIDs) != 1 || len(fabric.gatewaySecretInputs) != 1 || len(fabric.runtimeInputs) != 1 {
+		t.Fatalf("receipt replay repeated side effects: receipts=%d keys=%#v secrets=%#v runtimes=%#v", ledger.receiptCalls, sub2API.workspaceKeyUserIDs, fabric.gatewaySecretInputs, fabric.runtimeInputs)
 	}
 }
 
 func TestWorkspaceCreatePreservesFabricConflictStatus(t *testing.T) {
-	t.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
 	fabric := &fakeFabricClient{}
 	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
@@ -741,6 +744,49 @@ func TestWorkspaceCreatePreservesFabricConflictStatus(t *testing.T) {
 	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "upstream_conflict") {
 		t.Fatalf("workspace conflict status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceCreatePreservesGatewaySecretConflictStatus(t *testing.T) {
+	fabric := &fakeFabricClient{gatewaySecretErr: &clients.FabricHTTPError{StatusCode: http.StatusConflict, Body: `{"error":"secret_conflict"}`}}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "upstream_conflict") {
+		t.Fatalf("gateway Secret conflict status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestStorageDestroyPreservesRetainedProviderStatus(t *testing.T) {
+	fabric := &fakeFabricClient{storageDestroyStatus: "retained"}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes/destroy", `{"storageId":"`+stringValue(storage["id"])+`","confirmDataLoss":true}`)
+	var body map[string]any
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&body) != nil || body["status"] != "retained" || body["desiredStatus"] != "destroyed" || body["billingStatus"] != "stopped" {
+		t.Fatalf("retained destroy status=%d body=%#v", response.Code, body)
+	}
+}
+
+func TestProviderReconcilePreservesReleasedStorageStatus(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	row := map[string]any{"id": "storage-reconcile-released", "accountId": "acct-alpha", "status": "available", "desiredStatus": "destroyed", "billingStatus": "active"}
+	mustStore(t, app.tables.SaveStorage(context.Background(), row))
+	fabric := &fakeFabricClient{storageDestroyStatus: "released"}
+
+	if err := app.reconcileMonthlyStorage(context.Background(), newTestService(fakeLedgerClient{}, fabric), row, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := app.getStorage("storage-reconcile-released")
+	if stored["status"] != "released" || stored["desiredStatus"] != "destroyed" || stored["billingStatus"] != "stopped" {
+		t.Fatalf("reconciled storage=%#v", stored)
 	}
 }
 
@@ -1183,6 +1229,9 @@ type flakyWorkspaceReceiptLedger struct {
 }
 
 func (l *flakyWorkspaceReceiptLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
+	if input.Type != "workspace.created" {
+		return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
+	}
 	l.receiptCalls++
 	if l.receiptCalls == 1 {
 		return clients.Receipt{}, errors.New("ledger unavailable")
@@ -1229,13 +1278,15 @@ func (unavailableProCatalogFabricClient) Catalog(_ context.Context) (clients.Fab
 }
 
 type fakeFabricClient struct {
-	calls               *[]string
-	runtime             clients.WorkspaceRuntime
-	runtimeErr          error
-	runtimeStatus       clients.WorkspaceRuntime
-	gatewaySecret       clients.GatewaySecretWriteResult
-	gatewaySecretInputs []clients.GatewaySecretWriteInput
-	runtimeInputs       []clients.WorkspaceRuntimeInput
+	calls                *[]string
+	runtime              clients.WorkspaceRuntime
+	runtimeErr           error
+	runtimeStatus        clients.WorkspaceRuntime
+	gatewaySecret        clients.GatewaySecretWriteResult
+	gatewaySecretErr     error
+	storageDestroyStatus string
+	gatewaySecretInputs  []clients.GatewaySecretWriteInput
+	runtimeInputs        []clients.WorkspaceRuntimeInput
 }
 
 type provisioningComputeFabricClient struct{ fakeFabricClient }
@@ -1338,7 +1389,7 @@ func (f *fakeFabricClient) SyncStorageVolume(_ context.Context, id string) (clie
 
 func (f *fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage-destroy")
-	return clients.StorageVolume{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric"}, nil
+	return clients.StorageVolume{ID: id, Status: firstNonEmpty(f.storageDestroyStatus, "destroyed"), Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
@@ -1354,6 +1405,9 @@ func (f *fakeFabricClient) DetachStorageAttachment(_ context.Context, id string,
 func (f *fakeFabricClient) WriteGatewaySecret(_ context.Context, input clients.GatewaySecretWriteInput, _ string) (clients.GatewaySecretWriteResult, error) {
 	f.record("fabric.gateway-secret")
 	f.gatewaySecretInputs = append(f.gatewaySecretInputs, input)
+	if f.gatewaySecretErr != nil {
+		return clients.GatewaySecretWriteResult{}, f.gatewaySecretErr
+	}
 	if f.gatewaySecret.SecretRef != "" {
 		return f.gatewaySecret, nil
 	}

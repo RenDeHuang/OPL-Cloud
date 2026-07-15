@@ -31,6 +31,10 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 		row["sizeGb"] = 10
 		row["monthlyPriceCnyCents"] = int64(1800)
 		row["chargeUsdMicros"] = int64(2_571_429)
+	} else {
+		row["instanceId"], row["cvmInstanceId"] = providerID, providerID
+		row["instanceType"] = "S5.MEDIUM4"
+		row["providerData"].(map[string]any)["instanceType"] = "S5.MEDIUM4"
 	}
 	return row
 }
@@ -184,7 +188,7 @@ func TestMonthlyRenewalUnknownChargeRequiresReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, _ := app.getCompute("compute-review-renewal")
-	if row["billingStatus"] != "manual_review" || row["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(ledger.receipts) != 0 {
+	if row["billingStatus"] != "manual_review" || row["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 		t.Fatalf("unknown renewal row=%#v charges=%#v receipts=%#v", row, sub2API.charges, ledger.receipts)
 	}
 }
@@ -213,7 +217,7 @@ func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
 				t.Fatal(err)
 			}
 			review, _ := app.monthlyResource(resourceType, id)
-			if review["billingStatus"] != "manual_review" || review["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+			if review["billingStatus"] != "manual_review" || review["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 				t.Fatalf("provider review row=%#v charges=%#v refunds=%#v receipts=%#v", review, sub2API.charges, sub2API.refunds, ledger.receipts)
 			}
 			before := len(*events)
@@ -222,6 +226,63 @@ func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
 			}
 			if len(*events) != before || len(sub2API.charges) != 1 {
 				t.Fatalf("manual review retried provider: events=%#v charges=%#v", *events, sub2API.charges)
+			}
+		})
+	}
+}
+
+func TestMonthlyRenewalRejectsProviderIdentityDrift(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(24 * time.Hour)
+	renewedThrough := nextBillingMonth(paidThrough, paidThrough.Day())
+	tests := []struct {
+		name         string
+		resourceType string
+		mutate       func(*monthlyFabric, string)
+	}{
+		{name: "compute provider resource", resourceType: "compute", mutate: func(f *monthlyFabric, id string) { f.computeRenew.ProviderResourceID = "ins-other" }},
+		{name: "compute zone", resourceType: "compute", mutate: func(f *monthlyFabric, _ string) {
+			f.computeRenew.Zone, f.computeRenew.ProviderData["zone"] = "ap-shanghai-3", "ap-shanghai-3"
+		}},
+		{name: "compute package", resourceType: "compute", mutate: func(f *monthlyFabric, _ string) { f.computeRenew.PackageID = "pro" }},
+		{name: "compute instance type", resourceType: "compute", mutate: func(f *monthlyFabric, _ string) {
+			f.computeRenew.InstanceType, f.computeRenew.ProviderData["instanceType"] = "SA5.2XLARGE16", "SA5.2XLARGE16"
+		}},
+		{name: "compute instance identity", resourceType: "compute", mutate: func(f *monthlyFabric, _ string) {
+			f.computeRenew.InstanceID, f.computeRenew.CVMInstanceID = "ins-other", "ins-other"
+		}},
+		{name: "storage provider resource", resourceType: "storage", mutate: func(f *monthlyFabric, _ string) { f.storageRenew.ProviderResourceID = "disk-other" }},
+		{name: "storage zone", resourceType: "storage", mutate: func(f *monthlyFabric, _ string) {
+			f.storageRenew.Zone, f.storageRenew.ProviderData["zone"] = "ap-shanghai-3", "ap-shanghai-3"
+		}},
+		{name: "storage size", resourceType: "storage", mutate: func(f *monthlyFabric, _ string) { f.storageRenew.SizeGB = 20 }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			charge, postCharge := int64(50_000_000), int64(50_000_000)
+			if tc.resourceType == "storage" {
+				charge, postCharge = 2_571_429, 97_428_571
+			}
+			app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
+			id := tc.resourceType + "-identity-drift"
+			row := monthlyActiveResource(tc.resourceType, id, paidThrough)
+			row["chargeUsdMicros"] = charge
+			if tc.resourceType == "storage" {
+				fabric.storageRenew = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "disk-" + id, ProviderRequestID: "renew-" + id, CBSStatus: "UNATTACHED", SizeGB: 10, Zone: "ap-shanghai-2", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: renewedThrough.Format(time.RFC3339), ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2"}}
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+			} else {
+				fabric.computeRenew = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "ins-" + id, ProviderRequestID: "renew-" + id, InstanceID: "ins-" + id, CVMInstanceID: "ins-" + id, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: renewedThrough.Format(time.RFC3339), ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+			}
+			tc.mutate(fabric, id)
+
+			result, err := app.renewMonthlyResource(context.Background(), service, tc.resourceType, row, now)
+			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || result["paidThrough"] != paidThrough.Format(time.RFC3339) {
+				t.Fatalf("identity drift activated renewal: result=%#v err=%v", result, err)
+			}
+			if stringValue(result["providerResourceId"]) != stringValue(row["providerResourceId"]) || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+				t.Fatalf("identity drift overwrote truth or evidence: result=%#v refunds=%#v receipts=%#v", result, sub2API.refunds, ledger.receipts)
 			}
 		})
 	}
@@ -262,7 +323,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 			}
 			refunded, _ := app.monthlyResource(resourceType, id)
 			operationID := "renewal-" + stableID(resourceType, id, paidThrough.Format(time.RFC3339))[:18]
-			if refunded["billingStatus"] != "refunded" || refunded["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 0 {
+			if refunded["billingStatus"] != "refunded" || refunded["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_refunded.v1" {
 				t.Fatalf("refunded=%#v charges=%#v refunds=%#v receipts=%#v events=%#v", refunded, sub2API.charges, sub2API.refunds, ledger.receipts, *events)
 			}
 			if sub2API.refunds[0].Code != monthlyRefundCode(monthlyEnvironment(), operationID) || sub2API.refunds[0].RefundUSDMicros != charge {

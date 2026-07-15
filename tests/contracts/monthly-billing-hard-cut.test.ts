@@ -70,6 +70,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
     "billing.resource_purchased.v1",
     "billing.resource_renewed.v1",
     "billing.resource_expired.v1",
+    "billing.resource_refunded.v1",
     "billing.charge_review_required.v1",
     "billing.reconciliation.v1"
   ]) {

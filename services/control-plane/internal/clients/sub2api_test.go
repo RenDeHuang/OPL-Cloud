@@ -63,6 +63,8 @@ func TestSub2APIClientLogsInRefreshesOnceAndParsesDecimalBalance(t *testing.T) {
 		case "/api/v1/auth/refresh":
 			refreshCalls++
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access-two", "refresh_token": "refresh-two"})
+		case "/api/v1/admin/system/version":
+			writeSub2APISuccess(t, w, map[string]any{"version": "0.1.151"})
 		case "/api/v1/admin/users/41":
 			userCalls++
 			if r.Header.Get("Authorization") == "Bearer access-one" {
@@ -97,6 +99,8 @@ func TestSub2APIClientSelectsOneActiveWorkspaceKeyAcrossPages(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/auth/login":
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/system/version":
+			writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
 		case "/api/v1/admin/users/41/api-keys":
 			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer access" || r.URL.Query().Get("page_size") != "1000" {
 				t.Fatalf("unexpected key request: %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
@@ -160,6 +164,8 @@ func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/auth/login":
 					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/system/version":
+					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
 				case "/api/v1/admin/users/41/api-keys":
 					writeSub2APISuccess(t, w, map[string]any{"items": tc.items, "total": len(tc.items), "page": 1, "page_size": 1000, "pages": 1})
 				default:
@@ -184,6 +190,8 @@ func TestSub2APIClientWorkspaceKeyRejectsExcessivePaginationWithoutContinuing(t 
 				switch r.URL.Path {
 				case "/api/v1/auth/login":
 					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/system/version":
+					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
 				case "/api/v1/admin/users/41/api-keys":
 					keyRequests++
 					pagination["items"] = []any{}
@@ -208,6 +216,8 @@ func TestSub2APIClientWorkspaceKeyRejectsCrossUserAndDoesNotLeakKey(t *testing.T
 		switch r.URL.Path {
 		case "/api/v1/auth/login":
 			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/system/version":
+			writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
 		case "/api/v1/admin/users/41/api-keys":
 			writeSub2APISuccess(t, w, map[string]any{"items": []map[string]any{{"id": 1, "user_id": 42, "name": "opl-workspace", "key": secret, "status": "active"}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
 		default:
@@ -233,6 +243,10 @@ func TestSub2APIClientWorkspaceKeyBoundsAndRedactsUpstreamResponses(t *testing.T
 			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/auth/login" {
 					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+					return
+				}
+				if r.URL.Path == "/api/v1/admin/system/version" {
+					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
 					return
 				}
 				handler(w, r)
@@ -360,6 +374,41 @@ func TestSub2APIClientRejectsUnsupportedVersionBeforeCharge(t *testing.T) {
 	}
 }
 
+func TestSub2APIClientRejectsUnsupportedVersionBeforeReadPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		call func(*Sub2APIHTTPClient) error
+	}{
+		{name: "balance", path: "/api/v1/admin/users/41", call: func(client *Sub2APIHTTPClient) error { _, err := client.Balance(context.Background(), 41); return err }},
+		{name: "workspace key", path: "/api/v1/admin/users/41/api-keys", call: func(client *Sub2APIHTTPClient) error {
+			_, err := client.WorkspaceKey(context.Background(), 41)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			businessCalls := 0
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/system/version":
+					writeSub2APISuccess(t, w, map[string]any{"version": "0.1.157"})
+				case tc.path:
+					businessCalls++
+					writeSub2APISuccess(t, w, map[string]any{})
+				default:
+					http.NotFound(w, r)
+				}
+			}, []string{"0.1.156", "0.1.155"}, time.Second)
+
+			if err := tc.call(client); !errors.Is(err, ErrSub2APIUnsupportedVersion) || businessCalls != 0 {
+				t.Fatalf("unsupported read version err=%v business calls=%d", err, businessCalls)
+			}
+		})
+	}
+}
+
 func TestSub2APIClientAcceptsConfiguredCurrentAndFallbackVersions(t *testing.T) {
 	for _, tc := range []struct {
 		version string
@@ -422,6 +471,8 @@ func TestSub2APIClientBoundsBodiesAndTreatsChargeTimeoutAsUnknown(t *testing.T) 
 			switch r.URL.Path {
 			case "/api/v1/auth/login":
 				writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+			case "/api/v1/admin/system/version":
+				writeSub2APISuccess(t, w, map[string]any{"version": "0.1.151"})
 			case "/api/v1/admin/users/41":
 				_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","data":{"id":41,"balance":1,"padding":"%s"}}`, strings.Repeat("x", maxSub2APIResponseBytes))
 			default:

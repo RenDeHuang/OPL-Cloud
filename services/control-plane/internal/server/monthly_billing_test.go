@@ -71,6 +71,7 @@ type monthlyFabric struct {
 	events           *[]string
 	createErr        error
 	cleanupErr       error
+	cleanupStatus    string
 	syncErr          error
 	preflightResult  *clients.MonthlyPreflight
 	preflightErr     error
@@ -194,7 +195,7 @@ func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string
 	f.computeRenewKeys = append(f.computeRenewKeys, key)
 	result := f.computeRenew
 	if result.ID == "" {
-		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "ins-" + id, ProviderRequestID: "renew-" + id, ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"renewalResult": "renewed"}}
+		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "ins-" + id, ProviderRequestID: "renew-" + id, InstanceID: "ins-" + id, CVMInstanceID: "ins-" + id, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}
 	}
 	return result, f.computeRenewErr
 }
@@ -204,7 +205,7 @@ func (f *monthlyFabric) RenewStorageVolume(_ context.Context, id, key string) (c
 	f.storageRenewKeys = append(f.storageRenewKeys, key)
 	result := f.storageRenew
 	if result.ID == "" {
-		result = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "disk-" + id, ProviderRequestID: "renew-" + id, CBSStatus: "UNATTACHED", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed"}}
+		result = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "disk-" + id, ProviderRequestID: "renew-" + id, CBSStatus: "UNATTACHED", SizeGB: 10, Zone: "ap-shanghai-2", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2"}}
 	}
 	return result, f.storageRenewErr
 }
@@ -222,7 +223,7 @@ func (f *monthlyFabric) DestroyStorageVolume(_ context.Context, id, _ string) (c
 	if f.cleanupErr != nil {
 		return clients.StorageVolume{ID: id}, f.cleanupErr
 	}
-	return clients.StorageVolume{ID: id, Status: "destroyed"}, nil
+	return clients.StorageVolume{ID: id, Status: firstNonEmpty(f.cleanupStatus, "destroyed")}, nil
 }
 
 type monthlyLedger struct {
@@ -258,7 +259,7 @@ func (l *monthlyLedger) RecordReceipt(_ context.Context, input clients.ReceiptIn
 
 func newMonthlyBillingTest(t *testing.T, balances []int64) (*controlPlaneServer, *controlplane.Service, *monthlySub2API, *monthlyFabric, *monthlyLedger, *[]string) {
 	t.Helper()
-	t.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
 	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	events := &[]string{}
@@ -405,7 +406,7 @@ func TestMonthlyPurchaseConfirmedAbsenceRefundsOnce(t *testing.T) {
 	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-absent", BillingOperationID: "billing-absent", AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
 
 	result, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if !errors.Is(err, errMonthlyPurchaseRefunded) || result["billingStatus"] != "refunded" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 0 {
+	if !errors.Is(err, errMonthlyPurchaseRefunded) || result["billingStatus"] != "refunded" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_refunded.v1" {
 		t.Fatalf("absence result=%#v charges=%#v refunds=%#v receipts=%#v err=%v", result, sub2API.charges, sub2API.refunds, ledger.receipts, err)
 	}
 	if sub2API.refunds[0].RefundUSDMicros != 50_000_000 || sub2API.refunds[0].Code != monthlyRefundCode("test", "billing-absent") || sub2API.refunds[0].RefundUSDMicros <= 0 {
@@ -415,7 +416,7 @@ func TestMonthlyPurchaseConfirmedAbsenceRefundsOnce(t *testing.T) {
 	if _, err := app.purchaseMonthlyResource(context.Background(), service, input); !errors.Is(err, errMonthlyPurchaseRefunded) {
 		t.Fatalf("refund replay err=%v", err)
 	}
-	if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(fabric.computeIDs) != 1 {
+	if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(fabric.computeIDs) != 1 || len(ledger.receipts) != 1 {
 		t.Fatalf("refund replay duplicated work: events=%#v charges=%#v refunds=%#v creates=%#v", *events, sub2API.charges, sub2API.refunds, fabric.computeIDs)
 	}
 }
@@ -427,14 +428,14 @@ func TestMonthlyPurchaseUnknownProviderResultNeedsManualReviewWithoutRefund(t *t
 	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-unknown", BillingOperationID: "billing-unknown", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
 
 	result, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 		t.Fatalf("unknown result=%#v charges=%#v refunds=%#v receipts=%#v err=%v", result, sub2API.charges, sub2API.refunds, ledger.receipts, err)
 	}
 	before := len(*events)
 	if _, err := app.purchaseMonthlyResource(context.Background(), service, input); !errors.Is(err, errMonthlyChargeNeedsReview) {
 		t.Fatalf("manual review replay err=%v", err)
 	}
-	if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(fabric.preflightInputs) != 1 || len(fabric.computeIDs) != 1 || fabric.computeIDs[0] != "compute-unknown" {
+	if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(fabric.preflightInputs) != 1 || len(fabric.computeIDs) != 1 || fabric.computeIDs[0] != "compute-unknown" || len(ledger.receipts) != 1 {
 		t.Fatalf("manual review changed identity or retried: events=%#v charges=%#v refunds=%#v creates=%#v", *events, sub2API.charges, sub2API.refunds, fabric.computeIDs)
 	}
 }
@@ -478,7 +479,7 @@ func TestMonthlyPurchaseCommercialReadbackMismatchNeedsManualReviewWithoutRefund
 			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
 				t.Fatalf("result=%#v err=%v", result, err)
 			}
-			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 				t.Fatalf("charges=%#v refunds=%#v receipts=%#v", sub2API.charges, sub2API.refunds, ledger.receipts)
 			}
 		})
@@ -511,7 +512,7 @@ func TestMonthlyPurchaseRejectsConsistentButWrongComputeSKU(t *testing.T) {
 			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
 				t.Fatalf("wrong %s SKU activated: result=%#v err=%v", tc.packageID, result, err)
 			}
-			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 				t.Fatalf("charges=%#v refunds=%#v receipts=%#v", sub2API.charges, sub2API.refunds, ledger.receipts)
 			}
 		})
@@ -521,7 +522,7 @@ func TestMonthlyPurchaseRejectsConsistentButWrongComputeSKU(t *testing.T) {
 func TestMonthlyPurchaseClampsEntitlementToCanonicalProviderDeadline(t *testing.T) {
 	app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
 	fabric.mutateCompute = func(result *clients.ComputeAllocation) {
-		result.Deadline = "2026-08-16 00:00:00"
+		result.Deadline = "2026-08-16T08:00:00+08:00"
 		result.ProviderData["deadline"] = result.Deadline
 	}
 	now := time.Date(2026, 7, 16, 8, 30, 0, 0, time.UTC)
@@ -543,6 +544,23 @@ func TestMonthlyPurchaseClampsEntitlementToCanonicalProviderDeadline(t *testing.
 	}
 	if len(ledger.receipts) != 1 || ledger.receipts[0].Cost["paidThrough"] != wantDeadline {
 		t.Fatalf("receipt=%#v", ledger.receipts)
+	}
+}
+
+func TestMonthlyProviderDeadlineRejectsTimestampWithoutTimezone(t *testing.T) {
+	if _, err := monthlyProviderDeadline(map[string]any{"deadline": "2026-08-16 12:34:56"}); err == nil {
+		t.Fatal("provider deadline without timezone must fail closed")
+	}
+}
+
+func TestCleanupMonthlyStoragePreservesFabricRetentionStatus(t *testing.T) {
+	app, service, _, fabric, _, _ := newMonthlyBillingTest(t, nil)
+	fabric.cleanupStatus = "retained"
+	row := monthlyActiveResource("storage", "storage-cleanup-retained", time.Now().UTC().Add(time.Hour))
+
+	result, err := app.cleanupMonthlyResource(context.Background(), service, row)
+	if err != nil || result["status"] != "retained" || result["desiredStatus"] != "destroyed" {
+		t.Fatalf("cleanup result=%#v err=%v", result, err)
 	}
 }
 
@@ -569,12 +587,12 @@ func TestMonthlyPurchaseResumesProvisioningThroughFabricSync(t *testing.T) {
 }
 
 func TestMonthlyPurchaseUnconfirmedDebitDoesNotMutateFabric(t *testing.T) {
-	app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000, 60_000_000})
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, 60_000_000})
 	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-unconfirmed", BillingOperationID: "billing-unconfirmed", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()})
-	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(fabric.computeIDs) != 0 {
+	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(fabric.computeIDs) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 		t.Fatalf("unconfirmed debit result=%#v charges=%#v creates=%#v err=%v", result, sub2API.charges, fabric.computeIDs, err)
 	}
-	if strings.Join(*events, ",") != "fabric.monthly.preflight,sub2api.balance,sub2api.charge,sub2api.balance" {
+	if strings.Join(*events, ",") != "fabric.monthly.preflight,sub2api.balance,sub2api.charge,sub2api.balance,ledger.receipt" {
 		t.Fatalf("events = %#v", *events)
 	}
 }
@@ -635,7 +653,7 @@ func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
 }
 
 func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
-	t.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	events := &[]string{}
 	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000}}
 	fabric := &monthlyFabric{events: events}

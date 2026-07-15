@@ -205,10 +205,8 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 		}
 		row, err = app.chargeMonthlyOperation(ctx, service, row, userID, balance.USDMicros)
 		if err != nil {
-			if stringValue(row["billingStatus"]) != "manual_review" {
-				row, _ = app.markMonthlyManualReview(ctx, row, "sub2api_renewal_charge_unconfirmed")
-			}
-			return row, err
+			reason := firstNonEmpty(stringValue(row["lastBillingError"]), "sub2api_renewal_charge_unconfirmed")
+			return app.markMonthlyManualReview(ctx, service, row, userID, reason)
 		}
 		if err := app.saveMonthlyResource(ctx, resourceType, row); err != nil {
 			return row, err
@@ -218,7 +216,7 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	renewedThrough := nextBillingMonth(paidThrough, anchorDay)
 	providerDeadline, err := monthlyProviderDeadline(row)
 	if err != nil {
-		return app.markMonthlyManualReview(ctx, row, "fabric_renewal_deadline_unknown")
+		return app.markMonthlyManualReview(ctx, service, row, userID, "fabric_renewal_deadline_unknown")
 	}
 	row, err = app.renewMonthlyProvider(ctx, service, resourceType, row, providerDeadline, renewedThrough, operationID+":provider-renew")
 	if err != nil {
@@ -230,7 +228,7 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 				}
 			}
 		}
-		return app.markMonthlyManualReview(ctx, row, "fabric_renewal_unconfirmed")
+		return app.markMonthlyManualReview(ctx, service, row, userID, "fabric_renewal_unconfirmed")
 	}
 	applyMonthlyProviderDeadline(row)
 	row["periodStart"], row["paidThrough"], row["billingStatus"] = paidThrough.Format(time.RFC3339), renewedThrough.Format(time.RFC3339), "active"
@@ -247,29 +245,34 @@ func (app *controlPlaneServer) renewMonthlyProvider(ctx context.Context, service
 	if resourceType == "storage" {
 		volume, err := service.RenewMonthlyStorage(ctx, stringValue(row["id"]), key)
 		result = structToMap(volume)
-		row = mergeMaps(row, result)
 		if err != nil {
-			return row, err
+			return mergeMaps(row, result), err
 		}
-		if !monthlyRenewalReadbackConfirmed(resourceType, expected, row, result, oldDeadline, paidThrough) {
-			return row, errMonthlyChargeNeedsReview
+		candidate := mergeMaps(row, result)
+		if !monthlyRenewalReadbackConfirmed(resourceType, expected, candidate, result, oldDeadline, paidThrough) {
+			return expected, errMonthlyChargeNeedsReview
 		}
-		return row, nil
+		return candidate, nil
 	}
 	allocation, err := service.RenewMonthlyCompute(ctx, stringValue(row["id"]), key)
 	result = structToMap(allocation)
-	row = mergeMaps(row, result)
 	if err != nil {
-		return row, err
+		return mergeMaps(row, result), err
 	}
-	if !monthlyRenewalReadbackConfirmed(resourceType, expected, row, result, oldDeadline, paidThrough) {
-		return row, errMonthlyChargeNeedsReview
+	candidate := mergeMaps(row, result)
+	if !monthlyRenewalReadbackConfirmed(resourceType, expected, candidate, result, oldDeadline, paidThrough) {
+		return expected, errMonthlyChargeNeedsReview
 	}
-	return row, nil
+	return candidate, nil
 }
 
 func monthlyRenewalReadbackConfirmed(resourceType string, expected, row, result map[string]any, oldDeadline, paidThrough time.Time) bool {
 	if !monthlyReadbackIdentityMatches(expected, stringValue(result["id"]), stringValue(result["accountId"]), stringValue(result["workspaceId"])) || stringValue(result["providerRequestId"]) == "" {
+		return false
+	}
+	providerResourceID := stringValue(result["providerResourceId"])
+	zone := firstNonEmpty(stringValue(result["zone"]), providerDataValue(result, "zone"))
+	if providerResourceID == "" || providerResourceID != stringValue(expected["providerResourceId"]) || zone == "" || zone != stringValue(expected["zone"]) {
 		return false
 	}
 	chargeType := firstNonEmpty(stringValue(result["chargeType"]), providerDataValue(result, "chargeType"))
@@ -282,7 +285,16 @@ func monthlyRenewalReadbackConfirmed(resourceType string, expected, row, result 
 	if !monthlyResourcePrepared(resourceType, row) {
 		return false
 	}
-	return resourceType != "storage" || stringValue(result["cbsStatus"]) == "UNATTACHED" || stringValue(result["cbsStatus"]) == "ATTACHED"
+	if resourceType == "storage" {
+		return int(numberField(result, "sizeGb", 0)) == int(numberField(expected, "sizeGb", 0)) &&
+			(stringValue(result["cbsStatus"]) == "UNATTACHED" || stringValue(result["cbsStatus"]) == "ATTACHED")
+	}
+	expectedInstanceType := monthlyComputeInstanceType(stringValue(expected["packageId"]))
+	instanceType, providerInstanceType := stringValue(result["instanceType"]), providerDataValue(result, "instanceType")
+	instanceID := firstNonEmpty(stringValue(result["instanceId"]), stringValue(result["cvmInstanceId"]))
+	expectedInstanceID := firstNonEmpty(stringValue(expected["instanceId"]), stringValue(expected["cvmInstanceId"]))
+	return stringValue(result["packageId"]) == stringValue(expected["packageId"]) && expectedInstanceType != "" &&
+		instanceType == expectedInstanceType && providerInstanceType == expectedInstanceType && instanceID != "" && instanceID == expectedInstanceID
 }
 
 func providerDataValue(row map[string]any, key string) string {
