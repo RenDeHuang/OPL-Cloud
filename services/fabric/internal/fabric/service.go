@@ -293,6 +293,12 @@ func (s *Service) RenewComputeAllocation(ctx context.Context, allocationID, idem
 			_ = s.recordOperation(lockCtx, operation, "failed", result, err)
 			return err
 		}
+		if !validComputeRenewal(existing, result) {
+			err = fmt.Errorf("compute_renewal_readback_mismatch")
+			result = existing
+			_ = s.recordOperation(lockCtx, operation, "failed", result, err)
+			return err
+		}
 		if err := s.recordOperation(lockCtx, operation, "succeeded", result, nil); err != nil {
 			return err
 		}
@@ -812,6 +818,12 @@ func (s *Service) RenewStorageVolume(ctx context.Context, volumeID, idempotencyK
 			_ = s.recordOperation(lockCtx, operation, "failed", result, err)
 			return err
 		}
+		if !validStorageRenewal(existing, result) {
+			err = fmt.Errorf("storage_renewal_readback_mismatch")
+			result = existing
+			_ = s.recordOperation(lockCtx, operation, "failed", result, err)
+			return err
+		}
 		if isRetainedStorageStatus(existing.Status) {
 			result.Status = "pending"
 		}
@@ -995,7 +1007,41 @@ func (s *Service) UpsertGatewaySecret(ctx context.Context, input GatewaySecretIn
 	if strings.TrimSpace(input.AccountID) == "" || strings.TrimSpace(input.GatewayAPIKey) == "" || strings.TrimSpace(input.IdempotencyKey) == "" {
 		return GatewaySecret{}, fmt.Errorf("gateway_secret_input_required")
 	}
-	return s.provider.UpsertGatewaySecret(ctx, input)
+	keyDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
+	requestHash := hashInput(map[string]string{"accountId": input.AccountID, "keyDigest": keyDigest})
+	now := s.now()
+	secretRef := gatewaySecretName(input.AccountID)
+	operation := newOperation("upsert_gateway_secret", "gateway_secret", secretRef, input.AccountID, "", input.IdempotencyKey, requestHash, now)
+	operation.ID = "fop_gateway_secret_claim_" + stableSuffix("upsert_gateway_secret", input.IdempotencyKey)
+	operation.Status = "started"
+	operation.CreatedAt = now
+	operation.ProviderRequestID = providerRequestID("gateway-secret", input.IdempotencyKey)
+	operation.RedactedProviderPayload = map[string]any{"resource": GatewaySecret{SecretRef: secretRef}, "keyDigest": keyDigest}
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
+	if err != nil {
+		return GatewaySecret{}, err
+	}
+	if !claimed {
+		if stored.RequestHash != requestHash {
+			return GatewaySecret{}, ErrGatewaySecretIdempotencyConflict
+		}
+		if stored.Status == "succeeded" {
+			var replayed GatewaySecret
+			if decodeOperationResource(stored, &replayed) {
+				return replayed, nil
+			}
+		}
+		return GatewaySecret{}, fmt.Errorf("gateway_secret_operation_%s", stored.Status)
+	}
+	secret, providerErr := s.provider.UpsertGatewaySecret(ctx, input)
+	stored.Status = operationStatus(providerErr)
+	stored.FinishedAt = s.now()
+	stored.ErrorCode = errorCode(providerErr)
+	stored.RedactedProviderPayload = map[string]any{"resource": secret, "keyDigest": keyDigest}
+	if saveErr := s.operations.SaveRuntime(ctx, stored); saveErr != nil && providerErr == nil {
+		return GatewaySecret{}, saveErr
+	}
+	return secret, providerErr
 }
 
 func (s *Service) Readiness(ctx context.Context) (map[string]any, error) {
@@ -1494,10 +1540,30 @@ func validateAttachmentInput(input StorageAttachmentInput, compute ComputeAlloca
 	if compute.AccountID == "" || volume.AccountID == "" || compute.AccountID != volume.AccountID {
 		return fmt.Errorf("resource_account_mismatch")
 	}
-	if isTerminalResourceStatus(compute.Status) || isTerminalResourceStatus(volume.Status) {
+	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")
 	}
 	return nil
+}
+
+func validComputeRenewal(existing, renewed ComputeAllocation) bool {
+	instanceID := firstNonEmpty(existing.InstanceID, existing.CVMInstanceID)
+	return renewed.ID == existing.ID && renewed.AccountID == existing.AccountID && renewed.WorkspaceID == existing.WorkspaceID &&
+		firstNonEmpty(renewed.InstanceID, renewed.CVMInstanceID) == instanceID &&
+		(renewed.InstanceID == "" || renewed.InstanceID == instanceID) && (renewed.CVMInstanceID == "" || renewed.CVMInstanceID == instanceID) &&
+		renewed.ChargeType == "PREPAID" && renewed.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && renewalDeadlineIncreased(existing.Deadline, renewed.Deadline)
+}
+
+func validStorageRenewal(existing, renewed StorageVolume) bool {
+	return renewed.ID == existing.ID && renewed.AccountID == existing.AccountID && renewed.WorkspaceID == existing.WorkspaceID &&
+		renewed.ProviderResourceID == existing.ProviderResourceID && renewed.ProviderData["diskChargeType"] == "PREPAID" &&
+		renewed.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && renewalDeadlineIncreased(existing.Deadline, renewed.Deadline)
+}
+
+func renewalDeadlineIncreased(previous, current string) bool {
+	previousTime, previousErr := time.Parse(time.RFC3339, previous)
+	currentTime, currentErr := time.Parse(time.RFC3339, current)
+	return previousErr == nil && currentErr == nil && currentTime.After(previousTime)
 }
 
 func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation, volume StorageVolume) error {
@@ -1531,15 +1597,6 @@ func isReadyResourceStatus(status string) bool {
 func isRetainedStorageStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "retained", "released":
-		return true
-	default:
-		return false
-	}
-}
-
-func isTerminalResourceStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "destroyed", "deleted", "failed", "detached", "unrecoverable", "retained", "released":
 		return true
 	default:
 		return false

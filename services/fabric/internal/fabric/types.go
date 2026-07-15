@@ -19,6 +19,7 @@ var ErrMonthlyPreflightUnavailable = errors.New("monthly_preflight_unavailable")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
 var ErrRuntimeOperationInProgress = errors.New("runtime_operation_in_progress")
 var ErrRuntimeOperationFailed = errors.New("runtime_operation_failed")
+var ErrGatewaySecretIdempotencyConflict = errors.New("gateway_secret_idempotency_conflict")
 
 type Catalog struct {
 	SchemaVersion     int                `json:"schemaVersion"`

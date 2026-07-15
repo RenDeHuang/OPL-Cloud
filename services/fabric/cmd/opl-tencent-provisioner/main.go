@@ -563,8 +563,9 @@ func (client *tencentSDKClient) CreateStorageVolume(request Request, env map[str
 	}
 	storage := request.Storage
 	storage.DiskType = firstNonEmpty(storage.DiskType, env["TENCENT_CBS_DISK_TYPE"], "CLOUD_BSSD")
-	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(storage.Id) == "" || storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" {
-		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "CBS account, resource, size, and compute Zone are required.", Retryable: false}
+	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(storage.Id) == "" || storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" ||
+		!validCBSOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != storage.Id {
+		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS account, resource, size, compute Zone, and ownership tags are required.", Retryable: false}
 	}
 	create := cbs2017.NewCreateDisksRequest()
 	create.Placement = &cbs2017.Placement{Zone: common.StringPtr(storage.Zone)}
@@ -584,7 +585,8 @@ func (client *tencentSDKClient) CreateStorageVolume(request Request, env map[str
 		return Response{Ok: false, ErrorCode: "tencent_create_cbs_identity_missing", Message: "Tencent CBS did not return exactly one disk identity.", Retryable: true}
 	}
 	storage.Id = stringValue(created.Response.DiskIdSet[0])
-	response := client.storageVolumeReadback(storage, false)
+	request.Storage = storage
+	response := client.storageVolumeReadback(request, false)
 	response.StorageVolumeId = storage.Id
 	if response.ProviderData == nil {
 		response.ProviderData = map[string]string{}
@@ -598,7 +600,7 @@ func (client *tencentSDKClient) SyncStorageVolume(request Request, _ map[string]
 	if client == nil || client.nativeCbsClient == nil {
 		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent CBS SDK client is missing.", Retryable: false}
 	}
-	return client.storageVolumeReadback(request.Storage, true)
+	return client.storageVolumeReadback(request, true)
 }
 
 func (client *tencentSDKClient) RenewStorageVolume(request Request, _ map[string]string) Response {
@@ -609,7 +611,7 @@ func (client *tencentSDKClient) RenewStorageVolume(request Request, _ map[string
 	if request.Storage.Deadline == "" {
 		return Response{Ok: false, ErrorCode: "tencent_cbs_deadline_required", Message: "The current CBS deadline is required for idempotent renewal.", Retryable: false}
 	}
-	current := client.storageVolumeReadback(request.Storage, true)
+	current := client.storageVolumeReadback(request, true)
 	if !current.Ok || current.Status == "external_deleted" {
 		return current
 	}
@@ -630,7 +632,7 @@ func (client *tencentSDKClient) RenewStorageVolume(request Request, _ map[string
 	if renewed == nil || renewed.Response == nil {
 		return Response{Ok: false, ErrorCode: "tencent_renew_cbs_response_missing", Message: "Tencent CBS renewal response is missing.", Retryable: true}
 	}
-	response := client.storageVolumeReadback(request.Storage, false)
+	response := client.storageVolumeReadback(request, false)
 	if response.Ok && !deadlineAfter(response.ProviderData["deadline"], request.Storage.Deadline) {
 		return Response{Ok: false, ErrorCode: "tencent_cbs_renewal_unconfirmed", Message: "Tencent CBS renewal deadline did not increase.", ProviderRequestId: stringValue(renewed.Response.RequestId), ProviderData: response.ProviderData, Retryable: true}
 	}
@@ -643,10 +645,11 @@ func (client *tencentSDKClient) RenewStorageVolume(request Request, _ map[string
 	return response
 }
 
-func (client *tencentSDKClient) storageVolumeReadback(storage StorageInput, allowAbsent bool) Response {
+func (client *tencentSDKClient) storageVolumeReadback(request Request, allowAbsent bool) Response {
+	storage := request.Storage
 	storage.DiskType = firstNonEmpty(storage.DiskType, "CLOUD_BSSD")
-	if !strings.HasPrefix(storage.Id, "disk-") || storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" {
-		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS disk identity, size, and compute Zone are required.", Retryable: false}
+	if !validCBSReadbackInput(storage, request.Tags) {
+		return Response{Ok: false, ErrorCode: "tencent_cbs_input_invalid", Message: "Exact CBS disk identity, size, compute Zone, and ownership tags are required.", Retryable: false}
 	}
 	describe := cbs2017.NewDescribeDisksRequest()
 	describe.DiskIds = []*string{common.StringPtr(storage.Id)}
@@ -668,29 +671,78 @@ func (client *tencentSDKClient) storageVolumeReadback(storage StorageInput, allo
 		return Response{Ok: false, ErrorCode: "tencent_cbs_readback_mismatch", Message: "Tencent CBS readback must return exactly one disk.", ProviderRequestId: requestID, Retryable: true}
 	}
 	disk := result.Response.DiskSet[0]
-	deadline := normalizeTencentDeadline(stringValue(disk.DeadlineTime))
-	zone := ""
-	if disk.Placement != nil {
-		zone = stringValue(disk.Placement.Zone)
-	}
-	if stringValue(disk.DiskId) != storage.Id || stringValue(disk.DiskChargeType) != "PREPAID" ||
-		stringValue(disk.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || stringValue(disk.DiskType) != storage.DiskType ||
-		disk.DiskSize == nil || *disk.DiskSize != storage.SizeGB || zone != storage.Zone || deadline == "" {
+	facts, err := validateCBSVolume(disk, storage, request.Tags)
+	if err != nil {
 		return Response{Ok: false, ErrorCode: "tencent_cbs_readback_mismatch", Message: "Tencent CBS billing or identity facts do not match the requested volume.", ProviderRequestId: requestID, Retryable: true}
 	}
 	state := stringValue(disk.DiskState)
+	facts["describeCbsRequestId"] = requestID
 	status := "pending"
 	if state == "UNATTACHED" || state == "ATTACHED" {
 		status = "provider_ready"
 	}
 	return Response{
 		Ok: true, StorageVolumeId: storage.Id, CBSStatus: state, Status: status, ProviderRequestId: requestID,
-		ProviderData: map[string]string{
-			"storageVolumeId": storage.Id, "cbsStatus": state, "diskChargeType": stringValue(disk.DiskChargeType),
-			"diskType": stringValue(disk.DiskType), "renewFlag": stringValue(disk.RenewFlag), "sizeGb": strconv.FormatUint(*disk.DiskSize, 10),
-			"zone": zone, "deadline": deadline, "describeCbsRequestId": requestID,
-		},
+		ProviderData: facts,
 	}
+}
+
+func validCBSReadbackInput(storage StorageInput, tags map[string]string) bool {
+	if !strings.HasPrefix(storage.Id, "disk-") || storage.SizeGB == 0 || strings.TrimSpace(storage.Zone) == "" || strings.TrimSpace(storage.DiskType) == "" {
+		return false
+	}
+	return validCBSOwnershipTags(tags)
+}
+
+func validCBSOwnershipTags(tags map[string]string) bool {
+	for _, key := range cbsOwnershipTagKeys {
+		if strings.TrimSpace(tags[key]) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validateCBSVolume(disk *cbs2017.Disk, storage StorageInput, expectedTags map[string]string) (map[string]string, error) {
+	if disk == nil || !validCBSReadbackInput(storage, expectedTags) {
+		return nil, fmt.Errorf("CBS identity is missing")
+	}
+	zone := ""
+	if disk.Placement != nil {
+		zone = stringValue(disk.Placement.Zone)
+	}
+	deadline := normalizeTencentDeadline(stringValue(disk.DeadlineTime))
+	actualTags := map[string]string{}
+	for _, tag := range disk.Tags {
+		if tag == nil || strings.TrimSpace(stringValue(tag.Key)) == "" {
+			continue
+		}
+		key := stringValue(tag.Key)
+		if _, duplicate := actualTags[key]; duplicate {
+			return nil, fmt.Errorf("CBS ownership tag is duplicated")
+		}
+		actualTags[key] = stringValue(tag.Value)
+	}
+	if stringValue(disk.DiskId) != storage.Id || stringValue(disk.DiskName) != expectedTags["opl_resource_id"] || stringValue(disk.DiskUsage) != "DATA_DISK" ||
+		strings.TrimSpace(stringValue(disk.DiskState)) == "" || stringValue(disk.DiskChargeType) != "PREPAID" ||
+		stringValue(disk.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || stringValue(disk.DiskType) != storage.DiskType ||
+		disk.DiskSize == nil || *disk.DiskSize != storage.SizeGB || zone != storage.Zone || deadline == "" {
+		return nil, fmt.Errorf("CBS billing or identity facts mismatch")
+	}
+	for _, key := range cbsOwnershipTagKeys {
+		if actualTags[key] != expectedTags[key] {
+			return nil, fmt.Errorf("CBS ownership tag mismatch")
+		}
+	}
+	facts := map[string]string{
+		"storageVolumeId": storage.Id, "cbsStatus": stringValue(disk.DiskState), "diskName": stringValue(disk.DiskName), "diskUsage": stringValue(disk.DiskUsage),
+		"diskChargeType": stringValue(disk.DiskChargeType), "diskType": stringValue(disk.DiskType), "renewFlag": stringValue(disk.RenewFlag),
+		"sizeGb": strconv.FormatUint(*disk.DiskSize, 10), "zone": zone, "deadline": deadline,
+	}
+	for _, key := range cbsOwnershipTagKeys {
+		facts[key] = actualTags[key]
+	}
+	return facts, nil
 }
 
 func (client *tencentSDKClient) RenewComputeAllocation(request Request, _ map[string]string) Response {
@@ -1424,7 +1476,11 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	if !strings.HasPrefix(request.StorageVolumeId, "disk-") {
 		return Response{Ok: false, ErrorCode: "provider_truth_cbs_volume_required", Message: "A Tencent CBS disk-* volume ID is required.", Retryable: false}
 	}
-	storagePresent, cbsStatus, cbsRequestID, cbsFacts, err := client.cbsVolumeTruth(request.StorageVolumeId)
+	request.Storage.Id = request.StorageVolumeId
+	if request.Tags["opl_account_id"] != request.AccountId || !validCBSReadbackInput(request.Storage, request.Tags) {
+		return Response{Ok: false, ErrorCode: "provider_truth_cbs_ownership_required", Message: "Exact CBS ownership tags and storage facts are required for provider truth.", Retryable: false}
+	}
+	storagePresent, cbsStatus, cbsRequestID, cbsFacts, err := client.cbsVolumeTruth(request.Storage, request.Tags)
 	if err != nil {
 		response := sdkErrorResponse("tencent_provider_truth_cbs_probe_failed", err)
 		response.ProviderRequestId = firstNonEmpty(response.ProviderRequestId, cbsRequestID)
@@ -1522,9 +1578,9 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, CBSStatus: cbsStatus, Status: "present", MachineType: "NativeCVM", ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID), ProviderData: providerData}
 }
 
-func (client *tencentSDKClient) cbsVolumeTruth(volumeID string) (bool, string, string, map[string]string, error) {
+func (client *tencentSDKClient) cbsVolumeTruth(storage StorageInput, tags map[string]string) (bool, string, string, map[string]string, error) {
 	request := cbs2017.NewDescribeDisksRequest()
-	request.DiskIds = []*string{common.StringPtr(volumeID)}
+	request.DiskIds = []*string{common.StringPtr(storage.Id)}
 	response, err := client.nativeCbsClient.DescribeDisks(request)
 	if err != nil {
 		if sdkErr, ok := err.(*tcerrors.TencentCloudSDKError); ok && sdkErr.Code == cbs2017.INVALIDDISKID_NOTFOUND {
@@ -1541,23 +1597,19 @@ func (client *tencentSDKClient) cbsVolumeTruth(volumeID string) (bool, string, s
 		return false, "NOT_FOUND", requestID, nil, nil
 	}
 	disk := response.Response.DiskSet[0]
-	if disk == nil || stringValue(disk.DiskId) != volumeID || strings.TrimSpace(stringValue(disk.DiskState)) == "" {
-		return false, "", requestID, nil, fmt.Errorf("Tencent CBS disk identity or state is missing")
+	facts, err := validateCBSVolume(disk, storage, tags)
+	if err != nil {
+		return false, "", requestID, nil, err
 	}
-	zone := ""
-	if disk.Placement != nil {
-		zone = stringValue(disk.Placement.Zone)
+	truthFacts := map[string]string{
+		"storageChargeType": facts["diskChargeType"], "storageRenewFlag": facts["renewFlag"], "storageDeadline": facts["deadline"],
+		"storageDiskType": facts["diskType"], "storageDiskName": facts["diskName"], "storageDiskUsage": facts["diskUsage"],
+		"storageSizeGb": facts["sizeGb"], "storageZone": facts["zone"],
 	}
-	deadline := normalizeTencentDeadline(stringValue(disk.DeadlineTime))
-	if stringValue(disk.DiskChargeType) != "PREPAID" || stringValue(disk.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" ||
-		deadline == "" || strings.TrimSpace(stringValue(disk.DiskType)) == "" || disk.DiskSize == nil || *disk.DiskSize == 0 || strings.TrimSpace(zone) == "" {
-		return false, "", requestID, nil, fmt.Errorf("Tencent CBS billing facts are missing or mismatched")
+	for _, key := range cbsOwnershipTagKeys {
+		truthFacts[key] = facts[key]
 	}
-	return true, strings.ToUpper(strings.TrimSpace(stringValue(disk.DiskState))), requestID, map[string]string{
-		"storageChargeType": stringValue(disk.DiskChargeType), "storageRenewFlag": stringValue(disk.RenewFlag),
-		"storageDeadline": deadline, "storageDiskType": stringValue(disk.DiskType),
-		"storageSizeGb": strconv.FormatUint(*disk.DiskSize, 10), "storageZone": zone,
-	}, nil
+	return true, strings.ToUpper(strings.TrimSpace(stringValue(disk.DiskState))), requestID, truthFacts, nil
 }
 
 func (client *tencentSDKClient) describeClusterMachines(nodePoolId string) ([]*tke2022.Machine, string, error) {
@@ -2064,9 +2116,11 @@ func tkeTagSpecifications(tags map[string]string, resourceType string) []*tke202
 	return []*tke2022.TagSpecification{{ResourceType: common.StringPtr(resourceType), Tags: items}}
 }
 
+var cbsOwnershipTagKeys = [...]string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"}
+
 func cbsTags(tags map[string]string) []*cbs2017.Tag {
 	items := []*cbs2017.Tag{}
-	for _, key := range []string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"} {
+	for _, key := range cbsOwnershipTagKeys {
 		if value := strings.TrimSpace(tags[key]); value != "" {
 			items = append(items, &cbs2017.Tag{Key: common.StringPtr(key), Value: common.StringPtr(value)})
 		}

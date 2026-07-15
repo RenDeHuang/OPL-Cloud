@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -820,7 +821,8 @@ func TestTencentProviderStorageReadinessRequiresCBSAndBoundPVC(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := NewTencentProvider()
 			provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-				if request.Action != "sync_storage_volume" || request.Storage.ID != "disk-storage-alpha" {
+				if request.Action != "sync_storage_volume" || request.AccountID != "acct-alpha" || request.Storage.ID != "disk-storage-alpha" ||
+					!reflect.DeepEqual(request.Tags, oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha")) {
 					t.Fatalf("provisioner request = %#v", request)
 				}
 				return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: tc.cbsStatus, Status: "provider_ready", ProviderRequestID: "req-sync-cbs", ProviderData: map[string]string{"zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-08-16 00:00:00", "sizeGb": "10"}}, nil
@@ -832,7 +834,8 @@ func TestTencentProviderStorageReadinessRequiresCBSAndBoundPVC(t *testing.T) {
 				return mustJSON(map[string]any{"kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "opl-storage-alpha-data"}, "status": map[string]any{"phase": tc.pvcPhase}}), nil
 			}
 			volume, err := provider.SyncStorageVolume(context.Background(), StorageVolume{
-				ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD",
+				ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD",
+				CostTags:     oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha"),
 				ProviderData: map[string]string{"pvName": "opl-storage-alpha-pv", "pvcName": "opl-storage-alpha-data"},
 			})
 			if err != nil || volume.Status != tc.wantStatus || volume.CBSStatus != tc.cbsStatus {
@@ -887,13 +890,17 @@ func TestTencentProviderDestroyStorageReleasesKubernetesBindingButRetainsCBS(t *
 func TestTencentProviderRenewsCBSAndPersistsDeadlineReadback(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		if request.Action != "renew_storage_volume" || request.Storage.Deadline != "2026-08-16 00:00:00" {
+		if request.Action != "renew_storage_volume" || request.AccountID != "acct-alpha" || request.Storage.Deadline != "2026-08-16T00:00:00Z" ||
+			!reflect.DeepEqual(request.Tags, oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha")) {
 			t.Fatalf("renew request = %#v", request)
 		}
-		return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-renew-cbs", ProviderData: map[string]string{"deadline": "2026-09-16 00:00:00", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "sizeGb": "10"}}, nil
+		return provisionerResponse{OK: true, StorageVolumeID: "disk-storage-alpha", CBSStatus: "UNATTACHED", Status: "provider_ready", ProviderRequestID: "req-renew-cbs", ProviderData: map[string]string{"deadline": "2026-09-16T00:00:00Z", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "diskChargeType": "PREPAID", "zone": "ap-guangzhou-3", "diskType": "CLOUD_BSSD", "sizeGb": "10"}}, nil
 	}
-	volume, err := provider.RenewStorageVolume(context.Background(), StorageVolume{ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16 00:00:00"})
-	if err != nil || volume.Deadline != "2026-09-16 00:00:00" || volume.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || volume.ProviderRequestID != "req-renew-cbs" {
+	volume, err := provider.RenewStorageVolume(context.Background(), StorageVolume{
+		ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", ProviderResourceID: "disk-storage-alpha", SizeGB: 10, Zone: "ap-guangzhou-3", DiskType: "CLOUD_BSSD", Deadline: "2026-08-16T00:00:00Z",
+		CostTags: oplCostTags("acct-alpha", "ws-alpha", "storage-alpha", "op-storage-alpha"),
+	})
+	if err != nil || volume.Deadline != "2026-09-16T00:00:00Z" || volume.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || volume.ProviderRequestID != "req-renew-cbs" {
 		t.Fatalf("renewed volume=%#v err=%v", volume, err)
 	}
 }

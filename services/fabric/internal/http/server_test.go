@@ -260,7 +260,7 @@ func TestTransferServiceFailureIsLogged(t *testing.T) {
 }
 
 func TestRuntimeOperationConflictsAreHTTPConflict(t *testing.T) {
-	for _, err := range []error{fabric.ErrRuntimeIdempotencyConflict, fabric.ErrRuntimeOperationInProgress, fabric.ErrRuntimeOperationFailed} {
+	for _, err := range []error{fabric.ErrRuntimeIdempotencyConflict, fabric.ErrRuntimeOperationInProgress, fabric.ErrRuntimeOperationFailed, fabric.ErrGatewaySecretIdempotencyConflict} {
 		recorder := httptest.NewRecorder()
 		writeResult(recorder, fabric.WorkspaceRuntime{}, err)
 		if recorder.Code != http.StatusConflict {
@@ -711,7 +711,15 @@ func (testProvider) SyncStorageVolume(_ context.Context, volume fabric.StorageVo
 }
 
 func (testProvider) RenewStorageVolume(_ context.Context, volume fabric.StorageVolume) (fabric.StorageVolume, error) {
-	volume.Deadline = "2026-09-16 00:00:00"
+	volume.Deadline = "2026-09-16T00:00:00Z"
+	volume.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	if volume.ProviderData == nil {
+		volume.ProviderData = map[string]string{}
+	}
+	volume.ProviderData["diskChargeType"] = "PREPAID"
+	volume.ProviderData["deadline"] = volume.Deadline
+	volume.ProviderData["renewFlag"] = volume.RenewFlag
+	volume.ProviderData["renewalResult"] = "renewed"
 	return volume, nil
 }
 

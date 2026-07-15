@@ -834,15 +834,48 @@ func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 	}
 }
 
-func TestGatewaySecretWriteIsTransientAndNeverRecordedInOperations(t *testing.T) {
-	service := NewServiceWithOperationStore(testProvider{}, NewMemoryOperationStore())
-	secret, err := service.UpsertGatewaySecret(context.Background(), GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"})
+type countingGatewayProvider struct {
+	testProvider
+	calls atomic.Int32
+}
+
+func (p *countingGatewayProvider) UpsertGatewaySecret(ctx context.Context, input GatewaySecretInput) (GatewaySecret, error) {
+	p.calls.Add(1)
+	return p.testProvider.UpsertGatewaySecret(ctx, input)
+}
+
+func TestGatewaySecretWriteReplaysOneRedactedOperation(t *testing.T) {
+	provider := &countingGatewayProvider{}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	input := GatewaySecretInput{AccountID: "acct-alpha", GatewayAPIKey: "raw-gateway-key", IdempotencyKey: "gateway-once"}
+	secret, err := service.UpsertGatewaySecret(context.Background(), input)
 	if err != nil || secret.SecretRef != gatewaySecretName("acct-alpha") || secret.Version == "" || secret.Fingerprint == "" {
 		t.Fatalf("gateway secret=%#v err=%v", secret, err)
 	}
+	replayed, err := service.UpsertGatewaySecret(context.Background(), input)
+	if err != nil || replayed != secret || provider.calls.Load() != 1 {
+		t.Fatalf("gateway replay=%#v err=%v calls=%d", replayed, err, provider.calls.Load())
+	}
+	input.GatewayAPIKey = "rotated-gateway-key"
+	if _, err := service.UpsertGatewaySecret(context.Background(), input); err == nil || err.Error() != "gateway_secret_idempotency_conflict" {
+		t.Fatalf("changed Gateway key replay error=%v", err)
+	}
+	if provider.calls.Load() != 1 {
+		t.Fatalf("conflicting replay reached provider %d times", provider.calls.Load())
+	}
 	operations, err := service.ListOperations(context.Background())
-	if err != nil || len(operations) != 0 || strings.Contains(fmt.Sprint(operations), "raw-gateway-key") {
-		t.Fatalf("Gateway key must not enter Fabric operations: %#v err=%v", operations, err)
+	if err != nil || len(operations) != 1 {
+		t.Fatalf("Gateway operations=%#v err=%v", operations, err)
+	}
+	operation := operations[0]
+	serialized := fmt.Sprint(operation)
+	if operation.Action != "upsert_gateway_secret" || operation.Status != "succeeded" || operation.RequestHash == "" ||
+		operation.RedactedProviderPayload["keyDigest"] == "" || strings.Contains(serialized, "raw-gateway-key") || strings.Contains(serialized, "rotated-gateway-key") {
+		t.Fatalf("Gateway operation is not safely replayable: %#v", operation)
+	}
+	var recorded GatewaySecret
+	if !decodeOperationResource(operation, &recorded) || recorded != secret {
+		t.Fatalf("recorded Gateway secret=%#v operation=%#v", recorded, operation)
 	}
 }
 
@@ -853,7 +886,9 @@ type renewingProvider struct {
 
 func (p *renewingProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
 	p.calls.Add(1)
-	volume.Deadline = "2026-09-16 00:00:00"
+	volume.Deadline = "2026-09-16T00:00:00Z"
+	volume.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	volume.ProviderData = map[string]string{"diskChargeType": "PREPAID"}
 	volume.ProviderRequestID = "req-renew-cbs"
 	return volume, nil
 }
@@ -873,6 +908,8 @@ func (p *retainedStorageProvider) SyncStorageVolume(_ context.Context, volume St
 func (p *retainedStorageProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
 	p.renewCalls++
 	volume.Deadline = "2026-09-16T00:00:00Z"
+	volume.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	volume.ProviderData = map[string]string{"diskChargeType": "PREPAID"}
 	return volume, nil
 }
 
@@ -910,14 +947,14 @@ func TestRetainedStorageRequiresSuccessfulRenewBeforeSyncReactivation(t *testing
 func TestRenewStorageVolumeReplaysWithoutSecondProviderMutation(t *testing.T) {
 	provider := &renewingProvider{}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", ProviderResourceID: "disk-storage-alpha", Deadline: "2026-08-16 00:00:00"}
+	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", ProviderResourceID: "disk-storage-alpha", Deadline: "2026-08-16T00:00:00Z"}
 
 	first, err := service.RenewStorageVolume(context.Background(), "storage-alpha", "renew-storage-once")
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := service.RenewStorageVolume(context.Background(), "storage-alpha", "renew-storage-once")
-	if err != nil || first.Deadline != "2026-09-16 00:00:00" || second.Deadline != first.Deadline || provider.calls.Load() != 1 {
+	if err != nil || first.Deadline != "2026-09-16T00:00:00Z" || second.Deadline != first.Deadline || provider.calls.Load() != 1 {
 		t.Fatalf("first=%#v second=%#v err=%v calls=%d", first, second, err, provider.calls.Load())
 	}
 }
@@ -934,14 +971,16 @@ func (p *blockingStorageRenewProvider) RenewStorageVolume(_ context.Context, vol
 		close(p.entered)
 	}
 	<-p.release
-	volume.Deadline = "2026-09-16 00:00:00"
+	volume.Deadline = "2026-09-16T00:00:00Z"
+	volume.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	volume.ProviderData = map[string]string{"diskChargeType": "PREPAID"}
 	return volume, nil
 }
 
 func TestRenewStorageVolumeSerializesConcurrentSameKey(t *testing.T) {
 	provider := &blockingStorageRenewProvider{entered: make(chan struct{}), release: make(chan struct{})}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", Status: "ready", ProviderResourceID: "disk-storage-alpha", Deadline: "2026-08-16 00:00:00"}
+	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", Status: "ready", ProviderResourceID: "disk-storage-alpha", Deadline: "2026-08-16T00:00:00Z"}
 	results := make(chan StorageVolume, 2)
 	errs := make(chan error, 2)
 	for range 2 {
@@ -956,7 +995,7 @@ func TestRenewStorageVolumeSerializesConcurrentSameKey(t *testing.T) {
 	close(provider.release)
 	for range 2 {
 		volume, err := <-results, <-errs
-		if err != nil || volume.Deadline != "2026-09-16 00:00:00" {
+		if err != nil || volume.Deadline != "2026-09-16T00:00:00Z" {
 			t.Fatalf("renewed volume=%#v err=%v", volume, err)
 		}
 	}
@@ -1011,6 +1050,93 @@ func TestRenewComputeAllocationSerializesConcurrentSameKey(t *testing.T) {
 	}
 }
 
+type renewalResultProvider struct {
+	testProvider
+	compute func(ComputeAllocation) ComputeAllocation
+	storage func(StorageVolume) StorageVolume
+}
+
+func (p *renewalResultProvider) RenewComputeAllocation(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
+	return p.compute(allocation), nil
+}
+
+func (p *renewalResultProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
+	return p.storage(volume), nil
+}
+
+func TestRenewComputeAllocationRejectsMalformedProviderSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*ComputeAllocation)
+	}{
+		{name: "resource id", configure: func(result *ComputeAllocation) { result.ID = "compute-other" }},
+		{name: "instance id", configure: func(result *ComputeAllocation) { result.InstanceID = "ins-other" }},
+		{name: "postpaid", configure: func(result *ComputeAllocation) { result.ChargeType = "POSTPAID_BY_HOUR" }},
+		{name: "auto renew", configure: func(result *ComputeAllocation) { result.RenewFlag = "NOTIFY_AND_AUTO_RENEW" }},
+		{name: "deadline without timezone", configure: func(result *ComputeAllocation) { result.Deadline = "2026-09-16 00:00:00" }},
+		{name: "deadline did not grow", configure: func(result *ComputeAllocation) { result.Deadline = "2026-08-16T00:00:00Z" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := ComputeAllocation{
+				ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", InstanceID: "ins-basic-1", CVMInstanceID: "ins-basic-1",
+				ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z",
+			}
+			provider := &renewalResultProvider{compute: func(result ComputeAllocation) ComputeAllocation {
+				result.Deadline = "2026-09-16T00:00:00Z"
+				tc.configure(&result)
+				return result
+			}}
+			service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+			service.computes[existing.ID] = existing
+			returned, err := service.RenewComputeAllocation(context.Background(), existing.ID, "renew-compute-invalid-"+tc.name)
+			if err == nil || errorCode(err) != "compute_renewal_readback_mismatch" {
+				t.Fatalf("malformed compute renewal returned=%#v err=%v", returned, err)
+			}
+			current, ok := service.GetComputeAllocation(context.Background(), existing.ID)
+			if !ok || current.InstanceID != existing.InstanceID || current.CVMInstanceID != existing.CVMInstanceID || current.Deadline != existing.Deadline {
+				t.Fatalf("malformed renewal overwrote compute identity: %#v", current)
+			}
+		})
+	}
+}
+
+func TestRenewStorageVolumeRejectsMalformedProviderSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*StorageVolume)
+	}{
+		{name: "resource id", configure: func(result *StorageVolume) { result.ID = "storage-other" }},
+		{name: "disk id", configure: func(result *StorageVolume) { result.ProviderResourceID = "disk-other" }},
+		{name: "postpaid", configure: func(result *StorageVolume) { result.ProviderData["diskChargeType"] = "POSTPAID_BY_HOUR" }},
+		{name: "auto renew", configure: func(result *StorageVolume) { result.RenewFlag = "NOTIFY_AND_AUTO_RENEW" }},
+		{name: "deadline without timezone", configure: func(result *StorageVolume) { result.Deadline = "2026-09-16 00:00:00" }},
+		{name: "deadline did not grow", configure: func(result *StorageVolume) { result.Deadline = "2026-08-16T00:00:00Z" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := StorageVolume{
+				ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready", ProviderResourceID: "disk-storage-alpha",
+				RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"diskChargeType": "PREPAID"},
+			}
+			provider := &renewalResultProvider{storage: func(result StorageVolume) StorageVolume {
+				result.Deadline = "2026-09-16T00:00:00Z"
+				result.ProviderData = map[string]string{"diskChargeType": "PREPAID"}
+				tc.configure(&result)
+				return result
+			}}
+			service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+			service.volumes[existing.ID] = existing
+			returned, err := service.RenewStorageVolume(context.Background(), existing.ID, "renew-storage-invalid-"+tc.name)
+			if err == nil || errorCode(err) != "storage_renewal_readback_mismatch" {
+				t.Fatalf("malformed storage renewal returned=%#v err=%v", returned, err)
+			}
+			current, ok := service.GetStorageVolume(context.Background(), existing.ID)
+			if !ok || current.ProviderResourceID != existing.ProviderResourceID || current.Deadline != existing.Deadline {
+				t.Fatalf("malformed renewal overwrote storage identity: %#v", current)
+			}
+		})
+	}
+}
+
 func TestFabricRejectsIllegalResourceMutationsWithOperationFacts(t *testing.T) {
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)
@@ -1050,13 +1176,24 @@ func TestFabricRejectsIllegalResourceMutationsWithOperationFacts(t *testing.T) {
 	assertOperationFact(t, operations, "create_storage_attachment", "storage_attachment", "reject-cross-account-attach", "rejected")
 }
 
-func TestStorageAttachmentRejectsRetainedOrReleasedVolume(t *testing.T) {
-	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", Status: "running"}
-	for _, status := range []string{"retained", "released"} {
+func TestStorageAttachmentRequiresReadyComputeAndVolume(t *testing.T) {
+	readyCompute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", Status: "running"}
+	readyVolume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: "ready"}
+	for _, status := range []string{"provisioning", "pending", "provider_ready", "quarantined"} {
+		compute := readyCompute
+		compute.Status = status
+		if err := validateAttachmentInput(StorageAttachmentInput{}, compute, readyVolume); err == nil || errorCode(err) != "resource_status_invalid" {
+			t.Fatalf("compute status %q err=%v, want resource_status_invalid", status, err)
+		}
+	}
+	for _, status := range []string{"pending", "provider_ready", "quarantined", "retained", "released"} {
 		volume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: status}
-		if err := validateAttachmentInput(StorageAttachmentInput{}, compute, volume); err == nil || errorCode(err) != "resource_status_invalid" {
+		if err := validateAttachmentInput(StorageAttachmentInput{}, readyCompute, volume); err == nil || errorCode(err) != "resource_status_invalid" {
 			t.Fatalf("storage status %q err=%v, want resource_status_invalid", status, err)
 		}
+	}
+	if err := validateAttachmentInput(StorageAttachmentInput{}, readyCompute, readyVolume); err != nil {
+		t.Fatalf("ready resources rejected: %v", err)
 	}
 }
 
@@ -1465,7 +1602,9 @@ func (testProvider) SyncStorageVolume(_ context.Context, volume StorageVolume) (
 }
 
 func (testProvider) RenewStorageVolume(_ context.Context, volume StorageVolume) (StorageVolume, error) {
-	volume.Deadline = "2026-09-16 00:00:00"
+	volume.Deadline = "2026-09-16T00:00:00Z"
+	volume.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	volume.ProviderData = map[string]string{"diskChargeType": "PREPAID"}
 	return volume, nil
 }
 

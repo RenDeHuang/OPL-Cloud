@@ -423,7 +423,7 @@ func (p *TencentProvider) SyncStorageVolume(ctx context.Context, volume StorageV
 	if volume.ID == "" || !strings.HasPrefix(volume.ProviderResourceID, "disk-") {
 		return StorageVolume{}, fmt.Errorf("storage_volume_cbs_identity_required")
 	}
-	response, err := p.provision(ctx, provisionerRequest{Action: "sync_storage_volume", Storage: provisionerStorage{
+	response, err := p.provision(ctx, provisionerRequest{Action: "sync_storage_volume", AccountID: volume.AccountID, Tags: volume.CostTags, Storage: provisionerStorage{
 		ID: volume.ProviderResourceID, SizeGB: uint64(volume.SizeGB), Zone: volume.Zone, DiskType: volume.DiskType, Deadline: volume.Deadline,
 	}})
 	if err != nil {
@@ -501,7 +501,7 @@ func (p *TencentProvider) RenewStorageVolume(ctx context.Context, volume Storage
 	if volume.ID == "" || !strings.HasPrefix(volume.ProviderResourceID, "disk-") || strings.TrimSpace(volume.Deadline) == "" {
 		return StorageVolume{}, fmt.Errorf("storage_volume_renew_identity_required")
 	}
-	response, err := p.provision(ctx, provisionerRequest{Action: "renew_storage_volume", Storage: provisionerStorage{
+	response, err := p.provision(ctx, provisionerRequest{Action: "renew_storage_volume", AccountID: volume.AccountID, Tags: volume.CostTags, Storage: provisionerStorage{
 		ID: volume.ProviderResourceID, SizeGB: uint64(volume.SizeGB), Zone: volume.Zone, DiskType: volume.DiskType, Deadline: volume.Deadline,
 	}})
 	if err != nil {
