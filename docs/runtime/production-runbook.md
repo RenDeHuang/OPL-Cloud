@@ -264,6 +264,79 @@ read-only `DescribeBaseMetrics`) to confirm the metric belongs to the selected
 PostgreSQL/TKE/CLB resource. Do not copy an unverified namespace or instance ID
 from documentation, and do not store notification credentials in this repository.
 
+## Workspace Routing Verification
+
+Repository configuration declares one shared `qcloud` Ingress with `/` paths
+for `cloud.medopl.cn` and `workspace.medopl.cn`, both targeting Control Plane.
+Fabric creates a Deployment, ClusterIP Service, and Secret per Workspace; it
+does not create a per-Workspace Ingress. The deploy workflow renders the shared
+Ingress only for bootstrap and normally applies with `--skip-shared-ingress`, so
+the repository manifest is not evidence of the current live listener rules.
+
+Public read-only checks currently prove that `workspace.medopl.cn` resolves to
+the shared CLB, presents a valid certificate for that hostname, and reaches
+Control Plane. They do not prove the exact live rule count, HTTP/2 value,
+WebSocket forwarding, CLB access controls, backend health, or account quota.
+Run the following from the VPC-capable operator environment; the local default
+Tencent credential is not valid and must not be copied into this repository:
+
+```bash
+kubectl --kubeconfig "$KUBECONFIG" -n opl-cloud get ingress opl-cloud -o json
+kubectl --kubeconfig "$KUBECONFIG" -n opl-cloud get tkeserviceconfigs.cloud.tencent.com opl-cloud-ingress-config -o json
+
+kubectl --kubeconfig "$KUBECONFIG" -n opl-cloud get ingress opl-cloud -o json \
+  | jq '{pathCount: ([.spec.rules[].http.paths[]] | length), rules: [.spec.rules[] | {host, paths: [.http.paths[] | {path, pathType, backend: .backend.service}]}]}'
+
+openssl s_client -connect workspace.medopl.cn:443 -servername workspace.medopl.cn \
+  -verify_return_error </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+Resolve the current public VIP, then query the matching CLB. Replace only the
+placeholders below; never put Tencent credentials in command arguments or logs:
+
+```bash
+dig +short workspace.medopl.cn
+
+tccli --region na-siliconvalley clb DescribeLoadBalancers \
+  --LoadBalancerVips '["<workspace-public-vip>"]' --Limit 20
+
+tccli --region na-siliconvalley clb DescribeListeners \
+  --LoadBalancerId <load-balancer-id> --Protocol HTTPS --Port 443
+
+tccli --region na-siliconvalley clb DescribeTargets \
+  --LoadBalancerId <load-balancer-id> --Protocol HTTPS --Port 443
+
+tccli --region na-siliconvalley clb DescribeTargetHealth \
+  --LoadBalancerIds '["<load-balancer-id>"]'
+
+tccli --region na-siliconvalley clb DescribeLBOperateProtect \
+  --LoadBalancerIds '["<load-balancer-id>"]'
+
+tccli --region na-siliconvalley clb DescribeQuota
+```
+
+Record only redacted evidence. For the HTTPS listener, verify the certificate
+ID, `SniSwitch`, and every rule's `Domain`, `Url`, `Http2`, `ForwardType`,
+`OAuth`, `WafDomainId`, and location ID. Use `DescribeTargetHealth` rather than
+the target-binding response to verify `HealthStatus` and `HealthStatusDetail`.
+On the CLB record, verify `SecureGroups`; use `DescribeLBOperateProtect` for
+deletion protection. Count live `Rules` entries and compare that number with
+`TOTAL_LISTENER_RULE_QUOTA.QuotaLimit`; Tencent may return a null
+`QuotaCurrent`, so it is not a substitute for counting rules.
+
+WebSocket support is complete only when an already authorized Workspace browser
+gets HTTP 101 on `/ws` and exchanges frames through this exact CLB rule. A 404,
+ordinary 2xx page, repository annotation, or vendor capability statement is not
+evidence. Do not create a paid Workspace solely for this check, and never paste
+an authentication cookie into a shell command or artifact.
+
+Before any later route cleanup, compare live listener location IDs with the live
+Ingress, TkeServiceConfig, Fabric runtime Services, and active Workspace facts.
+Any unmatched rule is an orphan candidate, not deletion authorization. Route
+mutation and any dedicated Workspace Router or changed access-security model
+require separate approval.
+
 ## Deploy
 
 Use the `Deploy TKE Production` workflow with immutable image references. It
