@@ -106,7 +106,7 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	if err != nil {
 		return row, err
 	}
-	if balance.USDMicros <= chargeUSDMicros {
+	if balance.USDMicros < chargeUSDMicros {
 		row["billingStatus"], row["lastBillingError"] = "failed", errMonthlyInsufficientBalance.Error()
 		_ = app.saveMonthlyResource(ctx, input.ResourceType, row)
 		return row, errMonthlyInsufficientBalance
@@ -132,7 +132,7 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	if err != nil {
 		return row, err
 	}
-	if balance.USDMicros <= chargeUSDMicros {
+	if balance.USDMicros < chargeUSDMicros {
 		row["billingStatus"], row["lastBillingError"] = "failed", errMonthlyInsufficientBalance.Error()
 		var cleanupErr error
 		row, cleanupErr = app.cleanupMonthlyResource(ctx, service, row)
@@ -188,7 +188,7 @@ func (app *controlPlaneServer) chargeMonthlyOperation(ctx context.Context, servi
 		return row, errMonthlyChargeNeedsReview
 	}
 	row["postChargeBalanceKnown"], row["postChargeBalanceUsdMicros"] = true, postCharge.USDMicros
-	if postCharge.USDMicros <= 0 || (preChargeBalance > 0 && postCharge.USDMicros > preChargeBalance-chargeUSDMicros) {
+	if postCharge.USDMicros < 0 || (preChargeBalance > 0 && postCharge.USDMicros > preChargeBalance-chargeUSDMicros) {
 		row["billingStatus"], row["lastBillingError"] = "manual_review", errMonthlyChargeNeedsReview.Error()
 		_ = app.saveMonthlyResource(ctx, monthlyResourceType(row), row)
 		return row, errMonthlyChargeNeedsReview

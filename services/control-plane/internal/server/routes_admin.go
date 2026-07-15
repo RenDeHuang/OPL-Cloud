@@ -3,9 +3,11 @@ package server
 import (
 	"errors"
 	"net/http"
+
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer) {
+func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("POST /api/organizations", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		body, err := app.createOrganization(decodeJSON(r))
 		if err != nil {
@@ -48,7 +50,7 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer) {
 	}))
 	mux.HandleFunc("POST /api/users", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
-		body, err := app.createUser(input)
+		body, err := app.createUser(r.Context(), service, input)
 		if err != nil {
 			writeCreateUserError(w, err)
 			return

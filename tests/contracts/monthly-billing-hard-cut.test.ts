@@ -49,8 +49,7 @@ test("pricing contract fixes exact integer monthly charges", async () => {
   assert.equal(pricing.walletCurrency, "USD");
   assert.equal(pricing.exchangeRateCnyPerUsd, 7);
   assert.deepEqual(pricing.computeMonthly, {
-    basic: { cnyCents: 35000, usdMicros: 50000000 },
-    pro: { cnyCents: 150000, usdMicros: 214285715 }
+    basic: { cnyCents: 35000, usdMicros: 50000000 }
   });
   assert.deepEqual(pricing.storagePer10GbMonthly, { cnyCents: 1800, usdMicros: 2571429 });
   assert.deepEqual(pricing.storageSize, { minimumGb: 10, stepGb: 10 });

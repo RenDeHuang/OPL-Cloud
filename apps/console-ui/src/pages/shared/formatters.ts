@@ -11,6 +11,7 @@ export function usdMicros(value) {
 }
 
 export function usdBalance(balance: any = {}) {
+  if (balance.available === false || balance.status === "unavailable") return "-";
   return usdMicros(balance.usdMicros);
 }
 

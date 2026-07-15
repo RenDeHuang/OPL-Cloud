@@ -371,8 +371,8 @@ func TestCatalogExposesWorkspacePackages(t *testing.T) {
 	service := NewService(testProvider{})
 	catalog := service.Catalog(context.Background())
 
-	if len(catalog.WorkspacePackages) == 0 {
-		t.Fatalf("expected workspace packages")
+	if len(catalog.WorkspacePackages) != 1 {
+		t.Fatalf("workspace packages = %#v, want Basic only", catalog.WorkspacePackages)
 	}
 	if catalog.WorkspacePackages[0].ID != "basic" {
 		t.Fatalf("first package = %q, want basic", catalog.WorkspacePackages[0].ID)
@@ -398,7 +398,7 @@ func (p *resourceBoundaryProvider) CreateStorageVolume(ctx context.Context, inpu
 func TestResourceBoundariesRejectUnknownPackagesAndInvalidStorageBeforeProvider(t *testing.T) {
 	provider := &resourceBoundaryProvider{}
 	service := NewService(provider)
-	for _, packageID := range []string{"", "enterprise"} {
+	for _, packageID := range []string{"", "pro", "enterprise"} {
 		if _, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: packageID, IdempotencyKey: "invalid-package-" + packageID}); !errors.Is(err, ErrUnsupportedComputePackage) {
 			t.Fatalf("package %q err=%v, want %v", packageID, err, ErrUnsupportedComputePackage)
 		}

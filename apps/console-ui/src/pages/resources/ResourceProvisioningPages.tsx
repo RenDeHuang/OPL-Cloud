@@ -278,7 +278,7 @@ export function CreateComputeAllocationPage({ state, session, runAction }: any) 
               description={`将从 Sub2API 余额扣除 ${usdMicros(pricingPreview?.chargeUsdMicros)}，开通一个日历月；参考价 ${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月。`}
               type="primary"
               icon={<Server size={15} />}
-              disabled={!availablePackages.length || !pricingPreview || Boolean(pricingPreview.safeMessage)}
+              disabled={state.balance?.available === false || !availablePackages.length || !pricingPreview || Boolean(pricingPreview.safeMessage)}
               loading={operationPending}
               onConfirm={() => form.submit()}
             />
@@ -489,7 +489,7 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
               description={`将从 Sub2API 余额扣除 ${usdMicros(pricingPreview?.chargeUsdMicros)}，开通一个日历月；参考价 ${moneyCents(pricingPreview?.monthlyPriceCnyCents)}/月。`}
               type="primary"
               icon={<Database size={15} />}
-              disabled={!availablePackages.length || !pricingPreview || Boolean(pricingPreview.safeMessage)}
+              disabled={state.balance?.available === false || !availablePackages.length || !pricingPreview || Boolean(pricingPreview.safeMessage)}
               loading={operationPending}
               onConfirm={() => form.submit()}
             />

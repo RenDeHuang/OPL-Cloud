@@ -13,7 +13,7 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if !ok {
 			return
 		}
-		balance, ok := app.liveBalance(w, r, service, accountID)
+		balance, ok := app.liveBalance(w, r, service, accountID, false)
 		if ok {
 			writeJSON(w, http.StatusOK, balance)
 		}

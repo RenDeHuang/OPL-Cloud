@@ -8,17 +8,21 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 const maxJSONSafeInteger = float64(1<<53 - 1)
 
-func (app *controlPlaneServer) createUser(input map[string]any) (map[string]any, error) {
+var errSub2APIUserMappingUnverified = errors.New("sub2api_user_mapping_unverified")
+
+func (app *controlPlaneServer) createUser(ctx context.Context, service *controlplane.Service, input map[string]any) (map[string]any, error) {
 	role := stringField(input, "role", "owner")
 	if !validRole(role) {
 		return nil, errInvalidRole
 	}
 	email := stringField(input, "email", "admin@medopl.cn")
-	users, err := app.tables.ListUsers(context.Background(), true)
+	users, err := app.tables.ListUsers(ctx, true)
 	if err != nil {
 		return nil, err
 	}
@@ -41,11 +45,14 @@ func (app *controlPlaneServer) createUser(input map[string]any) (map[string]any,
 	if !ok {
 		return nil, errMonthlyAccountUnmapped
 	}
-	if err := app.ensureMappedAccount(context.Background(), accountID, sub2APIUserID); err != nil {
+	if _, err := service.Sub2APIBalance(ctx, sub2APIUserID); err != nil {
+		return nil, errSub2APIUserMappingUnverified
+	}
+	if err := app.ensureMappedAccount(ctx, accountID, sub2APIUserID); err != nil {
 		return nil, err
 	}
 	user := map[string]any{"id": id, "email": email, "accountId": accountID, "role": role, "status": "active", "passwordHash": passwordHash}
-	return sanitizeUser(user), app.tables.SaveUser(context.Background(), user)
+	return sanitizeUser(user), app.tables.SaveUser(ctx, user)
 }
 
 func positiveIntegerField(input map[string]any, key string) (int64, bool) {

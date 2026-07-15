@@ -46,7 +46,7 @@ func TestBillingMonthClampsWithoutChangingAnchor(t *testing.T) {
 
 func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 	paidThrough := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
-	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{50_000_000, 0})
 	row := monthlyActiveResource("compute", "compute-renew", paidThrough)
 	row["billingAnchorDay"] = int64(31)
 	if err := app.tables.SaveCompute(context.Background(), row); err != nil {
@@ -62,7 +62,7 @@ func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	renewed, _ := app.getCompute("compute-renew")
-	if renewed["billingStatus"] != "active" || renewed["periodStart"] != paidThrough.Format(time.RFC3339) || renewed["paidThrough"] != "2026-09-30T09:30:00Z" {
+	if renewed["billingStatus"] != "active" || renewed["postChargeBalanceUsdMicros"] != int64(0) || renewed["periodStart"] != paidThrough.Format(time.RFC3339) || renewed["paidThrough"] != "2026-09-30T09:30:00Z" {
 		t.Fatalf("renewed row = %#v", renewed)
 	}
 	if len(sub2API.charges) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {

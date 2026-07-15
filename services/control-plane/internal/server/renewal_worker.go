@@ -166,7 +166,7 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 		_ = app.saveMonthlyResource(ctx, resourceType, row)
 		return row, err
 	}
-	if balance.USDMicros <= int64(numberField(row, "chargeUsdMicros", 0)) {
+	if balance.USDMicros < int64(numberField(row, "chargeUsdMicros", 0)) {
 		row["billingStatus"], row["lastBillingError"] = "past_due", errMonthlyInsufficientBalance.Error()
 		_ = app.saveMonthlyResource(ctx, resourceType, row)
 		return row, errMonthlyInsufficientBalance

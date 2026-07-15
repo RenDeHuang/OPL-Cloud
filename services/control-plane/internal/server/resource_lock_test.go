@@ -26,7 +26,7 @@ func TestEntitlementConsumersWaitForResourceMutation(t *testing.T) {
 	service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
 	mux := http.NewServeMux()
 	registerAuthRoutes(mux, app)
-	registerAdminRoutes(mux, app)
+	registerAdminRoutes(mux, app, service)
 	registerResourceRoutes(mux, app, service)
 	registerWorkspaceRoutes(mux, app, service)
 	session := tenantAdminSessionForTest(t, mux)

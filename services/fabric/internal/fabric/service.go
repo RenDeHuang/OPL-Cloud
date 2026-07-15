@@ -72,7 +72,6 @@ func (s *Service) Catalog(_ context.Context) Catalog {
 		Owner:         "OPL Fabric",
 		WorkspacePackages: []WorkspacePackage{
 			{ID: "basic", Name: "Basic Workspace", ComputeProfileID: "cpu-basic", CPU: 2, MemoryGB: 4, DiskGB: 10, Provider: "tencent-tke", Available: true},
-			{ID: "pro", Name: "Pro Workspace", ComputeProfileID: "cpu-pro", CPU: 8, MemoryGB: 16, DiskGB: 100, Provider: "tencent-tke", Available: true},
 		},
 		StorageClasses: []StorageClass{{ID: "workspace-cbs", StorageClassName: "cbs", Provider: "tencent-tke", Available: true}},
 		IngressDomains: []IngressDomain{{ID: "workspace", Host: "workspace.medopl.cn", PathPattern: "/w/<workspaceId>/", Available: true}},
@@ -84,7 +83,7 @@ func (s *Service) MachineOwnership(ctx context.Context, resourceID string) (Mach
 }
 
 func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllocationInput) (ComputeAllocation, error) {
-	if input.PackageID != "basic" && input.PackageID != "pro" {
+	if input.PackageID != "basic" {
 		return ComputeAllocation{}, ErrUnsupportedComputePackage
 	}
 	now := time.Now().UTC()

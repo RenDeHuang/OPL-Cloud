@@ -19,10 +19,6 @@
     "basic": {
       "cnyCents": 35000,
       "usdMicros": 50000000
-    },
-    "pro": {
-      "cnyCents": 150000,
-      "usdMicros": 214285715
     }
   },
   "storagePer10GbMonthly": {

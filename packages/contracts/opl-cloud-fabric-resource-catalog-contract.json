@@ -19,8 +19,7 @@
     "unavailableError": "package_unavailable:<packageId>:<reason>"
   },
   "currentAvailablePackages": [
-    "basic",
-    "pro"
+    "basic"
   ],
   "readinessSurface": {
     "endpoint": "GET /api/runtime/readiness",

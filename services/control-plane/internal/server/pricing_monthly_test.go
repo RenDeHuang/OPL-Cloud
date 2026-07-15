@@ -12,7 +12,7 @@ func TestMonthlyPricingCatalogUsesIntegerCharges(t *testing.T) {
 	}
 
 	packages, _ := catalog["packages"].([]any)
-	if len(packages) != 2 {
+	if len(packages) != 1 {
 		t.Fatalf("packages = %#v", packages)
 	}
 	assertCharge := func(index int, packageID string, cnyCents, usdMicros int64) {
@@ -24,7 +24,6 @@ func TestMonthlyPricingCatalogUsesIntegerCharges(t *testing.T) {
 		}
 	}
 	assertCharge(0, "basic", 35000, 50000000)
-	assertCharge(1, "pro", 150000, 214285715)
 }
 
 func TestMonthlyStoragePriceUsesWholeTenGigabyteBlocks(t *testing.T) {
@@ -43,6 +42,7 @@ func TestMonthlyStoragePriceUsesWholeTenGigabyteBlocks(t *testing.T) {
 
 func TestMonthlyPricingRejectsInvalidProducts(t *testing.T) {
 	for name, input := range map[string]map[string]any{
+		"disabled pro package":   {"resourceType": "compute", "packageId": "pro"},
 		"unknown compute package": {"resourceType": "compute", "packageId": "enterprise"},
 		"storage below minimum":   {"resourceType": "storage", "packageId": "basic", "sizeGb": 9},
 		"storage partial block":   {"resourceType": "storage", "packageId": "basic", "sizeGb": 15},

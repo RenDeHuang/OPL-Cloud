@@ -96,7 +96,7 @@ func TestBackendRejectsRolesOutsideOwnerAdminMember(t *testing.T) {
 	mustStore(t, app.tables.SaveOrganization(context.Background(), map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}))
 	mustStore(t, app.tables.SaveUser(context.Background(), map[string]any{"id": "usr-member", "email": "member@example.com", "accountId": "acct-alpha", "role": "member", "status": "active"}))
 	for _, role := range []string{"pi", "viewer", "OWNER"} {
-		if _, err := app.createUser(map[string]any{"email": role + "@example.com", "accountId": "acct-alpha", "role": role, "password": "correct horse battery staple"}); err == nil || err.Error() != "invalid_role" {
+		if _, err := app.createUser(context.Background(), nil, map[string]any{"email": role + "@example.com", "accountId": "acct-alpha", "role": role, "password": "correct horse battery staple"}); err == nil || err.Error() != "invalid_role" {
 			t.Fatalf("user role %q error = %v, want invalid_role", role, err)
 		}
 		if _, err := app.createMembership(map[string]any{"organizationId": "org-alpha", "userId": "usr-member", "accountId": "acct-alpha", "role": role}); err == nil || err.Error() != "invalid_role" {

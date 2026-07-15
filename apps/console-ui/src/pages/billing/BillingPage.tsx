@@ -26,7 +26,6 @@ export function BillingPage({ state, balance }: any) {
         items={[
           { label: "Sub2API 余额", value: usdBalance(balance), caption: "gflabtoken.cn 实时余额", tone: Number(balance.usdMicros || 0) > 0 ? "good" : "warn" },
           { label: "Basic 2C4G", value: "¥350.00/月", caption: "$50.000000", tone: "info" },
-          { label: "Pro 8C16G", value: "¥1,500.00/月", caption: "$214.285715", tone: "info" },
           { label: "存储", value: "每 10GB ¥18/月", caption: "$2.571429 起", tone: "info" },
           { label: "价格参考", value: "1 USD = 7 CNY", caption: "当前目录固定汇率", tone: "neutral" }
         ]}

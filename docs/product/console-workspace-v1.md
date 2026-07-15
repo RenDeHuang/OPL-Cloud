@@ -16,7 +16,7 @@ Console shows:
 
 - live Sub2API USD balance;
 - fixed CNY monthly reference prices;
-- Basic and Pro compute;
+- Basic compute;
 - storage in 10 GB steps;
 - resource status, `paidThrough`, auto-renew, and manual-review state;
 - attachment and Workspace URL actions;

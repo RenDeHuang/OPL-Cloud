@@ -51,7 +51,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	registerBillingRoutes(mux, app, service)
 	registerResourceRoutes(mux, app, service)
 	registerSupportRoutes(mux, app)
-	registerAdminRoutes(mux, app)
+	registerAdminRoutes(mux, app, service)
 	registerExecutionRoutes(mux, app, service)
 	registerSyncRoutes(mux, app)
 	registerTransferRoutes(mux, app, service)
@@ -281,6 +281,8 @@ func writeCreateUserError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errUserExists):
 		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, errSub2APIUserMappingUnverified):
+		writeError(w, http.StatusBadGateway, err.Error())
 	default:
 		writeError(w, http.StatusBadRequest, err.Error())
 	}

@@ -7,9 +7,9 @@ Current status is a controlled CPU Workspace pilot, not public GA.
 Implemented:
 
 - owner/admin login and server-side tenant isolation;
-- required positive `sub2apiUserId` account mapping;
+- live-verified positive `sub2apiUserId` account mapping before user creation;
 - live Sub2API USD balance in Console;
-- Basic and Pro monthly compute purchase;
+- Basic monthly compute purchase;
 - storage purchase in 10 GB blocks;
 - stable purchase/renewal redeem codes and recovery states;
 - renewal, auto-renew control, expiration, retained storage, and entitlement gates;

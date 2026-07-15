@@ -21,6 +21,7 @@ test("product contract treats app image as runtime template, not commercial reso
   assert.equal(product.runtimeTemplatePolicy.defaultTemplateId, "one-person-lab-app");
   assert.equal(product.runtimeTemplatePolicy.billingObject, false);
   assert.match(product.runtimeTemplatePolicy.ownershipRule, /never own accounts/);
+  assert.deepEqual(product.defaultPackages.map((plan) => plan.id), ["basic"]);
 });
 
 test("business object contract keeps runtime template out of billing ownership", async () => {
