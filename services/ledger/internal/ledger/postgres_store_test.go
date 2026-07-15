@@ -396,6 +396,9 @@ func TestPostgresConcurrentReviewPolicyIdempotency(t *testing.T) {
 func openLedgerTestPostgres(t *testing.T) *sql.DB {
 	t.Helper()
 	rawURL := os.Getenv("LEDGER_TEST_DATABASE_URL")
+	if rawURL == "" && os.Getenv("OPL_POSTGRES_TESTS") == "1" {
+		rawURL = "connect_timeout=10"
+	}
 	if rawURL == "" {
 		t.Skip("LEDGER_TEST_DATABASE_URL is not set")
 	}
