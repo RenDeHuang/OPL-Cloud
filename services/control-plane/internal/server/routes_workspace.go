@@ -315,7 +315,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			VolumeID:      storageID,
 		}, "workspace-create:"+workspaceID)
 		if err != nil {
-			writeUpstreamError(w)
+			writeUpstreamError(w, err)
 			return
 		}
 		if err := app.saveWorkspaceProjection(workspace); err != nil {

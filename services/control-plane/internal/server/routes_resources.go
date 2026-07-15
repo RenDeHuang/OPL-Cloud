@@ -51,7 +51,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{
 			ResourceType: "compute", ResourceID: resourceID, BillingOperationID: "billing-" + stableID("compute", accountID, key)[:18],
 			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: workspaceID,
-			Name: stringField(input, "name", ""), PackageID: packageID, Environment: monthlyEnvironment(),
+			Name: stringField(input, "name", ""), PackageID: packageID, Zone: monthlyComputeLaunchZone(), Environment: monthlyEnvironment(),
 		})
 		if err != nil {
 			writeMonthlyPurchaseError(w, err)

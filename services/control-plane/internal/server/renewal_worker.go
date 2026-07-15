@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -75,7 +76,7 @@ func (app *controlPlaneServer) runMonthlyBillingOnce(ctx context.Context, servic
 }
 
 func monthlyBusinessOutcome(err error) bool {
-	return errors.Is(err, errMonthlyInsufficientBalance) || errors.Is(err, errMonthlyChargeNeedsReview) || errors.Is(err, errMonthlyAccountUnmapped)
+	return errors.Is(err, errMonthlyInsufficientBalance) || errors.Is(err, errMonthlyChargeNeedsReview) || errors.Is(err, errMonthlyAccountUnmapped) || errors.Is(err, errMonthlyPurchaseRefunded)
 }
 
 func (app *controlPlaneServer) processMonthlyResource(ctx context.Context, service *controlplane.Service, resourceType string, row map[string]any, now time.Time) error {
@@ -101,7 +102,15 @@ func (app *controlPlaneServer) processMonthlyResource(ctx context.Context, servi
 		row = updated
 	}
 	status := stringValue(row["billingStatus"])
-	if status == "retained" || status == "stopped" || status == "failed" || status == "manual_review" {
+	if status == "refund_pending" {
+		userID, err := app.sub2APIUserID(ctx, stringValue(row["accountId"]))
+		if err != nil {
+			return err
+		}
+		_, err = app.refundMonthlyOperation(ctx, service, row, userID)
+		return err
+	}
+	if status == "retained" || status == "stopped" || status == "failed" || status == "manual_review" || status == "refunded" {
 		return nil
 	}
 	paidThrough, err := time.Parse(time.RFC3339, stringValue(row["paidThrough"]))
@@ -140,19 +149,44 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	row["billingStatus"], row["billingOperationId"] = "renewal_pending", operationID
 	row["billingOperationStartedAt"], row["lastRenewalAttemptAt"] = now.Format(time.RFC3339), now.Format(time.RFC3339)
 	row["sub2apiRedeemCode"] = monthlyRedeemCode(monthlyEnvironment(), operationID)
+	row["sub2apiRefundCode"] = monthlyRefundCode(monthlyEnvironment(), operationID)
 	row["lastReceiptId"], row["postChargeBalanceKnown"], row["postChargeBalanceUsdMicros"] = "", false, int64(0)
 	delete(row, "lastBillingError")
 	row, _, err = app.tables.ClaimResourceBillingOperation(ctx, resourceType, row)
 	if err != nil {
 		return row, err
 	}
-	if stringValue(row["billingStatus"]) == "active" {
+	switch stringValue(row["billingStatus"]) {
+	case "active":
 		return row, nil
-	}
-	if stringValue(row["billingStatus"]) == "manual_review" {
+	case "manual_review":
 		return row, errMonthlyChargeNeedsReview
+	case "refunded":
+		return row, errMonthlyPurchaseRefunded
+	case "refund_pending":
+		userID, err := app.sub2APIUserID(ctx, stringValue(row["accountId"]))
+		if err != nil {
+			return row, err
+		}
+		return app.refundMonthlyOperation(ctx, service, row, userID)
 	}
 	row["lastReceiptId"] = ""
+	preflightInput := clients.MonthlyPreflightInput{
+		ResourceType: resourceType, PackageID: stringValue(row["packageId"]),
+		SizeGB: int(numberField(row, "sizeGb", 0)), Zone: stringValue(row["zone"]),
+	}
+	preflight, err := service.PreflightMonthlyResource(ctx, preflightInput)
+	if err != nil {
+		row["lastBillingError"] = "fabric_monthly_preflight_failed"
+		_ = app.saveMonthlyResource(ctx, resourceType, row)
+		return row, err
+	}
+	if !monthlyPreflightConfirmed(preflightInput, preflight) {
+		row["lastBillingError"] = "fabric_monthly_preflight_invalid"
+		_ = app.saveMonthlyResource(ctx, resourceType, row)
+		return row, errors.New("fabric_monthly_preflight_invalid")
+	}
+	delete(row, "lastBillingError")
 	userID, err := app.sub2APIUserID(ctx, stringValue(row["accountId"]))
 	if err != nil {
 		return row, err
@@ -182,14 +216,23 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	}
 	anchorDay := int(numberField(row, "billingAnchorDay", float64(paidThrough.Day())))
 	renewedThrough := nextBillingMonth(paidThrough, anchorDay)
-	providerDeadline, err := time.Parse(time.RFC3339, firstNonEmpty(stringValue(row["deadline"]), providerDataValue(row, "deadline")))
+	providerDeadline, err := monthlyProviderDeadline(row)
 	if err != nil {
 		return app.markMonthlyManualReview(ctx, row, "fabric_renewal_deadline_unknown")
 	}
 	row, err = app.renewMonthlyProvider(ctx, service, resourceType, row, providerDeadline, renewedThrough, operationID+":provider-renew")
 	if err != nil {
+		if !errors.Is(err, errMonthlyChargeNeedsReview) {
+			if synced, syncErr := app.syncMonthlyResource(ctx, service, row); syncErr == nil {
+				row = synced
+				if monthlyResourceConfirmedAbsent(resourceType, row) {
+					return app.refundMonthlyOperation(ctx, service, row, userID)
+				}
+			}
+		}
 		return app.markMonthlyManualReview(ctx, row, "fabric_renewal_unconfirmed")
 	}
+	applyMonthlyProviderDeadline(row)
 	row["periodStart"], row["paidThrough"], row["billingStatus"] = paidThrough.Format(time.RFC3339), renewedThrough.Format(time.RFC3339), "active"
 	delete(row, "lastBillingError")
 	if err := app.saveMonthlyResource(ctx, resourceType, row); err != nil {
@@ -205,7 +248,10 @@ func (app *controlPlaneServer) renewMonthlyProvider(ctx context.Context, service
 		volume, err := service.RenewMonthlyStorage(ctx, stringValue(row["id"]), key)
 		result = structToMap(volume)
 		row = mergeMaps(row, result)
-		if err != nil || !monthlyRenewalReadbackConfirmed(resourceType, expected, row, result, oldDeadline, paidThrough) {
+		if err != nil {
+			return row, err
+		}
+		if !monthlyRenewalReadbackConfirmed(resourceType, expected, row, result, oldDeadline, paidThrough) {
 			return row, errMonthlyChargeNeedsReview
 		}
 		return row, nil
@@ -213,7 +259,10 @@ func (app *controlPlaneServer) renewMonthlyProvider(ctx context.Context, service
 	allocation, err := service.RenewMonthlyCompute(ctx, stringValue(row["id"]), key)
 	result = structToMap(allocation)
 	row = mergeMaps(row, result)
-	if err != nil || !monthlyRenewalReadbackConfirmed(resourceType, expected, row, result, oldDeadline, paidThrough) {
+	if err != nil {
+		return row, err
+	}
+	if !monthlyRenewalReadbackConfirmed(resourceType, expected, row, result, oldDeadline, paidThrough) {
 		return row, errMonthlyChargeNeedsReview
 	}
 	return row, nil
@@ -225,9 +274,8 @@ func monthlyRenewalReadbackConfirmed(resourceType string, expected, row, result 
 	}
 	chargeType := firstNonEmpty(stringValue(result["chargeType"]), providerDataValue(result, "chargeType"))
 	renewFlag := firstNonEmpty(stringValue(result["renewFlag"]), providerDataValue(result, "renewFlag"))
-	deadlineText := firstNonEmpty(stringValue(result["deadline"]), providerDataValue(result, "deadline"))
 	renewalResult := providerDataValue(result, "renewalResult")
-	deadline, err := time.Parse(time.RFC3339, deadlineText)
+	deadline, err := monthlyProviderDeadline(result)
 	if err != nil || !deadline.After(oldDeadline) || deadline.Before(paidThrough) || chargeType != "PREPAID" || renewFlag != "NOTIFY_AND_MANUAL_RENEW" || (renewalResult != "renewed" && renewalResult != "already_renewed") {
 		return false
 	}

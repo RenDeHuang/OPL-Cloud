@@ -360,6 +360,42 @@ func TestSub2APIClientRejectsUnsupportedVersionBeforeCharge(t *testing.T) {
 	}
 }
 
+func TestSub2APIClientAcceptsConfiguredCurrentAndFallbackVersions(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		allowed bool
+	}{
+		{version: "0.1.155", allowed: true},
+		{version: "0.1.156", allowed: true},
+		{version: "0.1.157", allowed: false},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			redeemCalls := 0
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/system/version":
+					writeSub2APISuccess(t, w, map[string]any{"version": tc.version})
+				case "/api/v1/admin/redeem-codes/create-and-redeem":
+					redeemCalls++
+					writeSub2APISuccess(t, w, json.RawMessage(`{"redeem_code":{"code":"opl:version-guard","type":"balance","value":-0.000001,"status":"used","used_by":41}}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}, []string{"0.1.155", "0.1.156"}, time.Second)
+
+			_, err := client.Charge(context.Background(), Sub2APIChargeInput{UserID: 41, Code: "opl:version-guard", ChargeUSDMicros: 1})
+			if tc.allowed && (err != nil || redeemCalls != 1) {
+				t.Fatalf("configured version rejected: err=%v calls=%d", err, redeemCalls)
+			}
+			if !tc.allowed && (!errors.Is(err, ErrSub2APIUnsupportedVersion) || redeemCalls != 0) {
+				t.Fatalf("unconfigured version err=%v calls=%d", err, redeemCalls)
+			}
+		})
+	}
+}
+
 func TestSub2APIClientDetectsSameCodeDifferentValue(t *testing.T) {
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

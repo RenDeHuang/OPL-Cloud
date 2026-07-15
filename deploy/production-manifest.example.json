@@ -66,6 +66,9 @@
     "OPL_WORKSPACE_STORAGE_CLASS": {
       "value": "cbs"
     },
+    "OPL_COMPUTE_LAUNCH_ZONE": {
+      "value": "ap-guangzhou-3"
+    },
     "OPL_BASIC_COMPUTE_INSTANCE_TYPE": {
       "value": "SA5.MEDIUM4"
     },

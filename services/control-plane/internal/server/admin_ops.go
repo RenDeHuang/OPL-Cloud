@@ -106,7 +106,7 @@ func (app *controlPlaneServer) managementState(includeDeleted bool, computePools
 		"memberships":            rowsAsAnyFromMaps(app.listMemberships()),
 		"supportTickets":         rowsAsAnyFromMaps(app.listSupportMappings("")),
 		"accounts":               app.accountsLocked(""),
-		"packages":               packageList(),
+		"packages":               packageList(computePools),
 		"computePools":           computePools,
 		"workspaces":             rowsAsAnyFromMaps(app.listWorkspaces("")),
 		"computeAllocations":     rowsAsAnyFromMaps(app.listComputes("")),

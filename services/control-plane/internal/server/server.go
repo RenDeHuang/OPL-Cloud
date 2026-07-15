@@ -244,6 +244,11 @@ func writeUpstreamError(w http.ResponseWriter, causes ...error) {
 		if cause != nil {
 			log.Printf("upstream request failed: %v", cause)
 		}
+		var fabricErr *clients.FabricHTTPError
+		if errors.As(cause, &fabricErr) && fabricErr.StatusCode == http.StatusConflict {
+			writeError(w, http.StatusConflict, "upstream_conflict")
+			return
+		}
 	}
 	writeError(w, http.StatusBadGateway, "upstream_unavailable")
 }

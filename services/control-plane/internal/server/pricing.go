@@ -55,8 +55,10 @@ func defaultPricingCatalog() pricingCatalogData {
 
 func pricingCatalogResponse() map[string]any { return pricingCatalogDTO(defaultPricingCatalog()) }
 
-func (app *controlPlaneServer) pricingCatalogResponse(context.Context) (map[string]any, error) {
-	return pricingCatalogResponse(), nil
+func (app *controlPlaneServer) pricingCatalogResponse(_ context.Context, computePools []any) (map[string]any, error) {
+	response := pricingCatalogResponse()
+	response["packages"] = packageRowsForComputePools(defaultPricingCatalog(), computePools)
+	return response, nil
 }
 
 func pricingCatalogDTO(catalog pricingCatalogData) map[string]any {
@@ -120,6 +122,21 @@ func packageRows(catalog pricingCatalogData) []any {
 			"memoryGb": plan.MemoryGB, "diskGb": plan.DiskGB, "server": plan.Server,
 			"price": map[string]any{"monthlyPriceCnyCents": plan.MonthlyPriceCNYCents, "chargeUsdMicros": plan.ChargeUSDMicros},
 		})
+	}
+	return rows
+}
+
+func packageRowsForComputePools(catalog pricingCatalogData, computePools []any) []any {
+	available := map[string]bool{}
+	for _, raw := range computePools {
+		pool, _ := raw.(map[string]any)
+		packageID := stringValue(pool["packageId"])
+		available[packageID] = available[packageID] || pool["available"] == true
+	}
+	rows := packageRows(catalog)
+	for _, raw := range rows {
+		row := raw.(map[string]any)
+		row["available"] = row["available"] == true && available[stringValue(row["id"])]
 	}
 	return rows
 }

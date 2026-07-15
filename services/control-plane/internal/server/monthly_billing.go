@@ -40,6 +40,9 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	if input.ResourceID == "" || input.BillingOperationID == "" || input.AccountID == "" {
 		return nil, errors.New("monthly_purchase_identity_required")
 	}
+	if input.ResourceType == "compute" && input.Zone == "" {
+		input.Zone = monthlyComputeLaunchZone()
+	}
 	if input.Now.IsZero() {
 		input.Now = time.Now().UTC()
 	} else {
@@ -89,10 +92,10 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 		"pricingVersion":    stringValue(quote["pricingVersion"]), "monthlyPriceCnyCents": int64(numberField(quote, "monthlyPriceCnyCents", 0)),
 		"chargeUsdMicros": chargeUSDMicros, "billingAnchorDay": int64(anchorDay), "periodStart": periodStart.Format(time.RFC3339),
 		"paidThrough": paidThrough.Format(time.RFC3339), "autoRenew": autoRenew, "postChargeBalanceKnown": false,
-		"status": "provisioning", "desiredStatus": monthlyDesiredStatus(input.ResourceType), "providerStatus": "pending",
+		"status": "provisioning", "desiredStatus": monthlyDesiredStatus(input.ResourceType), "providerStatus": "pending", "zone": input.Zone,
 	}
 	if input.ResourceType == "storage" {
-		row["sizeGb"], row["computeAllocationId"], row["zone"] = input.SizeGB, input.ComputeID, input.Zone
+		row["sizeGb"], row["computeAllocationId"] = input.SizeGB, input.ComputeID
 	}
 	claimed, _, err := app.tables.ClaimResourceBillingOperation(ctx, input.ResourceType, row)
 	if err != nil {
@@ -183,7 +186,7 @@ func monthlyPreflightConfirmed(input clients.MonthlyPreflightInput, result clien
 	if result.ResourceType != input.ResourceType || result.PackageID != input.PackageID || result.SizeGB != input.SizeGB ||
 		!result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 ||
 		result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY <= 0 ||
-		strings.TrimSpace(result.Zone) == "" || (input.Zone != "" && result.Zone != input.Zone) {
+		strings.TrimSpace(input.Zone) == "" || result.Zone != input.Zone {
 		return false
 	}
 	requestIDs := []string{"nodePool", "subnets", "availability"}
@@ -331,6 +334,7 @@ func (app *controlPlaneServer) prepareMonthlyResource(ctx context.Context, servi
 			if !monthlyPurchaseReadbackConfirmed(resourceType, expected, facts) {
 				return row, errors.New("fabric_storage_commercial_readback_invalid")
 			}
+			applyMonthlyProviderDeadline(row)
 			row["providerCommercialReady"] = true
 		}
 		return row, err
@@ -347,6 +351,7 @@ func (app *controlPlaneServer) prepareMonthlyResource(ctx context.Context, servi
 		if !monthlyPurchaseReadbackConfirmed(resourceType, expected, facts) {
 			return row, errors.New("fabric_compute_commercial_readback_invalid")
 		}
+		applyMonthlyProviderDeadline(row)
 		row["providerCommercialReady"] = true
 	}
 	return row, err
@@ -366,6 +371,7 @@ func (app *controlPlaneServer) syncMonthlyResource(ctx context.Context, service 
 			if !monthlyPurchaseReadbackConfirmed("storage", expected, facts) {
 				return row, errors.New("fabric_storage_commercial_readback_invalid")
 			}
+			applyMonthlyProviderDeadline(row)
 			row["providerCommercialReady"] = true
 		}
 		return row, err
@@ -381,6 +387,7 @@ func (app *controlPlaneServer) syncMonthlyResource(ctx context.Context, service 
 		if !monthlyPurchaseReadbackConfirmed("compute", expected, facts) {
 			return row, errors.New("fabric_compute_commercial_readback_invalid")
 		}
+		applyMonthlyProviderDeadline(row)
 		row["providerCommercialReady"] = true
 	}
 	return row, err
@@ -394,25 +401,50 @@ func monthlyPurchaseReadbackConfirmed(resourceType string, row, facts map[string
 	if !monthlyResourcePrepared(resourceType, facts) || stringValue(facts["providerRequestId"]) == "" {
 		return false
 	}
-	deadline, err := time.Parse(time.RFC3339, firstNonEmpty(stringValue(facts["deadline"]), providerDataValue(facts, "deadline")))
+	deadline, err := monthlyProviderDeadline(facts)
+	periodStart, startErr := time.Parse(time.RFC3339, stringValue(row["periodStart"]))
 	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(row["paidThrough"]))
+	minimumDeadline := time.Date(paidThrough.Year(), paidThrough.Month(), paidThrough.Day(), 0, 0, 0, 0, time.UTC)
 	zone := firstNonEmpty(stringValue(facts["zone"]), providerDataValue(facts, "zone"))
 	chargeType := firstNonEmpty(stringValue(facts["chargeType"]), providerDataValue(facts, "chargeType"))
 	renewFlag := firstNonEmpty(stringValue(facts["renewFlag"]), providerDataValue(facts, "renewFlag"))
-	if err != nil || paidErr != nil || deadline.Before(paidThrough) || zone == "" || chargeType != "PREPAID" || renewFlag != "NOTIFY_AND_MANUAL_RENEW" {
+	if err != nil || startErr != nil || paidErr != nil || !deadline.After(periodStart) || deadline.Before(minimumDeadline) || zone == "" || zone != stringValue(row["zone"]) || chargeType != "PREPAID" || renewFlag != "NOTIFY_AND_MANUAL_RENEW" {
 		return false
 	}
 	if resourceType == "compute" {
 		instanceType, providerInstanceType := stringValue(facts["instanceType"]), providerDataValue(facts, "instanceType")
+		expectedInstanceType := monthlyComputeInstanceType(stringValue(row["packageId"]))
 		return stringValue(facts["providerResourceId"]) != "" &&
 			stringValue(facts["packageId"]) == stringValue(row["packageId"]) &&
 			firstNonEmpty(stringValue(facts["instanceId"]), stringValue(facts["cvmInstanceId"])) != "" &&
-			firstNonEmpty(instanceType, providerInstanceType) != "" &&
-			(instanceType == "" || providerInstanceType == "" || instanceType == providerInstanceType)
+			expectedInstanceType != "" && instanceType == expectedInstanceType && providerInstanceType == expectedInstanceType
 	}
 	return strings.HasPrefix(stringValue(facts["providerResourceId"]), "disk-") &&
-		stringValue(facts["diskType"]) != "" && zone == stringValue(row["zone"]) &&
+		stringValue(facts["diskType"]) != "" &&
 		int(numberField(facts, "sizeGb", 0)) == int(numberField(row, "sizeGb", 0))
+}
+
+func monthlyProviderDeadline(row map[string]any) (time.Time, error) {
+	value := strings.TrimSpace(firstNonEmpty(stringValue(row["deadline"]), providerDataValue(row, "deadline")))
+	if deadline, err := time.Parse(time.RFC3339, value); err == nil {
+		return deadline.UTC(), nil
+	}
+	return time.ParseInLocation("2006-01-02 15:04:05", value, time.UTC)
+}
+
+func applyMonthlyProviderDeadline(row map[string]any) {
+	deadline, err := monthlyProviderDeadline(row)
+	if err != nil {
+		return
+	}
+	canonical := deadline.Format(time.RFC3339)
+	row["deadline"] = canonical
+	providerData := cloneMap(mapField(row, "providerData"))
+	providerData["deadline"] = canonical
+	row["providerData"] = providerData
+	if paidThrough, err := time.Parse(time.RFC3339, stringValue(row["paidThrough"])); err == nil && deadline.Before(paidThrough) {
+		row["paidThrough"] = canonical
+	}
 }
 
 func (app *controlPlaneServer) cleanupMonthlyResource(ctx context.Context, service *controlplane.Service, row map[string]any) (map[string]any, error) {
@@ -536,6 +568,20 @@ func writeMonthlyPurchaseError(w http.ResponseWriter, err error) {
 
 func monthlyEnvironment() string {
 	return os.Getenv("NODE_ENV")
+}
+
+func monthlyComputeLaunchZone() string {
+	return strings.TrimSpace(os.Getenv("OPL_COMPUTE_LAUNCH_ZONE"))
+}
+
+func monthlyComputeInstanceType(packageID string) string {
+	if packageID == "pro" {
+		return strings.TrimSpace(os.Getenv("OPL_PRO_COMPUTE_INSTANCE_TYPE"))
+	}
+	if packageID == "basic" {
+		return strings.TrimSpace(os.Getenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE"))
+	}
+	return ""
 }
 
 func nextBillingMonth(current time.Time, anchorDay int) time.Time {

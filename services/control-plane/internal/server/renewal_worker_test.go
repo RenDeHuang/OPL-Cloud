@@ -24,8 +24,8 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 		"monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000), "billingAnchorDay": int64(paidThrough.Day()),
 		"periodStart": paidThrough.AddDate(0, -1, 0).Format(time.RFC3339), "paidThrough": paidThrough.Format(time.RFC3339),
 		"autoRenew": true, "lastReceiptId": "receipt-purchase-" + id, "postChargeBalanceKnown": true, "postChargeBalanceUsdMicros": int64(100_000_000),
-		"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339),
-		"providerData": map[string]any{"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339)},
+		"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339), "zone": "ap-shanghai-2",
+		"providerData": map[string]any{"chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": paidThrough.Format(time.RFC3339), "zone": "ap-shanghai-2"},
 	}
 	if resourceType == "storage" {
 		row["sizeGb"] = 10
@@ -33,6 +33,58 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 		row["chargeUsdMicros"] = int64(2_571_429)
 	}
 	return row
+}
+
+func TestMonthlyRenewalPreflightStopsBeforeFinancialAndProviderCalls(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(24 * time.Hour)
+	for _, tc := range []struct {
+		resourceType string
+		configure    func(*monthlyFabric)
+	}{
+		{
+			resourceType: "compute",
+			configure: func(fabric *monthlyFabric) {
+				fabric.preflightErr = errors.New("capacity unavailable")
+			},
+		},
+		{
+			resourceType: "storage",
+			configure: func(fabric *monthlyFabric) {
+				fabric.preflightResult = &clients.MonthlyPreflight{
+					ResourceType: "storage", PackageID: "basic", SizeGB: 10, Zone: "ap-shanghai-2",
+					Available: true, ChargeType: "PREPAID", PeriodMonths: 1,
+					RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 12.34,
+				}
+			},
+		},
+	} {
+		t.Run(tc.resourceType, func(t *testing.T) {
+			app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, nil)
+			tc.configure(fabric)
+			row := monthlyActiveResource(tc.resourceType, tc.resourceType+"-preflight", paidThrough)
+			if tc.resourceType == "storage" {
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+			} else {
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+			}
+
+			result, err := app.renewMonthlyResource(context.Background(), service, tc.resourceType, row, now)
+			if err == nil || result["billingStatus"] != "renewal_pending" {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+			if len(fabric.preflightInputs) != 1 {
+				t.Fatalf("preflight inputs=%#v", fabric.preflightInputs)
+			}
+			input := fabric.preflightInputs[0]
+			if input.ResourceType != tc.resourceType || input.PackageID != "basic" || input.Zone != "ap-shanghai-2" || input.SizeGB != int(numberField(row, "sizeGb", 0)) {
+				t.Fatalf("preflight input=%#v row=%#v", input, row)
+			}
+			if strings.Join(*events, ",") != "fabric.monthly.preflight" || len(sub2API.charges) != 0 || len(fabric.computeRenewKeys) != 0 || len(fabric.storageRenewKeys) != 0 {
+				t.Fatalf("events=%#v charges=%#v compute renews=%#v storage renews=%#v", *events, sub2API.charges, fabric.computeRenewKeys, fabric.storageRenewKeys)
+			}
+		})
+	}
 }
 
 func TestBillingMonthClampsWithoutChangingAnchor(t *testing.T) {
@@ -84,7 +136,7 @@ func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 				renewKeys, renewEvent = fabric.storageRenewKeys, "fabric.storage.renew"
 			}
 			operationID := "renewal-" + stableID(resourceType, id, paidThrough.Format(time.RFC3339))[:18]
-			wantEvents := []string{"sub2api.balance", "sub2api.charge", "sub2api.balance", renewEvent, "ledger.receipt"}
+			wantEvents := []string{"fabric.monthly.preflight", "sub2api.balance", "sub2api.charge", "sub2api.balance", renewEvent, "ledger.receipt"}
 			if len(renewKeys) != 1 || renewKeys[0] != operationID+":provider-renew" || strings.Join(*events, ",") != strings.Join(wantEvents, ",") {
 				t.Fatalf("renewal keys=%#v events=%#v", renewKeys, *events)
 			}
@@ -172,6 +224,79 @@ func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
 				t.Fatalf("manual review retried provider: events=%#v charges=%#v", *events, sub2API.charges)
 			}
 		})
+	}
+}
+
+func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(24 * time.Hour)
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			charge, postCharge := int64(50_000_000), int64(50_000_000)
+			if resourceType == "storage" {
+				charge, postCharge = 2_571_429, 97_428_571
+			}
+			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
+			id := resourceType + "-renew-absent"
+			row := monthlyActiveResource(resourceType, id, paidThrough)
+			row["chargeUsdMicros"] = charge
+			row["sub2apiRefundCode"] = "stale-purchase-refund-code"
+			if resourceType == "storage" {
+				fabric.storageRenewErr = errors.New("renew response unavailable")
+				fabric.storageSync = clients.StorageVolume{
+					ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly",
+					Status: "external_deleted", CBSStatus: "NOT_FOUND",
+				}
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+			} else {
+				fabric.computeRenewErr = errors.New("renew response unavailable")
+				fabric.computeSync = clients.ComputeAllocation{
+					ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly",
+					Status: "external_deleted",
+				}
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+			}
+
+			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+				t.Fatal(err)
+			}
+			refunded, _ := app.monthlyResource(resourceType, id)
+			operationID := "renewal-" + stableID(resourceType, id, paidThrough.Format(time.RFC3339))[:18]
+			if refunded["billingStatus"] != "refunded" || refunded["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 0 {
+				t.Fatalf("refunded=%#v charges=%#v refunds=%#v receipts=%#v events=%#v", refunded, sub2API.charges, sub2API.refunds, ledger.receipts, *events)
+			}
+			if sub2API.refunds[0].Code != monthlyRefundCode(monthlyEnvironment(), operationID) || sub2API.refunds[0].RefundUSDMicros != charge {
+				t.Fatalf("refund=%#v operation=%s", sub2API.refunds[0], operationID)
+			}
+			before := len(*events)
+			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+				t.Fatal(err)
+			}
+			if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 {
+				t.Fatalf("refund replay duplicated work: events=%#v charges=%#v refunds=%#v", *events, sub2API.charges, sub2API.refunds)
+			}
+		})
+	}
+}
+
+func TestMonthlyRenewalStorageDoesNotRefundWithoutCBSNotFound(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(24 * time.Hour)
+	app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000, 97_428_571})
+	row := monthlyActiveResource("storage", "storage-renew-attached", paidThrough)
+	fabric.storageRenewErr = errors.New("renew response unavailable")
+	fabric.storageSync = clients.StorageVolume{
+		ID: "storage-renew-attached", AccountID: "acct-monthly", WorkspaceID: "workspace-monthly",
+		Status: "external_deleted", CBSStatus: "ATTACHED",
+	}
+	mustStore(t, app.tables.SaveStorage(context.Background(), row))
+
+	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+		t.Fatal(err)
+	}
+	review, _ := app.getStorage("storage-renew-attached")
+	if review["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || strings.Count(strings.Join(*events, ","), "fabric.storage.sync") != 1 {
+		t.Fatalf("review=%#v charges=%#v refunds=%#v events=%#v", review, sub2API.charges, sub2API.refunds, *events)
 	}
 }
 

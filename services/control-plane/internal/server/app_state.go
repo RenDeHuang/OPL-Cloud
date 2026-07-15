@@ -128,7 +128,7 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 	}
 	return map[string]any{
 		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
-		"packages":               packageList(),
+		"packages":               packageList(computePools),
 		"computePools":           computePools,
 		"user":                   nil,
 		"workspaces":             workspaces,
@@ -391,8 +391,8 @@ func projectionReplayKey(row controlPlaneRecord) string {
 	return strings.Join([]string{id, stringValue(row["type"]), resourceID}, "\x00")
 }
 
-func packageList() []any {
-	return packageRows(defaultPricingCatalog())
+func packageList(computePools []any) []any {
+	return packageRowsForComputePools(defaultPricingCatalog(), computePools)
 }
 
 func computePoolsFromFabricCatalog(catalog clients.FabricCatalog) []any {

@@ -103,14 +103,12 @@ func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.Monthl
 	if f.preflightResult != nil {
 		return *f.preflightResult, f.preflightErr
 	}
-	zone := input.Zone
 	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
 	if input.ResourceType == "compute" {
-		zone = "ap-shanghai-2"
 		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
 	}
 	return clients.MonthlyPreflight{
-		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: zone,
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
 	}, f.preflightErr
@@ -148,7 +146,11 @@ func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients
 	if f.createErr != nil {
 		return clients.ComputeAllocation{ID: input.ID}, f.createErr
 	}
-	result := clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + input.ID, ProviderRequestID: "req-" + input.ID, InstanceID: "ins-" + input.ID, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}
+	instanceType := "S5.MEDIUM4"
+	if input.PackageID == "pro" {
+		instanceType = "SA5.2XLARGE16"
+	}
+	result := clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + input.ID, ProviderRequestID: "req-" + input.ID, InstanceID: "ins-" + input.ID, InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType}}
 	if f.mutateCompute != nil {
 		f.mutateCompute(&result)
 	}
@@ -256,6 +258,9 @@ func (l *monthlyLedger) RecordReceipt(_ context.Context, input clients.ReceiptIn
 
 func newMonthlyBillingTest(t *testing.T, balances []int64) (*controlPlaneServer, *controlplane.Service, *monthlySub2API, *monthlyFabric, *monthlyLedger, *[]string) {
 	t.Helper()
+	t.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	events := &[]string{}
 	sub2API := &monthlySub2API{events: events, balances: balances}
 	fabric := &monthlyFabric{events: events}
@@ -448,6 +453,7 @@ func TestMonthlyPurchaseCommercialReadbackMismatchNeedsManualReviewWithoutRefund
 		{name: "compute renew flag missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.RenewFlag = "" }},
 		{name: "compute deadline too early", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.Deadline = "2026-07-31T00:00:00Z" }},
 		{name: "compute zone missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.Zone, v.ProviderData["zone"] = "", "" }},
+		{name: "compute zone mismatches", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.Zone, v.ProviderData["zone"] = "ap-shanghai-3", "ap-shanghai-3" }},
 		{name: "compute instance type missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.InstanceType, v.ProviderData["instanceType"] = "", "" }},
 		{name: "compute instance type conflicts", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.ProviderData["instanceType"] = "SA5.2XLARGE16" }},
 		{name: "storage size mismatches", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.SizeGB++ }},
@@ -476,6 +482,67 @@ func TestMonthlyPurchaseCommercialReadbackMismatchNeedsManualReviewWithoutRefund
 				t.Fatalf("charges=%#v refunds=%#v receipts=%#v", sub2API.charges, sub2API.refunds, ledger.receipts)
 			}
 		})
+	}
+}
+
+func TestMonthlyPurchaseRejectsConsistentButWrongComputeSKU(t *testing.T) {
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
+	for _, tc := range []struct {
+		packageID string
+		wrongSKU  string
+	}{
+		{packageID: "basic", wrongSKU: "SA5.2XLARGE16"},
+		{packageID: "pro", wrongSKU: "S5.MEDIUM4"},
+	} {
+		t.Run(tc.packageID, func(t *testing.T) {
+			app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{1_000_000_000, 0})
+			fabric.mutateCompute = func(result *clients.ComputeAllocation) {
+				result.InstanceType = tc.wrongSKU
+				result.ProviderData["instanceType"] = tc.wrongSKU
+			}
+
+			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+				ResourceType: "compute", ResourceID: "compute-wrong-sku-" + tc.packageID,
+				BillingOperationID: "billing-wrong-sku-" + tc.packageID, AccountID: "acct-monthly",
+				WorkspaceID: "workspace-monthly", PackageID: tc.packageID, Environment: "test",
+				Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC),
+			})
+			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
+				t.Fatalf("wrong %s SKU activated: result=%#v err=%v", tc.packageID, result, err)
+			}
+			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 0 {
+				t.Fatalf("charges=%#v refunds=%#v receipts=%#v", sub2API.charges, sub2API.refunds, ledger.receipts)
+			}
+		})
+	}
+}
+
+func TestMonthlyPurchaseClampsEntitlementToCanonicalProviderDeadline(t *testing.T) {
+	app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+	fabric.mutateCompute = func(result *clients.ComputeAllocation) {
+		result.Deadline = "2026-08-16 00:00:00"
+		result.ProviderData["deadline"] = result.Deadline
+	}
+	now := time.Date(2026, 7, 16, 8, 30, 0, 0, time.UTC)
+
+	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+		ResourceType: "compute", ResourceID: "compute-deadline", BillingOperationID: "billing-deadline",
+		AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test", Now: now,
+	})
+	if err != nil || result["billingStatus"] != "active" {
+		t.Fatalf("purchase result=%#v err=%v", result, err)
+	}
+	wantDeadline := "2026-08-16T00:00:00Z"
+	if result["deadline"] != wantDeadline || result["paidThrough"] != wantDeadline || providerDataValue(result, "deadline") != wantDeadline {
+		t.Fatalf("deadline was not canonical and bounded: %#v", result)
+	}
+	stored, ok := app.getCompute("compute-deadline")
+	if !ok || stored["deadline"] != wantDeadline || stored["paidThrough"] != wantDeadline {
+		t.Fatalf("stored compute=%#v", stored)
+	}
+	if len(ledger.receipts) != 1 || ledger.receipts[0].Cost["paidThrough"] != wantDeadline {
+		t.Fatalf("receipt=%#v", ledger.receipts)
 	}
 }
 
@@ -568,6 +635,7 @@ func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
 }
 
 func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
+	t.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
 	events := &[]string{}
 	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000}}
 	fabric := &monthlyFabric{events: events}
@@ -581,7 +649,7 @@ func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 		t.Fatalf("new monthly server: %v", err)
 	}
 	session := tenantAdminSessionForTest(t, server)
-	rec := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute"}`)
+	rec := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute","zone":"ap-guangzhou-3"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("purchase status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -589,8 +657,15 @@ func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 		t.Fatalf("decode purchase: %v", err)
 	}
-	if result["billingStatus"] != "active" || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
+	if result["billingStatus"] != "active" || result["zone"] != "ap-shanghai-2" || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
 		t.Fatalf("purchase result=%#v charges=%#v receipts=%#v", result, sub2API.charges, ledger.receipts)
+	}
+	if len(fabric.preflightInputs) != 1 || fabric.preflightInputs[0].Zone != "ap-shanghai-2" {
+		t.Fatalf("compute preflight input = %#v", fabric.preflightInputs)
+	}
+	computes, err := store.ListComputes(context.Background(), "acct-alpha")
+	if err != nil || len(computes) != 1 || computes[0]["zone"] != "ap-shanghai-2" {
+		t.Fatalf("stored computes=%#v err=%v", computes, err)
 	}
 }
 

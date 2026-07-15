@@ -22,6 +22,13 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+func TestMain(m *testing.M) {
+	_ = os.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	_ = os.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	_ = os.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
+	os.Exit(m.Run())
+}
+
 func mustStore(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -664,6 +671,79 @@ func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
 	}
 }
 
+func TestPricingPackageAvailabilityFollowsFabricComputePools(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "console state", path: "/api/state?accountId=acct-alpha"},
+		{name: "pricing catalog", path: "/api/pricing/catalog"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(newTestService(fakeLedgerClient{}, &unavailableProCatalogFabricClient{}))
+			response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, tc.path, "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var body map[string]any
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			packages, _ := body["packages"].([]any)
+			availability := map[string]bool{}
+			for _, raw := range packages {
+				pkg, _ := raw.(map[string]any)
+				availability[stringValue(pkg["id"])] = pkg["available"] == true
+			}
+			if !availability["basic"] || availability["pro"] {
+				t.Fatalf("package availability=%#v body=%#v", availability, body)
+			}
+		})
+	}
+}
+
+func TestWorkspaceReceiptFailureKeepsSucceededRuntimeForReplay(t *testing.T) {
+	calls := []string{}
+	ledger := &flakyWorkspaceReceiptLedger{}
+	service := newTestService(ledger, &fakeFabricClient{calls: &calls})
+	input := controlplane.CreateWorkspaceInput{
+		WorkspaceID: "workspace-receipt-replay", AccountID: "acct-alpha", Sub2APIUserID: 41,
+		OwnerID: "usr-alpha", Name: "Receipt Replay", PackageID: "basic",
+		AttachmentID: "attachment-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha",
+	}
+
+	if _, err := service.CreateWorkspace(context.Background(), input, "workspace-receipt-replay"); err == nil {
+		t.Fatal("first receipt outage should be returned")
+	}
+	if slices.Contains(calls, "fabric.runtime-destroy") {
+		t.Fatalf("receipt outage destroyed succeeded runtime: %#v", calls)
+	}
+	workspace, err := service.CreateWorkspace(context.Background(), input, "workspace-receipt-replay")
+	if err != nil || workspace.RuntimeID != "runtime-from-fabric" || workspace.ReceiptID != "receipt-from-ledger" {
+		t.Fatalf("replay workspace=%#v err=%v calls=%#v", workspace, err, calls)
+	}
+	if ledger.receiptCalls != 2 || slices.Contains(calls, "fabric.runtime-destroy") {
+		t.Fatalf("receipt replay calls=%d fabric=%#v", ledger.receiptCalls, calls)
+	}
+}
+
+func TestWorkspaceCreatePreservesFabricConflictStatus(t *testing.T) {
+	t.Setenv("OPL_COMPUTE_LAUNCH_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	fabric := &fakeFabricClient{}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+	fabric.runtimeErr = &clients.FabricHTTPError{StatusCode: http.StatusConflict, Body: `{"error":"runtime_conflict"}`}
+
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "upstream_conflict") {
+		t.Fatalf("workspace conflict status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
@@ -1097,6 +1177,19 @@ func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Con
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "tencent_bill_reconciliation_failed"}, nil
 }
 
+type flakyWorkspaceReceiptLedger struct {
+	fakeLedgerClient
+	receiptCalls int
+}
+
+func (l *flakyWorkspaceReceiptLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
+	l.receiptCalls++
+	if l.receiptCalls == 1 {
+		return clients.Receipt{}, errors.New("ledger unavailable")
+	}
+	return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
+}
+
 type failingFabricClient struct {
 	fakeFabricClient
 }
@@ -1126,9 +1219,19 @@ func (catalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 	}}}, nil
 }
 
+type unavailableProCatalogFabricClient struct{ fakeFabricClient }
+
+func (unavailableProCatalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
+	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{
+		{ID: "basic", ComputeProfileID: "pool-basic", Available: true},
+		{ID: "pro", ComputeProfileID: "pool-pro", Available: false},
+	}}, nil
+}
+
 type fakeFabricClient struct {
 	calls               *[]string
 	runtime             clients.WorkspaceRuntime
+	runtimeErr          error
 	runtimeStatus       clients.WorkspaceRuntime
 	gatewaySecret       clients.GatewaySecretWriteResult
 	gatewaySecretInputs []clients.GatewaySecretWriteInput
@@ -1173,14 +1276,12 @@ func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 
 func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
 	f.record("fabric.monthly.preflight")
-	zone := input.Zone
 	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
 	if input.ResourceType == "compute" {
-		zone = "ap-shanghai-2"
 		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
 	}
 	return clients.MonthlyPreflight{
-		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: zone,
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
 		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
 	}, nil
@@ -1188,7 +1289,11 @@ func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.Mon
 
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric", InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}, nil
+	instanceType := "S5.MEDIUM4"
+	if input.PackageID == "pro" {
+		instanceType = "SA5.2XLARGE16"
+	}
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric", InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType}}, nil
 }
 
 func (f *provisioningComputeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
@@ -1258,6 +1363,9 @@ func (f *fakeFabricClient) WriteGatewaySecret(_ context.Context, input clients.G
 func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, _ string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime")
 	f.runtimeInputs = append(f.runtimeInputs, input)
+	if f.runtimeErr != nil {
+		return clients.WorkspaceRuntime{}, f.runtimeErr
+	}
 	if f.runtime.ID != "" {
 		return f.runtime, nil
 	}
