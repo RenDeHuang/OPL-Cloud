@@ -1,5 +1,10 @@
 # OPL Cloud Launch Delivery V2 设计
 
+> **历史状态：已取代。** 本文由
+> `docs/superpowers/specs/2026-07-16-pilot-b-rolling-four-lanes-design.md`
+> 取代，仅保留为 `c46caff` 交付背景；不得继续按本文扩大 Pro、React UI、Key
+> 创建或并行 Agent 范围。
+
 ## 状态
 
 本设计已由用户确认进入执行。它把十个业务验收阶段编排为六个交付阶段，目标是

@@ -1,5 +1,10 @@
 # OPL Cloud Launch Delivery V2 Implementation Plan
 
+> **Superseded:** Do not execute this historical plan. Use the four slide-bounded
+> plans linked by
+> `docs/superpowers/specs/2026-07-16-pilot-b-rolling-four-lanes-design.md`.
+> The active Pilot excludes Pro, React implementation, Key CRUD, and subagents.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
 **Goal:** Ship Basic and Pro monthly Workspaces on one-month Tencent PREPAID CVM/CBS, account-owned Sub2API keys, a recoverable Console flow, and a reusable production verification slot.
