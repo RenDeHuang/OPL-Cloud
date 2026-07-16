@@ -50,11 +50,32 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.workspaceRuntime.sourceImage.digest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
   assert.equal(freeze.workspaceRuntime.primaryWorkspacePerAccount, 1);
   assert.equal(freeze.gateway.sub2apiMutable, false);
-  assert.equal(freeze.gateway.backend, "Sub2API v0.1.156");
-  assert.deepEqual(freeze.gateway.compatibleVersions, ["0.1.155", "0.1.156"]);
+  assert.equal(freeze.gateway.backend, "Sub2API");
+  assert.equal(freeze.gateway.compatibilityGate, "required_capabilities");
+  assert.equal(freeze.gateway.versionRole, "diagnostic_only");
+  assert.equal("compatibleVersions" in freeze.gateway, false);
+  assert.deepEqual(freeze.gateway.compatibilityEvidence, ["contract_tests", "read_only_production_probe"]);
   assert.equal(freeze.productSurfaces.gateway.backend, freeze.gateway.backend);
   assert.equal(freeze.gateway.keyName, "opl-workspace");
-  assert.equal(freeze.gateway.adminUsageEndpointAllowed, false);
+  assert.deepEqual(freeze.gateway.usageScope, ["user_id", "api_key_id"]);
+  assert.equal(freeze.gateway.usageMoneySource, "actual_cost");
+  assert.equal(freeze.gateway.usageMoneyRepresentation, "integer_usd_micros");
+  assert.equal(freeze.gateway.rawAdminDTOForwarding, false);
+  assert.equal(freeze.gateway.missingCapabilityBehavior, "dependent_surface_unavailable_never_zero");
+  assert.equal(freeze.consoleFinancialProjection.mode, "read_only_projection");
+  assert.deepEqual(freeze.consoleFinancialProjection.authorities, {
+    balanceApiKeysAndRequestUsage: "Sub2API",
+    resourceBillingHistory: "Ledger receipts",
+    workspaceAndEntitlements: "Control Plane"
+  });
+  assert.deepEqual(freeze.consoleFinancialProjection.prohibitions, [
+    "second_wallet",
+    "usage_database",
+    "billing_fact_table",
+    "raw_admin_dto",
+    "browser_to_sub2api",
+    "prompt_or_response_content"
+  ]);
 
   assert.equal(freeze.verification.slot.computeInstanceType, "SA5.MEDIUM4");
   assert.equal(freeze.verification.slot.resources.memoryGb, 4);
@@ -130,6 +151,10 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.match(invariants, /confirmed.*no billable resource.*refund/is);
   assert.match(invariants, /POSTPAID_BY_HOUR.*forbidden/is);
   assert.doesNotMatch(invariants, /monthly settlement requires Sub2API-owned `reserve`/i);
+  assert.match(invariants, /version is diagnostic metadata and never blocks/i);
+  assert.match(invariants, /actual_cost.*integer USD micros/is);
+  assert.match(invariants, /Raw Sub2API admin responses.*never reach Console/is);
+  assert.doesNotMatch(invariants, /Cloud accepts the API-compatible v0\.1\./i);
   assert.doesNotMatch(invariants, /Production E2E requires explicit confirmation that it spends real balance/);
   assert.doesNotMatch(invariants, /Fabric prepares before charge/);
 });

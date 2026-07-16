@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "owner": "OPL Platform Architecture",
-  "purpose": "Freeze the approved V2 launch products, debit-first settlement, prepaid Tencent procurement, account-owned Gateway access, and reusable verification boundary without claiming unfinished runtime evidence.",
+  "purpose": "Freeze the approved V2 launch products, debit-first settlement, prepaid Tencent procurement, account-owned Gateway access, read-only customer financial projection, and reusable verification boundary without claiming unfinished runtime evidence.",
   "state": "current",
   "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and one guarded production verification slot.",
   "lifecycle": {
@@ -17,7 +17,7 @@
   "productSurfaces": {
     "gateway": {
       "product": "OPL Gateway",
-      "backend": "Sub2API v0.1.156",
+      "backend": "Sub2API",
       "owns": ["spendable USD balance", "API keys", "model routing", "request usage"]
     },
     "workspace": {
@@ -82,7 +82,7 @@
     "ledgerFailureAfterActivation": "retry_receipt_only",
     "retryRule": "Debit, refund, provider mutation, claim, activation, renewal, Secret write, and receipt use stable operation-scoped idempotency identities.",
     "doubleDebitForbidden": true,
-    "currentImplementation": "The old path prepares Fabric before debit; delivery V2 must replace it with debit before any provider mutation."
+    "currentImplementation": "Debit-first orchestration, confirmed-absence refund, and operator review resolution are CI-verified; production rollout and live reconciliation evidence remain pending."
   },
   "providerProcurement": {
     "provider": "Tencent Cloud",
@@ -95,7 +95,7 @@
     "claimReadback": ["provider resource ID", "charge type", "period or deadline", "renew flag", "zone", "size or SKU", "ownership tags"],
     "renewalOrder": ["capacity_preflight", "debit", "provider_renew", "claim", "extend_entitlement", "record_receipt"],
     "automaticRenewal": false,
-    "currentImplementation": "Fabric still requires POSTPAID_BY_HOUR CVM pools and does not create or prove PREPAID CBS."
+    "currentImplementation": "One-month PREPAID CVM/CBS requests, stable operations, and provider readback are CI-verified; live Tencent evidence remains pending."
   },
   "workspaceRuntime": {
     "primaryWorkspacePerAccount": 1,
@@ -112,17 +112,39 @@
     "globalGatewayKeyForbidden": true
   },
   "gateway": {
-    "backend": "Sub2API v0.1.156",
-    "compatibleVersions": ["0.1.155", "0.1.156"],
+    "backend": "Sub2API",
     "sub2apiMutable": false,
+    "compatibilityGate": "required_capabilities",
+    "versionRole": "diagnostic_only",
     "accountMapping": "sub2apiUserId",
     "keyName": "opl-workspace",
     "activeKeyCardinality": 1,
     "adminKeyListEndpoint": "GET /api/v1/admin/users/:id/api-keys",
-    "adminUsageEndpointAllowed": false,
-    "usageSource": ["quota_used", "usage_5h", "usage_1d", "usage_7d", "last_used_at"],
+    "requiredCapabilities": ["mapped_user_balance", "mapped_user_key_list", "request_usage_list", "aggregate_usage_stats", "deterministic_idempotent_balance_adjustment"],
+    "compatibilityEvidence": ["contract_tests", "read_only_production_probe"],
+    "usageScope": ["user_id", "api_key_id"],
+    "usageListFields": ["user_id", "api_key_id", "request_id", "created_at", "model", "inbound_endpoint", "request_type", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "actual_cost"],
+    "usageStatsFields": ["total_requests", "total_input_tokens", "total_output_tokens", "total_tokens", "total_actual_cost"],
+    "usageMoneySource": "actual_cost",
+    "usageMoneyRepresentation": "integer_usd_micros",
+    "rawAdminDTOForwarding": false,
+    "missingCapabilityBehavior": "dependent_surface_unavailable_never_zero",
+    "keyDTOUsageSource": ["quota_used", "usage_5h", "usage_1d", "usage_7d", "last_used_at"],
     "keyPersistence": "Kubernetes Secret only",
-    "ownerOnlyReveal": true
+    "ownerOnlyReveal": true,
+    "currentImplementation": "Control Plane capability calls no longer gate on the reported Sub2API version. Request usage, aggregate stats, and customer billing receipt projections remain unimplemented and lack production evidence."
+  },
+  "consoleFinancialProjection": {
+    "mode": "read_only_projection",
+    "authorities": {
+      "balanceApiKeysAndRequestUsage": "Sub2API",
+      "resourceBillingHistory": "Ledger receipts",
+      "workspaceAndEntitlements": "Control Plane"
+    },
+    "requiredViews": ["balance_and_usability", "active_resource_terms", "resource_billing_history", "gateway_usage_totals", "gateway_request_usage"],
+    "displayFacts": ["current_balance", "workspace_name_and_usability", "compute_and_storage_purchase_time_price_expiry_renewal_refund", "current_period_fixed_spend", "gateway_request_time_model_endpoint_tokens_actual_cost"],
+    "prohibitions": ["second_wallet", "usage_database", "billing_fact_table", "raw_admin_dto", "browser_to_sub2api", "prompt_or_response_content"],
+    "partialFailure": "render_independent_sources_with_explicit_retry"
   },
   "verification": {
     "purchaseBudget": 1,
@@ -181,7 +203,7 @@
       "id": "balance_debit",
       "business": "After read-only preflight, the exact monthly amount is debited once with a deterministic Redeem Code before any provider write.",
       "owners": ["console", "gateway", "ledger"],
-      "currentState": "The current path prepares Fabric before debit and must be reversed.",
+      "currentState": "Debit-first ordering and replay are CI-verified; live Sub2API evidence is pending.",
       "requiredDeliverables": ["balance preflight", "stable debit identity", "same-key replay", "insufficient-balance failure"],
       "completionEvidence": ["event-order test", "concurrency test", "debit replay evidence", "redacted debit receipt"]
     },
@@ -189,7 +211,7 @@
       "id": "prepaid_fulfillment",
       "business": "Fabric opens one-month PREPAID CVM and CBS only after debit.",
       "owners": ["fabric", "console"],
-      "currentState": "Blocked by POSTPAID_BY_HOUR CVM logic and missing explicit PREPAID CBS creation.",
+      "currentState": "PREPAID CVM/CBS requests and readback are CI-verified; live Tencent evidence is pending.",
       "requiredDeliverables": ["PREPAID CVM", "PREPAID CBS", "manual renew flag", "stable provider operation IDs"],
       "completionEvidence": ["request-shape tests", "provider readback", "duplicate-purchase protection"]
     },
@@ -197,7 +219,7 @@
       "id": "claim_and_activate",
       "business": "Entitlements activate only after all billable provider resources are identified and assigned.",
       "owners": ["fabric", "console", "gateway", "ledger"],
-      "currentState": "Provider claim and debit-first recovery semantics are incomplete.",
+      "currentState": "Claim, confirmed-absence refund, and manual-review resolution are CI-verified; live reconciliation evidence is pending.",
       "requiredDeliverables": ["resource claim", "confirmed-absence refund", "manual-review state", "purchase receipt"],
       "completionEvidence": ["claim identity test", "refund replay test", "partial-result manual-review test"]
     },
@@ -205,17 +227,17 @@
       "id": "workspace_access",
       "business": "The customer authenticates to a ready Workspace backed by owned compute, CBS, and an account-scoped Gateway Secret.",
       "owners": ["console", "fabric", "ledger"],
-      "currentState": "Readiness and password paths exist; static CBS, account Secret, immutable image, browser, and WebSocket proof are missing.",
+      "currentState": "Attachment, account Secret, readiness, and runtime isolation are CI-verified; browser, WebSocket, and live model evidence are pending.",
       "requiredDeliverables": ["runtime readiness", "password login", "static CBS mounts", "secret rotation", "immutable image"],
       "completionEvidence": ["post-login assertion", "WebSocket 101", "Secret fingerprint", "image digest readback"]
     },
     {
       "id": "gateway_usage",
-      "business": "The owner can reveal the account's opl-workspace Key and the Workspace can make a metered model request with it.",
+      "business": "The owner can reveal the account's opl-workspace Key, make a metered Workspace model request, and inspect its customer-safe cost and Token facts.",
       "owners": ["gateway", "console", "ledger"],
-      "currentState": "Balance and portal integration exist; owner Key projection, Workspace use, and Key DTO usage readback are unproven.",
-      "requiredDeliverables": ["single active Key selection", "owner-only reveal", "Secret handoff", "Key DTO usage"],
-      "completionEvidence": ["tenant test", "real model response", "usage increase", "no secret leakage"]
+      "currentState": "Balance and Key summary exist; request-level usage, aggregate stats, customer-safe projection, and live evidence remain incomplete.",
+      "requiredDeliverables": ["single active Key selection", "owner-only reveal", "Secret handoff", "request usage list", "aggregate usage stats", "customer-safe integer money projection"],
+      "completionEvidence": ["tenant test", "real model response", "request usage and stats readback", "actual cost conversion", "no secret leakage"]
     },
     {
       "id": "renewal_expiry_recovery",
