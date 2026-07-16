@@ -239,7 +239,7 @@ func TestReconcileComputePoolPreservesDemandWhenProvisionerProcessFails(t *testi
 	}
 }
 
-func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
+func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	t.Setenv("OPL_WORKSPACE_IMAGE", "workspace-image:test")
 	t.Setenv("OPL_IMAGE_PULL_SECRET_NAME", "pull-secret")
 	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
@@ -252,12 +252,16 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 		t.Fatalf("decode workspace manifest: %v", err)
 	}
 	var deployment map[string]any
+	var networkPolicy map[string]any
 	var service map[string]any
 	var secret map[string]any
 	for _, item := range manifest["items"].([]any) {
 		candidate := item.(map[string]any)
 		if candidate["kind"] == "Deployment" {
 			deployment = candidate
+		}
+		if candidate["kind"] == "NetworkPolicy" {
+			networkPolicy = candidate
 		}
 		if candidate["kind"] == "Service" {
 			service = candidate
@@ -301,14 +305,52 @@ func TestWorkspaceManifestUsesHostNetworkOnDedicatedTKENode(t *testing.T) {
 	if !selectorMatches(service, deployment) {
 		t.Fatalf("service selector must match deployment pod labels: selector=%#v labels=%#v", selector, nested(deployment, "spec", "template", "metadata", "labels"))
 	}
-	if podSpec["hostNetwork"] != true || podSpec["dnsPolicy"] != "ClusterFirstWithHostNet" {
-		t.Fatalf("workspace pod must use host networking on dedicated TKE nodes: %#v", podSpec)
+	if hostNetwork, ok := podSpec["hostNetwork"]; ok && hostNetwork != false {
+		t.Fatalf("workspace pod must not share the node network namespace: %#v", podSpec)
+	}
+	if podSpec["dnsPolicy"] != "ClusterFirst" || podSpec["automountServiceAccountToken"] != false {
+		t.Fatalf("workspace pod must use cluster DNS without a service account token: %#v", podSpec)
+	}
+	if nested(podSpec, "securityContext", "seccompProfile", "type") != "RuntimeDefault" {
+		t.Fatalf("workspace pod must use the RuntimeDefault seccomp profile: %#v", podSpec["securityContext"])
 	}
 	toleration := podSpec["tolerations"].([]any)[0].(map[string]any)
 	if toleration["key"] != "tke.cloud.tencent.com/eni-ip-unavailable" || toleration["effect"] != "NoSchedule" {
 		t.Fatalf("workspace pod must tolerate TKE ENI readiness taint: %#v", toleration)
 	}
 	container := podSpec["containers"].([]any)[0].(map[string]any)
+	containerSecurity, ok := container["securityContext"].(map[string]any)
+	if !ok {
+		t.Fatalf("workspace container securityContext missing: %#v", container)
+	}
+	if containerSecurity["allowPrivilegeEscalation"] != false || !reflect.DeepEqual(nested(containerSecurity, "capabilities", "drop"), []any{"ALL"}) {
+		t.Fatalf("workspace container must prevent privilege escalation and drop all capabilities: %#v", containerSecurity)
+	}
+	if _, ok := containerSecurity["runAsUser"]; ok {
+		t.Fatalf("workspace container UID must not be guessed for an image whose OCI config has no User: %#v", containerSecurity)
+	}
+	if _, ok := containerSecurity["runAsNonRoot"]; ok {
+		t.Fatalf("workspace container must not claim the current root-default image runs as non-root: %#v", containerSecurity)
+	}
+	policySpec, ok := networkPolicy["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("workspace NetworkPolicy missing: %#v", manifest["items"])
+	}
+	if nested(networkPolicy, "metadata", "name") != "opl-compute-alpha" ||
+		nested(networkPolicy, "metadata", "labels", "oplcloud.cn/workspace-id") != "ws-alpha" ||
+		nested(networkPolicy, "metadata", "annotations", "opl_operation_id") != "op-alpha" ||
+		!reflect.DeepEqual(nested(policySpec, "podSelector", "matchLabels"), selector) ||
+		!reflect.DeepEqual(policySpec["policyTypes"], []any{"Ingress"}) {
+		t.Fatalf("workspace NetworkPolicy must select only its immutable runtime labels: %#v", networkPolicy)
+	}
+	ingress := policySpec["ingress"].([]any)
+	ports := ingress[0].(map[string]any)["ports"].([]any)
+	if len(ingress) != 1 || len(ports) != 1 || nested(ports[0].(map[string]any), "protocol") != "TCP" || number(nested(ports[0].(map[string]any), "port")) != 3000 {
+		t.Fatalf("workspace NetworkPolicy must allow only the Runtime Service port: %#v", policySpec)
+	}
+	if _, ok := policySpec["egress"]; ok {
+		t.Fatalf("workspace NetworkPolicy must leave required DNS and model egress unchanged: %#v", policySpec)
+	}
 	if _, ok := podSpec["initContainers"]; ok {
 		t.Fatalf("workspace must let one-person-lab-app cloud mode configure gateway access, not run retired bootstrap init containers: %#v", podSpec["initContainers"])
 	}
@@ -564,7 +606,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	deployment := map[string]any{
 		"kind":     "Deployment",
 		"metadata": map[string]any{"name": "opl-compute-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
-		"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"labels": map[string]any{"app": "workspace"}}, "spec": map[string]any{
+		"spec": map[string]any{"selector": map[string]any{"matchLabels": map[string]any{"app": "workspace"}}, "template": map[string]any{"metadata": map[string]any{"labels": map[string]any{"app": "workspace"}}, "spec": map[string]any{
 			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "volumeMounts": workspaceDataMounts()}},
 			"volumes":    []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
 		}}},
@@ -574,6 +616,15 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		"kind":     "Service",
 		"metadata": map[string]any{"name": "opl-compute-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
 		"spec":     map[string]any{"selector": map[string]any{"app": "workspace"}},
+	}
+	networkPolicy := map[string]any{
+		"kind":     "NetworkPolicy",
+		"metadata": map[string]any{"name": "opl-compute-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
+		"spec": map[string]any{
+			"podSelector": map[string]any{"matchLabels": map[string]any{"app": "workspace"}},
+			"policyTypes": []any{"Ingress"},
+			"ingress":     []any{map[string]any{"ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}},
+		},
 	}
 	pod := map[string]any{
 		"kind": "Pod",
@@ -600,7 +651,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		if slices.Equal(args, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
 			return mustJSON(map[string]any{"kind": "List", "items": []any{pod}}), nil
 		}
-		want := []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}
+		want := []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "networkpolicy/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}
 		if !slices.Equal(args, want) {
 			t.Fatalf("kubectl args = %#v, want %#v", args, want)
 		}
@@ -608,6 +659,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 			deployment,
 			map[string]any{"kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "opl-storage-alpha-data"}, "status": map[string]any{"phase": "Bound"}},
 			service,
+			networkPolicy,
 			map[string]any{"kind": "Ingress", "metadata": map[string]any{"name": "opl-cloud"}, "spec": map[string]any{"rules": []any{map[string]any{"http": map[string]any{"paths": []any{map[string]any{"path": "/", "backend": map[string]any{"service": map[string]any{"name": gatewayService, "port": map[string]any{"number": 8787}}}}}}}}}},
 			map[string]any{"kind": "Endpoints", "metadata": map[string]any{"name": "opl-compute-alpha"}, "subsets": []any{map[string]any{"addresses": []any{map[string]any{"ip": "10.0.0.8"}}}}},
 			map[string]any{"kind": "Secret", "metadata": map[string]any{"name": "opl-compute-alpha-env"}, "data": map[string]any{"webui_password": base64.StdEncoding.EncodeToString([]byte("secret-password"))}},
@@ -626,7 +678,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	for _, check := range status.Checks {
 		verified[check.Name] = check.OK
 	}
-	for _, name := range []string{"pvc_bound", "deployment_uses_retained_pvc", "deployment_ready"} {
+	for _, name := range []string{"pvc_bound", "deployment_uses_retained_pvc", "deployment_ready", "workspace_network_policy"} {
 		if !verified[name] {
 			t.Fatalf("runtime must own final mount/readiness proof %q: %#v", name, status.Checks)
 		}
@@ -660,6 +712,9 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	pod["spec"].(map[string]any)["volumes"].([]any)[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)["claimName"] = "opl-storage-alpha-data"
 	pod["status"].(map[string]any)["conditions"].([]any)[1].(map[string]any)["status"] = "False"
 	assertUnready("pod not Ready")
+	pod["status"].(map[string]any)["conditions"].([]any)[1].(map[string]any)["status"] = "True"
+	networkPolicy["spec"].(map[string]any)["ingress"].([]any)[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["port"] = 3001
+	assertUnready("NetworkPolicy port mismatch")
 	if !verified["ready_pod_uses_retained_pvc"] {
 		t.Fatalf("runtime must verify Ready Pod retained mount: %#v", status.Checks)
 	}
@@ -687,7 +742,7 @@ func TestDestroyWorkspaceRuntimeDeletesOnlyWorkspaceResources(t *testing.T) {
 	if err != nil || runtime.Status != "destroyed" || runtime.WorkspaceID != "ws-alpha" || runtime.Access.Password != "" {
 		t.Fatalf("destroy runtime = %#v err=%v", runtime, err)
 	}
-	if len(calls) != 2 || calls[1][0] != "delete" || !slices.Contains(calls[1], "deployment/opl-compute-alpha") || !slices.Contains(calls[1], "service/opl-compute-alpha") || !slices.Contains(calls[1], "secret/opl-compute-alpha-env") || slices.Contains(calls[1], "ingress/opl-cloud") {
+	if len(calls) != 2 || calls[1][0] != "delete" || !slices.Contains(calls[1], "deployment/opl-compute-alpha") || !slices.Contains(calls[1], "service/opl-compute-alpha") || !slices.Contains(calls[1], "networkpolicy/opl-compute-alpha") || !slices.Contains(calls[1], "secret/opl-compute-alpha-env") || slices.Contains(calls[1], "ingress/opl-cloud") {
 		t.Fatalf("kubectl calls = %#v", calls)
 	}
 }
@@ -717,7 +772,7 @@ func TestDestroyWorkspaceRuntimeDeletesSecretOnlyRemnant(t *testing.T) {
 	if _, err := provider.DestroyWorkspaceRuntime(context.Background(), "ws-alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 || calls[0][1] != "deployment,service,secret" || !slices.Contains(calls[1], "secret/opl-compute-alpha-env") || slices.Contains(calls[1], "ingress/opl-cloud") {
+	if len(calls) != 2 || calls[0][1] != "deployment,service,secret" || !slices.Contains(calls[1], "networkpolicy/opl-compute-alpha") || !slices.Contains(calls[1], "secret/opl-compute-alpha-env") || slices.Contains(calls[1], "ingress/opl-cloud") {
 		t.Fatalf("kubectl calls = %#v", calls)
 	}
 }
