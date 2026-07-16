@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 type customerFactsLedger struct {
@@ -17,6 +20,30 @@ type customerFactsLedger struct {
 	query      clients.ReceiptQuery
 	receipt    clients.Receipt
 	receiptErr error
+}
+
+type customerFactsSub2API struct {
+	*testSub2APIClient
+	usagePage  clients.Sub2APIUsagePage
+	usageErr   error
+	usageQuery clients.Sub2APIUsageQuery
+	usageStats clients.Sub2APIUsageStats
+	statsErr   error
+	statsQuery clients.Sub2APIUsageStatsQuery
+}
+
+func (c *customerFactsSub2API) Usage(_ context.Context, query clients.Sub2APIUsageQuery) (clients.Sub2APIUsagePage, error) {
+	c.usageQuery = query
+	return c.usagePage, c.usageErr
+}
+
+func (c *customerFactsSub2API) UsageStats(_ context.Context, query clients.Sub2APIUsageStatsQuery) (clients.Sub2APIUsageStats, error) {
+	c.statsQuery = query
+	return c.usageStats, c.statsErr
+}
+
+func (*customerFactsSub2API) BalanceHistory(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+	return nil, nil
 }
 
 func (l *customerFactsLedger) ListReceipts(_ context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
@@ -106,6 +133,103 @@ func TestBillingReceiptListUnavailableDoesNotAffectSummary(t *testing.T) {
 	summary := requestWithSession(t, server, session, http.MethodGet, "/api/billing/summary", "")
 	if summary.Code != http.StatusOK {
 		t.Fatalf("summary status after Ledger failure = %d: %s", summary.Code, summary.Body.String())
+	}
+}
+
+func TestGatewayUsageAndStatsUseMappedWorkspaceKey(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-member","email":"gateway-member@example.com","password":"correct horse battery staple","role":"member","accountId":"acct-gateway","sub2apiUserId":41}]`)
+	createdAt := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)
+	sub2API := &customerFactsSub2API{
+		testSub2APIClient: &testSub2APIClient{balance: 123, charges: map[string]int64{}, workspaceKey: clients.Sub2APIWorkspaceKey{ID: 9, UserID: 41, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active"}},
+		usagePage: clients.Sub2APIUsagePage{
+			Items: []clients.Sub2APIUsageRecord{{
+				UserID: 41, APIKeyID: 9, RequestID: "req-1", CreatedAt: createdAt, Model: "gpt-5", InboundEndpoint: "/v1/responses", RequestType: "sync",
+				InputTokens: 10, OutputTokens: 20, CacheCreationTokens: 0, CacheReadTokens: 5, ActualCostUSDMicros: 1234,
+			}},
+			Total: 1, Page: 1, PageSize: 50, Pages: 1,
+		},
+		usageStats: clients.Sub2APIUsageStats{TotalRequests: 1, TotalInputTokens: 10, TotalOutputTokens: 20, TotalTokens: 35, TotalActualCostUSDMicros: 1234},
+	}
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+	session := loginForTest(t, server, "gateway-member@example.com", "correct horse battery staple")
+
+	usage := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/usage?page=1&pageSize=50&user_id=999&api_key_id=999&sub2apiUserId=999", "")
+	if usage.Code != http.StatusOK || usage.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("usage response = %d cache=%q: %s", usage.Code, usage.Header().Get("Cache-Control"), usage.Body.String())
+	}
+	if sub2API.usageQuery != (clients.Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50}) {
+		t.Fatalf("usage query = %#v", sub2API.usageQuery)
+	}
+	var page map[string]any
+	if err := json.NewDecoder(usage.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := page["items"].([]any)
+	if len(page) != 5 || len(items) != 1 || numberField(page, "total", 0) != 1 || numberField(page, "page", 0) != 1 || numberField(page, "pageSize", 0) != 50 || numberField(page, "pages", 0) != 1 {
+		t.Fatalf("usage page = %#v", page)
+	}
+	row := items[0].(map[string]any)
+	allowed := map[string]bool{"requestId": true, "createdAt": true, "model": true, "inboundEndpoint": true, "requestType": true, "inputTokens": true, "outputTokens": true, "cacheCreationTokens": true, "cacheReadTokens": true, "actualCostUsdMicros": true}
+	if len(row) != len(allowed) || row["requestId"] != "req-1" || numberField(row, "actualCostUsdMicros", 0) != 1234 {
+		t.Fatalf("usage row = %#v", row)
+	}
+	for key := range row {
+		if !allowed[key] {
+			t.Fatalf("unsafe usage field %q in %#v", key, row)
+		}
+	}
+	stats := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/usage/stats?period=month&user_id=999&api_key_id=999", "")
+	if stats.Code != http.StatusOK || stats.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("stats response = %d cache=%q: %s", stats.Code, stats.Header().Get("Cache-Control"), stats.Body.String())
+	}
+	if sub2API.statsQuery != (clients.Sub2APIUsageStatsQuery{UserID: 41, APIKeyID: 9, Period: "month"}) {
+		t.Fatalf("stats query = %#v", sub2API.statsQuery)
+	}
+	var totals map[string]any
+	if err := json.NewDecoder(stats.Body).Decode(&totals); err != nil {
+		t.Fatal(err)
+	}
+	if len(totals) != 5 || numberField(totals, "totalRequests", 0) != 1 || numberField(totals, "totalActualCostUsdMicros", 0) != 1234 {
+		t.Fatalf("usage stats = %#v", totals)
+	}
+}
+
+func TestGatewayUsageAndStatsFailClosedWithoutFacts(t *testing.T) {
+	for _, path := range []string{"/api/gateway/usage", "/api/gateway/usage/stats?period=month"} {
+		for _, tc := range []struct {
+			name       string
+			client     clients.Sub2APIClient
+			wantStatus int
+			wantCode   string
+		}{
+			{
+				name: "missing key", wantStatus: http.StatusConflict, wantCode: "gateway_key_missing",
+				client: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}, workspaceKeyErr: clients.ErrSub2APIWorkspaceKeyMissing}},
+			},
+			{
+				name: "ambiguous key", wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous",
+				client: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}, workspaceKeyErr: clients.ErrSub2APIWorkspaceKeyAmbiguous}},
+			},
+			{
+				name: "missing usage capability", wantStatus: http.StatusBadGateway, wantCode: "sub2api_usage_unavailable",
+				client: &testSub2APIClient{charges: map[string]int64{}},
+			},
+			{
+				name: "upstream unavailable", wantStatus: http.StatusBadGateway, wantCode: "sub2api_usage_unavailable",
+				client: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}}, usageErr: errors.New("usage unavailable"), statsErr: errors.New("stats unavailable")},
+			},
+		} {
+			t.Run(path+" "+tc.name, func(t *testing.T) {
+				t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-member","email":"gateway-member@example.com","password":"correct horse battery staple","role":"member","accountId":"acct-gateway","sub2apiUserId":41}]`)
+				server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, tc.client))
+				session := loginForTest(t, server, "gateway-member@example.com", "correct horse battery staple")
+				response := requestWithSession(t, server, session, http.MethodGet, path, "")
+				assertErrorResponse(t, response.Code, response.Body.String(), tc.wantStatus, tc.wantCode)
+				if strings.Contains(response.Body.String(), `:0`) {
+					t.Fatalf("unavailable response substituted zero: %s", response.Body.String())
+				}
+			})
+		}
 	}
 }
 

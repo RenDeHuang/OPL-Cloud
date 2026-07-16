@@ -3,12 +3,87 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET /api/gateway/usage", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
+			return
+		}
+		page, pageSize := 1, 50
+		if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < 1 || value > 1_000_000 {
+				writeError(w, http.StatusBadRequest, "invalid_gateway_usage_pagination")
+				return
+			}
+			page = value
+		}
+		if raw := strings.TrimSpace(r.URL.Query().Get("pageSize")); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < 1 || value > 100 {
+				writeError(w, http.StatusBadRequest, "invalid_gateway_usage_pagination")
+				return
+			}
+			pageSize = value
+		}
+		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
+		usage, err := service.GatewayUsage(r.Context(), userID, page, pageSize)
+		if err != nil {
+			writeGatewayUsageError(w, err)
+			return
+		}
+		items := make([]any, 0, len(usage.Items))
+		for _, item := range usage.Items {
+			items = append(items, map[string]any{
+				"requestId": item.RequestID, "createdAt": item.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+				"model": item.Model, "inboundEndpoint": item.InboundEndpoint, "requestType": item.RequestType,
+				"inputTokens": item.InputTokens, "outputTokens": item.OutputTokens,
+				"cacheCreationTokens": item.CacheCreationTokens, "cacheReadTokens": item.CacheReadTokens,
+				"actualCostUsdMicros": item.ActualCostUSDMicros,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": usage.Total, "page": usage.Page, "pageSize": usage.PageSize, "pages": usage.Pages})
+	}))
+	mux.HandleFunc("GET /api/gateway/usage/stats", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
+			return
+		}
+		period := strings.TrimSpace(r.URL.Query().Get("period"))
+		if period == "" {
+			period = "month"
+		}
+		if period != "today" && period != "week" && period != "month" {
+			writeError(w, http.StatusBadRequest, "invalid_gateway_usage_period")
+			return
+		}
+		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
+		stats, err := service.GatewayUsageStats(r.Context(), userID, period)
+		if err != nil {
+			writeGatewayUsageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"totalRequests": stats.TotalRequests, "totalInputTokens": stats.TotalInputTokens,
+			"totalOutputTokens": stats.TotalOutputTokens, "totalTokens": stats.TotalTokens,
+			"totalActualCostUsdMicros": stats.TotalActualCostUSDMicros,
+		})
+	}))
 	mux.HandleFunc("GET /api/gateway/summary", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		accountID, ok := app.scopedAccountID(w, r, nil)
@@ -58,6 +133,17 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			},
 		})
 	}))
+}
+
+func writeGatewayUsageError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing):
+		writeError(w, http.StatusConflict, "gateway_key_missing")
+	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous):
+		writeError(w, http.StatusConflict, "gateway_key_ambiguous")
+	default:
+		writeError(w, http.StatusBadGateway, "sub2api_usage_unavailable")
+	}
 }
 
 func (app *controlPlaneServer) mappedSub2APIUserID(w http.ResponseWriter, r *http.Request, accountID string) (int64, bool) {
