@@ -1361,13 +1361,15 @@ func TestBillingReceiptRouteIsScopedToTheSessionAccount(t *testing.T) {
 		{name: "other account receipt", accountID: "acct-beta", wantStatus: http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ledger := scopedReceiptLedger{receipt: clients.Receipt{ReceiptInput: clients.ReceiptInput{Type: "billing.resource_purchased.v1", Status: "completed", AccountID: tc.accountID, WorkspaceID: "workspace-monthly"}}}
+			receipt := customerBillingReceipt()
+			receipt.AccountID = tc.accountID
+			ledger := scopedReceiptLedger{receipt: receipt}
 			server := NewServer(newTestService(ledger, &fakeFabricClient{}))
 			response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts/receipt-monthly", "")
 			if response.Code != tc.wantStatus {
 				t.Fatalf("receipt status = %d, want %d: %s", response.Code, tc.wantStatus, response.Body.String())
 			}
-			if tc.wantStatus == http.StatusOK && !strings.Contains(response.Body.String(), `"accountId":"acct-alpha"`) {
+			if tc.wantStatus == http.StatusOK && (!strings.Contains(response.Body.String(), `"receiptId":"receipt-monthly"`) || strings.Contains(response.Body.String(), `"accountId"`)) {
 				t.Fatalf("owned receipt response = %s", response.Body.String())
 			}
 		})
