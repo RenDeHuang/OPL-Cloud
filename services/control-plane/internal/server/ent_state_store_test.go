@@ -194,6 +194,47 @@ func TestEntStateStoreBillingOperationReplayConflictsOnAmountOrPeriod(t *testing
 	}
 }
 
+func TestStateStoreNewBillingOperationClearsPreviousReceipt(t *testing.T) {
+	ctx := context.Background()
+	stores := []struct {
+		name  string
+		store StateStore
+	}{
+		{name: "memory", store: newMemoryTableStore()},
+		{name: "ent", store: NewTestEntStateStore(t, t.TempDir()+"/billing-receipt-reset.sqlite")},
+	}
+	for _, tc := range stores {
+		t.Run(tc.name, func(t *testing.T) {
+			old := monthlyActiveResource("storage", "storage-receipt-reset", time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC))
+			old["billingStatus"] = "retained"
+			if err := tc.store.SaveStorage(ctx, old); err != nil {
+				t.Fatal(err)
+			}
+			operation := cloneMap(old)
+			operation["billingStatus"], operation["billingOperationId"] = "charge_pending", "billing-reactivation"
+			operation["lastReceiptId"] = ""
+
+			claimed, fresh, err := tc.store.ClaimResourceBillingOperation(ctx, "storage", operation)
+			if err != nil || !fresh || stringValue(claimed["lastReceiptId"]) != "" {
+				t.Fatalf("new operation fresh=%v row=%#v err=%v", fresh, claimed, err)
+			}
+			rows, err := tc.store.ListStorages(ctx, "acct-monthly")
+			if err != nil || stringValue(recordByID(rows, "storage-receipt-reset")["lastReceiptId"]) != "" {
+				t.Fatalf("persisted new operation rows=%#v err=%v", rows, err)
+			}
+
+			claimed["lastReceiptId"] = "receipt-reactivation"
+			if err := tc.store.SaveStorage(ctx, claimed); err != nil {
+				t.Fatal(err)
+			}
+			replayed, fresh, err := tc.store.ClaimResourceBillingOperation(ctx, "storage", operation)
+			if err != nil || fresh || stringValue(replayed["lastReceiptId"]) != "receipt-reactivation" {
+				t.Fatalf("same operation replay fresh=%v row=%#v err=%v", fresh, replayed, err)
+			}
+		})
+	}
+}
+
 func recordByID(rows []map[string]any, id string) map[string]any {
 	for _, row := range rows {
 		if stringValue(row["id"]) == id {
@@ -350,6 +391,45 @@ func TestEntWorkspaceCreateClaimSurvivesRestart(t *testing.T) {
 	operations, _ := restarted.ListRuntimeOperations(context.Background())
 	if len(workspaces) != 1 || len(operations) != 1 || operations[0]["status"] != "started" {
 		t.Fatalf("restart claim facts: workspaces=%#v operations=%#v", workspaces, operations)
+	}
+}
+
+func TestEntWorkspaceCreateClaimRetriesExpiredSameRequest(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/workspace-create-retry.sqlite")
+	workspace, operation := workspaceCreateClaimForTest("hash-first", "attachment-first")
+	expired := time.Now().UTC().Add(-time.Minute)
+	result, err := decodeWorkspaceCreateOperation(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.LeaseExpiresAt = &expired
+	operation["result"] = encodeWorkspaceCreateOperation(result)
+	if err := store.ClaimWorkspaceCreate(context.Background(), workspace, operation); err != nil {
+		t.Fatal(err)
+	}
+
+	retryWorkspace, retryOperation := workspaceCreateClaimForTest("hash-first", "attachment-first")
+	lease := time.Now().UTC().Add(time.Minute)
+	retryResult, err := decodeWorkspaceCreateOperation(retryOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryResult.LeaseExpiresAt = &lease
+	retryOperation["result"] = encodeWorkspaceCreateOperation(retryResult)
+	if err := store.ClaimWorkspaceCreate(context.Background(), retryWorkspace, retryOperation); err != nil {
+		t.Fatalf("retry same expired claim: %v", err)
+	}
+	if err := store.ClaimWorkspaceCreate(context.Background(), retryWorkspace, retryOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("active retry claim error=%v", err)
+	}
+
+	changedWorkspace, changedOperation := workspaceCreateClaimForTest("hash-changed", "attachment-first")
+	if err := store.ClaimWorkspaceCreate(context.Background(), changedWorkspace, changedOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("changed retry claim error=%v", err)
+	}
+	secondWorkspace, secondOperation := workspaceCreateClaimForAccountForTest("acct-alpha", "workspace-second", "hash-second", "attachment-second")
+	if err := store.ClaimWorkspaceCreate(context.Background(), secondWorkspace, secondOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("second Workspace claim error=%v", err)
 	}
 }
 

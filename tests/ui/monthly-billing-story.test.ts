@@ -68,6 +68,19 @@ test("Workspace launch derives progress and pricing from one attached resource p
   assert.match(createSource, /item\.id === attachment\?\.storageId/);
 });
 
+test("Workspace launch stops on non-terminal resources and keeps placeholder recovery visible", async () => {
+  const createSource = await source("apps/console-ui/src/pages/workspaces/CreateWorkspacePage.tsx");
+
+  assert.match(createSource, /if \(existingWorkspace && !isWorkspaceLaunchPlaceholder\(existingWorkspace\)\)/);
+  assert.match(createSource, /workspaceName: existingWorkspace\?\.name \|\| values\.workspaceName/);
+  assert.match(createSource, /createWorkspaceLaunchIntent\(requested, launchIntent\.current, launchScope\)/);
+  assert.match(createSource, /const launchInProgress = Boolean/);
+  assert.match(createSource, /label=\{launchInProgress \? "继续同一开通请求" : "开通 Workspace"\}/);
+  assert.match(createSource, /const computeStep = await launchWorkspaceResource/);
+  assert.match(createSource, /if \(!computeStep\.ready\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?const storageStep = await launchWorkspaceResource/);
+  assert.match(createSource, /if \(!storageStep\.ready\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?let nextAttachment/);
+});
+
 test("resource provisioning tells the debit-first PREPAID sequence", async () => {
   const resourceSource = await source("apps/console-ui/src/pages/resources/ResourceProvisioningPages.tsx");
   const sharedSource = await source("apps/console-ui/src/pages/shared/commercial-console.tsx");

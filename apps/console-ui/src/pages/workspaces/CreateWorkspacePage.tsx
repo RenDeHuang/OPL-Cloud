@@ -4,7 +4,12 @@ import { Link as LinkIcon, Plus, RefreshCw, WalletCards } from "lucide-react";
 import { getPricingCatalog } from "../../api/console-read-api.ts";
 import { previewPricing } from "../../api/pricing-api.ts";
 import { attachStorage, createComputeAllocation, createStorageVolume } from "../../api/resources-api.ts";
-import { createWorkspace, createWorkspaceLaunchIntent } from "../../api/workspaces-api.ts";
+import {
+  createWorkspace,
+  createWorkspaceLaunchIntent,
+  isWorkspaceLaunchPlaceholder,
+  launchWorkspaceResource
+} from "../../api/workspaces-api.ts";
 import { navigate, routeTo } from "../../consoleRoutes.ts";
 import {
   ActionGroup,
@@ -28,6 +33,14 @@ import {
 
 function failedStep(result) {
   return !result || result === false || result.ok === false || ["failed", "unknown", "manual_review", "refunded"].includes(result.status);
+}
+
+function computeLaunchReady(resource) {
+  return resource?.billingStatus === "active" && ["running", "ready", "active"].includes(resource.status);
+}
+
+function storageLaunchReady(resource) {
+  return resource?.billingStatus === "active" && ["bound", "available", "ready", "active"].includes(resource.status);
 }
 
 export function CreateWorkspacePage({ state, session, runAction }: any) {
@@ -58,6 +71,7 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
 
   const workspaces = state.workspaces || [];
   const existingWorkspace = workspaces[0];
+  const launchScope = state.account?.id || state.account?.accountId || session.user?.accountId || existingWorkspace?.ownerAccountId || existingWorkspace?.accountId || "";
   const computeAllocations = (state.computeAllocations || []).filter((item) => item.status !== "destroyed" && item.status !== "deleted");
   const storageVolumes = (state.storageVolumes || []).filter((item) => item.status !== "destroyed" && item.status !== "deleted");
   const attachments = (state.storageAttachments || []).filter((item) => item.status === "attached");
@@ -105,8 +119,7 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
   const totalCnyCents = computeCnyCents + storageCnyCents;
   const totalChargeUsdMicros = Number(quote?.compute?.chargeUsdMicros || 0) + Number(quote?.storage?.chargeUsdMicros || 0);
   const paid = compute?.billingStatus === "active" && storage?.billingStatus === "active";
-  const providerReady = ["running", "ready", "active"].includes(compute?.status)
-    && ["bound", "available", "ready", "active"].includes(storage?.status);
+  const providerReady = computeLaunchReady(compute) && storageLaunchReady(storage);
   const completed = [
     Boolean(selectedPlan),
     Boolean(quote),
@@ -126,7 +139,7 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
     { title: "打开 Workspace URL", description: workspace?.openable ? "Runtime 已就绪" : "详情页最多自动等待 5 分钟" }
   ].map((item, index) => ({ ...item, status: completed[index] ? "finish" : index === currentStep ? "process" : "wait" }));
 
-  if (existingWorkspace) {
+  if (existingWorkspace && !isWorkspaceLaunchPlaceholder(existingWorkspace)) {
     return (
       <ConsoleSurface title="Workspace 已开通" eyebrow="Workspace" subtitle="当前账号仅保留一个 Workspace 主入口" compact>
         <InsightPanel title={existingWorkspace.name} eyebrow="已有 Workspace" actions={<StatusPill label={statusLabel(existingWorkspace)} tone={existingWorkspace.openable ? "good" : "warn"} />}>
@@ -150,54 +163,58 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
     launchPending.current = true;
     setOperationPending(true);
     const requested = launchIntent.current?.input || {
-      workspaceName: values.workspaceName,
+      workspaceName: existingWorkspace?.name || values.workspaceName,
       packageId: values.packageId,
       sizeGb: selectedPlan.diskGb
     };
-    const intent = createWorkspaceLaunchIntent(requested, launchIntent.current);
+    const intent = createWorkspaceLaunchIntent(requested, launchIntent.current, launchScope);
     launchIntent.current = intent;
 
     try {
-      let nextCompute = compute;
-      if (nextCompute && nextCompute.billingStatus !== "active") {
-        setOperationResult({ ok: false, status: nextCompute.billingStatus || "pending", failureReason: "计算权益尚未激活，请继续同一开通请求。" });
+      setOperationResult({ ok: true, status: "submitted", nextStepMessage: "正在完成计算扣款与 PREPAID 开通。" });
+      const computeStep = await launchWorkspaceResource(
+        compute,
+        () => runAction(
+          () => createComputeAllocation({ name: `${intent.input.workspaceName}-compute`, packageId: intent.input.packageId }, session.csrfToken, intent.idempotencyKeys.compute),
+          "计算权益状态已更新",
+          { returnFailure: true, actionKey: intent.idempotencyKeys.compute }
+        ),
+        computeLaunchReady
+      );
+      const nextCompute = computeStep.resource;
+      if (failedStep(nextCompute)) {
+        setOperationResult(nextCompute);
         return;
       }
-      if (!nextCompute) {
-        setOperationResult({ ok: true, status: "submitted", nextStepMessage: "正在完成计算扣款与 PREPAID 开通。" });
-        nextCompute = await runAction(
-          () => createComputeAllocation({ name: `${intent.input.workspaceName}-compute`, packageId: intent.input.packageId }, session.csrfToken, intent.idempotencyKeys.compute),
-          "计算权益已开通",
-          { returnFailure: true, actionKey: intent.idempotencyKeys.compute }
-        );
-        if (failedStep(nextCompute)) {
-          setOperationResult(nextCompute);
-          return;
-        }
+      if (!computeStep.ready) {
+        setOperationResult({ ...(nextCompute || {}), ok: false, status: nextCompute?.billingStatus || nextCompute?.status || "pending", failureReason: "计算资源仍在准备中，请继续同一开通请求。" });
+        return;
       }
 
-      let nextStorage = storage;
-      if (nextStorage && (nextStorage.computeAllocationId && nextStorage.computeAllocationId !== nextCompute.id)) nextStorage = null;
-      if (nextStorage && nextStorage.billingStatus !== "active") {
-        setOperationResult({ ok: false, status: nextStorage.billingStatus || "pending", failureReason: "存储权益尚未激活，请继续同一开通请求。" });
-        return;
-      }
-      if (!nextStorage) {
-        setOperationResult({ ok: true, status: "submitted", nextStepMessage: "正在完成存储扣款与 PREPAID 开通。" });
-        nextStorage = await runAction(
+      const currentStorage = storage?.computeAllocationId && storage.computeAllocationId !== nextCompute.id ? null : storage;
+      setOperationResult({ ok: true, status: "submitted", nextStepMessage: "正在完成存储扣款与 PREPAID 开通。" });
+      const storageStep = await launchWorkspaceResource(
+        currentStorage,
+        () => runAction(
           () => createStorageVolume({
             name: `${intent.input.workspaceName}-storage`,
             packageId: intent.input.packageId,
             sizeGb: intent.input.sizeGb,
             computeAllocationId: nextCompute.id
           }, session.csrfToken, intent.idempotencyKeys.storage),
-          "存储权益已开通",
+          "存储权益状态已更新",
           { returnFailure: true, actionKey: intent.idempotencyKeys.storage }
-        );
-        if (failedStep(nextStorage)) {
-          setOperationResult(nextStorage);
-          return;
-        }
+        ),
+        storageLaunchReady
+      );
+      const nextStorage = storageStep.resource;
+      if (failedStep(nextStorage)) {
+        setOperationResult(nextStorage);
+        return;
+      }
+      if (!storageStep.ready) {
+        setOperationResult({ ...(nextStorage || {}), ok: false, status: nextStorage?.billingStatus || nextStorage?.status || "pending", failureReason: "存储资源仍在准备中，请继续同一开通请求。" });
+        return;
       }
 
       let nextAttachment = attachment;
@@ -236,7 +253,8 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
     }
   }
 
-  const fieldsLocked = operationPending || Boolean(launchIntent.current);
+  const launchInProgress = Boolean(launchIntent.current || compute || storage || attachment || isWorkspaceLaunchPlaceholder(existingWorkspace));
+  const fieldsLocked = operationPending || launchInProgress;
   const completedLaunch = operationResult?.ok === true && Boolean(operationResult?.resourceId);
   return (
     <ConsoleSurface title="开通 Workspace" eyebrow="Workspace" subtitle="套餐、扣款、PREPAID 资源与 Runtime 一次完成" compact>
@@ -265,7 +283,7 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
       </div>
 
       <InsightPanel title="确认开通" eyebrow="一个连续流程" actions={<StatusPill label={operationPending ? "处理中" : "可提交"} tone={operationPending ? "warn" : "good"} />}>
-        <Form form={form} layout="vertical" initialValues={{ workspaceName: "我的 Workspace" }} onFinish={launch}>
+        <Form form={form} layout="vertical" initialValues={{ workspaceName: existingWorkspace?.name || "我的 Workspace" }} onFinish={launch}>
           <Form.Item name="workspaceName" label="Workspace 名称" rules={[{ required: true, message: "请输入 Workspace 名称" }]}>
             <Input placeholder="输入 Workspace 名称" disabled={fieldsLocked} />
           </Form.Item>
@@ -283,11 +301,11 @@ export function CreateWorkspacePage({ state, session, runAction }: any) {
             ]} />
           )}
           <OperationConfirmButton
-            label={launchIntent.current ? "继续同一开通请求" : "开通 Workspace"}
+            label={launchInProgress ? "继续同一开通请求" : "开通 Workspace"}
             title="确认开通 Workspace"
             description={`将从 Sub2API 余额依次扣除计算与存储月费，共 ${usdMicros(totalChargeUsdMicros)}（${moneyCents(totalCnyCents)}/月）。`}
             type="primary"
-            icon={launchIntent.current ? <RefreshCw size={15} /> : <Plus size={15} />}
+            icon={launchInProgress ? <RefreshCw size={15} /> : <Plus size={15} />}
             loading={operationPending}
             disabled={!quote || !selectedPlan || state.balance?.available === false || completedLaunch}
             onConfirm={() => form.submit()}

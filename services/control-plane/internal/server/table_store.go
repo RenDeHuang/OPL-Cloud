@@ -24,8 +24,9 @@ type workspaceResumeOperationResult struct {
 }
 
 type workspaceCreateOperationResult struct {
-	RequestHash string                     `json:"requestHash"`
-	Workspace   domain.WorkspaceProjection `json:"workspace"`
+	RequestHash    string                     `json:"requestHash"`
+	LeaseExpiresAt *time.Time                 `json:"leaseExpiresAt,omitempty"`
+	Workspace      domain.WorkspaceProjection `json:"workspace"`
 }
 
 type workspaceGatewaySecretOperationResult struct {

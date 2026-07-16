@@ -91,7 +91,7 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 		"sub2apiRefundCode": monthlyRefundCode(input.Environment, input.BillingOperationID),
 		"pricingVersion":    stringValue(quote["pricingVersion"]), "monthlyPriceCnyCents": int64(numberField(quote, "monthlyPriceCnyCents", 0)),
 		"chargeUsdMicros": chargeUSDMicros, "billingAnchorDay": int64(anchorDay), "periodStart": periodStart.Format(time.RFC3339),
-		"paidThrough": paidThrough.Format(time.RFC3339), "autoRenew": autoRenew, "postChargeBalanceKnown": false,
+		"paidThrough": paidThrough.Format(time.RFC3339), "autoRenew": autoRenew, "lastReceiptId": "", "postChargeBalanceKnown": false,
 		"status": "provisioning", "desiredStatus": monthlyDesiredStatus(input.ResourceType), "providerStatus": "pending", "zone": input.Zone,
 	}
 	if input.ResourceType == "storage" {

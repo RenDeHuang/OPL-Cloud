@@ -1041,7 +1041,11 @@ func claimEntBillingOperation(ctx context.Context, row map[string]any, load func
 			return nil, false, err
 		}
 		if updated == 1 {
-			return mergeMaps(existing, row), true, nil
+			claimed := mergeMaps(existing, row)
+			if lastReceiptID, reset := row["lastReceiptId"].(string); reset && lastReceiptID == "" {
+				claimed["lastReceiptId"] = ""
+			}
+			return claimed, true, nil
 		}
 	}
 	return nil, false, errors.New("billing_operation_claim_retry_exhausted")
@@ -1100,7 +1104,9 @@ func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[strin
 }
 
 func (s *postgresEntStateStore) ClaimWorkspaceCreate(ctx context.Context, workspaceRow map[string]any, operation map[string]any) error {
-	if firstNonEmpty(stringValue(workspaceRow["accountId"]), stringValue(workspaceRow["ownerAccountId"])) == "" || stringValue(workspaceRow["id"]) == "" || stringValue(operation["id"]) == "" {
+	accountID := firstNonEmpty(stringValue(workspaceRow["accountId"]), stringValue(workspaceRow["ownerAccountId"]))
+	workspaceID, operationID := stringValue(workspaceRow["id"]), stringValue(operation["id"])
+	if accountID == "" || workspaceID == "" || operationID == "" {
 		return errors.New("invalid_workspace_create_claim")
 	}
 	tx, err := s.client.Tx(ctx)
@@ -1108,6 +1114,37 @@ func (s *postgresEntStateStore) ClaimWorkspaceCreate(ctx context.Context, worksp
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	existing, err := tx.RuntimeOperation.Get(ctx, operationID)
+	if err == nil {
+		current, currentErr := decodeWorkspaceCreateOperation(recordFromEnt(existing, runtimeOpEntFields))
+		claim, claimErr := decodeWorkspaceCreateOperation(operation)
+		if currentErr != nil || claimErr != nil || current.RequestHash != claim.RequestHash || current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID || existing.AccountID != accountID || existing.WorkspaceID != workspaceID {
+			return errPrimaryWorkspaceExists
+		}
+		if existing.Status != "retryable" && (existing.Status != "started" || current.LeaseExpiresAt != nil && current.LeaseExpiresAt.After(time.Now().UTC())) {
+			return errPrimaryWorkspaceExists
+		}
+		_, err := tx.RuntimeOperation.UpdateOneID(existing.ID).
+			Where(runtimeoperation.StatusEQ(existing.Status), runtimeoperation.ResultEQ(existing.Result)).
+			SetStatus("started").
+			SetResult(stringValue(operation["result"])).
+			Save(ctx)
+		if err != nil {
+			if controlplaneent.IsNotFound(err) {
+				return errPrimaryWorkspaceExists
+			}
+			return err
+		}
+		return tx.Commit()
+	}
+	if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	if _, err := tx.Workspace.Query().Where(workspace.Or(workspace.AccountID(accountID), workspace.And(workspace.AccountID(""), workspace.OwnerAccountID(accountID)))).First(ctx); err == nil {
+		return errPrimaryWorkspaceExists
+	} else if !controlplaneent.IsNotFound(err) {
+		return err
+	}
 	workspaceRow = cloneMap(workspaceRow)
 	if _, ok := workspaceRow["customerProduct"]; !ok {
 		workspaceRow["customerProduct"] = true

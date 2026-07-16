@@ -320,6 +320,9 @@ func (s *memoryTableStore) ClaimResourceBillingOperation(_ context.Context, reso
 		return cloneMap(existing), false, errBillingOperationInProgress
 	}
 	claimed := mergeMaps(existing, row)
+	if lastReceiptID, reset := row["lastReceiptId"].(string); reset && lastReceiptID == "" {
+		claimed["lastReceiptId"] = ""
+	}
 	records[id] = claimed
 	return cloneMap(claimed), true, nil
 }
@@ -379,13 +382,28 @@ func (s *memoryTableStore) ClaimWorkspaceCreate(_ context.Context, workspace map
 	if accountID == "" || stringValue(workspace["id"]) == "" || stringValue(operation["id"]) == "" {
 		return errors.New("invalid_workspace_create_claim")
 	}
-	for _, existing := range s.workspaces {
-		if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) == accountID {
+	for index, existing := range s.runtimeOps {
+		if stringValue(existing["id"]) != stringValue(operation["id"]) {
+			continue
+		}
+		current, currentErr := decodeWorkspaceCreateOperation(existing)
+		claim, claimErr := decodeWorkspaceCreateOperation(operation)
+		if currentErr != nil || claimErr != nil || current.RequestHash != claim.RequestHash || current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID {
 			return errPrimaryWorkspaceExists
 		}
+		status := stringValue(existing["status"])
+		if status != "retryable" && (status != "started" || current.LeaseExpiresAt != nil && current.LeaseExpiresAt.After(time.Now().UTC())) {
+			return errPrimaryWorkspaceExists
+		}
+		persisted := s.workspaces[stringValue(workspace["id"])]
+		if persisted == nil || firstNonEmpty(stringValue(persisted["accountId"]), stringValue(persisted["ownerAccountId"])) != accountID {
+			return errPrimaryWorkspaceExists
+		}
+		s.runtimeOps[index] = cloneMap(operation)
+		return nil
 	}
-	for _, existing := range s.runtimeOps {
-		if stringValue(existing["id"]) == stringValue(operation["id"]) {
+	for _, existing := range s.workspaces {
+		if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) == accountID {
 			return errPrimaryWorkspaceExists
 		}
 	}

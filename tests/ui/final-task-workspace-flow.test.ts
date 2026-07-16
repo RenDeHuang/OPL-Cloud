@@ -21,7 +21,7 @@ test("overview presents one Workspace with balance entitlements expiry and recov
   assert.doesNotMatch(overview, /routeTo\("compute-allocations\.create"\)|routeTo\("storage\.create"\)|routeTo\("attachment\.create"\)/);
 });
 
-test("existing Workspace hides creation entry points", async () => {
+test("existing non-placeholder Workspace hides creation entry points", async () => {
   const [overview, workspaces, createPage, resources] = await Promise.all([
     source("apps/console-ui/src/pages/OverviewPage.tsx"),
     source("apps/console-ui/src/pages/workspaces/WorkspacesPage.tsx"),
@@ -31,7 +31,7 @@ test("existing Workspace hides creation entry points", async () => {
 
   assert.match(overview, /!workspace && \{ label: "开通 Workspace"/);
   assert.match(workspaces, /workspaces\.length === 0/);
-  assert.match(createPage, /if \(existingWorkspace\)/);
+  assert.match(createPage, /if \(existingWorkspace && !isWorkspaceLaunchPlaceholder\(existingWorkspace\)\)/);
   assert.match(resources, /hasWorkspace \? undefined/);
 });
 

@@ -188,6 +188,11 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
+		user, ok := app.sessionUserContext(r)
+		if !ok || stringValue(user["role"]) != "owner" || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
+			writeError(w, http.StatusForbidden, "workspace_owner_required")
+			return
+		}
 		key, ok := executionMutationKey(w, r)
 		if !ok {
 			return
@@ -401,7 +406,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			return
 		}
 		var workspace domain.WorkspaceProjection
-		retryReceipt := false
+		retryReceipt, retryPrepare := false, false
 		for _, operation := range operations {
 			if stringValue(operation["id"]) != operationID {
 				continue
@@ -426,8 +431,13 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			case "receipt_pending":
 				workspace, retryReceipt = result.Workspace, true
 			case "started":
-				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
-				return
+				if result.LeaseExpiresAt != nil && result.LeaseExpiresAt.After(time.Now().UTC()) {
+					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+					return
+				}
+				workspace, retryPrepare = result.Workspace, true
+			case "retryable":
+				workspace, retryPrepare = result.Workspace, true
 			default:
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
@@ -445,23 +455,27 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				return
 			}
 		} else {
-			if existing, exists := app.getWorkspace(workspaceID); exists {
-				if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
-					stringValue(existing["attachmentId"]) != attachmentID || firstNonEmpty(stringValue(existing["computeAllocationId"]), stringValue(existing["currentComputeAllocationId"])) != computeID ||
-					stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
-					firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
-					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+			if !retryPrepare {
+				if existing, exists := app.getWorkspace(workspaceID); exists {
+					if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
+						stringValue(existing["attachmentId"]) != attachmentID || firstNonEmpty(stringValue(existing["computeAllocationId"]), stringValue(existing["currentComputeAllocationId"])) != computeID ||
+						stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
+						firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
+						writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
 					return
 				}
-				writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
-				return
+				workspace = domain.WorkspaceProjection{
+					ID: workspaceID, AccountID: accountID, OwnerID: ownerID, Name: name, PackageID: packageID, Status: "provisioning",
+					ComputeID: computeID, VolumeID: storageID, AttachmentID: attachmentID,
+				}
 			}
-			claim := domain.WorkspaceProjection{
-				ID: workspaceID, AccountID: accountID, OwnerID: ownerID, Name: name, PackageID: packageID, Status: "provisioning",
-				ComputeID: computeID, VolumeID: storageID, AttachmentID: attachmentID,
-			}
-			claimOperation := workspaceCreateOperationRow(operationID, "started", workspaceCreateOperationResult{RequestHash: requestHash, Workspace: claim})
-			if err := app.tables.ClaimWorkspaceCreate(r.Context(), workspaceProjectionRow(claim), claimOperation); err != nil {
+			leaseExpiresAt := time.Now().UTC().Add(2 * time.Minute)
+			claimResult := workspaceCreateOperationResult{RequestHash: requestHash, LeaseExpiresAt: &leaseExpiresAt, Workspace: workspace}
+			claimOperation := workspaceCreateOperationRow(operationID, "started", claimResult)
+			if err := app.tables.ClaimWorkspaceCreate(r.Context(), workspaceProjectionRow(workspace), claimOperation); err != nil {
 				if errors.Is(err, errPrimaryWorkspaceExists) {
 					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
 					return
@@ -471,9 +485,11 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			}
 			sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
 			if !ok {
+				claimResult.LeaseExpiresAt = nil
+				_ = app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "retryable", claimResult))
 				return
 			}
-			workspace, err = service.PrepareWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
+			prepared, err := service.PrepareWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
 				WorkspaceID:   workspaceID,
 				AccountID:     accountID,
 				Sub2APIUserID: sub2APIUserID,
@@ -485,9 +501,15 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				VolumeID:      storageID,
 			}, idempotencyKey)
 			if err != nil {
+				claimResult.LeaseExpiresAt = nil
+				if saveErr := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "retryable", claimResult)); saveErr != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
 				writeUpstreamError(w, err)
 				return
 			}
+			workspace = prepared
 			result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace}
 			if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "receipt_pending", result)); err != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")

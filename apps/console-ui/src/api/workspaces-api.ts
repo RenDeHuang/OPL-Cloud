@@ -7,9 +7,9 @@ export function createWorkspaceIntent(input, previous: any = null) {
   return { input: { ...input }, idempotencyKey: crypto.randomUUID() };
 }
 
-export function createWorkspaceLaunchIntent(input, previous: any = null) {
+export function createWorkspaceLaunchIntent(input, previous: any = null, primaryScope = "") {
   if (previous) return previous;
-  const id = crypto.randomUUID();
+  const id = primaryScope ? `primary:${encodeURIComponent(primaryScope)}` : crypto.randomUUID();
   return {
     id,
     input: { ...input },
@@ -17,6 +17,19 @@ export function createWorkspaceLaunchIntent(input, previous: any = null) {
       ["compute", "storage", "attachment", "workspace"].map((step) => [step, `workspace-launch:${id}:${step}`])
     )
   };
+}
+
+export async function launchWorkspaceResource(current, replay, isReady) {
+  const resource = isReady(current) ? current : await replay();
+  return { resource, ready: isReady(resource) };
+}
+
+export function isWorkspaceLaunchPlaceholder(workspace) {
+  return (workspace?.state || workspace?.status) === "provisioning"
+    && !workspace?.runtimeId
+    && !workspace?.runtimeServiceName
+    && !workspace?.runtime?.serviceName
+    && !workspace?.receiptId;
 }
 
 export async function createWorkspace(intent, csrfToken) {

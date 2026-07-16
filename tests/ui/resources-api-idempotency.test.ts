@@ -99,6 +99,51 @@ test("Workspace launch retries every existing mutation with one stable intent", 
   assert.ok(Object.values(intent.idempotencyKeys).every((key) => String(key).startsWith(`workspace-launch:${intent.id}:`)));
 });
 
+test("Workspace launch rebuilds the same primary intent after a remount", () => {
+  const input = { workspaceName: "Alpha", packageId: "basic", sizeGb: 10 };
+  const firstMount = workspaceApi.createWorkspaceLaunchIntent(input, null, "acct-alpha");
+  const secondMount = workspaceApi.createWorkspaceLaunchIntent(input, null, "acct-alpha");
+  const otherAccount = workspaceApi.createWorkspaceLaunchIntent(input, null, "acct-beta");
+
+  assert.notStrictEqual(secondMount, firstMount);
+  assert.deepEqual(secondMount.idempotencyKeys, firstMount.idempotencyKeys);
+  assert.notDeepEqual(otherAccount.idempotencyKeys, firstMount.idempotencyKeys);
+  assert.ok(Object.values(firstMount.idempotencyKeys).every((key) => String(key).startsWith("workspace-launch:primary:acct-alpha:")));
+});
+
+test("Workspace launch replays the current non-terminal resource with the original key", async () => {
+  assert.equal(typeof workspaceApi.launchWorkspaceResource, "function");
+
+  const intent = workspaceApi.createWorkspaceLaunchIntent({ workspaceName: "Alpha", packageId: "basic", sizeGb: 10 });
+  for (const current of [
+    { step: "compute", pending: { id: "compute-alpha", billingStatus: "preparing", status: "provisioning" }, ready: { id: "compute-alpha", billingStatus: "active", status: "running" } },
+    { step: "storage", pending: { id: "storage-alpha", billingStatus: "preparing", status: "provisioning" }, ready: { id: "storage-alpha", billingStatus: "active", status: "available" } }
+  ]) {
+    const keys: string[] = [];
+    const replay = async () => {
+      keys.push(intent.idempotencyKeys[current.step]);
+      return keys.length === 1 ? current.pending : current.ready;
+    };
+    const isReady = (resource) => resource?.billingStatus === "active" && ["running", "available"].includes(resource.status);
+
+    const first = await workspaceApi.launchWorkspaceResource(null, replay, isReady);
+    assert.equal(first.ready, false);
+    assert.strictEqual(first.resource, current.pending);
+
+    const second = await workspaceApi.launchWorkspaceResource(first.resource, replay, isReady);
+    assert.equal(second.ready, true);
+    assert.strictEqual(second.resource, current.ready);
+    assert.deepEqual(keys, [intent.idempotencyKeys[current.step], intent.idempotencyKeys[current.step]]);
+  }
+});
+
+test("only an unprepared provisioning Workspace is a launch placeholder", () => {
+  assert.equal(typeof workspaceApi.isWorkspaceLaunchPlaceholder, "function");
+  assert.equal(workspaceApi.isWorkspaceLaunchPlaceholder({ id: "workspace-alpha", state: "provisioning" }), true);
+  assert.equal(workspaceApi.isWorkspaceLaunchPlaceholder({ id: "workspace-alpha", state: "provisioning", runtimeServiceName: "opl-runtime-alpha" }), false);
+  assert.equal(workspaceApi.isWorkspaceLaunchPlaceholder({ id: "workspace-alpha", state: "running" }), false);
+});
+
 test("Workspace launch mutations mark transport failures unknown and keep caller keys", async () => {
   const originalFetch = globalThis.fetch;
   const requests: RequestInit[] = [];

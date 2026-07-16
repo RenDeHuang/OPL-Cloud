@@ -359,6 +359,65 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 	}
 }
 
+func TestRetainedStorageReactivationRecordsNewReceipt(t *testing.T) {
+	now := time.Date(2026, 7, 16, 8, 30, 0, 0, time.UTC)
+	tests := []struct {
+		name            string
+		mutateSync      func(*clients.StorageVolume)
+		wantStatus      string
+		wantReceiptType string
+		wantErr         error
+	}{
+		{name: "purchased", wantStatus: "active", wantReceiptType: "billing.resource_purchased.v1"},
+		{name: "refunded", mutateSync: func(result *clients.StorageVolume) {
+			result.Status, result.CBSStatus = "external_deleted", "NOT_FOUND"
+		}, wantStatus: "refunded", wantReceiptType: "billing.resource_refunded.v1", wantErr: errMonthlyPurchaseRefunded},
+		{name: "manual review", mutateSync: func(result *clients.StorageVolume) {
+			result.ProviderRequestID = ""
+		}, wantStatus: "manual_review", wantReceiptType: "billing.charge_review_required.v1", wantErr: errMonthlyChargeNeedsReview},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 97_428_571})
+			resourceID := "storage-reactivation-" + strings.ReplaceAll(tc.name, " ", "-")
+			retained := monthlyActiveResource("storage", resourceID, now.Add(-time.Hour))
+			retained["billingStatus"] = "retained"
+			oldReceiptID := stringValue(retained["lastReceiptId"])
+			mustStore(t, app.tables.SaveStorage(context.Background(), retained))
+
+			syncResult := clients.StorageVolume{
+				ID: resourceID, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available",
+				Provider: "tencent-tke", ProviderResourceID: "disk-" + resourceID, ProviderRequestID: "req-" + resourceID,
+				SizeGB: 10, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+				Deadline: "2099-01-01T00:00:00Z", Zone: "ap-shanghai-2", ProviderData: map[string]string{"chargeType": "PREPAID"},
+			}
+			if tc.mutateSync != nil {
+				tc.mutateSync(&syncResult)
+			}
+			fabric.storageSync = syncResult
+			operationID := "billing-reactivation-" + strings.ReplaceAll(tc.name, " ", "-")
+
+			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+				ResourceType: "storage", ResourceID: resourceID, BillingOperationID: operationID,
+				AccountID: "acct-monthly", Environment: "test", Now: now,
+			})
+			if !errors.Is(err, tc.wantErr) || result["billingStatus"] != tc.wantStatus {
+				t.Fatalf("reactivation result=%#v err=%v, want status=%q err=%v", result, err, tc.wantStatus, tc.wantErr)
+			}
+			if len(ledger.receipts) != 1 || ledger.receipts[0].Type != tc.wantReceiptType || ledger.receipts[0].RequestID != operationID {
+				t.Fatalf("receipts=%#v, want one %s receipt for %s", ledger.receipts, tc.wantReceiptType, operationID)
+			}
+			if receiptID := stringValue(result["lastReceiptId"]); receiptID == "" || receiptID == oldReceiptID {
+				t.Fatalf("lastReceiptId=%q, old=%q", receiptID, oldReceiptID)
+			}
+			if len(fabric.storageIDs) != 0 {
+				t.Fatalf("retained storage was recreated: %#v", fabric.storageIDs)
+			}
+		})
+	}
+}
+
 func TestMonthlyPurchaseRejectsInvalidInputBeforeExternalCalls(t *testing.T) {
 	for name, input := range map[string]monthlyPurchaseInput{
 		"unknown package": {ResourceType: "compute", ResourceID: "compute-invalid", BillingOperationID: "billing-invalid", AccountID: "acct-monthly", PackageID: "enterprise"},
@@ -646,7 +705,7 @@ func TestMonthlyPurchaseRetriesReceiptWithoutChargingAgain(t *testing.T) {
 	ledger.receiptErrors = []error{errors.New("ledger unavailable"), nil}
 	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-receipt", BillingOperationID: "billing-receipt", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()}
 	first, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || first["billingStatus"] != "active" || first["lastReceiptId"] != nil {
+	if err != nil || first["billingStatus"] != "active" || stringValue(first["lastReceiptId"]) != "" {
 		t.Fatalf("receipt outage result=%#v err=%v", first, err)
 	}
 	second, err := app.purchaseMonthlyResource(context.Background(), service, input)
