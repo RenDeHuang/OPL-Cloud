@@ -23,7 +23,9 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReceiptInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		decoder := json.NewDecoder(r.Body)
+		decoder.UseNumber()
+		if err := decoder.Decode(&input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -318,7 +320,9 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReconciliationInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		decoder := json.NewDecoder(r.Body)
+		decoder.UseNumber()
+		if err := decoder.Decode(&input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}

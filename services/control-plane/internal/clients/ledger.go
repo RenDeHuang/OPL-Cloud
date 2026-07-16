@@ -234,8 +234,8 @@ func (c *ledgerHTTPClient) do(req *http.Request, output any) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-		return fmt.Errorf("ledger request failed: status %d: %s", res.StatusCode, string(body))
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
+		return fmt.Errorf("ledger request failed: status %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil {

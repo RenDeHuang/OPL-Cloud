@@ -88,6 +88,53 @@ func TestBillingReceiptSchemaHTTP(t *testing.T) {
 	}
 }
 
+func TestReceiptHTTPPreservesLargeIntegerCost(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"billing.resource_purchased.v1","status":"completed","surface":"control_plane","workspaceId":"workspace-alpha","cost":{"pricingVersion":"pricing-v1","monthlyPriceCnyCents":9007199254740993,"chargeUsdMicros":50000000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:test:billing-alpha:charge:v1","periodStart":"2026-07-01T00:00:00Z","paidThrough":"2026-08-01T00:00:00Z","resourceType":"compute","resourceId":"compute-alpha"}}`))
+	req.Header.Set("Idempotency-Key", "http-large-integer-cost")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("large integer receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"monthlyPriceCnyCents":9007199254740993`) {
+		t.Fatalf("large integer receipt changed: %s", rec.Body.String())
+	}
+	var created struct {
+		ReceiptID string `json:"receiptId"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	read := httptest.NewRecorder()
+	server.ServeHTTP(read, testRequest(http.MethodGet, "/ledger/receipts/"+created.ReceiptID, nil))
+	if read.Code != http.StatusOK || !strings.Contains(read.Body.String(), `"monthlyPriceCnyCents":9007199254740993`) {
+		t.Fatalf("persisted large integer status=%d body=%s", read.Code, read.Body.String())
+	}
+}
+
+func TestReconciliationHTTPPreservesInt64Boundary(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	post := func(key, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(body))
+		req.Header.Set("Idempotency-Key", key)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	maxInt64 := `{"report":{"id":"recon-max-int64","status":"ok","counts":{"billingOperations":9223372036854775807,"matched":9223372036854775807,"exceptions":0},"exceptions":[]}}`
+	for _, rec := range []*httptest.ResponseRecorder{post("recon-max-int64", maxInt64), post("recon-max-int64", maxInt64)} {
+		if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"billingOperations":9223372036854775807`) {
+			t.Fatalf("MaxInt64 reconciliation status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	overflow := post("recon-overflow", `{"report":{"id":"recon-overflow","status":"ok","counts":{"billingOperations":9223372036854775808,"matched":9223372036854775808,"exceptions":0},"exceptions":[]}}`)
+	if overflow.Code != http.StatusBadRequest {
+		t.Fatalf("overflow reconciliation status=%d body=%s", overflow.Code, overflow.Body.String())
+	}
+}
+
 func TestReceiptRejectsSensitiveHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-alpha","outputRefs":{"nested":[{"RAWPROVIDERRESPONSE":{"credential":"must-not-persist"}}]}}`))

@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,7 +30,9 @@ type idempotencyRecord struct {
 func cloneMemoryValue[T any](value T) T {
 	payload, _ := json.Marshal(value)
 	var clone T
-	_ = json.Unmarshal(payload, &clone)
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	_ = decoder.Decode(&clone)
 	return clone
 }
 

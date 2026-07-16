@@ -475,6 +475,9 @@ func int64Value(value any) int64 {
 		return typed
 	case float64:
 		return int64(typed)
+	case json.Number:
+		result, _ := typed.Int64()
+		return result
 	default:
 		return 0
 	}

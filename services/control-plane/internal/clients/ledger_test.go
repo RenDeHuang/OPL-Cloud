@@ -61,17 +61,18 @@ func TestLedgerReceiptList(t *testing.T) {
 }
 
 func TestLedgerHTTPClientReturnsBoundedErrorForFailedEvidenceWrite(t *testing.T) {
+	const secretMarker = "LEDGER_BODY_SECRET_MUST_NOT_LEAK"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer internal-secret" || r.URL.Path != "/ledger/reconciliation" {
 			t.Fatalf("request = %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
 		}
-		http.Error(w, strings.Repeat("x", 70<<10), http.StatusConflict)
+		http.Error(w, secretMarker+strings.Repeat("x", 70<<10), http.StatusConflict)
 	}))
 	defer server.Close()
 
 	client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
 	_, err := client.RecordReconciliation(context.Background(), ReconciliationInput{Report: map[string]any{"id": "report-1"}}, "report-once")
-	if err == nil || !strings.Contains(err.Error(), "status 409") || len(err.Error()) > 66<<10 {
+	if err == nil || !strings.Contains(err.Error(), "status 409") || strings.Contains(err.Error(), secretMarker) || len(err.Error()) > 66<<10 {
 		t.Fatalf("bounded status error = %v", err)
 	}
 }
