@@ -29,7 +29,7 @@ test("Billing renders compute and storage components from the server catalog", a
   assert.doesNotMatch(billingSource, /¥350\.00|¥1,?500\.00|\$50\.000000/);
 });
 
-test("Workspace launch is a recoverable six-step guide over existing resource routes", async () => {
+test("Workspace launch is one recoverable flow over existing resource APIs", async () => {
   const createSource = await source("apps/console-ui/src/pages/workspaces/CreateWorkspacePage.tsx");
 
   for (const label of [
@@ -44,12 +44,20 @@ test("Workspace launch is a recoverable six-step guide over existing resource ro
   }
   assert.match(createSource, /<Steps/);
   assert.match(createSource, /getPricingCatalog/);
-  assert.match(createSource, /routeTo\("compute-allocations\.create"\)/);
-  assert.match(createSource, /routeTo\("storage\.create"\)/);
-  assert.match(createSource, /routeTo\("attachment\.create"\)/);
+  assert.match(createSource, /previewPricing/);
+  assert.match(createSource, /totalChargeUsdMicros/);
+  assert.match(createSource, /launchPending\.current/);
+  assert.match(createSource, /createComputeAllocation\(/);
+  assert.match(createSource, /createStorageVolume\(/);
+  assert.match(createSource, /attachStorage\(/);
   assert.match(createSource, /createWorkspace\(/);
+  assert.ok(createSource.indexOf("createComputeAllocation(") < createSource.indexOf("createStorageVolume("));
+  assert.ok(createSource.indexOf("createStorageVolume(") < createSource.indexOf("attachStorage("));
+  assert.ok(createSource.indexOf("attachStorage(") < createSource.indexOf("createWorkspace("));
+  assert.doesNotMatch(createSource, /routeTo\("compute-allocations\.create"\)/);
+  assert.doesNotMatch(createSource, /routeTo\("storage\.create"\)/);
+  assert.doesNotMatch(createSource, /routeTo\("attachment\.create"\)/);
   assert.match(createSource, /firstIncomplete === -1 \? 5 : firstIncomplete/);
-  assert.doesNotMatch(createSource, /createComputeAllocation|createStorageVolume|attachStorage\(/);
 });
 
 test("Workspace launch derives progress and pricing from one attached resource pair", async () => {

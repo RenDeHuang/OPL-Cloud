@@ -17,6 +17,22 @@ function entitlementTone(status = "") {
   return "warn";
 }
 
+function chargeOutcome(status = "") {
+  if (["active", "refunded", "manual_review", "past_due"].includes(status)) return "已扣款";
+  if (["preparing", "charge_pending"].includes(status)) return "扣款中";
+  return "未扣款";
+}
+
+function refundOutcome(status = "") {
+  if (status === "refunded") return "已退款";
+  if (status === "refund_pending") return "退款中";
+  return "未退款";
+}
+
+function entitlementLabel(status = "") {
+  return status === "manual_review" ? "人工复核" : valueLabel(status);
+}
+
 export function BillingPage({ state, balance }: any) {
   const [catalog, setCatalog] = React.useState<any>(null);
   const [catalogError, setCatalogError] = React.useState("");
@@ -104,9 +120,11 @@ export function BillingPage({ state, balance }: any) {
             { title: "资源", render: (_, row) => <Typography.Text ellipsis>{row.name || row.id}</Typography.Text> },
             { title: "参考月价", dataIndex: "monthlyPriceCnyCents", render: (value) => moneyCents(value) },
             { title: "钱包扣款", dataIndex: "chargeUsdMicros", render: (value) => usdMicros(value) },
+            { title: "扣款", dataIndex: "billingStatus", render: (value) => chargeOutcome(value) },
+            { title: "退款", dataIndex: "billingStatus", render: (value) => refundOutcome(value) },
             { title: "有效期至", dataIndex: "paidThrough", render: (value) => paidThrough(value) },
             { title: "续费", dataIndex: "autoRenew", render: (value, row) => value ? "自动续费" : row.resourceType === "存储" ? "到期保留" : "到期停止" },
-            { title: "状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={valueLabel(value)} tone={entitlementTone(value)} /> }
+            { title: "状态", dataIndex: "billingStatus", render: (value) => <StatusPill label={entitlementLabel(value)} tone={entitlementTone(value)} /> }
           ]}
         />
       </InsightPanel>

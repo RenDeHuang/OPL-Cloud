@@ -7,6 +7,18 @@ export function createWorkspaceIntent(input, previous: any = null) {
   return { input: { ...input }, idempotencyKey: crypto.randomUUID() };
 }
 
+export function createWorkspaceLaunchIntent(input, previous: any = null) {
+  if (previous) return previous;
+  const id = crypto.randomUUID();
+  return {
+    id,
+    input: { ...input },
+    idempotencyKeys: Object.fromEntries(
+      ["compute", "storage", "attachment", "workspace"].map((step) => [step, `workspace-launch:${id}:${step}`])
+    )
+  };
+}
+
 export async function createWorkspace(intent, csrfToken) {
   if (!intent?.idempotencyKey || !intent?.input) throw new Error("workspace_create_intent_required");
   try {
@@ -22,4 +34,17 @@ export async function createWorkspace(intent, csrfToken) {
 
 export function getWorkspaceRuntimeStatus(input, csrfToken) {
   return postJson("/api/workspaces/runtime-status", input, csrfToken);
+}
+
+export async function rotateWorkspaceGatewaySecret(input, csrfToken, idempotencyKey) {
+  const payload = await postJson(
+    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/gateway-secret/rotate`,
+    { reason: input.reason || "owner-request" },
+    csrfToken,
+    idempotencyKey
+  );
+  return {
+    status: payload.status || "unknown",
+    fingerprint: payload.fingerprint || ""
+  };
 }

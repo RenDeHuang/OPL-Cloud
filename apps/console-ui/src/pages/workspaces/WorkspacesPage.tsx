@@ -36,8 +36,8 @@ export function WorkspacesPage({ state, balance }: any) {
     <ConsoleSurface
       title="工作区"
       eyebrow="工作区"
-      subtitle="创建、访问和管理工作区"
-      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建工作区</Button>}
+      subtitle="访问唯一 Workspace；计算、存储和挂载收纳在高级管理中"
+      extra={workspaces.length === 0 ? <Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>开通 Workspace</Button> : undefined}
     >
       <MetricStrip
         items={[
@@ -49,12 +49,12 @@ export function WorkspacesPage({ state, balance }: any) {
         ]}
       />
 
-      <InsightPanel title="资源管理" eyebrow="工作区下的计算、存储、挂载">
+      <InsightPanel title="高级资源管理" eyebrow="计算、存储、挂载">
         <ResourceSplit
           items={[
-            { label: "计算资源", value: `${computeResources.length} 个`, meta: "开通和查看计算节点", status: computeResources.length ? "可查看" : "未开通", tone: computeResources.length ? "info" : "neutral" },
-            { label: "云硬盘", value: `${storageResources.length} 个`, meta: "开通和查看数据盘", status: storageResources.length ? "可查看" : "未开通", tone: storageResources.length ? "info" : "neutral" },
-            { label: "挂载关系", value: `${activeAttachments.length} 个`, meta: "存储挂到计算后才能创建入口", status: activeAttachments.length ? "已挂载" : "待挂载", tone: activeAttachments.length ? "good" : "warn" },
+            { label: "计算资源", value: `${computeResources.length} 个`, meta: "高级生命周期操作", status: computeResources.length ? "可查看" : "未开通", tone: computeResources.length ? "info" : "neutral" },
+            { label: "云硬盘", value: `${storageResources.length} 个`, meta: "高级数据保留操作", status: storageResources.length ? "可查看" : "未开通", tone: storageResources.length ? "info" : "neutral" },
+            { label: "挂载关系", value: `${activeAttachments.length} 个`, meta: "高级绑定管理", status: activeAttachments.length ? "已挂载" : "待挂载", tone: activeAttachments.length ? "good" : "warn" },
             { label: "资源关系", value: "链路图", meta: "账号、计算、存储、挂载、工作区", status: "可查看", tone: "info" }
           ]}
         />

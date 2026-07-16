@@ -156,12 +156,13 @@ export function ComputeAllocationsPage({ state }: any) {
 }
 
 export function ResourceRelationshipPage({ state }: any) {
+  const hasWorkspace = (state.workspaces || []).length > 0;
   return (
     <ConsoleSurface
       title="资源关系"
       eyebrow="资源"
       subtitle="账号、计算、存储、挂载、工作区入口"
-      extra={<Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>创建工作区入口</Button>}
+      extra={hasWorkspace ? undefined : <Button type="primary" icon={<Plus size={15} />} onClick={() => navigate(routeTo("workspace.create"))}>开通 Workspace</Button>}
     >
       <ResourceRelationshipGraph state={state} />
       <div className="consoleGrid equal">
@@ -682,6 +683,7 @@ export function CreateStorageAttachmentPage({ state, session, runAction }: any) 
   const computeAllocations = (state.computeAllocations || []).filter((item) => item.status === "running");
   const storageVolumes = (state.storageVolumes || []).filter((item) => !["destroyed", "attached"].includes(item.status));
   const canAttach = computeAllocations.length > 0 && storageVolumes.length > 0;
+  const hasWorkspace = (state.workspaces || []).length > 0;
   return (
     <ConsoleSurface title="挂载存储" eyebrow="资源" subtitle="选择计算资源和存储资源" compact>
       <InsightPanel title="挂载存储" eyebrow="挂载">
@@ -724,8 +726,8 @@ export function CreateStorageAttachmentPage({ state, session, runAction }: any) 
           {operationResult && operationResult.ok !== false && (
             <ActionGroup actions={[
               { label: "查看挂载关系", icon: <Cable size={15} />, onClick: () => navigate(routeTo("attachment.list")) },
-              { label: "创建工作空间 URL", icon: <Plus size={15} />, onClick: () => navigate(routeTo("workspace.create")) }
-            ]} />
+              !hasWorkspace && { label: "开通 Workspace", icon: <Plus size={15} />, onClick: () => navigate(routeTo("workspace.create")) }
+            ].filter(Boolean)} />
           )}
           <Form.Item>
             <OperationConfirmButton

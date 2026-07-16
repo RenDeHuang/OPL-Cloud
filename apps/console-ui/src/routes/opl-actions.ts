@@ -36,6 +36,18 @@ export const consoleActions = Object.freeze([
     requires: ["workspace.runtime.ready"]
   },
   {
+    id: "workspace.gatewaySecret.rotate",
+    label: "同步/轮换 Gateway Key",
+    type: "api",
+    role: "lab_owner",
+    objectKind: "Workspace",
+    apiClient: "apps/console-ui/src/api/workspaces-api.ts",
+    apiName: "rotateWorkspaceGatewaySecret",
+    mutation: true,
+    confirmation: "normal",
+    failureVisible: true
+  },
+  {
     id: "compute-allocations.create",
     label: "开通计算资源",
     type: "route",

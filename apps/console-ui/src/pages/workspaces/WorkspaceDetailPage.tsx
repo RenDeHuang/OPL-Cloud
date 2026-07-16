@@ -1,7 +1,7 @@
 import React from "react";
 import { Alert, Button, Empty, Typography } from "antd";
-import { Eye, EyeOff, Headphones, Link as LinkIcon, WalletCards } from "lucide-react";
-import { getWorkspaceRuntimeStatus } from "../../api/workspaces-api.ts";
+import { Eye, EyeOff, Headphones, KeyRound, Link as LinkIcon, RefreshCw, WalletCards } from "lucide-react";
+import { getWorkspaceRuntimeStatus, rotateWorkspaceGatewaySecret } from "../../api/workspaces-api.ts";
 import { navigate, routeTo } from "../../consoleRoutes.ts";
 import {
   ActionGroup,
@@ -38,12 +38,15 @@ function workspaceCredential(workspace: AnyRecord = {}) {
   };
 }
 
-export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: any) {
+export function WorkspaceDetailPage({ selected, selectedPlan, state, session, runAction }: any) {
   const [runtimeStatus, setRuntimeStatus] = React.useState<AnyRecord | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
   const [pollAttempts, setPollAttempts] = React.useState(0);
   const [pollError, setPollError] = React.useState("");
   const [pollRun, setPollRun] = React.useState(0);
+  const [gatewaySyncPending, setGatewaySyncPending] = React.useState(false);
+  const [gatewaySyncResult, setGatewaySyncResult] = React.useState<AnyRecord | null>(null);
+  const gatewaySyncKey = React.useRef(crypto.randomUUID());
   React.useEffect(() => {
     let active = true;
     let timer: number | undefined;
@@ -100,7 +103,29 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: 
   const computeId = workspace.currentComputeAllocationId || workspace.computeAllocationId;
   const compute = (state.computeAllocations || []).find((item) => item.id === computeId) || {};
   const storage = (state.storageVolumes || []).find((item) => item.id === workspace.storageId) || {};
+  const canRotateGateway = session.user?.role === "owner"
+    && (workspace.ownerUserId || workspace.ownerId) === session.user?.id;
   const supportPath = `${routeTo("support.create")}?category=Workspace&resourceId=${encodeURIComponent(workspace.id)}&operationId=${encodeURIComponent(workspace.currentAttachmentId || workspace.currentComputeAllocationId || "")}`;
+
+  async function syncGatewaySecret() {
+    if (gatewaySyncPending) return;
+    setGatewaySyncPending(true);
+    const result = await runAction(
+      () => rotateWorkspaceGatewaySecret(
+        { workspaceId: workspace.id, reason: "owner-request" },
+        session.csrfToken,
+        gatewaySyncKey.current
+      ),
+      "Gateway Key 已同步",
+      { returnFailure: true, actionKey: gatewaySyncKey.current }
+    );
+    setGatewaySyncResult(result);
+    if (result?.ok !== false && result?.status === "succeeded") {
+      gatewaySyncKey.current = crypto.randomUUID();
+    }
+    setGatewaySyncPending(false);
+  }
+
   return (
     <ConsoleSurface
       title={workspace.name}
@@ -173,6 +198,35 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: 
           />
         </InsightPanel>
       </div>
+
+      {canRotateGateway && (
+        <InsightPanel
+          title="Gateway Key"
+          eyebrow="Owner 操作"
+          actions={<StatusPill label={gatewaySyncResult?.status || "可同步"} tone={gatewaySyncResult?.status === "succeeded" ? "good" : gatewaySyncResult?.ok === false ? "danger" : "info"} />}
+        >
+          <ResourceSplit items={[
+            { label: "状态", value: gatewaySyncResult?.status || "未同步", meta: "账户范围", status: workspace.openable ? "可操作" : "Workspace 未就绪", tone: workspace.openable ? "good" : "warn" },
+            { label: "Fingerprint", value: gatewaySyncResult?.fingerprint || "-", meta: "最近同步结果", status: "SHA-256", tone: "info" }
+          ]} />
+          {gatewaySyncResult?.ok === false && <Alert type="error" showIcon message="Gateway Key 同步失败" description={gatewaySyncResult.failureReason || gatewaySyncResult.status} />}
+          <ActionGroup actions={[
+            {
+              label: "同步/轮换 Gateway Key",
+              icon: <KeyRound size={15} />,
+              disabled: !workspace.openable,
+              loading: gatewaySyncPending,
+              onClick: syncGatewaySecret
+            },
+            gatewaySyncResult?.ok === false && {
+              label: "重试同一请求",
+              icon: <RefreshCw size={15} />,
+              disabled: !workspace.openable,
+              onClick: syncGatewaySecret
+            }
+          ].filter(Boolean)} />
+        </InsightPanel>
+      )}
     </ConsoleSurface>
   );
 }
