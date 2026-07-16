@@ -94,6 +94,23 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, http.StatusOK, workspaceRuntimeStatusResponse(runtime))
 	}))
+	mux.HandleFunc("POST /api/workspaces/{workspaceId}/runtime-credentials/reveal", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceId")
+		if _, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID); !ok {
+			return
+		}
+		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), workspaceID)
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
+		}
+		if !runtime.Ready || runtime.Status == "not_found" || runtime.Access.Password == "" {
+			writeError(w, http.StatusConflict, "workspace_credentials_unavailable")
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, workspaceRuntimeCredentialResponse(runtime))
+	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/gateway-secret/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		key, ok := requiredMutationKey(w, r)
@@ -542,6 +559,17 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeJSON(w, http.StatusCreated, body)
 	}))
+}
+
+func (app *controlPlaneServer) ownedWorkspaceForCredentialCommand(w http.ResponseWriter, r *http.Request, workspaceID string) (map[string]any, bool) {
+	workspace, workspaceOK := app.getWorkspace(workspaceID)
+	user, userOK := app.sessionUserContext(r)
+	if !workspaceOK || !userOK || !app.canAccessResource(r, workspace) ||
+		firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
+		writeError(w, http.StatusForbidden, "workspace_owner_required")
+		return nil, false
+	}
+	return workspace, true
 }
 
 func workspaceCreateOperationRow(operationID, status string, result workspaceCreateOperationResult) map[string]any {
