@@ -82,6 +82,9 @@ func (app *controlPlaneServer) pricingPreviewResponse(_ context.Context, input m
 
 func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {
 	resourceType := firstNonEmpty(stringField(input, "resourceType", ""), "compute")
+	if resourceType == "workspace" {
+		return workspacePricingPreview(catalog, input)
+	}
 	if resourceType != "compute" && resourceType != "storage" {
 		return nil, fmt.Errorf("%w: unknown resource type %q", errInvalidPricingInput, resourceType)
 	}
@@ -112,6 +115,42 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 		"monthlyPriceCnyCents": monthlyPriceCNYCents, "chargeUsdMicros": chargeUSDMicros,
 		"priceSnapshot": snapshot,
 	}, nil
+}
+
+func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {
+	computeInput := cloneMap(input)
+	computeInput["resourceType"] = "compute"
+	storageInput := cloneMap(input)
+	storageInput["resourceType"] = "storage"
+	compute, err := pricingPreviewFromCatalog(catalog, computeInput)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := pricingPreviewFromCatalog(catalog, storageInput)
+	if err != nil {
+		return nil, err
+	}
+	cnyCents, ok := checkedAddInt64(int64(numberField(compute, "monthlyPriceCnyCents", 0)), int64(numberField(storage, "monthlyPriceCnyCents", 0)))
+	if !ok {
+		return nil, errInvalidPricingInput
+	}
+	usdMicros, ok := checkedAddInt64(int64(numberField(compute, "chargeUsdMicros", 0)), int64(numberField(storage, "chargeUsdMicros", 0)))
+	if !ok {
+		return nil, errInvalidPricingInput
+	}
+	return map[string]any{
+		"resourceType": "workspace", "pricingVersion": catalog.Version,
+		"packageId": stringValue(compute["packageId"]), "currency": catalog.Currency,
+		"billingUnit": catalog.BillingUnit, "compute": compute, "storage": storage,
+		"totalMonthlyPriceCnyCents": cnyCents, "totalChargeUsdMicros": usdMicros,
+	}, nil
+}
+
+func checkedAddInt64(left, right int64) (int64, bool) {
+	if left < 0 || right < 0 || left > math.MaxInt64-right {
+		return 0, false
+	}
+	return left + right, true
 }
 
 func packageRows(catalog pricingCatalogData) []any {

@@ -84,6 +84,17 @@
     "doubleDebitForbidden": true,
     "currentImplementation": "Debit-first orchestration, confirmed-absence refund, and operator review resolution are CI-verified; production rollout and live reconciliation evidence remain pending."
   },
+  "workspaceLaunch": {
+    "quoteApi": "POST /api/pricing/preview with resourceType=workspace",
+    "createApi": "POST /api/workspace-launches",
+    "listApi": "GET /api/workspace-launches",
+    "detailApi": "GET /api/workspace-launches/{id}",
+    "persistence": "control_plane_runtime_operations with action=workspace.launch",
+    "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "sub2api_total_balance_preflight", "persist_launch"],
+    "totalBalanceSemantics": "read_only_preflight_not_hold_or_reservation",
+    "backgroundProgression": "The existing provider reconciliation worker resumes stable compute, storage, attachment, Gateway Secret, Runtime, and receipt sub-operations after browser close or process restart.",
+    "currentImplementation": "Quote composition, one-submit persistence, total balance preflight, tenant polling, phase recovery, and replay tests exist locally; deployed browser, live Sub2API, and live Tencent evidence remain pending."
+  },
   "providerProcurement": {
     "provider": "Tencent Cloud",
     "resources": ["CVM", "CBS"],
@@ -187,7 +198,7 @@
       "id": "offer_identity",
       "business": "A mapped customer signs in and sees Basic and Pro with separate compute and storage prices; the internal verification slot never appears.",
       "owners": ["console", "gateway"],
-      "currentState": "Basic mapping exists; Pro and the V2 catalog still require implementation and deployed evidence.",
+      "currentState": "Manual account and Sub2API mapping plus operator password reset are CI-verified; self-registration and SSO are outside the Pilot, while Pro and deployed identity evidence remain incomplete.",
       "requiredDeliverables": ["account mapping", "Basic and Pro definitions", "tenant isolation"],
       "completionEvidence": ["contract tests", "tenant tests", "deployed mapped-account readback"]
     },
@@ -195,7 +206,7 @@
       "id": "wallet_quote",
       "business": "The customer sees live Sub2API balance and an exact monthly compute plus storage quote before side effects.",
       "owners": ["console", "gateway"],
-      "currentState": "Live balance and Basic quote exist; Pro and complete storage presentation remain incomplete.",
+      "currentState": "Live balance and an integer Workspace compute-plus-storage quote are CI-verified; deployed presentation and live Sub2API evidence remain incomplete.",
       "requiredDeliverables": ["live balance", "integer quote", "period and retention disclosure"],
       "completionEvidence": ["Sub2API read test", "quote test", "unavailable-state UI test"]
     },
@@ -203,7 +214,7 @@
       "id": "balance_debit",
       "business": "After read-only preflight, the exact monthly amount is debited once with a deterministic Redeem Code before any provider write.",
       "owners": ["console", "gateway", "ledger"],
-      "currentState": "Debit-first ordering and replay are CI-verified; live Sub2API evidence is pending.",
+      "currentState": "One-submit durable launch, total balance preflight, debit-first child operations, restart recovery, and replay are CI-verified; deployed browser and live Sub2API evidence remain pending.",
       "requiredDeliverables": ["balance preflight", "stable debit identity", "same-key replay", "insufficient-balance failure"],
       "completionEvidence": ["event-order test", "concurrency test", "debit replay evidence", "redacted debit receipt"]
     },

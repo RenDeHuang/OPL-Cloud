@@ -65,6 +65,22 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusCreated, body)
 	}))
+	mux.HandleFunc("POST /api/users/{id}/reset-password", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		body, err := app.resetUserPassword(r.Context(), r.PathValue("id"), stringField(decodeJSON(r), "password", ""))
+		if err != nil {
+			if errors.Is(err, errMissingPassword) {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeUserLifecycleError(w, err)
+			return
+		}
+		if err := app.appendAuditEvent(r, "user.password_reset", "user", stringValue(body["id"]), stringValue(body["accountId"]), nil, body, "succeeded"); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
+	}))
 	mux.HandleFunc("POST /api/users/disable", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		withOperatorUserID(input, app.sessionUserID(r))

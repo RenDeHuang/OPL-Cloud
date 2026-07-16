@@ -14,6 +14,7 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 - Console calls only Control Plane product APIs.
 - Control Plane owns account-to-Sub2API mapping, quotes, monthly orchestration, entitlements, renewal, expiry, and operator review.
+- Pilot customer identities are provisioned and mapped manually. Operators can reset a customer's password and revoke existing sessions; self-registration and SSO are not Pilot claims.
 - Console displays live Sub2API balance, Key metadata, request usage, usage stats, and Ledger billing receipts without creating a wallet, Key database, usage database, or billing fact table.
 - Basic compute is `2c4g` for CNY 350/month; its default 10GB storage is billed separately at CNY 18/month.
 - Pro compute is `8c16g` for CNY 1,500/month; its default 100GB storage is billed separately at CNY 180/month.
@@ -68,6 +69,8 @@ validate account and quote
 ```
 
 - Debit, provider mutation, claim, activation, refund, Secret write, renewal, and receipt each use stable operation-scoped identities.
+- One authenticated `POST /api/workspace-launches` stores a durable `workspace.launch` RuntimeOperation. The existing provider reconciliation worker resumes its compute, storage, attachment, Gateway Secret, Runtime, and receipt phases after browser close or process restart.
+- The submission-time Sub2API total-balance read is a read-only preflight, not a hold or reservation. Each child purchase still performs its existing safety preflight and deterministic debit protocol.
 - Debit failure forbids every Tencent resource write.
 - A confirmed provider result showing no billable resource exists permits exactly one idempotent refund.
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.
@@ -132,9 +135,9 @@ validate account and quote
 
 | Stage | Business | Owners | Current state | Required output and evidence |
 | --- | --- | --- | --- | --- |
-| 1. Offer and identity | Show mapped customers Basic and Pro without the verification SKU. | Console, Gateway | Basic mapping exists; Pro implementation evidence is incomplete. | Product contract, tenant tests, deployed account readback. |
-| 2. Wallet and quote | Show live balance and exact compute plus storage quote before side effects. | Console, Gateway | Basic exists; Pro and complete presentation remain incomplete. | Balance/quote tests, failure UI, period and retention disclosure. |
-| 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Debit-first ordering and replay are CI-verified; live Sub2API evidence is pending. | Deterministic debit, balance check, replay/concurrency evidence. |
+| 1. Offer and identity | Show mapped customers Basic and Pro without the verification SKU. | Console, Gateway | Manual mapping and operator password reset are CI-verified; self-registration and SSO are outside the Pilot, while Pro and deployed evidence remain incomplete. | Product contract, tenant tests, deployed account readback. |
+| 2. Wallet and quote | Show live balance and exact compute plus storage quote before side effects. | Console, Gateway | Integer Workspace compute-plus-storage quote is CI-verified; deployed presentation and live Sub2API evidence remain incomplete. | Balance/quote tests, failure UI, period and retention disclosure. |
+| 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, total balance preflight, debit-first child operations, restart recovery, and replay are CI-verified; deployed browser and live Sub2API evidence remain pending. | Deterministic debit, balance check, replay/concurrency evidence. |
 | 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request and readback are CI-verified; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
 | 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, and manual-review resolution are CI-verified; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
 | 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, and runtime isolation are CI-verified; browser, WebSocket, and live model evidence are pending. | Login, WebSocket 101, Secret rotation, digest readback. |
