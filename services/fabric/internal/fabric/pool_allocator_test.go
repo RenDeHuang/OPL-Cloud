@@ -18,6 +18,7 @@ type recordingPoolProvider struct {
 type failingPoolProvider struct {
 	testProvider
 	syncCalls int
+	demands   []int64
 }
 
 type scaleDownFailureProvider struct{ testProvider }
@@ -54,6 +55,12 @@ type invalidInitialBillingPoolProvider struct {
 	syncCalls int
 }
 
+type unknownPrepaidPoolProvider struct {
+	testProvider
+	demands     []int64
+	deleteCalls int
+}
+
 type unverifiedSyncPoolProvider struct {
 	testProvider
 	syncErr      error
@@ -73,6 +80,19 @@ func (p *invalidInitialBillingPoolProvider) SyncComputeAllocation(_ context.Cont
 	p.syncCalls++
 	allocation.Status = "running"
 	return allocation, nil
+}
+
+func (p *unknownPrepaidPoolProvider) ReconcileComputePool(_ context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+	p.demands = append(p.demands, input.DesiredReplicas)
+	return ComputePoolState{
+		PoolID: input.PoolID, NodePoolID: "np-basic", DesiredReplicas: input.DesiredReplicas, CurrentReplicas: 1,
+		Machines: []ProviderMachine{{MachineID: "machine-alpha", InstanceID: "ins-alpha", NodeName: "node-alpha", InstanceType: input.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Ready: true}},
+	}, nil
+}
+
+func (p *unknownPrepaidPoolProvider) DeleteComputeMachine(context.Context, ProviderMachine, MachineOwnership) error {
+	p.deleteCalls++
+	return nil
 }
 
 func (p *unverifiedSyncPoolProvider) SyncComputeAllocation(_ context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
@@ -142,7 +162,7 @@ func TestPoolAllocatorPersistsPoolEvidence(t *testing.T) {
 	}
 }
 
-func TestPoolAllocatorNeverClaimsInitialMachineWithoutExactPrepaidBilling(t *testing.T) {
+func TestPoolAllocatorQuarantinesInitialMachineWithoutExactPrepaidBilling(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		instanceType string
@@ -170,11 +190,61 @@ func TestPoolAllocatorNeverClaimsInitialMachineWithoutExactPrepaidBilling(t *tes
 
 			_, _, err := service.reconcileComputePoolOnce(context.Background(), "basic", false)
 			current, _ := service.GetComputeAllocation(context.Background(), resource.ID)
-			_, ownershipErr := store.MachineOwnership(context.Background(), resource.ID)
-			if err != nil || current.Status != "provisioning" || provider.syncCalls != 0 || !errors.Is(ownershipErr, ErrMachineOwnershipNotFound) {
-				t.Fatalf("compute=%#v err=%v syncCalls=%d ownershipErr=%v", current, err, provider.syncCalls, ownershipErr)
+			ownership, ownershipErr := store.MachineOwnership(context.Background(), resource.ID)
+			if err != nil || current.Status != "quarantined" || current.ProviderData["recoveryAction"] != "manual_review" || provider.syncCalls != 0 || ownershipErr != nil || ownership.Status != "quarantined" {
+				t.Fatalf("compute=%#v err=%v syncCalls=%d ownership=%#v ownershipErr=%v", current, err, provider.syncCalls, ownership, ownershipErr)
+			}
+			if current.MachineName != provider.machine.MachineID || current.InstanceID != provider.machine.InstanceID || current.NodeName != provider.machine.NodeName {
+				t.Fatalf("quarantine lost provider identity: compute=%#v machine=%#v", current, provider.machine)
 			}
 		})
+	}
+}
+
+func TestPoolAllocatorUnknownPrepaidReadbackNeverScalesDown(t *testing.T) {
+	provider := &unknownPrepaidPoolProvider{}
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(provider, store)
+	resource := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", Status: "provisioning"}
+	operation := newOperation("create_compute_allocation", "compute_allocation", resource.ID, resource.AccountID, resource.WorkspaceID, "request-alpha", hashInput(resource), time.Now().UTC())
+	if err := service.recordOperation(context.Background(), operation, "started", resource, nil); err != nil {
+		t.Fatal(err)
+	}
+	service.computes[resource.ID] = resource
+	oldAttempts, oldDelay := poolReconcileAttempts, poolReconcileDelay
+	poolReconcileAttempts, poolReconcileDelay = 1, 0
+	t.Cleanup(func() { poolReconcileAttempts, poolReconcileDelay = oldAttempts, oldDelay })
+
+	_ = service.reconcileComputePool("basic", false)
+	restarted := NewServiceWithOperationStore(provider, store)
+	_ = restarted.reconcileComputePool("basic", false)
+
+	if len(provider.demands) < 2 {
+		t.Fatalf("reconcile demands = %v, want retry after unknown provider result", provider.demands)
+	}
+	for _, demand := range provider.demands {
+		if demand != 1 {
+			t.Fatalf("unknown PREPAID result scaled pool: demands=%v deletes=%d", provider.demands, provider.deleteCalls)
+		}
+	}
+	if provider.deleteCalls != 0 {
+		t.Fatalf("unknown PREPAID result deleted machine: demands=%v deletes=%d", provider.demands, provider.deleteCalls)
+	}
+	ownership, err := store.MachineOwnership(context.Background(), resource.ID)
+	if err != nil || ownership.Status != "quarantined" || ownership.ReleasedAt != nil {
+		t.Fatalf("restart lost quarantine: ownership=%#v err=%v", ownership, err)
+	}
+	recovered, ok := restarted.GetComputeAllocation(context.Background(), resource.ID)
+	if !ok || recovered.Status != "quarantined" || recovered.ProviderData["recoveryAction"] != "manual_review" {
+		t.Fatalf("restart lost manual recovery evidence: compute=%#v ok=%v", recovered, ok)
+	}
+	operations, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := operations[len(operations)-1]
+	if latest.Status != "failed" || latest.ErrorCode != "compute_provider_readback_mismatch" {
+		t.Fatalf("unknown provider operation evidence = %#v", latest)
 	}
 }
 
@@ -308,7 +378,8 @@ func TestPoolAllocatorQuarantinesTagFailureWithoutDeletingPrepaidMachine(t *test
 	}
 }
 
-func (p *failingPoolProvider) ReconcileComputePool(context.Context, ComputePoolDemand) (ComputePoolState, error) {
+func (p *failingPoolProvider) ReconcileComputePool(_ context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+	p.demands = append(p.demands, input.DesiredReplicas)
 	return ComputePoolState{}, fmt.Errorf("tencent pool unavailable")
 }
 
@@ -333,11 +404,16 @@ func TestPoolAllocatorExhaustionKeepsHoldUntilCleanupIsConfirmed(t *testing.T) {
 
 	service.reconcileComputePool("basic", false)
 	pendingCleanup, ok := service.GetComputeAllocation(context.Background(), resource.ID)
-	if !ok || pendingCleanup.Status != "provisioning" {
+	if !ok || pendingCleanup.Status != "provisioning" || pendingCleanup.ProviderData["recoveryAction"] != "manual_review" {
 		t.Fatalf("cleanup-pending resource = %#v ok=%v", pendingCleanup, ok)
 	}
+	for _, demand := range provider.demands {
+		if demand != 1 {
+			t.Fatalf("unknown provider result scaled pool: demands=%v", provider.demands)
+		}
+	}
 	synced, err := service.SyncComputeAllocation(context.Background(), resource.ID)
-	if err != nil || synced.Status != "provisioning" || provider.syncCalls != 1 {
+	if err != nil || synced.Status != "provisioning" || provider.syncCalls != 0 {
 		t.Fatalf("sync cleanup-pending resource = %#v err=%v provider calls=%d", synced, err, provider.syncCalls)
 	}
 }
