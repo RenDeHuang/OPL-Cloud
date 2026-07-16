@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -673,6 +674,138 @@ func TestComputeAllocationReturnsProvisioningBeforeProviderCompletes(t *testing.
 	t.Fatalf("allocation did not become running: %#v", current)
 }
 
+type countingBlockedPoolProvider struct {
+	testProvider
+	calls   atomic.Int32
+	entered chan ComputePoolDemand
+	release chan struct{}
+}
+
+func (p *countingBlockedPoolProvider) ReconcileComputePool(ctx context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+	p.calls.Add(1)
+	p.entered <- input
+	select {
+	case <-p.release:
+		return testProvider{}.ReconcileComputePool(ctx, input)
+	case <-ctx.Done():
+		return ComputePoolState{}, ctx.Err()
+	}
+}
+
+func TestCreateComputeAllocationReplaysStartedClaimWithoutIncreasingDemand(t *testing.T) {
+	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 2), release: make(chan struct{})}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-replay"}
+	t.Cleanup(func() { close(provider.release) })
+
+	first, err := service.CreateComputeAllocation(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	demand := <-provider.entered
+	replayed, err := service.CreateComputeAllocation(context.Background(), input)
+	if err != nil || replayed.ID != first.ID || replayed.Status != first.Status || demand.DesiredReplicas != 1 || provider.calls.Load() != 1 {
+		t.Fatalf("first=%#v replayed=%#v err=%v demand=%#v calls=%d", first, replayed, err, demand, provider.calls.Load())
+	}
+	operations, err := service.ListOperations(context.Background())
+	if err != nil || len(operations) != 1 || operations[0].Status != "started" {
+		t.Fatalf("operations=%#v err=%v", operations, err)
+	}
+}
+
+func TestCreateComputeAllocationRejectsSameKeyWithDifferentRequest(t *testing.T) {
+	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 2), release: make(chan struct{})}
+	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+	t.Cleanup(func() { close(provider.release) })
+
+	first, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-conflict"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-provider.entered
+	replayed, err := service.CreateComputeAllocation(context.Background(), ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-other", PackageID: "basic", IdempotencyKey: "compute-conflict"})
+	if err == nil || err.Error() != "compute_idempotency_conflict" || replayed.ID != "" || provider.calls.Load() != 1 {
+		t.Fatalf("first=%#v replayed=%#v err=%v calls=%d", first, replayed, err, provider.calls.Load())
+	}
+}
+
+func TestCreateComputeAllocationConcurrentSameKeyClaimsOnce(t *testing.T) {
+	provider := &countingBlockedPoolProvider{entered: make(chan ComputePoolDemand, 20), release: make(chan struct{})}
+	store := NewMemoryOperationStore()
+	service := NewServiceWithOperationStore(provider, store)
+	input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-concurrent"}
+	t.Cleanup(func() { close(provider.release) })
+
+	const callers = 16
+	results := make(chan ComputeAllocation, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := service.CreateComputeAllocation(context.Background(), input)
+			results <- result
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := map[string]bool{}
+	for result := range results {
+		ids[result.ID] = true
+	}
+	operations, err := store.List(context.Background())
+	if err != nil || len(ids) != 1 || len(operations) != 1 {
+		t.Fatalf("ids=%#v operations=%#v err=%v", ids, operations, err)
+	}
+}
+
+type failedPoolProvider struct{ testProvider }
+
+func (failedPoolProvider) ReconcileComputePool(_ context.Context, input ComputePoolDemand) (ComputePoolState, error) {
+	return ComputePoolState{PoolID: input.PoolID, DesiredReplicas: input.DesiredReplicas, CurrentReplicas: 0}, nil
+}
+
+func TestCreateComputeAllocationReplaysSucceededAndFailedResults(t *testing.T) {
+	t.Run("succeeded", func(t *testing.T) {
+		service := NewServiceWithOperationStore(testProvider{}, NewMemoryOperationStore())
+		input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-succeeded"}
+		first, err := service.CreateComputeAllocation(context.Background(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForOperation(t, service, "create_compute_allocation", "compute_allocation", first.ID, "succeeded")
+		replayed, err := service.CreateComputeAllocation(context.Background(), input)
+		if err != nil || replayed.ID != first.ID || replayed.Status != "running" {
+			t.Fatalf("first=%#v replayed=%#v err=%v", first, replayed, err)
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		previousAttempts := poolReconcileAttempts
+		poolReconcileAttempts = 1
+		t.Cleanup(func() { poolReconcileAttempts = previousAttempts })
+		service := NewServiceWithOperationStore(failedPoolProvider{}, NewMemoryOperationStore())
+		input := ComputeAllocationInput{AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-failed"}
+		first, err := service.CreateComputeAllocation(context.Background(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForOperation(t, service, "create_compute_allocation", "compute_allocation", first.ID, "failed")
+		replayed, err := service.CreateComputeAllocation(context.Background(), input)
+		if err == nil || err.Error() != "compute_operation_failed" || replayed.ID != first.ID || replayed.Status != "failed" {
+			t.Fatalf("first=%#v replayed=%#v err=%v", first, replayed, err)
+		}
+	})
+}
+
 func TestResourceMutationsAppendFabricOperationFacts(t *testing.T) {
 	store := NewMemoryOperationStore()
 	service := NewServiceWithOperationStore(testProvider{}, store)
@@ -1026,7 +1159,7 @@ func (p *blockingComputeRenewProvider) RenewComputeAllocation(_ context.Context,
 func TestRenewComputeAllocationSerializesConcurrentSameKey(t *testing.T) {
 	provider := &blockingComputeRenewProvider{entered: make(chan struct{}), release: make(chan struct{})}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
-	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", InstanceID: "ins-basic-1", Deadline: "2026-08-16T00:00:00Z"}
+	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", InstanceID: "ins-basic-1", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3"}, CostTags: oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-alpha")}
 
 	results := make(chan ComputeAllocation, 2)
 	errs := make(chan error, 2)
@@ -1071,6 +1204,12 @@ func TestRenewComputeAllocationRejectsMalformedProviderSuccess(t *testing.T) {
 	}{
 		{name: "resource id", configure: func(result *ComputeAllocation) { result.ID = "compute-other" }},
 		{name: "instance id", configure: func(result *ComputeAllocation) { result.InstanceID = "ins-other" }},
+		{name: "instance type", configure: func(result *ComputeAllocation) { result.ProviderData["instanceType"] = "SA5.2XLARGE16" }},
+		{name: "zone", configure: func(result *ComputeAllocation) { result.ProviderData["zone"] = "ap-guangzhou-4" }},
+		{name: "account tag", configure: func(result *ComputeAllocation) { result.CostTags["opl_account_id"] = "acct-other" }},
+		{name: "workspace tag", configure: func(result *ComputeAllocation) { result.CostTags["opl_workspace_id"] = "ws-other" }},
+		{name: "resource tag", configure: func(result *ComputeAllocation) { result.CostTags["opl_resource_id"] = "compute-other" }},
+		{name: "operation tag", configure: func(result *ComputeAllocation) { result.CostTags["opl_operation_id"] = "owner-other" }},
 		{name: "postpaid", configure: func(result *ComputeAllocation) { result.ChargeType = "POSTPAID_BY_HOUR" }},
 		{name: "auto renew", configure: func(result *ComputeAllocation) { result.RenewFlag = "NOTIFY_AND_AUTO_RENEW" }},
 		{name: "deadline without timezone", configure: func(result *ComputeAllocation) { result.Deadline = "2026-09-16 00:00:00" }},
@@ -1080,6 +1219,8 @@ func TestRenewComputeAllocationRejectsMalformedProviderSuccess(t *testing.T) {
 			existing := ComputeAllocation{
 				ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", InstanceID: "ins-basic-1", CVMInstanceID: "ins-basic-1",
 				ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z",
+				ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3"},
+				CostTags:     oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-alpha"),
 			}
 			provider := &renewalResultProvider{compute: func(result ComputeAllocation) ComputeAllocation {
 				result.Deadline = "2026-09-16T00:00:00Z"
@@ -1095,6 +1236,28 @@ func TestRenewComputeAllocationRejectsMalformedProviderSuccess(t *testing.T) {
 			current, ok := service.GetComputeAllocation(context.Background(), existing.ID)
 			if !ok || current.InstanceID != existing.InstanceID || current.CVMInstanceID != existing.CVMInstanceID || current.Deadline != existing.Deadline {
 				t.Fatalf("malformed renewal overwrote compute identity: %#v", current)
+			}
+		})
+	}
+}
+
+func TestRenewComputeAllocationRejectsMissingProviderIdentityBeforeMutation(t *testing.T) {
+	for _, missing := range []string{"instanceType", "zone", "tags"} {
+		t.Run(missing, func(t *testing.T) {
+			provider := &renewalResultProvider{compute: func(allocation ComputeAllocation) ComputeAllocation { return allocation }}
+			service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
+			existing := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running", InstanceID: "ins-basic-1", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3"}, CostTags: oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-alpha")}
+			switch missing {
+			case "instanceType":
+				delete(existing.ProviderData, "instanceType")
+			case "zone":
+				delete(existing.ProviderData, "zone")
+			case "tags":
+				existing.CostTags = nil
+			}
+			service.computes[existing.ID] = existing
+			if _, err := service.RenewComputeAllocation(context.Background(), existing.ID, "renew-missing-"+missing); err == nil || errorCode(err) != "compute_allocation_renew_identity_required" {
+				t.Fatalf("missing %s error=%v", missing, err)
 			}
 		})
 	}
@@ -1177,23 +1340,46 @@ func TestFabricRejectsIllegalResourceMutationsWithOperationFacts(t *testing.T) {
 }
 
 func TestStorageAttachmentRequiresReadyComputeAndVolume(t *testing.T) {
-	readyCompute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", Status: "running"}
-	readyVolume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: "ready"}
+	input := StorageAttachmentInput{WorkspaceID: "ws-alpha"}
+	readyCompute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running"}
+	readyVolume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready"}
 	for _, status := range []string{"provisioning", "pending", "provider_ready", "quarantined"} {
 		compute := readyCompute
 		compute.Status = status
-		if err := validateAttachmentInput(StorageAttachmentInput{}, compute, readyVolume); err == nil || errorCode(err) != "resource_status_invalid" {
+		if err := validateAttachmentInput(input, compute, readyVolume); err == nil || errorCode(err) != "resource_status_invalid" {
 			t.Fatalf("compute status %q err=%v, want resource_status_invalid", status, err)
 		}
 	}
 	for _, status := range []string{"pending", "provider_ready", "quarantined", "retained", "released"} {
-		volume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", Status: status}
-		if err := validateAttachmentInput(StorageAttachmentInput{}, readyCompute, volume); err == nil || errorCode(err) != "resource_status_invalid" {
+		volume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: status}
+		if err := validateAttachmentInput(input, readyCompute, volume); err == nil || errorCode(err) != "resource_status_invalid" {
 			t.Fatalf("storage status %q err=%v, want resource_status_invalid", status, err)
 		}
 	}
-	if err := validateAttachmentInput(StorageAttachmentInput{}, readyCompute, readyVolume); err != nil {
+	if err := validateAttachmentInput(input, readyCompute, readyVolume); err != nil {
 		t.Fatalf("ready resources rejected: %v", err)
+	}
+}
+
+func TestAttachmentAndRuntimeRequireExactWorkspaceOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*ComputeAllocation, *StorageVolume)
+	}{
+		{name: "compute", configure: func(compute *ComputeAllocation, _ *StorageVolume) { compute.WorkspaceID = "ws-beta" }},
+		{name: "volume", configure: func(_ *ComputeAllocation, volume *StorageVolume) { volume.WorkspaceID = "ws-beta" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "running"}
+			volume := StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", Status: "ready"}
+			tc.configure(&compute, &volume)
+			if err := validateAttachmentInput(StorageAttachmentInput{WorkspaceID: "ws-alpha"}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
+				t.Fatalf("attachment workspace isolation error=%v", err)
+			}
+			if err := validateRuntimeInput(WorkspaceRuntimeInput{WorkspaceID: "ws-alpha", GatewaySecretRef: gatewaySecretName("acct-alpha")}, compute, volume); err == nil || errorCode(err) != "resource_workspace_mismatch" {
+				t.Fatalf("runtime workspace isolation error=%v", err)
+			}
+		})
 	}
 }
 
@@ -1557,7 +1743,7 @@ func (testProvider) MonthlyPreflight(_ context.Context, input MonthlyPreflightIn
 	return MonthlyPreflight{
 		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
 		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 7.5,
-		ProviderRequestIDs: map[string]string{"quota": "req-quota", "price": "req-price"},
+		ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-availability", "quota": "req-quota", "price": "req-price"},
 	}, nil
 }
 

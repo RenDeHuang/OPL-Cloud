@@ -15,6 +15,7 @@ import (
 	cbs2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cbs/v20170312"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	tcerrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
+	tchttp "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/http"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
 	cvm2017 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/cvm/v20170312"
 	tke2022 "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tke/v20220501"
@@ -40,6 +41,7 @@ type Request struct {
 	Zone            string                 `json:"zone,omitempty"`
 	StorageVolumeId string                 `json:"storageVolumeId,omitempty"`
 	Tags            map[string]string      `json:"tags,omitempty"`
+	ComputeTags     map[string]string      `json:"computeTags,omitempty"`
 	Pool            ComputePoolInput       `json:"pool,omitempty"`
 	Allocation      ComputeAllocationInput `json:"allocation,omitempty"`
 	Storage         StorageInput           `json:"storage,omitempty"`
@@ -148,6 +150,53 @@ type tencentSDKClient struct {
 	nativeCvmClient cvmNativeAPI
 	nativeCbsClient cbsNativeAPI
 	nativeVpcClient vpcNativeAPI
+	nativeTagClient tagNativeAPI
+}
+
+type tagNativeAPI interface {
+	SetCVMTag(instanceID, key, value string, attached bool) (string, error)
+}
+
+type tencentTagClient struct {
+	client *common.Client
+	region string
+}
+
+type tagResourceRequest struct {
+	*tchttp.BaseRequest
+	ServiceType    *string   `json:"ServiceType,omitempty" name:"ServiceType"`
+	ResourceIds    []*string `json:"ResourceIds,omitempty" name:"ResourceIds"`
+	TagKey         *string   `json:"TagKey,omitempty" name:"TagKey"`
+	TagValue       *string   `json:"TagValue,omitempty" name:"TagValue"`
+	ResourceRegion *string   `json:"ResourceRegion,omitempty" name:"ResourceRegion"`
+	ResourcePrefix *string   `json:"ResourcePrefix,omitempty" name:"ResourcePrefix"`
+}
+
+type tagResourceResponse struct {
+	*tchttp.BaseResponse
+	Response *struct {
+		RequestId *string `json:"RequestId,omitempty" name:"RequestId"`
+	} `json:"Response"`
+}
+
+func (client *tencentTagClient) SetCVMTag(instanceID, key, value string, attached bool) (string, error) {
+	action := "AttachResourcesTag"
+	if attached {
+		action = "ModifyResourcesTagValue"
+	}
+	request := &tagResourceRequest{
+		BaseRequest: &tchttp.BaseRequest{}, ServiceType: common.StringPtr("cvm"), ResourceIds: []*string{common.StringPtr(instanceID)},
+		TagKey: common.StringPtr(key), TagValue: common.StringPtr(value), ResourceRegion: common.StringPtr(client.region), ResourcePrefix: common.StringPtr("instance"),
+	}
+	request.Init().WithApiInfo("tag", "2018-08-13", action)
+	response := &tagResourceResponse{BaseResponse: &tchttp.BaseResponse{}}
+	if err := client.client.Send(request, response); err != nil {
+		return "", err
+	}
+	if response.Response == nil || strings.TrimSpace(stringValue(response.Response.RequestId)) == "" {
+		return "", fmt.Errorf("Tencent Tag %s response is missing", action)
+	}
+	return stringValue(response.Response.RequestId), nil
 }
 
 type tkeNativeAPI interface {
@@ -290,6 +339,10 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 	if err != nil {
 		return nil, &Response{Ok: false, ErrorCode: "tencent_sdk_client_failed", Message: err.Error(), Retryable: false}
 	}
+	tagProfile := profile.NewClientProfile()
+	tagProfile.HttpProfile.Endpoint = "tag.tencentcloudapi.com"
+	tagClient := &common.Client{}
+	tagClient.Init(env["TENCENTCLOUD_REGION"]).WithCredential(credential).WithProfile(tagProfile)
 
 	return &tencentSDKClient{
 		region:          env["TENCENTCLOUD_REGION"],
@@ -298,6 +351,7 @@ func newTencentSDKClient(env map[string]string) (*tencentSDKClient, *Response) {
 		nativeCvmClient: cvmClient,
 		nativeCbsClient: cbsClient,
 		nativeVpcClient: vpcClient,
+		nativeTagClient: &tencentTagClient{client: tagClient, region: env["TENCENTCLOUD_REGION"]},
 	}, nil
 }
 
@@ -464,7 +518,26 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		return capacityFailure("tencent_capacity_zone_unavailable", nil)
 	}
 	capacityZones := zones
-	providerRequestIDs := map[string]string{"nodePool": nodePoolRequestId, "subnets": subnetRequestID}
+	quotaRequest := cvm2017.NewDescribeAccountQuotaRequest()
+	quotaResponse, err := client.nativeCvmClient.DescribeAccountQuota(quotaRequest)
+	if err != nil || quotaResponse == nil || quotaResponse.Response == nil || quotaResponse.Response.AccountQuotaOverview == nil || quotaResponse.Response.AccountQuotaOverview.AccountQuota == nil {
+		return capacityFailure("tencent_capacity_prepaid_quota_describe_failed", err)
+	}
+	quotaRequestID := stringValue(quotaResponse.Response.RequestId)
+	matchingQuotas := []*cvm2017.PrePaidQuota{}
+	for _, quota := range quotaResponse.Response.AccountQuotaOverview.AccountQuota.PrePaidQuotaSet {
+		if quota == nil || strings.TrimSpace(stringValue(quota.Zone)) == "" {
+			return capacityFailure("tencent_capacity_prepaid_quota_ambiguous", nil)
+		}
+		if stringValue(quota.Zone) == capacityZones[0] {
+			matchingQuotas = append(matchingQuotas, quota)
+		}
+	}
+	if len(matchingQuotas) != 1 || matchingQuotas[0].RemainingQuota == nil || *matchingQuotas[0].RemainingQuota < uint64(required) || quotaRequestID == "" {
+		return capacityFailure("tencent_capacity_prepaid_quota_unavailable", nil)
+	}
+	remainingQuota := *matchingQuotas[0].RemainingQuota
+	providerRequestIDs := map[string]string{"nodePool": nodePoolRequestId, "subnets": subnetRequestID, "quota": quotaRequestID}
 	providerPriceCNY := 0.0
 	for _, zone := range capacityZones {
 		availabilityRequest := cvm2017.NewDescribeZoneInstanceConfigInfosRequest()
@@ -501,6 +574,7 @@ func (client *tencentSDKClient) Capacity(request Request, _ map[string]string) R
 		ProviderRequestIDs: providerRequestIDs, ProviderPriceCNY: providerPriceCNY,
 		ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": firstNonEmpty(request.Zone, capacityZones[0])},
 		InstanceType: request.Pool.InstanceType, InstanceAvailable: true, RequiredCapacity: required,
+		RemainingQuota:  remainingQuota,
 		CurrentReplicas: *native.Replicas, ReadyReplicas: *native.ReadyReplicas,
 		MaxReplicas: *native.Scaling.MaxReplicas, TargetReplicas: *native.Replicas + required, MachineType: stringValue(native.MachineType), Zones: capacityZones,
 	}
@@ -751,10 +825,11 @@ func (client *tencentSDKClient) RenewComputeAllocation(request Request, _ map[st
 	}
 	allocation := request.Allocation
 	allocation.Deadline = normalizeTencentDeadline(allocation.Deadline)
-	if strings.TrimSpace(allocation.Id) == "" || !strings.HasPrefix(allocation.InstanceId, "ins-") || allocation.Deadline == "" {
+	request.Allocation = allocation
+	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(allocation.Id) == "" || !strings.HasPrefix(allocation.InstanceId, "ins-") || allocation.Deadline == "" || strings.TrimSpace(request.Pool.InstanceType) == "" || strings.TrimSpace(request.Zone) == "" || !validOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != allocation.Id {
 		return Response{Ok: false, ErrorCode: "tencent_cvm_renew_input_invalid", Message: "Exact compute resource, CVM instance, and previous deadline are required.", Retryable: false}
 	}
-	current := client.computeRenewalReadback(allocation)
+	current := client.computeRenewalReadback(request)
 	if !current.Ok || current.Status == "external_deleted" {
 		return current
 	}
@@ -776,7 +851,7 @@ func (client *tencentSDKClient) RenewComputeAllocation(request Request, _ map[st
 	if renewed == nil || renewed.Response == nil {
 		return Response{Ok: false, ErrorCode: "tencent_renew_cvm_response_missing", Message: "Tencent CVM renewal response is missing.", Retryable: true}
 	}
-	response := client.computeRenewalReadback(allocation)
+	response := client.computeRenewalReadback(request)
 	if !response.Ok || response.Status == "external_deleted" || !deadlineAfter(response.ProviderData["deadline"], allocation.Deadline) {
 		return Response{
 			Ok: false, ErrorCode: "tencent_cvm_renewal_unconfirmed", Message: "Tencent CVM renewal could not be confirmed by exact readback.",
@@ -789,7 +864,8 @@ func (client *tencentSDKClient) RenewComputeAllocation(request Request, _ map[st
 	return response
 }
 
-func (client *tencentSDKClient) computeRenewalReadback(allocation ComputeAllocationInput) Response {
+func (client *tencentSDKClient) computeRenewalReadback(request Request) Response {
+	allocation := request.Allocation
 	instance, requestID, err := client.describeCvmInstanceByID(allocation.InstanceId)
 	if err != nil {
 		response := sdkErrorResponse("tencent_describe_cvm_renewal_failed", err)
@@ -807,17 +883,29 @@ func (client *tencentSDKClient) computeRenewalReadback(allocation ComputeAllocat
 		zone = stringValue(instance.Placement.Zone)
 	}
 	deadline := normalizeTencentDeadline(stringValue(instance.ExpiredTime))
-	if stringValue(instance.InstanceId) != allocation.InstanceId || stringValue(instance.InstanceName) != allocation.Id || strings.TrimSpace(stringValue(instance.InstanceType)) == "" ||
+	actualTags, tagErr := cvmOwnershipTags(instance)
+	if stringValue(instance.InstanceType) != request.Pool.InstanceType {
+		return Response{
+			Ok: false, ErrorCode: "compute_instance_type_mismatch", Message: "Tencent CVM instance type does not match the requested package.",
+			InstanceId: allocation.InstanceId, ProviderRequestId: requestID, ProviderData: map[string]string{"instanceType": stringValue(instance.InstanceType)}, Retryable: true,
+		}
+	}
+	if stringValue(instance.InstanceId) != allocation.InstanceId || stringValue(instance.InstanceName) != allocation.Id ||
 		stringValue(instance.InstanceChargeType) != "PREPAID" || stringValue(instance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" ||
-		deadline == "" || strings.TrimSpace(zone) == "" ||
+		deadline == "" || zone != request.Zone || tagErr != nil ||
 		(strings.TrimSpace(allocation.PrivateIp) != "" && !containsString(instance.PrivateIpAddresses, allocation.PrivateIp)) {
 		return Response{
 			Ok: false, ErrorCode: "tencent_cvm_renewal_readback_mismatch", Message: "Tencent CVM billing, ownership, or deadline facts do not match the requested allocation.",
 			InstanceId: allocation.InstanceId, ProviderRequestId: requestID, Retryable: true,
 		}
 	}
+	for _, key := range cbsOwnershipTagKeys {
+		if actualTags[key] != request.Tags[key] {
+			return Response{Ok: false, ErrorCode: "tencent_cvm_renewal_readback_mismatch", Message: "Tencent CVM ownership tags do not match the requested allocation.", InstanceId: allocation.InstanceId, ProviderRequestId: requestID, Retryable: true}
+		}
+	}
 	state := stringValue(instance.InstanceState)
-	return Response{
+	response := Response{
 		Ok: true, InstanceId: allocation.InstanceId, Status: "provider_ready", CVMStatus: state, ProviderRequestId: requestID,
 		ProviderData: map[string]string{
 			"instanceId": allocation.InstanceId, "resourceId": allocation.Id, "cvmStatus": state,
@@ -826,6 +914,10 @@ func (client *tencentSDKClient) computeRenewalReadback(allocation ComputeAllocat
 			"deadline": deadline, "zone": zone, "privateIp": firstString(instance.PrivateIpAddresses), "describeCvmRequestId": requestID,
 		},
 	}
+	for _, key := range cbsOwnershipTagKeys {
+		response.ProviderData[key] = actualTags[key]
+	}
+	return response
 }
 
 func (client *tencentSDKClient) CreateComputeAllocation(request Request, env map[string]string) Response {
@@ -1168,18 +1260,8 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	}
 	instanceID := strings.TrimSpace(request.Allocation.InstanceId)
 	resourceID := strings.TrimSpace(request.Tags["opl_resource_id"])
-	if instanceID == "" || resourceID == "" || len(resourceID) > 60 {
+	if instanceID == "" || resourceID == "" || len(resourceID) > 60 || !validOwnershipTags(request.Tags) {
 		return Response{Ok: false, ErrorCode: "compute_machine_identity_required", Message: "Machine instance id and a resource id of at most 60 characters are required.", Retryable: false}
-	}
-	if strings.HasPrefix(instanceID, "np-") {
-		nativeInstance, requestID, err := client.describeTkeClusterInstanceByPrivateIp(request.Allocation.PrivateIp, request.Pool.NodePoolId)
-		if err != nil {
-			return sdkErrorResponse("tencent_verify_native_compute_machine_failed", err)
-		}
-		if stringValue(nativeInstance.InstanceId) != instanceID {
-			return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent TKE instance did not match the claimed machine identity.", ProviderRequestId: requestID, Retryable: true}
-		}
-		return Response{Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: requestID}
 	}
 	if !strings.HasPrefix(instanceID, "ins-") {
 		return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent machine identity source is unsupported.", Retryable: false}
@@ -1199,12 +1281,31 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	if len(described.Response.InstanceSet) != 1 || described.Response.InstanceSet[0] == nil || stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID {
 		return Response{Ok: false, ErrorCode: "compute_machine_identity_unverified", Message: "Tencent CVM instance did not match the claimed machine identity.", ProviderRequestId: stringValue(described.Response.RequestId), Retryable: true}
 	}
+	actualTags, tagErr := cvmOwnershipTags(described.Response.InstanceSet[0])
+	if tagErr != nil {
+		return Response{Ok: false, ErrorCode: "compute_machine_tags_unverified", Message: tagErr.Error(), ProviderRequestId: stringValue(described.Response.RequestId), Retryable: true}
+	}
+	if client.nativeTagClient == nil {
+		return Response{Ok: false, ErrorCode: "tencent_sdk_client_missing", Message: "Tencent Tag SDK client is missing.", Retryable: false}
+	}
 	modify := cvm2017.NewModifyInstancesAttributeRequest()
 	modify.InstanceIds = []*string{common.StringPtr(instanceID)}
 	modify.InstanceName = common.StringPtr(resourceID)
 	modified, err := client.nativeCvmClient.ModifyInstancesAttribute(modify)
 	if err != nil {
 		return sdkErrorResponse("tencent_tag_compute_machine_failed", err)
+	}
+	tagRequestIDs := map[string]string{}
+	for _, key := range cbsOwnershipTagKeys {
+		if actualTags[key] == request.Tags[key] {
+			continue
+		}
+		_, attached := actualTags[key]
+		requestID, err := client.nativeTagClient.SetCVMTag(instanceID, key, request.Tags[key], attached)
+		if err != nil {
+			return sdkErrorResponse("tencent_tag_compute_machine_failed", err)
+		}
+		tagRequestIDs[key] = requestID
 	}
 	describe = cvm2017.NewDescribeInstancesRequest()
 	describe.InstanceIds = []*string{common.StringPtr(instanceID)}
@@ -1218,14 +1319,55 @@ func (client *tencentSDKClient) TagComputeMachine(request Request, _ map[string]
 	if len(described.Response.InstanceSet) != 1 || described.Response.InstanceSet[0] == nil {
 		return sdkErrorResponse("tencent_verify_compute_machine_tag_failed", fmt.Errorf("Tencent CVM DescribeInstances readback instance is missing"))
 	}
-	if stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID || stringValue(described.Response.InstanceSet[0].InstanceName) != resourceID {
-		return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM instance name did not match the resource id after update.", Retryable: true}
+	readbackTags, tagErr := cvmOwnershipTags(described.Response.InstanceSet[0])
+	if stringValue(described.Response.InstanceSet[0].InstanceId) != instanceID || stringValue(described.Response.InstanceSet[0].InstanceName) != resourceID || tagErr != nil {
+		return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM instance identity or ownership tags were malformed after update.", Retryable: true}
+	}
+	for _, key := range cbsOwnershipTagKeys {
+		if readbackTags[key] != request.Tags[key] {
+			return Response{Ok: false, ErrorCode: "compute_machine_tag_unverified", Message: "Tencent CVM ownership tags did not match after update.", Retryable: true}
+		}
 	}
 	modifyRequestID := ""
 	if modified.Response != nil {
 		modifyRequestID = stringValue(modified.Response.RequestId)
 	}
-	return Response{Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: firstNonEmpty(stringValue(described.Response.RequestId), modifyRequestID)}
+	providerData := map[string]string{"modifyInstanceRequestId": modifyRequestID}
+	for _, key := range cbsOwnershipTagKeys {
+		providerData[key] = readbackTags[key]
+		providerData["tagRequestId:"+key] = tagRequestIDs[key]
+	}
+	return Response{Ok: true, InstanceId: instanceID, Status: "tagged", ProviderRequestId: firstNonEmpty(stringValue(described.Response.RequestId), modifyRequestID), ProviderData: providerData}
+}
+
+func validOwnershipTags(tags map[string]string) bool {
+	for _, key := range cbsOwnershipTagKeys {
+		if strings.TrimSpace(tags[key]) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func cvmOwnershipTags(instance *cvm2017.Instance) (map[string]string, error) {
+	tags := map[string]string{}
+	if instance == nil {
+		return tags, fmt.Errorf("Tencent CVM instance is missing")
+	}
+	for _, tag := range instance.Tags {
+		if tag == nil {
+			continue
+		}
+		key := strings.TrimSpace(stringValue(tag.Key))
+		if key == "" {
+			continue
+		}
+		if _, duplicate := tags[key]; duplicate {
+			return nil, fmt.Errorf("Tencent CVM ownership tag is duplicated")
+		}
+		tags[key] = stringValue(tag.Value)
+	}
+	return tags, nil
 }
 
 func (client *tencentSDKClient) DestroyComputeAllocation(request Request, env map[string]string) Response {
@@ -1372,6 +1514,9 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 	if strings.TrimSpace(request.Pool.InstanceType) == "" {
 		return Response{Ok: false, ErrorCode: "instance_type_required", Message: "The exact package instance type is required for compute sync.", Retryable: false}
 	}
+	if strings.TrimSpace(request.AccountId) == "" || strings.TrimSpace(request.Allocation.Id) == "" || !strings.HasPrefix(request.Allocation.InstanceId, "ins-") || strings.TrimSpace(request.Zone) == "" || !validOwnershipTags(request.Tags) || request.Tags["opl_account_id"] != request.AccountId || request.Tags["opl_resource_id"] != request.Allocation.Id {
+		return Response{Ok: false, ErrorCode: "compute_sync_identity_required", Message: "Exact compute account, resource, CVM instance, Zone, and ownership tags are required for compute sync.", Retryable: false}
+	}
 	machines, requestId, err := client.describeClusterMachines(request.Pool.NodePoolId)
 	if err != nil {
 		response := sdkErrorResponse("tencent_describe_cluster_machines_failed", err)
@@ -1379,9 +1524,11 @@ func (client *tencentSDKClient) SyncComputeAllocation(request Request, _ map[str
 		return response
 	}
 	machine := findComputeMachine(machines, request.Allocation)
-	cvm := client.computeRenewalReadback(request.Allocation)
+	cvm := client.computeRenewalReadback(request)
 	if !cvm.Ok {
-		cvm.ErrorCode = "tencent_sync_cvm_readback_failed"
+		if cvm.ErrorCode != "compute_instance_type_mismatch" {
+			cvm.ErrorCode = "tencent_sync_cvm_readback_failed"
+		}
 		return cvm
 	}
 	if machine == nil && cvm.Status == "external_deleted" {
@@ -1460,7 +1607,7 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	}
 	for field, value := range map[string]string{
 		"accountId": request.AccountId, "resourceId": request.Allocation.Id, "clusterId": request.Pool.ClusterId,
-		"nodePoolId": request.Pool.NodePoolId, "machineName": request.Allocation.MachineName,
+		"nodePoolId": request.Pool.NodePoolId, "instanceType": request.Pool.InstanceType, "machineName": request.Allocation.MachineName,
 		"instanceId": request.Allocation.InstanceId, "privateIp": request.Allocation.PrivateIp, "storageVolumeId": request.StorageVolumeId,
 	} {
 		if strings.TrimSpace(value) == "" {
@@ -1479,6 +1626,9 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	request.Storage.Id = request.StorageVolumeId
 	if request.Tags["opl_account_id"] != request.AccountId || !validCBSReadbackInput(request.Storage, request.Tags) {
 		return Response{Ok: false, ErrorCode: "provider_truth_cbs_ownership_required", Message: "Exact CBS ownership tags and storage facts are required for provider truth.", Retryable: false}
+	}
+	if !validOwnershipTags(request.ComputeTags) || request.ComputeTags["opl_account_id"] != request.AccountId || request.ComputeTags["opl_workspace_id"] != request.Tags["opl_workspace_id"] || request.ComputeTags["opl_resource_id"] != request.Allocation.Id {
+		return Response{Ok: false, ErrorCode: "provider_truth_compute_ownership_required", Message: "Exact CVM ownership tags are required for provider truth.", Retryable: false}
 	}
 	storagePresent, cbsStatus, cbsRequestID, cbsFacts, err := client.cbsVolumeTruth(request.Storage, request.Tags)
 	if err != nil {
@@ -1552,6 +1702,9 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	if stringValue(tkeInstance.InstanceId) != request.Allocation.MachineName {
 		return Response{Ok: false, ErrorCode: "provider_truth_node_mismatch", Message: "The supplied machine does not identify the TKE cluster instance at the private IP.", ProviderRequestId: tkeRequestID, ProviderData: providerData, Retryable: false}
 	}
+	if stringValue(machine.InstanceType) != request.Pool.InstanceType || stringValue(cvmInstance.InstanceType) != request.Pool.InstanceType {
+		return Response{Ok: false, ErrorCode: "provider_truth_compute_sku_mismatch", Message: "The TKE machine and CVM instance type must exactly match the requested package.", ProviderRequestId: firstNonEmpty(cvmRequestID, machineRequestID), ProviderData: providerData, Retryable: false}
+	}
 	if stringValue(cvmInstance.InstanceId) != request.Allocation.InstanceId || stringValue(cvmInstance.InstanceName) != request.Allocation.Id ||
 		!containsString(cvmInstance.PrivateIpAddresses, request.Allocation.PrivateIp) {
 		return Response{Ok: false, ErrorCode: "provider_truth_cvm_identity_mismatch", Message: "The supplied resource, instance, machine, and node do not identify the same CVM.", ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
@@ -1561,7 +1714,16 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 		zone = stringValue(cvmInstance.Placement.Zone)
 	}
 	deadline := normalizeTencentDeadline(stringValue(cvmInstance.ExpiredTime))
-	if stringValue(cvmInstance.InstanceChargeType) != "PREPAID" || stringValue(cvmInstance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || deadline == "" || strings.TrimSpace(zone) == "" {
+	cvmTags, tagErr := cvmOwnershipTags(cvmInstance)
+	if tagErr != nil {
+		return Response{Ok: false, ErrorCode: "provider_truth_cvm_ownership_mismatch", Message: tagErr.Error(), ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
+	}
+	for _, key := range cbsOwnershipTagKeys {
+		if cvmTags[key] != request.ComputeTags[key] {
+			return Response{Ok: false, ErrorCode: "provider_truth_cvm_ownership_mismatch", Message: "The exact CVM ownership tags do not match the compute allocation.", ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
+		}
+	}
+	if stringValue(cvmInstance.InstanceChargeType) != "PREPAID" || stringValue(cvmInstance.RenewFlag) != "NOTIFY_AND_MANUAL_RENEW" || deadline == "" || strings.TrimSpace(zone) == "" || zone != cbsFacts["storageZone"] {
 		return Response{Ok: false, ErrorCode: "provider_truth_cvm_billing_mismatch", Message: "The exact CVM does not have required PREPAID manual-renew billing facts.", ProviderRequestId: cvmRequestID, ProviderData: providerData, Retryable: false}
 	}
 	tkeStatus := strings.ToUpper(strings.TrimSpace(stringValue(tkeInstance.InstanceState)))
@@ -1575,7 +1737,11 @@ func (client *tencentSDKClient) ProviderTruth(request Request, _ map[string]stri
 	providerData["renewFlag"] = stringValue(cvmInstance.RenewFlag)
 	providerData["deadline"] = deadline
 	providerData["zone"] = zone
-	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, CBSStatus: cbsStatus, Status: "present", MachineType: "NativeCVM", ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID), ProviderData: providerData}
+	providerData["instanceType"] = request.Pool.InstanceType
+	for _, key := range cbsOwnershipTagKeys {
+		providerData["computeTag:"+key] = cvmTags[key]
+	}
+	return Response{Ok: true, PoolId: request.Pool.Id, NodePoolId: request.Pool.NodePoolId, InstanceId: request.Allocation.InstanceId, PrivateIp: request.Allocation.PrivateIp, MachinePresent: &machinePresent, StoragePresent: &storagePresent, CVMStatus: cvmStatus, TKEStatus: tkeStatus, CBSStatus: cbsStatus, Status: "present", MachineType: "NativeCVM", InstanceType: request.Pool.InstanceType, ProviderRequestId: firstNonEmpty(cbsRequestID, cvmRequestID), ProviderData: providerData}
 }
 
 func (client *tencentSDKClient) cbsVolumeTruth(storage StorageInput, tags map[string]string) (bool, string, string, map[string]string, error) {

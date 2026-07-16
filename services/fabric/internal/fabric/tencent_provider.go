@@ -64,7 +64,7 @@ func (p *TencentProvider) MonthlyPreflight(ctx context.Context, input MonthlyPre
 		response.ProviderData["renewFlag"] == "NOTIFY_AND_MANUAL_RENEW" && response.ProviderData["zone"] == input.Zone
 	if input.ResourceType == "compute" {
 		validFacts = validFacts && response.NodePoolID == plan.NodePoolID && response.InstanceType == plan.InstanceType && response.InstanceAvailable && len(response.Zones) == 1 && response.Zones[0] == input.Zone &&
-			strings.TrimSpace(response.ProviderRequestIDs["nodePool"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["subnets"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["availability"]) != ""
+			response.RemainingQuota >= uint64(request.Pool.DesiredReplicas) && strings.TrimSpace(response.ProviderRequestIDs["nodePool"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["subnets"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["availability"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["quota"]) != ""
 	} else {
 		validFacts = validFacts && response.ProviderData["diskType"] == request.Storage.DiskType && response.ProviderData["sizeGb"] == strconv.Itoa(input.SizeGB) &&
 			strings.TrimSpace(response.ProviderRequestIDs["quota"]) != "" && strings.TrimSpace(response.ProviderRequestIDs["price"]) != ""
@@ -165,6 +165,7 @@ type provisionerResponse struct {
 	Machines           []provisionerMachine `json:"machines,omitempty"`
 	InstanceType       string               `json:"instanceType,omitempty"`
 	InstanceAvailable  bool                 `json:"instanceAvailable,omitempty"`
+	RemainingQuota     uint64               `json:"remainingQuota,omitempty"`
 	Zones              []string             `json:"zones,omitempty"`
 }
 
@@ -255,6 +256,8 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 		Action:    "sync_compute_allocation",
 		AccountID: allocation.AccountID,
 		PackageID: allocation.PackageID,
+		Zone:      allocation.ProviderData["zone"],
+		Tags:      allocation.CostTags,
 		Pool:      provisionerPool{ID: allocation.PoolID, NodePoolID: allocation.NodePoolID, InstanceType: plan.InstanceType},
 		Allocation: provisionerAllocation{
 			ID:          allocation.ID,
@@ -299,12 +302,17 @@ func (p *TencentProvider) SyncComputeAllocation(ctx context.Context, allocation 
 }
 
 func (p *TencentProvider) RenewComputeAllocation(ctx context.Context, allocation ComputeAllocation) (ComputeAllocation, error) {
-	if allocation.ID == "" || !strings.HasPrefix(firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), "ins-") || strings.TrimSpace(allocation.Deadline) == "" {
+	if !validComputeRenewalIdentity(allocation) {
 		return ComputeAllocation{}, fmt.Errorf("compute_allocation_renew_identity_required")
 	}
+	expectedInstanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
+	expectedInstanceType := allocation.ProviderData["instanceType"]
+	expectedZone := allocation.ProviderData["zone"]
+	expectedTags := allocation.CostTags
 	response, err := p.provision(ctx, provisionerRequest{
-		Action: "renew_compute_allocation", AccountID: allocation.AccountID,
-		Allocation: provisionerAllocation{ID: allocation.ID, InstanceID: firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID), Deadline: allocation.Deadline},
+		Action: "renew_compute_allocation", AccountID: allocation.AccountID, Zone: allocation.ProviderData["zone"], Tags: allocation.CostTags,
+		Pool:       provisionerPool{InstanceType: allocation.ProviderData["instanceType"]},
+		Allocation: provisionerAllocation{ID: allocation.ID, InstanceID: expectedInstanceID, PrivateIP: allocation.PrivateIP, Deadline: allocation.Deadline},
 	})
 	if err != nil {
 		return ComputeAllocation{}, err
@@ -327,6 +335,14 @@ func (p *TencentProvider) RenewComputeAllocation(ctx context.Context, allocation
 	allocation.Deadline = firstNonEmpty(response.ProviderData["deadline"], allocation.Deadline)
 	if !response.OK {
 		return allocation, provisionerError(response)
+	}
+	if response.InstanceID != expectedInstanceID || response.ProviderData["instanceType"] != expectedInstanceType || response.ProviderData["zone"] != expectedZone {
+		return allocation, fmt.Errorf("compute_renewal_readback_mismatch")
+	}
+	for _, key := range []string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"} {
+		if response.ProviderData[key] != expectedTags[key] {
+			return allocation, fmt.Errorf("compute_renewal_readback_mismatch")
+		}
 	}
 	return allocation, nil
 }
@@ -611,9 +627,38 @@ func (p *TencentProvider) DestroyStorageSnapshot(ctx context.Context, snapshot S
 	return snapshot, nil
 }
 
-func (p *TencentProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error) {
-	if input.VolumeID == "" {
-		return StorageAttachment{}, fmt.Errorf("storage_volume_id_required")
+func (p *TencentProvider) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, compute ComputeAllocation, volume StorageVolume) (StorageAttachment, error) {
+	pvcName := storagePVCName(volume)
+	if input.VolumeID == "" || strings.TrimSpace(input.WorkspaceID) == "" || pvcName == "" {
+		return StorageAttachment{}, fmt.Errorf("storage_attachment_provider_identity_required")
+	}
+	serviceName, workloadPVCName, err := p.workspaceRuntimeResourcesStrict(ctx, input.WorkspaceID, false)
+	if err != nil {
+		return StorageAttachment{}, err
+	}
+	if serviceName == "" || workloadPVCName != pvcName {
+		return StorageAttachment{}, fmt.Errorf("storage_attachment_workload_identity_required")
+	}
+	raw, err := p.kubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "--ignore-not-found", "-o", "json"}, nil)
+	if err != nil {
+		return StorageAttachment{}, err
+	}
+	items := kubectlItems(raw)
+	deployment := findK8s(items, "Deployment", serviceName)
+	pvc := findK8s(items, "PersistentVolumeClaim", pvcName)
+	if nested(deployment, "metadata", "labels", "oplcloud.cn/workspace-id") != input.WorkspaceID || stringValue(nested(pvc, "status", "phase")) != "Bound" || !workloadUsesPVC(deployment, pvcName) {
+		return StorageAttachment{}, fmt.Errorf("storage_attachment_workload_not_ready")
+	}
+	readyPod := false
+	for _, item := range p.workspacePods(ctx, input.WorkspaceID) {
+		pod, _ := item.(map[string]any)
+		if nested(pod, "metadata", "labels", "oplcloud.cn/workspace-id") == input.WorkspaceID && stringValue(nested(pod, "status", "phase")) == "Running" && conditionStatuses(nested(pod, "status", "conditions"))["Ready"] == "True" && workloadUsesPVC(pod, pvcName) {
+			readyPod = true
+			break
+		}
+	}
+	if !readyPod {
+		return StorageAttachment{}, fmt.Errorf("storage_attachment_workload_not_ready")
 	}
 	now := time.Now().UTC()
 	id := fabricID("att", input.WorkspaceID, now)
@@ -625,7 +670,7 @@ func (p *TencentProvider) CreateStorageAttachment(_ context.Context, input Stora
 		VolumeID:             input.VolumeID,
 		Status:               "attached",
 		Provider:             "tencent-tke",
-		ProviderAttachmentID: "deployment/" + compute.ServiceName + ":pvc/" + storagePVCName(volume),
+		ProviderAttachmentID: "deployment/" + serviceName + ":pvc/" + pvcName,
 		ProviderRequestID:    providerRequestID("storage-attach", input.IdempotencyKey),
 		CostTags:             tags,
 		CreatedAt:            now,
@@ -703,7 +748,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		{Name: "deployment_ready", OK: readyReplicas > 0 && availableReplicas > 0, Details: mergeDetails(map[string]any{"readyReplicas": readyReplicas, "availableReplicas": availableReplicas}, podDetails)},
 		{Name: "workspace_image_pulled", OK: image == os.Getenv("OPL_WORKSPACE_IMAGE")},
 		{Name: "pvc_bound", OK: stringValue(nested(pvc, "status", "phase")) == "Bound"},
-		{Name: "deployment_uses_retained_pvc", OK: deploymentUsesPVC(deployment, pvcName)},
+		{Name: "deployment_uses_retained_pvc", OK: workloadUsesPVC(deployment, pvcName)},
 		{Name: "service_targets_workspace", OK: selectorMatches(service, deployment)},
 		{Name: "service_endpoints_ready", OK: readyAddresses > 0, Details: mergeDetails(map[string]any{"readyAddresses": readyAddresses}, podDetails)},
 		{Name: "ingress_routes_workspace_gateway", OK: ingressRoutesGateway(ingress)},
@@ -1264,8 +1309,11 @@ func firstContainerField(deployment map[string]any, key string) any {
 	return container[key]
 }
 
-func deploymentUsesPVC(deployment map[string]any, pvcName string) bool {
-	volumes, _ := nested(deployment, "spec", "template", "spec", "volumes").([]any)
+func workloadUsesPVC(workload map[string]any, pvcName string) bool {
+	volumes, _ := nested(workload, "spec", "template", "spec", "volumes").([]any)
+	if len(volumes) == 0 {
+		volumes, _ = nested(workload, "spec", "volumes").([]any)
+	}
 	for _, volume := range volumes {
 		asMap, _ := volume.(map[string]any)
 		if nested(asMap, "persistentVolumeClaim", "claimName") == pvcName {

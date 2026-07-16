@@ -356,7 +356,7 @@ func writeResult(w http.ResponseWriter, body any, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if errors.Is(err, fabric.ErrRuntimeIdempotencyConflict) || errors.Is(err, fabric.ErrRuntimeOperationInProgress) || errors.Is(err, fabric.ErrRuntimeOperationFailed) || errors.Is(err, fabric.ErrGatewaySecretIdempotencyConflict) {
+	if errors.Is(err, fabric.ErrComputeIdempotencyConflict) || errors.Is(err, fabric.ErrRuntimeIdempotencyConflict) || errors.Is(err, fabric.ErrRuntimeOperationInProgress) || errors.Is(err, fabric.ErrRuntimeOperationFailed) || errors.Is(err, fabric.ErrGatewaySecretIdempotencyConflict) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

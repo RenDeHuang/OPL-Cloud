@@ -218,6 +218,7 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		resource.RenewFlag = machine.RenewFlag
 		resource.Deadline = machine.Deadline
 		resource.ProviderData = map[string]string{"instanceType": machine.InstanceType, "zone": machine.Zone, "chargeType": machine.ChargeType, "renewFlag": machine.RenewFlag, "deadline": machine.Deadline, "machineName": machine.MachineID}
+		resource.CostTags = oplCostTags(resource.AccountID, resource.WorkspaceID, resource.ID, claimed.ID)
 		resource.CreatedAt = firstTime(resource.CreatedAt, s.now())
 		if tagErr := s.provider.TagComputeMachine(ctx, machine, claimed); tagErr != nil {
 			resource.Status = "quarantined"

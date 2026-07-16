@@ -48,7 +48,7 @@ func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *tes
 			},
 			reply: provisionerResponse{
 				OK: true, Status: "ready", NodePoolID: "np-basic", InstanceType: "SA5.MEDIUM4", InstanceAvailable: true, Zones: []string{"na-siliconvalley-1"},
-				ProviderPriceCNY: 142.91, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity"},
+				ProviderPriceCNY: 142.91, RemainingQuota: 8, ProviderRequestIDs: map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity", "quota": "req-quota"},
 				ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": "na-siliconvalley-1"},
 			},
 		},
@@ -61,7 +61,7 @@ func TestTencentProviderMonthlyPreflightUsesExplicitReadOnlyProviderPaths(t *tes
 			},
 			reply: provisionerResponse{
 				OK: true, Status: "ready", NodePoolID: "np-pro", InstanceType: "SA5.2XLARGE16", InstanceAvailable: true, Zones: []string{"na-siliconvalley-1"},
-				ProviderPriceCNY: 571.64, ProviderRequestIDs: map[string]string{"nodePool": "req-pro-pool", "subnets": "req-pro-subnets", "availability": "req-pro-capacity"},
+				ProviderPriceCNY: 571.64, RemainingQuota: 8, ProviderRequestIDs: map[string]string{"nodePool": "req-pro-pool", "subnets": "req-pro-subnets", "availability": "req-pro-capacity", "quota": "req-pro-quota"},
 				ProviderData: map[string]string{"chargeType": "PREPAID", "periodMonths": "1", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "zone": "na-siliconvalley-1"},
 			},
 		},
@@ -448,6 +448,89 @@ func TestTencentRuntimeCreationUsesActualReadinessAfterApply(t *testing.T) {
 	}
 	if runtime.Ready || runtime.Status != "not_found" || runtime.Access.CredentialStatus == "configured" || len(calls) != 2 {
 		t.Fatalf("apply must be followed by actual readiness: runtime=%#v calls=%#v", runtime, calls)
+	}
+}
+
+func TestTencentStorageAttachmentRequiresExactReadyWorkspaceWorkload(t *testing.T) {
+	newResources := func() (map[string]any, map[string]any, map[string]any) {
+		deployment := map[string]any{
+			"kind": "Deployment", "metadata": map[string]any{"name": "opl-workspace-alpha", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
+			"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}}}}},
+		}
+		pvc := map[string]any{"kind": "PersistentVolumeClaim", "metadata": map[string]any{"name": "opl-storage-alpha-data"}, "status": map[string]any{"phase": "Bound"}}
+		pod := map[string]any{
+			"kind": "Pod", "metadata": map[string]any{"name": "opl-workspace-alpha-7d6c", "labels": map[string]any{"oplcloud.cn/workspace-id": "ws-alpha"}},
+			"spec":   map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}}},
+			"status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+		}
+		return deployment, pvc, pod
+	}
+	newProvider := func(deployment, pvc, pod map[string]any) (*TencentProvider, *[][]string) {
+		provider := NewTencentProvider()
+		calls := &[][]string{}
+		provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			*calls = append(*calls, append([]string(nil), args...))
+			switch {
+			case slices.Equal(args, []string{"get", "deployment,service", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}):
+				items := []any{}
+				if deployment != nil {
+					items = append(items, deployment)
+				}
+				return mustJSON(map[string]any{"kind": "List", "items": items}), nil
+			case slices.Equal(args, []string{"get", "deployment/opl-workspace-alpha", "pvc/opl-storage-alpha-data", "--ignore-not-found", "-o", "json"}):
+				return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, pvc}}), nil
+			case slices.Equal(args, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}):
+				items := []any{}
+				if pod != nil {
+					items = append(items, pod)
+				}
+				return mustJSON(map[string]any{"kind": "List", "items": items}), nil
+			default:
+				t.Fatalf("unexpected kubectl args: %#v", args)
+				return nil, nil
+			}
+		}
+		return provider, calls
+	}
+	create := func(provider *TencentProvider) (StorageAttachment, error) {
+		return provider.CreateStorageAttachment(context.Background(), StorageAttachmentInput{WorkspaceID: "ws-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", IdempotencyKey: "attach-alpha"},
+			ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha"}, StorageVolume{ID: "storage-alpha", ProviderResourceID: "disk-storage-alpha"})
+	}
+
+	t.Run("exact workload", func(t *testing.T) {
+		deployment, pvc, pod := newResources()
+		provider, calls := newProvider(deployment, pvc, pod)
+		attachment, err := create(provider)
+		if err != nil || attachment.Status != "attached" || attachment.ProviderAttachmentID != "deployment/opl-workspace-alpha:pvc/opl-storage-alpha-data" || len(*calls) != 3 {
+			t.Fatalf("attachment=%#v err=%v calls=%#v", attachment, err, *calls)
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		configure func(*map[string]any, *map[string]any, *map[string]any)
+	}{
+		{name: "workload missing", configure: func(deployment, _, _ *map[string]any) { *deployment = nil }},
+		{name: "PVC pending", configure: func(_, pvc, _ *map[string]any) { (*pvc)["status"] = map[string]any{"phase": "Pending"} }},
+		{name: "deployment uses another PVC", configure: func(deployment, _, _ *map[string]any) {
+			(*deployment)["spec"] = map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-other"}}}}}}
+		}},
+		{name: "pod missing", configure: func(_, _, pod *map[string]any) { *pod = nil }},
+		{name: "pod not ready", configure: func(_, _, pod *map[string]any) {
+			(*pod)["status"] = map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "False"}}}
+		}},
+		{name: "pod uses another PVC", configure: func(_, _, pod *map[string]any) {
+			(*pod)["spec"] = map[string]any{"volumes": []any{map[string]any{"persistentVolumeClaim": map[string]any{"claimName": "pvc-other"}}}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment, pvc, pod := newResources()
+			tc.configure(&deployment, &pvc, &pod)
+			provider, _ := newProvider(deployment, pvc, pod)
+			if attachment, err := create(provider); err == nil || attachment.Status == "attached" {
+				t.Fatalf("invalid workload attached storage: attachment=%#v err=%v", attachment, err)
+			}
+		})
 	}
 }
 
@@ -908,16 +991,16 @@ func TestTencentProviderRenewsCBSAndPersistsDeadlineReadback(t *testing.T) {
 func TestTencentProviderRenewsCVMAndPersistsBillingReadback(t *testing.T) {
 	provider := NewTencentProvider()
 	provider.provision = func(_ context.Context, request provisionerRequest) (provisionerResponse, error) {
-		if request.Action != "renew_compute_allocation" || request.Allocation.ID != "compute-alpha" || request.Allocation.InstanceID != "ins-basic-1" || request.Allocation.Deadline != "2026-08-16T00:00:00Z" {
+		if request.Action != "renew_compute_allocation" || request.Allocation.ID != "compute-alpha" || request.Allocation.InstanceID != "ins-basic-1" || request.Allocation.Deadline != "2026-08-16T00:00:00Z" || request.Pool.InstanceType != "SA5.MEDIUM4" || request.Zone != "ap-guangzhou-3" || !reflect.DeepEqual(request.Tags, oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-alpha")) {
 			t.Fatalf("renew request = %#v", request)
 		}
 		return provisionerResponse{
 			OK: true, InstanceID: "ins-basic-1", CVMStatus: "RUNNING", Status: "provider_ready", ProviderRequestID: "req-renew-cvm",
-			ProviderData: map[string]string{"deadline": "2026-09-16T00:00:00Z", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-guangzhou-3"},
+			ProviderData: map[string]string{"deadline": "2026-09-16T00:00:00Z", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-guangzhou-3", "instanceType": "SA5.MEDIUM4", "opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "compute-alpha", "opl_operation_id": "owner-alpha"},
 		}, nil
 	}
 	allocation, err := provider.RenewComputeAllocation(context.Background(), ComputeAllocation{
-		ID: "compute-alpha", InstanceID: "ins-basic-1", Status: "running", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"zone": "ap-guangzhou-3"},
+		ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", InstanceID: "ins-basic-1", Status: "running", Deadline: "2026-08-16T00:00:00Z", ProviderData: map[string]string{"zone": "ap-guangzhou-3", "instanceType": "SA5.MEDIUM4"}, CostTags: oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-alpha"),
 	})
 	if err != nil || allocation.Deadline != "2026-09-16T00:00:00Z" || allocation.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || allocation.ChargeType != "PREPAID" || allocation.ProviderData["renewalResult"] != "renewed" || allocation.ProviderRequestID != "req-renew-cvm" {
 		t.Fatalf("renewed allocation=%#v err=%v", allocation, err)
@@ -930,7 +1013,10 @@ func TestTencentProviderRenewFailuresPreserveProviderIdentityAndReadback(t *test
 		provider.provision = func(context.Context, provisionerRequest) (provisionerResponse, error) {
 			return provisionerResponse{OK: false, InstanceID: "ins-basic-1", ProviderRequestID: "req-renew-cvm", ErrorCode: "tencent_cvm_renewal_unconfirmed", ProviderData: map[string]string{"deadline": "2026-08-16T00:00:00Z", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "chargeType": "PREPAID", "describeCvmRequestId": "req-read-cvm"}}, nil
 		}
-		allocation, err := provider.RenewComputeAllocation(context.Background(), ComputeAllocation{ID: "compute-alpha", InstanceID: "ins-basic-1", Deadline: "2026-08-16T00:00:00Z"})
+		allocation, err := provider.RenewComputeAllocation(context.Background(), ComputeAllocation{
+			ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", InstanceID: "ins-basic-1", Deadline: "2026-08-16T00:00:00Z",
+			ProviderData: map[string]string{"instanceType": "SA5.MEDIUM4", "zone": "ap-guangzhou-3"}, CostTags: oplCostTags("acct-alpha", "ws-alpha", "compute-alpha", "owner-alpha"),
+		})
 		if err == nil || allocation.ID != "compute-alpha" || allocation.InstanceID != "ins-basic-1" || allocation.ProviderRequestID != "req-renew-cvm" || allocation.ProviderData["describeCvmRequestId"] != "req-read-cvm" {
 			t.Fatalf("failed CVM renewal lost evidence: allocation=%#v err=%v", allocation, err)
 		}

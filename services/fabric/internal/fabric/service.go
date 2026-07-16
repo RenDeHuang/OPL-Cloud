@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"sync"
@@ -93,7 +94,7 @@ func (s *Service) MonthlyPreflight(ctx context.Context, input MonthlyPreflightIn
 	if err != nil {
 		return MonthlyPreflight{}, fmt.Errorf("%w: %v", ErrMonthlyPreflightUnavailable, err)
 	}
-	requiredRequestIDs := []string{"nodePool", "subnets", "availability"}
+	requiredRequestIDs := []string{"nodePool", "subnets", "availability", "quota"}
 	if input.ResourceType == "storage" {
 		requiredRequestIDs = []string{"quota", "price"}
 	}
@@ -117,14 +118,13 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 	if input.PackageID != "basic" && input.PackageID != "pro" {
 		return ComputeAllocation{}, ErrUnsupportedComputePackage
 	}
-	now := time.Now().UTC()
-	id := firstNonEmpty(input.ID, fabricID("ca", firstNonEmpty(input.WorkspaceID, input.AccountID, "compute"), now))
-	input.ID = id
-	operation := newOperation("create_compute_allocation", "compute_allocation", id, input.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), now)
-	input.OperationID = operation.OperationID
-	if err := s.recordOperation(ctx, operation, "started", ComputeAllocation{ID: id, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: firstNonEmpty(input.PackageID, "basic"), Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: providerRequestID("compute", input.IdempotencyKey), CreatedAt: now}, nil); err != nil {
-		return ComputeAllocation{}, err
+	if strings.TrimSpace(input.IdempotencyKey) == "" {
+		return ComputeAllocation{}, fmt.Errorf("compute_idempotency_key_required")
 	}
+	requestHash := hashInput(input)
+	now := s.now()
+	id := firstNonEmpty(input.ID, "ca_"+stableSuffix("create_compute_allocation", input.IdempotencyKey)[:18])
+	input.ID = id
 	allocation := ComputeAllocation{
 		ID:                id,
 		AccountID:         input.AccountID,
@@ -135,12 +135,39 @@ func (s *Service) CreateComputeAllocation(ctx context.Context, input ComputeAllo
 		ProviderRequestID: providerRequestID("compute", input.IdempotencyKey),
 		CreatedAt:         now,
 	}
+	operation := newOperation("create_compute_allocation", "compute_allocation", id, input.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
+	operation.ID = "fop_compute_claim_" + stableSuffix("create_compute_allocation", input.IdempotencyKey)
+	operation.Status = "started"
+	operation.CreatedAt = now
+	fillOperationResource(&operation, allocation)
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
+	if err != nil {
+		return ComputeAllocation{}, err
+	}
+	if !claimed {
+		return replayComputeAllocationOperation(stored, requestHash)
+	}
+	input.OperationID = operation.OperationID
 	s.mu.Lock()
 	s.computes[allocation.ID] = allocation
 	s.mu.Unlock()
 
 	go func() { _ = s.reconcileComputePool(allocation.PackageID, input.DryRun) }()
 	return allocation, nil
+}
+
+func replayComputeAllocationOperation(operation FabricOperation, requestHash string) (ComputeAllocation, error) {
+	if operation.RequestHash != requestHash {
+		return ComputeAllocation{}, ErrComputeIdempotencyConflict
+	}
+	var allocation ComputeAllocation
+	if !decodeOperationResource(operation, &allocation) {
+		return ComputeAllocation{}, ErrComputeOperationFailed
+	}
+	if operation.Status == "started" || operation.Status == "succeeded" {
+		return allocation, nil
+	}
+	return allocation, ErrComputeOperationFailed
 }
 
 func (s *Service) GetComputeAllocation(_ context.Context, allocationID string) (ComputeAllocation, bool) {
@@ -260,7 +287,7 @@ func (s *Service) RenewComputeAllocation(ctx context.Context, allocationID, idem
 		s.mu.Lock()
 		existing := s.computes[allocationID]
 		s.mu.Unlock()
-		if existing.ID == "" || !strings.HasPrefix(firstNonEmpty(existing.InstanceID, existing.CVMInstanceID), "ins-") || strings.TrimSpace(existing.Deadline) == "" {
+		if !validComputeRenewalIdentity(existing) {
 			return fmt.Errorf("compute_allocation_renew_identity_required")
 		}
 		requestHash := hashInput(map[string]string{"id": allocationID})
@@ -288,7 +315,10 @@ func (s *Service) RenewComputeAllocation(ctx context.Context, allocationID, idem
 				return err
 			}
 		}
-		result, err = s.provider.RenewComputeAllocation(lockCtx, existing)
+		request := existing
+		request.ProviderData = maps.Clone(existing.ProviderData)
+		request.CostTags = maps.Clone(existing.CostTags)
+		result, err = s.provider.RenewComputeAllocation(lockCtx, request)
 		if err != nil {
 			_ = s.recordOperation(lockCtx, operation, "failed", result, err)
 			return err
@@ -1540,6 +1570,9 @@ func validateAttachmentInput(input StorageAttachmentInput, compute ComputeAlloca
 	if compute.AccountID == "" || volume.AccountID == "" || compute.AccountID != volume.AccountID {
 		return fmt.Errorf("resource_account_mismatch")
 	}
+	if strings.TrimSpace(input.WorkspaceID) == "" || input.WorkspaceID != compute.WorkspaceID || input.WorkspaceID != volume.WorkspaceID {
+		return fmt.Errorf("resource_workspace_mismatch")
+	}
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")
 	}
@@ -1548,10 +1581,26 @@ func validateAttachmentInput(input StorageAttachmentInput, compute ComputeAlloca
 
 func validComputeRenewal(existing, renewed ComputeAllocation) bool {
 	instanceID := firstNonEmpty(existing.InstanceID, existing.CVMInstanceID)
+	if !validComputeRenewalIdentity(existing) || !validComputeRenewalIdentity(renewed) || renewed.ProviderData["instanceType"] != existing.ProviderData["instanceType"] || renewed.ProviderData["zone"] != existing.ProviderData["zone"] {
+		return false
+	}
+	for _, key := range []string{"opl_account_id", "opl_workspace_id", "opl_resource_id", "opl_operation_id"} {
+		if renewed.CostTags[key] != existing.CostTags[key] {
+			return false
+		}
+	}
 	return renewed.ID == existing.ID && renewed.AccountID == existing.AccountID && renewed.WorkspaceID == existing.WorkspaceID &&
 		firstNonEmpty(renewed.InstanceID, renewed.CVMInstanceID) == instanceID &&
 		(renewed.InstanceID == "" || renewed.InstanceID == instanceID) && (renewed.CVMInstanceID == "" || renewed.CVMInstanceID == instanceID) &&
 		renewed.ChargeType == "PREPAID" && renewed.RenewFlag == "NOTIFY_AND_MANUAL_RENEW" && renewalDeadlineIncreased(existing.Deadline, renewed.Deadline)
+}
+
+func validComputeRenewalIdentity(allocation ComputeAllocation) bool {
+	instanceID := firstNonEmpty(allocation.InstanceID, allocation.CVMInstanceID)
+	if allocation.ID == "" || allocation.AccountID == "" || allocation.WorkspaceID == "" || !strings.HasPrefix(instanceID, "ins-") || strings.TrimSpace(allocation.Deadline) == "" || strings.TrimSpace(allocation.ProviderData["instanceType"]) == "" || strings.TrimSpace(allocation.ProviderData["zone"]) == "" {
+		return false
+	}
+	return allocation.CostTags["opl_account_id"] == allocation.AccountID && allocation.CostTags["opl_workspace_id"] == allocation.WorkspaceID && allocation.CostTags["opl_resource_id"] == allocation.ID && strings.TrimSpace(allocation.CostTags["opl_operation_id"]) != ""
 }
 
 func validStorageRenewal(existing, renewed StorageVolume) bool {
@@ -1575,6 +1624,9 @@ func validateRuntimeInput(input WorkspaceRuntimeInput, compute ComputeAllocation
 	}
 	if compute.AccountID == "" || volume.AccountID == "" || compute.AccountID != volume.AccountID {
 		return fmt.Errorf("resource_account_mismatch")
+	}
+	if strings.TrimSpace(input.WorkspaceID) == "" || input.WorkspaceID != compute.WorkspaceID || input.WorkspaceID != volume.WorkspaceID {
+		return fmt.Errorf("resource_workspace_mismatch")
 	}
 	if !isReadyResourceStatus(compute.Status) || volume.Status != "ready" {
 		return fmt.Errorf("resource_status_invalid")
