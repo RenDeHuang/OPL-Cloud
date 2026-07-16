@@ -289,7 +289,6 @@ mutation, or receipt correction.
 report := map[string]any{
 	"id": "reconciliation-" + stableID(idempotencyKey)[:18],
 	"status": status,
-	"checkedAt": now.UTC().Format(time.RFC3339),
 	"counts": map[string]any{
 		"billingOperations": checked,
 		"matched": matched,
@@ -298,6 +297,10 @@ report := map[string]any{
 	"exceptions": exceptions,
 }
 ```
+
+Do not put a recomputed timestamp in the report. Ledger hashes the complete
+report for idempotency, so the same `Idempotency-Key` must produce identical
+content; Ledger's `createdAt` is the audit timestamp.
 
 Exceptions contain stable resource references and machine codes only. Treat any
 source unavailable as an exception; exclude raw bodies, notes, account emails,
