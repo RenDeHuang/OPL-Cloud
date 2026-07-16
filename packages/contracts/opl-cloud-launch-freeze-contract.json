@@ -75,6 +75,12 @@
   "monthlySettlement": {
     "balanceOwner": "Sub2API",
     "moneyWriteApi": "POST /api/v1/admin/redeem-codes/create-and-redeem",
+    "conflictReplayEvidence": {
+      "source": "GET /api/v1/admin/users/:id/balance-history",
+      "confirmation": "exactly_one_same_code_user_type_balance_status_used_signed_amount",
+      "missingOrUnavailable": "charge_unknown_retryable",
+      "duplicateOrMismatch": "charge_conflict_manual_review"
+    },
     "protocol": ["debit", "provision", "claim", "activate"],
     "preconditions": ["validate account and quote", "read-only provider capacity and price preflight", "confirm live Sub2API balance"],
     "confirmedNoResourceAfterDebit": "idempotent_refund",
@@ -90,7 +96,7 @@
     "listApi": "GET /api/workspace-launches",
     "detailApi": "GET /api/workspace-launches/{id}",
     "persistence": "control_plane_runtime_operations with action=workspace.launch",
-    "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "sub2api_total_balance_preflight", "persist_launch"],
+    "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "workspace_key_preflight", "sub2api_total_balance_preflight", "persist_launch"],
     "totalBalanceSemantics": "read_only_preflight_not_hold_or_reservation",
     "backgroundProgression": "The existing provider reconciliation worker resumes stable compute, storage, attachment, Gateway Secret, Runtime, and receipt sub-operations after browser close or process restart.",
     "currentImplementation": "Quote composition, one-submit persistence, total balance preflight, tenant polling, phase recovery, and replay tests exist locally; deployed browser, live Sub2API, and live Tencent evidence remain pending."
@@ -144,6 +150,12 @@
     "keyName": "opl-workspace",
     "activeKeyCardinality": 1,
     "adminKeyListEndpoint": "GET /api/v1/admin/users/:id/api-keys",
+    "keyListPaginationRule": "freeze first-page total pages and requested page_size; require coherent metadata, exact page numbers and ceiling, bounded items, positive unique Key IDs, mapped user_id on every item, and collected item count equal total before cardinality selection",
+    "summaryApi": "GET /api/gateway/summary",
+    "summaryKeyVisibility": "masked_only_even_when_reveal_query_is_present",
+    "revealApi": "POST /api/gateway/keys/opl-workspace/reveal",
+    "revealAuthorization": "owner_and_current_session_account_with_csrf",
+    "revealCacheControl": "private, no-store",
     "requiredCapabilities": ["mapped_user_balance", "mapped_user_key_list", "request_usage_list", "aggregate_usage_stats", "deterministic_idempotent_balance_adjustment"],
     "compatibilityEvidence": ["contract_tests", "read_only_production_probe"],
     "usageScope": ["user_id", "api_key_id"],
@@ -156,7 +168,7 @@
     "keyDTOUsageSource": ["quota_used", "usage_5h", "usage_1d", "usage_7d", "last_used_at"],
     "keyPersistence": "Kubernetes Secret only",
     "ownerOnlyReveal": true,
-    "currentImplementation": "Control Plane capability calls no longer gate on the reported Sub2API version. Scoped request usage, aggregate stats, integer actual_cost projection, and balance-history reads are CI-verified; a real model request and production readback remain pending."
+    "currentImplementation": "Control Plane capability calls no longer gate on the reported Sub2API version. Full coherent Key and balance-history pagination, masked-only summary, audited POST-only owner reveal, Key-before-balance paid-launch preflight, exact-history adjustment replay, scoped usage, and integer actual_cost projection are CI-verified; a real model request and production readback remain pending."
   },
   "consoleFinancialProjection": {
     "mode": "read_only_projection",

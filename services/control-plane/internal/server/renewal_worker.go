@@ -189,7 +189,9 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	row["sub2apiRedeemCode"] = monthlyRedeemCode(monthlyEnvironment(), operationID)
 	row["sub2apiRefundCode"] = monthlyRefundCode(monthlyEnvironment(), operationID)
 	row["lastReceiptId"], row["postChargeBalanceKnown"], row["postChargeBalanceUsdMicros"] = "", false, int64(0)
-	delete(row, "lastBillingError")
+	if stringValue(row["lastBillingError"]) != "sub2api_charge_unconfirmed" {
+		delete(row, "lastBillingError")
+	}
 	row, _, err = app.tables.ClaimResourceBillingOperation(ctx, resourceType, row)
 	if err != nil {
 		return row, err
@@ -232,7 +234,9 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 		_ = app.saveMonthlyResource(ctx, resourceType, row)
 		return row, errors.New("fabric_monthly_preflight_invalid")
 	}
-	delete(row, "lastBillingError")
+	if stringValue(row["lastBillingError"]) != "sub2api_charge_unconfirmed" {
+		delete(row, "lastBillingError")
+	}
 	userID, err := app.sub2APIUserID(ctx, stringValue(row["accountId"]))
 	if err != nil {
 		return row, err

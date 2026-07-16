@@ -114,12 +114,12 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusConflict, errMonthlyAccountUnmapped.Error())
 			return
 		}
-		balance, err := service.Sub2APIBalance(r.Context(), sub2APIUserID)
+		summary, err := service.GatewaySummary(r.Context(), sub2APIUserID)
 		if err != nil {
-			writeUpstreamError(w, err)
+			writeGatewayKeyError(w, err)
 			return
 		}
-		if balance.USDMicros < operation.TotalChargeUSDMicros {
+		if summary.Balance.USDMicros < operation.TotalChargeUSDMicros {
 			writeError(w, http.StatusConflict, errMonthlyInsufficientBalance.Error())
 			return
 		}

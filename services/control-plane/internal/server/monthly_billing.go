@@ -163,7 +163,9 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 			_ = app.saveMonthlyResource(ctx, input.ResourceType, row)
 			return row, errors.New("fabric_monthly_preflight_invalid")
 		}
-		delete(row, "lastBillingError")
+		if stringValue(row["lastBillingError"]) != "sub2api_charge_unconfirmed" {
+			delete(row, "lastBillingError")
+		}
 		balance, err := service.Sub2APIBalance(ctx, sub2APIUserID)
 		if err != nil {
 			return row, err
@@ -247,6 +249,9 @@ func (app *controlPlaneServer) resumeMonthlyPurchase(ctx context.Context, servic
 }
 
 func (app *controlPlaneServer) chargeMonthlyOperation(ctx context.Context, service *controlplane.Service, row map[string]any, sub2APIUserID, preChargeBalance int64) (map[string]any, error) {
+	if _, err := service.Sub2APIWorkspaceKey(ctx, sub2APIUserID); err != nil {
+		return row, err
+	}
 	chargeUSDMicros := int64(numberField(row, "chargeUsdMicros", 0))
 	verifyDelta := stringValue(row["lastBillingError"]) != "sub2api_charge_unconfirmed"
 	charge, err := service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{

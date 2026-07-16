@@ -206,11 +206,11 @@ func (s *Service) Sub2APIWorkspaceKey(ctx context.Context, userID int64) (client
 }
 
 func (s *Service) GatewaySummary(ctx context.Context, userID int64) (GatewaySummary, error) {
-	balance, err := s.Sub2APIBalance(ctx, userID)
+	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
 	if err != nil {
 		return GatewaySummary{}, err
 	}
-	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
+	balance, err := s.Sub2APIBalance(ctx, userID)
 	return GatewaySummary{Balance: balance, Key: key}, err
 }
 

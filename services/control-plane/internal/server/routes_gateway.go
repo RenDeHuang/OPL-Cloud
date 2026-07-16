@@ -90,34 +90,18 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if !ok {
 			return
 		}
-		reveal := r.URL.Query().Get("reveal") == "true"
-		user, _ := app.sessionUserContext(r)
-		if reveal && stringValue(user["role"]) != "owner" {
-			writeError(w, http.StatusForbidden, "gateway_key_reveal_forbidden")
-			return
-		}
 		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
 		if !ok {
 			return
 		}
 		summary, err := service.GatewaySummary(r.Context(), userID)
 		if err != nil {
-			switch {
-			case errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing):
-				writeError(w, http.StatusConflict, "gateway_key_missing")
-			case errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous):
-				writeError(w, http.StatusConflict, "gateway_key_ambiguous")
-			default:
-				writeUpstreamError(w, err)
-			}
+			writeGatewayKeyError(w, err)
 			return
 		}
 		apiKey := map[string]any{
 			"id": summary.Key.ID, "name": summary.Key.Name, "status": summary.Key.Status,
-			"maskedValue": maskedGatewayKey(summary.Key.Key), "revealed": reveal,
-		}
-		if reveal {
-			apiKey["value"] = summary.Key.Key
+			"maskedValue": maskedGatewayKey(summary.Key.Key), "revealed": false,
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"account": map[string]any{"sub2apiUserId": userID, "status": summary.Balance.Status},
@@ -133,6 +117,47 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			},
 		})
 	}))
+	mux.HandleFunc("POST /api/gateway/keys/opl-workspace/reveal", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		user, _ := app.sessionUserContext(r)
+		if stringValue(user["role"]) != "owner" {
+			writeError(w, http.StatusForbidden, "gateway_key_reveal_forbidden")
+			return
+		}
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
+			return
+		}
+		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
+		key, err := service.Sub2APIWorkspaceKey(r.Context(), userID)
+		if err != nil {
+			writeGatewayKeyError(w, err)
+			return
+		}
+		if err := app.appendAuditEvent(r, "gateway.key_reveal", "gateway_key", strconv.FormatInt(key.ID, 10), accountID, nil, map[string]any{
+			"id": key.ID, "name": key.Name, "status": key.Status,
+		}, "succeeded"); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"apiKey": map[string]any{
+			"id": key.ID, "name": key.Name, "status": key.Status, "value": key.Key,
+		}})
+	}))
+}
+
+func writeGatewayKeyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing):
+		writeError(w, http.StatusConflict, "gateway_key_missing")
+	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous):
+		writeError(w, http.StatusConflict, "gateway_key_ambiguous")
+	default:
+		writeUpstreamError(w, err)
+	}
 }
 
 func writeGatewayUsageError(w http.ResponseWriter, err error) {

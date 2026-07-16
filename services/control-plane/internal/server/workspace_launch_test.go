@@ -102,7 +102,7 @@ func newWorkspaceLaunchHTTPFixture(t *testing.T, balances ...int64) workspaceLau
 	events := []string{}
 	sub2API := &monthlySub2API{events: &events, balances: balances}
 	fabric := &monthlyFabric{events: &events}
-	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, sub2API), store)
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, &workspaceLaunchSub2API{monthlySub2API: sub2API}), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestWorkspaceLaunchTotalPreflightRejectsInsufficientBalanceWithoutSideEffec
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errMonthlyInsufficientBalance.Error()) {
 		t.Fatalf("insufficient launch status = %d, want 409: %s", response.Code, response.Body.String())
 	}
-	if want := []string{"fabric.monthly.preflight", "fabric.monthly.preflight", "sub2api.balance"}; !reflect.DeepEqual(*fixture.events, want) {
+	if want := []string{"fabric.monthly.preflight", "fabric.monthly.preflight", "sub2api.workspace_key", "sub2api.balance"}; !reflect.DeepEqual(*fixture.events, want) {
 		t.Fatalf("preflight events = %#v, want %#v", *fixture.events, want)
 	}
 	operations, _ := fixture.store.ListRuntimeOperations(context.Background())
@@ -145,6 +145,33 @@ func TestWorkspaceLaunchTotalPreflightRejectsInsufficientBalanceWithoutSideEffec
 	storages, _ := fixture.store.ListStorages(context.Background(), "acct-alpha")
 	if len(fixture.sub2API.charges) != 0 || len(fixture.sub2API.refunds) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 || len(operations) != 0 || len(computes) != 0 || len(storages) != 0 {
 		t.Fatalf("insufficient launch caused side effects: charges=%#v refunds=%#v compute=%#v storage=%#v operations=%#v", fixture.sub2API.charges, fixture.sub2API.refunds, fixture.fabric.computeIDs, fixture.fabric.storageIDs, operations)
+	}
+}
+
+func TestWorkspaceLaunchGatewayKeyPreflightFailsBeforeBalanceAndSideEffects(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "missing", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict, wantCode: "gateway_key_missing"},
+		{name: "ambiguous", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous"},
+		{name: "unavailable", err: errors.New("Sub2API unavailable"), wantStatus: http.StatusBadGateway, wantCode: "upstream_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			fixture.sub2API.workspaceKeyErr = tc.err
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+			if response.Code != tc.wantStatus || !strings.Contains(response.Body.String(), tc.wantCode) {
+				t.Fatalf("Gateway Key launch status = %d, want %d %s: %s", response.Code, tc.wantStatus, tc.wantCode, response.Body.String())
+			}
+			wantEvents := []string{"fabric.monthly.preflight", "fabric.monthly.preflight", "sub2api.workspace_key"}
+			operations, _ := fixture.store.ListRuntimeOperations(context.Background())
+			if !reflect.DeepEqual(*fixture.events, wantEvents) || len(operations) != 0 || len(fixture.sub2API.charges) != 0 || len(fixture.sub2API.refunds) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+				t.Fatalf("Gateway Key failure caused side effects: events=%#v operations=%#v charges=%#v refunds=%#v compute=%#v storage=%#v", *fixture.events, operations, fixture.sub2API.charges, fixture.sub2API.refunds, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+			}
+		})
 	}
 }
 
@@ -325,8 +352,9 @@ func (l *workspaceLaunchLedger) RecordReceipt(_ context.Context, input clients.R
 
 type workspaceLaunchSub2API struct{ *monthlySub2API }
 
-func (s *workspaceLaunchSub2API) WorkspaceKey(_ context.Context, userID int64) (clients.Sub2APIWorkspaceKey, error) {
-	return clients.Sub2APIWorkspaceKey{ID: 9, UserID: userID, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active"}, nil
+func (s *workspaceLaunchSub2API) WorkspaceKey(ctx context.Context, userID int64) (clients.Sub2APIWorkspaceKey, error) {
+	*s.events = append(*s.events, "sub2api.workspace_key")
+	return s.monthlySub2API.WorkspaceKey(ctx, userID)
 }
 
 type workspaceLaunchWorkerFixture struct {
@@ -403,10 +431,10 @@ func TestWorkspaceLaunchOrderPersistsEveryPhase(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantEvents := []string{
-		"fabric.monthly.preflight", "fabric.monthly.preflight", "sub2api.balance",
-		"fabric.monthly.preflight", "sub2api.balance", "sub2api.charge", "sub2api.balance", "fabric.compute.prepare",
-		"fabric.monthly.preflight", "sub2api.balance", "sub2api.charge", "sub2api.balance", "fabric.storage.prepare",
-		"fabric.attachment", "fabric.gateway-secret", "fabric.runtime", "ledger.workspace.receipt",
+		"fabric.monthly.preflight", "fabric.monthly.preflight", "sub2api.workspace_key", "sub2api.balance",
+		"fabric.monthly.preflight", "sub2api.balance", "sub2api.workspace_key", "sub2api.charge", "sub2api.balance", "fabric.compute.prepare",
+		"fabric.monthly.preflight", "sub2api.balance", "sub2api.workspace_key", "sub2api.charge", "sub2api.balance", "fabric.storage.prepare",
+		"fabric.attachment", "sub2api.workspace_key", "fabric.gateway-secret", "fabric.runtime", "ledger.workspace.receipt",
 	}
 	if !reflect.DeepEqual(*fixture.events, wantEvents) {
 		t.Fatalf("workspace launch events = %#v, want %#v", *fixture.events, wantEvents)

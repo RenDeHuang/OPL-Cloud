@@ -5,7 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,7 +25,7 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
-func TestGatewaySummaryUsesCurrentAccountAndOwnerReveal(t *testing.T) {
+func TestGatewaySummaryIsAlwaysMaskedAndOwnerRevealIsAudited(t *testing.T) {
 	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-owner","email":"gateway-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-gateway","sub2apiUserId":41}]`)
 	lastUsedAt := time.Date(2026, 7, 16, 8, 9, 10, 0, time.UTC)
 	sub2API := &testSub2APIClient{
@@ -37,6 +39,10 @@ func TestGatewaySummaryUsesCurrentAccountAndOwnerReveal(t *testing.T) {
 	}
 	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
 	session := loginForTest(t, server, "gateway-owner@example.com", "correct horse battery staple")
+	var logs bytes.Buffer
+	previousLogOutput := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
 
 	masked := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?sub2apiUserId=999", "")
 	if masked.Code != http.StatusOK {
@@ -69,16 +75,32 @@ func TestGatewaySummaryUsesCurrentAccountAndOwnerReveal(t *testing.T) {
 		t.Fatalf("Gateway usage = %#v", usage)
 	}
 
-	revealed := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?reveal=true&sub2apiUserId=999", "")
-	if revealed.Code != http.StatusOK || revealed.Header().Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("revealed Gateway response = %d Cache-Control %q: %s", revealed.Code, revealed.Header().Get("Cache-Control"), revealed.Body.String())
+	ignoredReveal := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?reveal=true&sub2apiUserId=999", "")
+	if ignoredReveal.Code != http.StatusOK || ignoredReveal.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("masked reveal query response = %d Cache-Control %q: %s", ignoredReveal.Code, ignoredReveal.Header().Get("Cache-Control"), ignoredReveal.Body.String())
 	}
-	if err := json.NewDecoder(revealed.Body).Decode(&summary); err != nil {
+	if err := json.NewDecoder(ignoredReveal.Body).Decode(&summary); err != nil {
 		t.Fatal(err)
 	}
 	key = mapField(summary, "apiKey")
-	if key["revealed"] != true || stringValue(key["value"]) != "workspace-key-secret" {
-		t.Fatalf("revealed Gateway key = %#v", key)
+	if key["revealed"] != false || stringValue(key["value"]) != "" {
+		t.Fatalf("GET reveal query exposed Gateway key = %#v", key)
+	}
+	if encoded, _ := json.Marshal(summary); strings.Contains(string(encoded), "workspace-key-secret") {
+		t.Fatalf("GET reveal query leaked Gateway key: %s", encoded)
+	}
+
+	revealed := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+	if revealed.Code != http.StatusOK || revealed.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("revealed Gateway response = %d Cache-Control %q: %s", revealed.Code, revealed.Header().Get("Cache-Control"), revealed.Body.String())
+	}
+	var revealBody map[string]any
+	if err := json.NewDecoder(revealed.Body).Decode(&revealBody); err != nil {
+		t.Fatal(err)
+	}
+	revealedKey := mapField(revealBody, "apiKey")
+	if numberField(revealedKey, "id", 0) != 9 || stringValue(revealedKey["name"]) != "opl-workspace" || stringValue(revealedKey["status"]) != "active" || stringValue(revealedKey["value"]) != "workspace-key-secret" {
+		t.Fatalf("revealed Gateway key = %#v", revealedKey)
 	}
 
 	crossAccount := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?accountId=acct-other", "")
@@ -92,23 +114,121 @@ func TestGatewaySummaryUsesCurrentAccountAndOwnerReveal(t *testing.T) {
 	if strings.Contains(state.Body.String(), "workspace-key-secret") || strings.Contains(state.Body.String(), "maskedValue") || strings.Contains(state.Body.String(), "usage5hUsdMicros") {
 		t.Fatalf("state leaked Gateway Key projection: %s", state.Body.String())
 	}
-	if len(sub2API.workspaceKeyUserIDs) != 2 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) {
+	handler := server.(*controlPlaneHTTPHandler)
+	auditEvents, err := handler.app.tables.ListAuditEvents(context.Background(), "acct-gateway")
+	if err != nil || !slices.ContainsFunc(auditEvents, func(event map[string]any) bool {
+		return stringValue(event["action"]) == "gateway.key_reveal" && stringValue(event["actorUserId"]) == "usr-gateway-owner" && stringValue(event["targetAccountId"]) == "acct-gateway" && stringValue(event["result"]) == "succeeded"
+	}) {
+		t.Fatalf("Gateway reveal audit events = %#v err=%v", auditEvents, err)
+	}
+	auditJSON, _ := json.Marshal(auditEvents)
+	if strings.Contains(string(auditJSON), "workspace-key-secret") || strings.Contains(string(auditJSON), "work...cret") || strings.Contains(logs.String(), "workspace-key-secret") {
+		t.Fatalf("Gateway reveal leaked Key outside response: audit=%s logs=%s", auditJSON, logs.String())
+	}
+	if len(sub2API.workspaceKeyUserIDs) != 3 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) {
 		t.Fatalf("Gateway used caller-supplied Sub2API identity: %#v", sub2API.workspaceKeyUserIDs)
 	}
 }
 
-func TestGatewaySummaryRejectsTenantAdminReveal(t *testing.T) {
-	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-admin","email":"gateway-admin@example.com","password":"correct horse battery staple","role":"admin","accountId":"acct-gateway","sub2apiUserId":41}]`)
-	sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
-	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
-	session := loginForTest(t, server, "gateway-admin@example.com", "correct horse battery staple")
-
-	rec := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?reveal=true", "")
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") {
-		t.Fatalf("tenant admin reveal status = %d, want 403: %s", rec.Code, rec.Body.String())
+func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
+	for _, role := range []string{"admin", "member"} {
+		t.Run(role, func(t *testing.T) {
+			t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-`+role+`","email":"gateway-`+role+`@example.com","password":"correct horse battery staple","role":"`+role+`","accountId":"acct-gateway","sub2apiUserId":41}]`)
+			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
+			server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+			session := loginForTest(t, server, "gateway-"+role+"@example.com", "correct horse battery staple")
+			rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") || len(sub2API.workspaceKeyUserIDs) != 0 {
+				t.Fatalf("%s reveal = %d calls=%#v: %s", role, rec.Code, sub2API.workspaceKeyUserIDs, rec.Body.String())
+			}
+		})
 	}
-	if rec.Header().Get("Cache-Control") != "private, no-store" || len(sub2API.workspaceKeyUserIDs) != 0 {
-		t.Fatalf("tenant admin reveal fetched Key or allowed caching: calls=%#v headers=%#v", sub2API.workspaceKeyUserIDs, rec.Header())
+
+	t.Run("operator", func(t *testing.T) {
+		t.Setenv("OPL_CONSOLE_USERS_JSON", "")
+		sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
+		server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+		rec := requestWithSession(t, server, reservedOperatorSessionForTest(t, server), http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") || len(sub2API.workspaceKeyUserIDs) != 0 {
+			t.Fatalf("operator reveal = %d calls=%#v: %s", rec.Code, sub2API.workspaceKeyUserIDs, rec.Body.String())
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		path string
+		csrf bool
+		code string
+	}{
+		{name: "cross account", path: "/api/gateway/keys/opl-workspace/reveal?accountId=acct-other", csrf: true, code: "account_scope_forbidden"},
+		{name: "missing csrf", path: "/api/gateway/keys/opl-workspace/reveal", code: "csrf_token_invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-owner","email":"gateway-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-gateway","sub2apiUserId":41}]`)
+			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
+			server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+			session := loginForTest(t, server, "gateway-owner@example.com", "correct horse battery staple")
+			req := httptest.NewRequest(http.MethodPost, tc.path, bytes.NewBufferString("{}"))
+			req.Header.Set("Content-Type", "application/json")
+			addSessionCookies(req, session)
+			if tc.csrf {
+				req.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
+			}
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tc.code) || len(sub2API.workspaceKeyUserIDs) != 0 {
+				t.Fatalf("%s reveal = %d calls=%#v: %s", tc.name, rec.Code, sub2API.workspaceKeyUserIDs, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestGatewayRevealAuditFailureDoesNotReturnKey(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-owner","email":"gateway-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-gateway","sub2apiUserId":41}]`)
+	store := &failingResumeCommitStore{memoryTableStore: newMemoryTableStore()}
+	sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previousLogOutput := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
+	session := loginForTest(t, server, "gateway-owner@example.com", "correct horse battery staple")
+	rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "state_persist_failed") {
+		t.Fatalf("audit failure reveal = %d: %s", rec.Code, rec.Body.String())
+	}
+	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
+	auditEvents, auditErr := store.ListAuditEvents(context.Background(), "acct-gateway")
+	joined := rec.Body.String() + state.Body.String() + logs.String()
+	if strings.Contains(joined, "workspace-key-secret") || strings.Contains(joined, "work...cret") || auditErr != nil || len(auditEvents) != 0 || len(sub2API.workspaceKeyUserIDs) != 1 {
+		t.Fatalf("audit failure leaked or persisted Key: calls=%#v audit=%#v err=%v output=%s", sub2API.workspaceKeyUserIDs, auditEvents, auditErr, joined)
+	}
+}
+
+func TestGatewayRevealFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "missing Key", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict, wantCode: "gateway_key_missing"},
+		{name: "ambiguous Key", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous"},
+		{name: "upstream unavailable", err: errors.New("Sub2API unavailable"), wantStatus: http.StatusBadGateway, wantCode: "upstream_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-owner","email":"gateway-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-gateway","sub2apiUserId":41}]`)
+			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}, workspaceKeyErr: tc.err}
+			server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+			session := loginForTest(t, server, "gateway-owner@example.com", "correct horse battery staple")
+			rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
+			if rec.Code != tc.wantStatus || !strings.Contains(rec.Body.String(), tc.wantCode) || strings.Contains(rec.Body.String(), "workspace-key-secret") || len(sub2API.workspaceKeyUserIDs) != 1 {
+				t.Fatalf("Gateway reveal error = %d calls=%#v, want %d %s: %s", rec.Code, sub2API.workspaceKeyUserIDs, tc.wantStatus, tc.wantCode, rec.Body.String())
+			}
+		})
 	}
 }
 

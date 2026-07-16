@@ -136,6 +136,23 @@ func TestMonthlyRenewalPreflightStopsBeforeFinancialAndProviderCalls(t *testing.
 	}
 }
 
+func TestMonthlyRenewalGatewayKeyFailureStopsBeforeDebitAndProviderRenewal(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(12 * time.Hour)
+	app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+	sub2API.workspaceKeyErr = clients.ErrSub2APIWorkspaceKeyMissing
+	row := monthlyActiveResource("compute", "compute-key-failure", paidThrough)
+	mustStore(t, app.tables.SaveCompute(context.Background(), row))
+
+	result, err := app.renewMonthlyResource(context.Background(), service, "compute", row, now)
+	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
+		t.Fatalf("Gateway Key renewal result=%#v err=%v", result, err)
+	}
+	if len(sub2API.workspaceKeyCalls) != 1 || sub2API.workspaceKeyCalls[0] != 41 || len(sub2API.charges) != 0 || len(sub2API.refunds) != 0 || len(fabric.computeRenewKeys) != 0 || len(fabric.storageRenewKeys) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+		t.Fatalf("Gateway Key renewal caused side effects: keyCalls=%#v charges=%#v refunds=%#v computeRenew=%#v storageRenew=%#v receipts=%#v", sub2API.workspaceKeyCalls, sub2API.charges, sub2API.refunds, fabric.computeRenewKeys, fabric.storageRenewKeys, ledger.receipts)
+	}
+}
+
 func TestBillingMonthClampsWithoutChangingAnchor(t *testing.T) {
 	jan31 := time.Date(2025, 1, 31, 9, 30, 0, 0, time.UTC)
 	feb := nextBillingMonth(jan31, 31)
@@ -235,6 +252,42 @@ func TestMonthlyRenewalUnknownChargeRequiresReview(t *testing.T) {
 	row, _ := app.getCompute("compute-review-renewal")
 	if row["billingStatus"] != "manual_review" || row["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
 		t.Fatalf("unknown renewal row=%#v charges=%#v receipts=%#v", row, sub2API.charges, ledger.receipts)
+	}
+}
+
+func TestMonthlyRenewalConfirmsLostAdjustmentFromAuthoritativeHistory(t *testing.T) {
+	t.Setenv("NODE_ENV", "test")
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	gateway := newAuthoritativeReplaySub2API(t, false)
+	events := &[]string{}
+	fabric := &monthlyFabric{events: events}
+	ledger := &monthlyLedger{events: events}
+	app := newControlPlaneAppEmpty()
+	mustStore(t, app.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-monthly", "status": "active", "sub2apiUserId": int64(41)}))
+	service := controlplane.NewService(ledger, fabric, gateway.client)
+	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	paidThrough := now.Add(12 * time.Hour)
+	row := monthlyActiveResource("compute", "compute-history-replay", paidThrough)
+	operationID := "renewal-" + stableID("compute", stringValue(row["id"]), paidThrough.Format(time.RFC3339))[:18]
+	wantCode := monthlyRedeemCode("test", operationID)
+	row["billingStatus"], row["billingOperationId"] = "renewal_pending", operationID
+	row["billingOperationStartedAt"], row["lastRenewalAttemptAt"] = now.Add(-time.Minute).Format(time.RFC3339), now.Add(-time.Minute).Format(time.RFC3339)
+	row["sub2apiRedeemCode"], row["sub2apiRefundCode"] = wantCode, monthlyRefundCode("test", operationID)
+	row["lastReceiptId"], row["postChargeBalanceKnown"], row["postChargeBalanceUsdMicros"] = "", false, int64(0)
+	row["lastBillingError"] = "sub2api_charge_unconfirmed"
+	gateway.codes, gateway.values = []string{wantCode}, []string{"-50.000000"}
+	mustStore(t, app.tables.SaveCompute(context.Background(), row))
+
+	result, err := app.renewMonthlyResource(context.Background(), service, "compute", row, now)
+	if err != nil || result["billingStatus"] != "active" {
+		t.Fatalf("history-confirmed renewal=%#v err=%v", result, err)
+	}
+	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(gateway.codes) != 2 || gateway.codes[0] != wantCode || gateway.codes[1] != wantCode || gateway.historyCalls != 1 || len(fabric.computeRenewKeys) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {
+		t.Fatalf("authoritative renewal codes=%#v history=%d renews=%#v receipts=%#v", gateway.codes, gateway.historyCalls, fabric.computeRenewKeys, ledger.receipts)
 	}
 }
 

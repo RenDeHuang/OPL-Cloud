@@ -793,7 +793,7 @@ func TestWorkspaceReceiptFailureKeepsSucceededRuntimeForReplay(t *testing.T) {
 	if second.Code != http.StatusCreated || !strings.Contains(second.Body.String(), "receipt-from-ledger") {
 		t.Fatalf("receipt replay status=%d body=%s", second.Code, second.Body.String())
 	}
-	if ledger.receiptCalls != 2 || len(sub2API.workspaceKeyUserIDs) != 1 || len(fabric.gatewaySecretInputs) != 1 || len(fabric.runtimeInputs) != 1 {
+	if ledger.receiptCalls != 2 || len(sub2API.workspaceKeyUserIDs) != 3 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) || len(fabric.gatewaySecretInputs) != 1 || len(fabric.runtimeInputs) != 1 {
 		t.Fatalf("receipt replay repeated side effects: receipts=%d keys=%#v secrets=%#v runtimes=%#v", ledger.receiptCalls, sub2API.workspaceKeyUserIDs, fabric.gatewaySecretInputs, fabric.runtimeInputs)
 	}
 }
