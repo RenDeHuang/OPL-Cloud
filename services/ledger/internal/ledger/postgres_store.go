@@ -199,7 +199,11 @@ func (s *PostgresStore) ListReceipts(ctx context.Context, query ReceiptQuery) (R
 	}
 	receipts := make([]Receipt, 0, len(rows))
 	for _, row := range rows {
-		receipts = append(receipts, s.receiptForRead(ctx, receiptFromEnt(row)))
+		receipt, err := receiptFromEnt(row)
+		if err != nil {
+			return ReceiptPage{}, err
+		}
+		receipts = append(receipts, s.receiptForRead(ctx, receipt))
 	}
 	page := ReceiptPage{Receipts: receipts, HasMore: hasMore}
 	if hasMore {
@@ -336,7 +340,7 @@ func (s *PostgresStore) receipt(ctx context.Context, receiptID string) (Receipt,
 	if err != nil {
 		return Receipt{}, err
 	}
-	return receiptFromEnt(row), nil
+	return receiptFromEnt(row)
 }
 
 func (s *PostgresStore) Continuation(ctx context.Context, receiptID string) (map[string]any, error) {
@@ -394,7 +398,10 @@ func (s *PostgresStore) Artifact(ctx context.Context, artifactID string) (Artifa
 	}
 	// ponytail: linear scan is enough for initial evidence volume; add indexed promoted columns when measured query load requires it.
 	for _, row := range rows {
-		receipt := receiptFromEnt(row)
+		receipt, err := receiptFromEnt(row)
+		if err != nil {
+			return Artifact{}, err
+		}
 		if receipt.ArtifactID == artifactID {
 			return artifactFromReceipt(receipt), nil
 		}
@@ -427,7 +434,10 @@ func (s *PostgresStore) Review(ctx context.Context, reviewID string) (Review, er
 	}
 	// ponytail: linear scan is enough for initial evidence volume; add indexed promoted columns when measured query load requires it.
 	for _, row := range rows {
-		receipt := receiptFromEnt(row)
+		receipt, err := receiptFromEnt(row)
+		if err != nil {
+			return Review{}, err
+		}
 		if receipt.ReviewID == reviewID {
 			return reviewFromReceipt(receipt), nil
 		}
@@ -619,7 +629,10 @@ func (s *PostgresStore) EvaluateReviewGate(ctx context.Context, input ReviewGate
 	}
 	reviews := make([]Review, 0, len(wanted))
 	for _, reviewRow := range reviewRows {
-		receipt := receiptFromEnt(reviewRow)
+		receipt, err := receiptFromEnt(reviewRow)
+		if err != nil {
+			return ReviewGateResult{}, err
+		}
 		if _, ok := wanted[receipt.ReviewID]; ok {
 			reviews = append(reviews, reviewFromReceipt(receipt))
 		}
@@ -696,13 +709,18 @@ func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string)
 	if err != nil {
 		return Receipt{}, "", err
 	}
-	return receiptFromEnt(row), row.RequestHash, nil
+	receipt, err := receiptFromEnt(row)
+	return receipt, row.RequestHash, err
 }
 
-func receiptFromEnt(row *ledgerent.EvidenceReceipt) Receipt {
+func receiptFromEnt(row *ledgerent.EvidenceReceipt) (Receipt, error) {
 	// ponytail: payload is canonical; promote fields to columns only when a real query needs an index.
 	var stored receiptPayload
-	_ = json.Unmarshal([]byte(row.PayloadJSON), &stored)
+	decoder := json.NewDecoder(strings.NewReader(row.PayloadJSON))
+	decoder.UseNumber()
+	if err := decoder.Decode(&stored); err != nil {
+		return Receipt{}, err
+	}
 	input := stored.ReceiptInput
 	input.Type = row.ReceiptType
 	input.Status = row.Status
@@ -713,7 +731,7 @@ func receiptFromEnt(row *ledgerent.EvidenceReceipt) Receipt {
 	input.TaskID = row.TaskID
 	input.JobID = row.JobID
 	input.SupersedesReceiptID = row.SupersedesReceiptID
-	return Receipt{ReceiptInput: input, ReceiptID: row.ID, CreatedAt: row.CreatedAt, Retention: stored.Retention}
+	return Receipt{ReceiptInput: input, ReceiptID: row.ID, CreatedAt: row.CreatedAt, Retention: stored.Retention}, nil
 }
 
 type receiptPayload struct {
@@ -726,11 +744,18 @@ func (s *PostgresStore) reconciliationByIdempotencyKey(ctx context.Context, key 
 	if err != nil {
 		return ReconciliationResult{}, "", err
 	}
+	result, err := reconciliationFromEnt(row)
+	return result, row.RequestHash, err
+}
+
+func reconciliationFromEnt(row *ledgerent.ReconciliationReport) (ReconciliationResult, error) {
 	result := ReconciliationResult{ID: row.ID, Status: row.Status, BlockNewWorkspaces: row.BlockNewWorkspaces, Reason: row.Reason, CreatedAt: row.CreatedAt}
-	if err := json.Unmarshal([]byte(row.ReportJSON), &result.Report); err != nil || validateReconciliationResult(result) != nil {
-		return ReconciliationResult{}, "", ErrInvalidReconciliationInput
+	decoder := json.NewDecoder(strings.NewReader(row.ReportJSON))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result.Report); err != nil || validateReconciliationResult(result) != nil {
+		return ReconciliationResult{}, ErrInvalidReconciliationInput
 	}
-	return result, row.RequestHash, nil
+	return result, nil
 }
 
 func postgresID(prefix string, t time.Time) string {

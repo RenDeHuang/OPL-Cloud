@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+
+	ledgerent "opl-cloud/services/ledger/ent"
 )
 
 func TestPostgresSchemaKeepsEvidenceAndDropsRetiredCommercialTables(t *testing.T) {
@@ -106,6 +108,68 @@ func TestPostgresStoreRunsEmbeddedMigrationsOnce(t *testing.T) {
 func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var db *sql.DB
 	var _ Store = NewPostgresStore(db)
+}
+
+func TestPostgresReceiptRowPreservesLargeInteger(t *testing.T) {
+	receipt, err := receiptFromEnt(&ledgerent.EvidenceReceipt{
+		ID: "receipt-large", ReceiptType: "billing.resource_purchased.v1", Status: "completed",
+		PayloadJSON: `{"cost":{"monthlyPriceCnyCents":9007199254740993}}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(receipt.Cost["monthlyPriceCnyCents"]); got != "9007199254740993" {
+		t.Fatalf("persisted receipt integer = %s", got)
+	}
+}
+
+func TestPostgresReconciliationRowPreservesMaxInt64(t *testing.T) {
+	result, err := reconciliationFromEnt(&ledgerent.ReconciliationReport{
+		ID: "recon-max-int64", Status: "ok", BlockNewWorkspaces: false, Reason: "operator_reconciliation",
+		ReportJSON: `{"id":"recon-max-int64","status":"ok","counts":{"billingOperations":9223372036854775807,"matched":9223372036854775807,"exceptions":0},"exceptions":[]}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(result.Report["counts"].(map[string]any)["billingOperations"]); got != "9223372036854775807" {
+		t.Fatalf("persisted reconciliation integer = %s", got)
+	}
+}
+
+func TestPostgresEvidenceNumberReadback(t *testing.T) {
+	store, db := installedLedgerTestPostgres(t)
+	ctx := context.Background()
+	receiptInput := validBillingReceiptInput()
+	receiptInput.IdempotencyKey = "postgres-large-receipt"
+	receiptInput.Cost["monthlyPriceCnyCents"] = int64(9_007_199_254_740_993)
+	created, err := store.RecordReceipt(ctx, receiptInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := store.Receipt(ctx, created.ReceiptID)
+	if err != nil || fmt.Sprint(read.Cost["monthlyPriceCnyCents"]) != "9007199254740993" {
+		t.Fatalf("persisted receipt = %#v, %v", read.Cost, err)
+	}
+
+	report := validReconciliationReport("ok")
+	report["id"] = "postgres-max-int64"
+	report["counts"].(map[string]any)["billingOperations"] = int64(9_223_372_036_854_775_807)
+	report["counts"].(map[string]any)["matched"] = int64(9_223_372_036_854_775_807)
+	reconciliationInput := ReconciliationInput{Report: report, IdempotencyKey: "postgres-max-int64"}
+	if _, err := store.RecordReconciliation(ctx, reconciliationInput); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := store.RecordReconciliation(ctx, reconciliationInput)
+	if err != nil || !replayed.Replayed || fmt.Sprint(replayed.Report["counts"].(map[string]any)["billingOperations"]) != "9223372036854775807" {
+		t.Fatalf("persisted reconciliation = %#v, %v", replayed, err)
+	}
+
+	if _, err := db.Exec(`UPDATE evidence_receipts SET payload_json = '{' WHERE id = $1`, created.ReceiptID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Receipt(ctx, created.ReceiptID); err == nil {
+		t.Fatal("invalid persisted receipt payload must fail closed")
+	}
 }
 
 func TestBillingReceiptSchemaPostgres(t *testing.T) {
