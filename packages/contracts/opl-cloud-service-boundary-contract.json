@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
-  "machineBoundary": "Service ownership, persistence, cloud SDK ownership, Sub2API balance access, and evidence rules.",
+  "machineBoundary": "Service ownership, persistence, cloud SDK ownership, live customer fact projection, Sub2API balance access, and evidence rules.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current service-boundary contract."
@@ -29,6 +29,7 @@
         "workspaces",
         "monthlyEntitlements",
         "billingOperations",
+        "latestReconciliationGuard",
         "projectTaskSyncHeads",
         "executionRequests",
         "approvals",
@@ -58,6 +59,7 @@
       "writeProtocol": "append_first_with_idempotency",
       "readApis": [
         "receiptQuery",
+        "paginatedTenantReceiptQuery",
         "reviewPolicyQuery",
         "reviewGateEvaluation"
       ]
@@ -94,9 +96,14 @@
         "usageEvents"
       ],
       "controlPlaneApi": [
-        "read balance",
+        "read mapped user balance",
+        "read mapped user API keys",
+        "read scoped request usage",
+        "read scoped aggregate usage stats",
+        "read mapped user balance history",
         "create and redeem adjustment"
-      ]
+      ],
+      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy"
     }
   },
   "migration": {

@@ -205,11 +205,54 @@ func (s *Service) GatewaySummary(ctx context.Context, userID int64) (GatewaySumm
 	return GatewaySummary{Balance: balance, Key: key}, err
 }
 
+func (s *Service) GatewayUsage(ctx context.Context, userID int64, page, pageSize int) (clients.Sub2APIUsagePage, error) {
+	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
+	if err != nil {
+		return clients.Sub2APIUsagePage{}, err
+	}
+	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+	if !ok {
+		return clients.Sub2APIUsagePage{}, errors.New("sub2api_usage_unavailable")
+	}
+	return client.Usage(ctx, clients.Sub2APIUsageQuery{UserID: userID, APIKeyID: key.ID, Page: page, PageSize: pageSize})
+}
+
+func (s *Service) GatewayUsageStats(ctx context.Context, userID int64, period string) (clients.Sub2APIUsageStats, error) {
+	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
+	if err != nil {
+		return clients.Sub2APIUsageStats{}, err
+	}
+	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+	if !ok {
+		return clients.Sub2APIUsageStats{}, errors.New("sub2api_usage_unavailable")
+	}
+	return client.UsageStats(ctx, clients.Sub2APIUsageStatsQuery{UserID: userID, APIKeyID: key.ID, Period: period})
+}
+
+func (s *Service) Sub2APIBalanceHistory(ctx context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+	if !ok {
+		return nil, errors.New("sub2api_balance_history_unavailable")
+	}
+	return client.BalanceHistory(ctx, userID)
+}
+
 func (s *Service) BillingReceipt(ctx context.Context, receiptID string) (clients.Receipt, error) {
 	if receiptID == "" {
 		return clients.Receipt{}, fmt.Errorf("receipt_id_required")
 	}
 	return s.ledger.Receipt(ctx, receiptID)
+}
+
+func (s *Service) BillingReceipts(ctx context.Context, query clients.ReceiptQuery) (clients.ReceiptPage, error) {
+	client, ok := s.ledger.(clients.LedgerReceiptListClient)
+	if !ok {
+		return clients.ReceiptPage{}, errors.New("ledger_receipt_list_unavailable")
+	}
+	if query.AccountID == "" {
+		return clients.ReceiptPage{}, errors.New("billing_account_id_required")
+	}
+	return client.ListReceipts(ctx, query)
 }
 
 func (s *Service) Execute(ctx context.Context, input ExecuteInput, idempotencyKey string) (ExecutionResult, error) {

@@ -1,9 +1,13 @@
 package server
 
 import (
+	"encoding/json"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -17,6 +21,43 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		if ok {
 			writeJSON(w, http.StatusOK, balance)
 		}
+	}))
+	mux.HandleFunc("GET /api/billing/receipts", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		accountID, ok := app.scopedAccountID(w, r, nil)
+		if !ok {
+			return
+		}
+		limit := 50
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 100 {
+				writeError(w, http.StatusBadRequest, "invalid_billing_receipt_limit")
+				return
+			}
+			limit = parsed
+		}
+		page, err := service.BillingReceipts(r.Context(), clients.ReceiptQuery{AccountID: accountID, Cursor: r.URL.Query().Get("cursor"), Limit: limit})
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
+		}
+		receipts := make([]any, 0, len(page.Receipts))
+		for _, receipt := range page.Receipts {
+			if receipt.AccountID != accountID {
+				writeError(w, http.StatusBadGateway, "billing_receipt_identity_mismatch")
+				return
+			}
+			if !strings.HasPrefix(receipt.Type, "billing.") {
+				continue
+			}
+			projected, ok := projectCustomerBillingReceipt(receipt)
+			if !ok {
+				writeError(w, http.StatusBadGateway, "billing_receipt_source_unavailable")
+				return
+			}
+			receipts = append(receipts, projected)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"receipts": receipts, "nextCursor": page.NextCursor, "hasMore": page.HasMore})
 	}))
 	mux.HandleFunc("GET /api/billing/receipts/{id}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		accountID, ok := app.scopedAccountID(w, r, nil)
@@ -32,7 +73,12 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeError(w, http.StatusNotFound, "billing_receipt_not_found")
 			return
 		}
-		writeJSON(w, http.StatusOK, receipt)
+		projected, ok := projectCustomerBillingReceipt(receipt)
+		if !ok {
+			writeError(w, http.StatusBadGateway, "billing_receipt_source_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, projected)
 	}))
 	mux.HandleFunc("POST /api/billing/reconciliation", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -40,13 +86,18 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeError(w, http.StatusBadRequest, "confirmation_required")
 			return
 		}
-		report, _ := input["report"].(map[string]any)
-		if report == nil {
-			report = map[string]any{}
+		if _, supplied := input["report"]; supplied {
+			writeError(w, http.StatusBadRequest, "reconciliation_report_server_computed")
+			return
 		}
-		idempotencyKey := firstNonEmpty(r.Header.Get("Idempotency-Key"), stringField(input, "idempotencyKey", ""), stringField(report, "id", ""))
+		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 		if idempotencyKey == "" {
 			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		report, err := app.billingReconciliationReport(r.Context(), service, idempotencyKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
 		result, err := service.RecordReconciliation(r.Context(), controlplane.ReconciliationInput{Report: report}, idempotencyKey)
@@ -58,10 +109,52 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		if err := app.appendAuditEvent(r, "billing.reconciliation", "billing_reconciliation", stringField(report, "id", ""), "", nil, result, "succeeded"); err != nil {
+		if err := app.appendAuditEvent(r, "billing.reconciliation", "billing_reconciliation", result.ID, "", nil, result, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, reconciliationResponse(result))
 	}))
+}
+
+func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, bool) {
+	monthlyPriceCNYCents, ok := requiredNonNegativeInteger(receipt.Cost, "monthlyPriceCnyCents")
+	if !ok {
+		return nil, false
+	}
+	chargeUSDMicros, ok := requiredNonNegativeInteger(receipt.Cost, "chargeUsdMicros")
+	if !ok {
+		return nil, false
+	}
+	return map[string]any{
+		"receiptId": receipt.ReceiptID, "type": receipt.Type, "status": receipt.Status,
+		"workspaceId": receipt.WorkspaceID, "createdAt": receipt.CreatedAt,
+		"resourceType": stringValue(receipt.Cost["resourceType"]), "resourceId": stringValue(receipt.Cost["resourceId"]),
+		"pricingVersion": stringValue(receipt.Cost["pricingVersion"]), "monthlyPriceCnyCents": monthlyPriceCNYCents,
+		"chargeUsdMicros": chargeUSDMicros, "periodStart": stringValue(receipt.Cost["periodStart"]), "paidThrough": stringValue(receipt.Cost["paidThrough"]),
+	}, true
+}
+
+func requiredNonNegativeInteger(input map[string]any, key string) (int64, bool) {
+	var result int64
+	switch value := input[key].(type) {
+	case int:
+		result = int64(value)
+	case int64:
+		result = value
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) || value < 0 || value >= math.Exp2(63) {
+			return 0, false
+		}
+		result = int64(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, false
+		}
+		result = parsed
+	default:
+		return 0, false
+	}
+	return result, result >= 0
 }

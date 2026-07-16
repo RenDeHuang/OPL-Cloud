@@ -605,3 +605,173 @@ func TestSub2APIClientErrorsDoNotLeakSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestSub2APIUsageListIsScopedAndDropsAdminFields(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/usage":
+			query := r.URL.Query()
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer access" || query.Get("user_id") != "41" || query.Get("api_key_id") != "9" || query.Get("page") != "1" || query.Get("page_size") != "50" || query.Get("sort_by") != "created_at" || query.Get("sort_order") != "desc" {
+				t.Fatalf("usage request = %s %s auth=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"))
+			}
+			writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"user_id":41,"api_key_id":9,"request_id":"req-1","created_at":"2026-07-16T00:00:00Z","model":"gpt-5","inbound_endpoint":"/v1/responses","request_type":"sync","input_tokens":10,"output_tokens":20,"cache_creation_tokens":0,"cache_read_tokens":5,"actual_cost":0.001234,"user":{"email":"private@example.test"},"api_key":{"key":"key-secret"},"ip_address":"198.51.100.1","user_agent":"secret-agent","prompt":"prompt-secret","response":"response-secret"}],"total":1,"page":1,"page_size":50,"pages":1}`))
+		default:
+			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
+		}
+	}, time.Second)
+
+	page, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50})
+	if err != nil || len(page.Items) != 1 || page.Total != 1 || page.Page != 1 || page.PageSize != 50 || page.Pages != 1 {
+		t.Fatalf("usage page = %#v err=%v", page, err)
+	}
+	row := page.Items[0]
+	if row.UserID != 41 || row.APIKeyID != 9 || row.RequestID != "req-1" || row.Model != "gpt-5" || row.InboundEndpoint != "/v1/responses" || row.RequestType != "sync" || row.InputTokens != 10 || row.OutputTokens != 20 || row.CacheCreationTokens != 0 || row.CacheReadTokens != 5 || row.ActualCostUSDMicros != 1234 || row.CreatedAt.Format(time.RFC3339) != "2026-07-16T00:00:00Z" {
+		t.Fatalf("usage row = %#v", row)
+	}
+	encoded, _ := json.Marshal(row)
+	for _, forbidden := range []string{"private@example.test", "key-secret", "198.51.100.1", "secret-agent", "prompt-secret", "response-secret"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("usage row leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestSub2APIUsageListRejectsCrossIdentity(t *testing.T) {
+	for name, identity := range map[string]string{
+		"user": `"user_id":42,"api_key_id":9`,
+		"key":  `"user_id":41,"api_key_id":10`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/usage":
+					writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{`+identity+`,"request_id":"req-1","created_at":"2026-07-16T00:00:00Z","model":"gpt-5","inbound_endpoint":"/v1/responses","request_type":"sync","input_tokens":1,"output_tokens":2,"cache_creation_tokens":0,"cache_read_tokens":0,"actual_cost":0.000001}],"total":1,"page":1,"page_size":50,"pages":1}`))
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, time.Second)
+			if _, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50}); err == nil || !strings.Contains(err.Error(), "identity mismatch") {
+				t.Fatalf("cross-%s usage error = %v", name, err)
+			}
+		})
+	}
+}
+
+func TestSub2APIUsageStatsConvertsExactActualCost(t *testing.T) {
+	for raw, want := range map[string]int64{"0": 0, "0.000001": 1, "12.345678": 12_345_678} {
+		t.Run(raw, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/usage/stats":
+					query := r.URL.Query()
+					if query.Get("user_id") != "41" || query.Get("api_key_id") != "9" || query.Get("period") != "month" {
+						t.Fatalf("stats query = %s", r.URL.RawQuery)
+					}
+					writeSub2APISuccess(t, w, json.RawMessage(fmt.Sprintf(`{"total_requests":3,"total_input_tokens":10,"total_output_tokens":20,"total_tokens":35,"total_actual_cost":%s,"user":{"email":"private@example.test"},"endpoints":[{"endpoint":"private"}]}`, raw)))
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, time.Second)
+
+			stats, err := client.UsageStats(context.Background(), Sub2APIUsageStatsQuery{UserID: 41, APIKeyID: 9, Period: "month"})
+			if err != nil || stats.TotalRequests != 3 || stats.TotalInputTokens != 10 || stats.TotalOutputTokens != 20 || stats.TotalTokens != 35 || stats.TotalActualCostUSDMicros != want {
+				t.Fatalf("usage stats = %#v err=%v", stats, err)
+			}
+			encoded, _ := json.Marshal(stats)
+			if strings.Contains(string(encoded), "private@example.test") || strings.Contains(string(encoded), "endpoints") {
+				t.Fatalf("stats leaked admin fields: %s", encoded)
+			}
+		})
+	}
+}
+
+func TestSub2APIUsageStatsRejectsInvalidFacts(t *testing.T) {
+	for name, data := range map[string]string{
+		"negative tokens":   `{"total_requests":1,"total_input_tokens":-1,"total_output_tokens":0,"total_tokens":0,"total_actual_cost":0}`,
+		"missing cost":      `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1}`,
+		"fractional micros": `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1,"total_actual_cost":0.0000001}`,
+		"overflow":          `{"total_requests":1,"total_input_tokens":1,"total_output_tokens":0,"total_tokens":1,"total_actual_cost":9223372036854.775808}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/auth/login" {
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+					return
+				}
+				if r.URL.Path != "/api/v1/admin/usage/stats" {
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+				writeSub2APISuccess(t, w, json.RawMessage(data))
+			}, time.Second)
+			if _, err := client.UsageStats(context.Background(), Sub2APIUsageStatsQuery{UserID: 41, APIKeyID: 9, Period: "month"}); err == nil {
+				t.Fatalf("invalid stats accepted: %s", data)
+			}
+		})
+	}
+}
+
+func TestSub2APIBalanceHistoryIsBoundedAndDropsNotes(t *testing.T) {
+	requestedPages := []string{}
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41/balance-history":
+			query := r.URL.Query()
+			if query.Get("page_size") != "1000" || query.Get("type") != "balance" {
+				t.Fatalf("history query = %s", r.URL.RawQuery)
+			}
+			requestedPages = append(requestedPages, query.Get("page"))
+			if query.Get("page") == "1" {
+				writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"code":"opl:charge","type":"balance","value":-50.000000,"status":"used","used_by":41,"used_at":"2026-07-16T00:01:00Z","created_at":"2026-07-16T00:00:00Z","notes":"balance-secret"}],"total":2,"page":1,"page_size":1000,"pages":2,"total_recharged":50}`))
+				return
+			}
+			writeSub2APISuccess(t, w, json.RawMessage(`{"items":[{"code":"opl:refund","type":"balance","value":50.000000,"status":"used","used_by":41,"used_at":"2026-07-16T00:03:00Z","created_at":"2026-07-16T00:02:00Z","notes":"balance-secret"}],"total":2,"page":2,"page_size":1000,"pages":2,"total_recharged":50}`))
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	entries, err := client.BalanceHistory(context.Background(), 41)
+	if err != nil || len(entries) != 2 || !slices.Equal(requestedPages, []string{"1", "2"}) {
+		t.Fatalf("balance history = %#v pages=%#v err=%v", entries, requestedPages, err)
+	}
+	if entries[0].Code != "opl:charge" || entries[0].ValueUSDMicros != -50_000_000 || entries[0].UsedBy == nil || *entries[0].UsedBy != 41 || entries[1].ValueUSDMicros != 50_000_000 {
+		t.Fatalf("balance entries = %#v", entries)
+	}
+	encoded, _ := json.Marshal(entries)
+	if strings.Contains(string(encoded), "balance-secret") || strings.Contains(string(encoded), "notes") {
+		t.Fatalf("balance history leaked notes: %s", encoded)
+	}
+}
+
+func TestSub2APIBalanceHistoryRejectsUntrustedIdentityAndPagination(t *testing.T) {
+	for name, data := range map[string]string{
+		"used by another user": `{"items":[{"code":"opl:charge","type":"balance","value":-1,"status":"used","used_by":42,"used_at":"2026-07-16T00:01:00Z","created_at":"2026-07-16T00:00:00Z"}],"total":1,"page":1,"page_size":1000,"pages":1}`,
+		"too many pages":       `{"items":[],"total":10001,"page":1,"page_size":1000,"pages":11}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			requests := 0
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/auth/login" {
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+					return
+				}
+				requests++
+				writeSub2APISuccess(t, w, json.RawMessage(data))
+			}, time.Second)
+			if _, err := client.BalanceHistory(context.Background(), 41); err == nil {
+				t.Fatalf("untrusted history accepted: %s", data)
+			}
+			if requests != 1 {
+				t.Fatalf("history requests = %d", requests)
+			}
+		})
+	}
+}

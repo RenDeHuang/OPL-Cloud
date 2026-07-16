@@ -1435,7 +1435,7 @@ func TestBillingReconciliationAppendsAuditEvent(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-audit","status":"ok"}}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
 	addSessionCookies(req, admin)
@@ -2712,7 +2712,7 @@ func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 	server := NewServer(newTestService(fakeBlockingReconciliationLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantAdminSessionForTest(t, server)
 
-	createResourceWithSession(t, server, session, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-mismatch","status":"mismatch"}}`)
+	createResourceWithSession(t, server, session, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`)
 
 	stateReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
 	addAuth(stateReq, operatorSessionForTest(t, server))

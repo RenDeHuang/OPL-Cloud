@@ -36,6 +36,8 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 - Ledger records append-only debit, refund, fulfillment, claim, activation, renewal, expiry, review, and verification evidence.
 - Ledger never owns or changes spendable balance.
+- Customer billing history is read live from Ledger through an account-scoped paginated query and projected through a strict allowlist; Control Plane never copies receipt facts.
+- Operator reconciliation is computed by Control Plane from active billing operations, Sub2API balance history, Fabric provider operations, and Ledger receipts. Ledger appends the deterministic exception-only report; Control Plane stores only the latest purchase guard and never repairs money, provider resources, or receipts automatically.
 - Receipts contain stable account, Workspace, billing-operation, provider-operation, resource, pricing, period, and redacted Gateway request references.
 - API keys, passwords, raw tokens, provider secrets, and raw Sub2API responses are forbidden in evidence.
 - A missing receipt retries only the receipt and never repeats debit, refund, provider purchase, Secret write, or renewal.
@@ -76,7 +78,7 @@ validate account and quote
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.
 - A Ledger failure after activation leaves the entitlement active and retries only its receipt.
 - Replays never create a second debit, refund, purchase, renewal, Secret, or receipt.
-- The merged implementation follows debit before provider mutation; production rollout and live reconciliation evidence remain pending.
+- The merged implementation follows debit before provider mutation. Server-computed read-only reconciliation and its blocking purchase guard are CI-verified; production rollout and live reconciliation evidence remain pending.
 
 ## Products And Lifecycle
 
@@ -139,9 +141,9 @@ validate account and quote
 | 2. Wallet and quote | Show live balance and exact compute plus storage quote before side effects. | Console, Gateway | Integer Workspace compute-plus-storage quote is CI-verified; deployed presentation and live Sub2API evidence remain incomplete. | Balance/quote tests, failure UI, period and retention disclosure. |
 | 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, total balance preflight, debit-first child operations, restart recovery, and replay are CI-verified; deployed browser and live Sub2API evidence remain pending. | Deterministic debit, balance check, replay/concurrency evidence. |
 | 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request and readback are CI-verified; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
-| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, and manual-review resolution are CI-verified; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
+| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, manual-review resolution, and server-computed read-only reconciliation with a blocking guard are CI-verified; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
 | 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, and runtime isolation are CI-verified; browser, WebSocket, and live model evidence are pending. | Login, WebSocket 101, Secret rotation, digest readback. |
-| 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Balance and Key summary exist; request-level usage, aggregate stats, customer-safe projection, and live evidence remain incomplete. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
+| 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Balance, Key summary, request-level usage, aggregate stats, and customer-safe integer-cost projections are CI-verified; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew customer and Tencent periods once with deterministic recovery. | All four lanes | Entitlement worker exists; provider PREPAID renewal does not. | Renewal replay, deadline readback, refund/review receipts. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Legacy verifier violates this rule. | Retained Slot, fake commercial chain, real Workspace/Gateway proof. |
 | 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | CI/rollout exist; remaining production evidence is incomplete. | CI, grouped rollback, read-only smoke, fixed-Slot receipt. |

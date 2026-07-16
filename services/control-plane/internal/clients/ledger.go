@@ -19,6 +19,10 @@ type LedgerClient interface {
 	RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error)
 }
 
+type LedgerReceiptListClient interface {
+	ListReceipts(ctx context.Context, query ReceiptQuery) (ReceiptPage, error)
+}
+
 type ReconciliationInput struct {
 	Report map[string]any `json:"report"`
 }
@@ -66,6 +70,18 @@ type Receipt struct {
 	Replayed       bool   `json:"replayed"`
 }
 
+type ReceiptQuery struct {
+	AccountID string
+	Cursor    string
+	Limit     int
+}
+
+type ReceiptPage struct {
+	Receipts   []Receipt `json:"receipts"`
+	NextCursor string    `json:"nextCursor"`
+	HasMore    bool      `json:"hasMore"`
+}
+
 type Review struct {
 	ReviewID             string         `json:"reviewId"`
 	ReceiptID            string         `json:"receiptId"`
@@ -111,6 +127,25 @@ func NewLedgerHTTPClient(baseURL, token string, client *http.Client) LedgerClien
 func (c *ledgerHTTPClient) RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error) {
 	var result Receipt
 	err := c.post(ctx, "/ledger/receipts", input, idempotencyKey, &result)
+	return result, err
+}
+
+func (c *ledgerHTTPClient) ListReceipts(ctx context.Context, query ReceiptQuery) (ReceiptPage, error) {
+	if query.Limit == 0 {
+		query.Limit = 50
+	}
+	if query.Limit < 1 || query.Limit > 100 {
+		return ReceiptPage{}, fmt.Errorf("ledger receipt limit must be between 1 and 100")
+	}
+	values := url.Values{
+		"accountId": {query.AccountID},
+		"limit":     {fmt.Sprint(query.Limit)},
+	}
+	if query.Cursor != "" {
+		values.Set("cursor", query.Cursor)
+	}
+	var result ReceiptPage
+	err := c.get(ctx, "/ledger/receipts?"+values.Encode(), &result)
 	return result, err
 }
 
@@ -182,5 +217,12 @@ func (c *ledgerHTTPClient) do(req *http.Request, output any) error {
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 		return fmt.Errorf("ledger request failed: status %d: %s", res.StatusCode, string(body))
 	}
-	return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(output)
+	body, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > 1<<20 {
+		return fmt.Errorf("ledger response too large")
+	}
+	return json.Unmarshal(body, output)
 }
