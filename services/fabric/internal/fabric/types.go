@@ -14,9 +14,17 @@ var ErrMachineOwnershipConflict = errors.New("machine_ownership_conflict")
 var ErrMachineOwnershipNotFound = errors.New("machine_ownership_not_found")
 var ErrUnsupportedComputePackage = errors.New("unsupported_compute_package")
 var ErrInvalidStorageSize = errors.New("invalid_storage_size")
+var ErrInvalidMonthlyPreflight = errors.New("invalid_monthly_preflight")
+var ErrMonthlyPreflightUnavailable = errors.New("monthly_preflight_unavailable")
+var ErrComputeIdempotencyConflict = errors.New("compute_idempotency_conflict")
+var ErrComputeOperationFailed = errors.New("compute_operation_failed")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
 var ErrRuntimeOperationInProgress = errors.New("runtime_operation_in_progress")
 var ErrRuntimeOperationFailed = errors.New("runtime_operation_failed")
+var ErrStorageAttachmentIdempotencyConflict = errors.New("storage_attachment_idempotency_conflict")
+var ErrStorageAttachmentOperationInProgress = errors.New("storage_attachment_operation_in_progress")
+var ErrStorageAttachmentOperationFailed = errors.New("storage_attachment_operation_failed")
+var ErrGatewaySecretIdempotencyConflict = errors.New("gateway_secret_idempotency_conflict")
 
 type Catalog struct {
 	SchemaVersion     int                `json:"schemaVersion"`
@@ -24,6 +32,26 @@ type Catalog struct {
 	WorkspacePackages []WorkspacePackage `json:"workspacePackages"`
 	StorageClasses    []StorageClass     `json:"storageClasses"`
 	IngressDomains    []IngressDomain    `json:"ingressDomains"`
+}
+
+type MonthlyPreflightInput struct {
+	ResourceType string `json:"resourceType"`
+	PackageID    string `json:"packageId"`
+	SizeGB       int    `json:"sizeGb,omitempty"`
+	Zone         string `json:"zone"`
+}
+
+type MonthlyPreflight struct {
+	ResourceType       string            `json:"resourceType"`
+	PackageID          string            `json:"packageId"`
+	SizeGB             int               `json:"sizeGb,omitempty"`
+	Zone               string            `json:"zone"`
+	Available          bool              `json:"available"`
+	ChargeType         string            `json:"chargeType"`
+	PeriodMonths       int               `json:"periodMonths"`
+	RenewFlag          string            `json:"renewFlag"`
+	ProviderPriceCNY   float64           `json:"providerPriceCny"`
+	ProviderRequestIDs map[string]string `json:"providerRequestIds"`
 }
 
 type WorkspacePackage struct {
@@ -78,6 +106,10 @@ type ComputeAllocation struct {
 	MachineName        string            `json:"machineName,omitempty"`
 	PrivateIP          string            `json:"privateIp,omitempty"`
 	PublicIP           string            `json:"publicIp,omitempty"`
+	CVMStatus          string            `json:"cvmStatus,omitempty"`
+	ChargeType         string            `json:"chargeType,omitempty"`
+	RenewFlag          string            `json:"renewFlag,omitempty"`
+	Deadline           string            `json:"deadline,omitempty"`
 	ServiceName        string            `json:"serviceName,omitempty"`
 	NodeSelector       map[string]any    `json:"nodeSelector,omitempty"`
 	ProviderData       map[string]string `json:"providerData,omitempty"`
@@ -108,6 +140,10 @@ type ProviderMachine struct {
 	PrivateIP    string `json:"privateIp,omitempty"`
 	PublicIP     string `json:"publicIp,omitempty"`
 	InstanceType string `json:"instanceType,omitempty"`
+	Zone         string `json:"zone,omitempty"`
+	ChargeType   string `json:"chargeType,omitempty"`
+	RenewFlag    string `json:"renewFlag,omitempty"`
+	Deadline     string `json:"deadline,omitempty"`
 	Ready        bool   `json:"ready"`
 }
 
@@ -134,6 +170,8 @@ type StorageVolumeInput struct {
 	ID             string `json:"id,omitempty"`
 	AccountID      string `json:"accountId"`
 	WorkspaceID    string `json:"workspaceId"`
+	ComputeID      string `json:"computeId"`
+	Zone           string `json:"zone"`
 	SizeGB         int    `json:"sizeGb"`
 	IdempotencyKey string `json:"-"`
 	OperationID    string `json:"-"`
@@ -149,6 +187,12 @@ type StorageVolume struct {
 	ProviderRequestID  string            `json:"providerRequestId"`
 	SizeGB             int               `json:"sizeGb,omitempty"`
 	StorageClass       string            `json:"storageClass,omitempty"`
+	CBSStatus          string            `json:"cbsStatus,omitempty"`
+	DiskType           string            `json:"diskType,omitempty"`
+	RenewFlag          string            `json:"renewFlag,omitempty"`
+	Deadline           string            `json:"deadline,omitempty"`
+	Zone               string            `json:"zone,omitempty"`
+	ProviderData       map[string]string `json:"providerData,omitempty"`
 	CostTags           map[string]string `json:"costTags,omitempty"`
 	CreatedAt          time.Time         `json:"createdAt"`
 }
@@ -206,12 +250,13 @@ type StorageAttachment struct {
 }
 
 type WorkspaceRuntimeInput struct {
-	WorkspaceID    string `json:"workspaceId"`
-	ComputeID      string `json:"computeId"`
-	VolumeID       string `json:"volumeId"`
-	ImageID        string `json:"imageId"`
-	IdempotencyKey string `json:"-"`
-	OperationID    string `json:"-"`
+	WorkspaceID      string `json:"workspaceId"`
+	ComputeID        string `json:"computeId"`
+	VolumeID         string `json:"volumeId"`
+	ImageID          string `json:"imageId"`
+	GatewaySecretRef string `json:"gatewaySecretRef"`
+	IdempotencyKey   string `json:"-"`
+	OperationID      string `json:"-"`
 }
 
 type WorkspaceRuntime struct {
@@ -235,6 +280,18 @@ type RuntimeAccess struct {
 	CredentialVersion string    `json:"credentialVersion,omitempty"`
 	SecretRef         string    `json:"secretRef,omitempty"`
 	UpdatedAt         time.Time `json:"updatedAt,omitempty"`
+}
+
+type GatewaySecretInput struct {
+	AccountID      string `json:"accountId"`
+	GatewayAPIKey  string `json:"gatewayApiKey"`
+	IdempotencyKey string `json:"-"`
+}
+
+type GatewaySecret struct {
+	SecretRef   string `json:"secretRef"`
+	Version     string `json:"version"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 type Check struct {
