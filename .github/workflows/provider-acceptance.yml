@@ -1,0 +1,56 @@
+name: Provider Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      account_id:
+        description: Dedicated account that owns verification-slot-01.
+        required: true
+        type: string
+      confirmation:
+        description: Exact one-time PREPAID purchase confirmation.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-acceptance-verification-slot-01
+  cancel-in-progress: false
+
+jobs:
+  accept:
+    name: Accept one fixed PREPAID verification slot
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      OPL_CONSOLE_ORIGIN: https://cloud.medopl.cn
+      OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
+      OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID: ${{ inputs.account_id }}
+      OPL_PROVIDER_ACCEPTANCE_CONFIRMATION: ${{ inputs.confirmation }}
+      OPL_PROVIDER_ACCEPTANCE_ATTEMPTS: "90"
+      OPL_PROVIDER_ACCEPTANCE_RETRY_DELAY_MS: "10000"
+      OPL_PROVIDER_ACCEPTANCE_REQUEST_TIMEOUT_MS: "30000"
+      OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH: artifacts/provider-acceptance/manifest.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run one-time Provider Acceptance
+        run: node tools/provider-acceptance.ts
+
+      - name: Upload Provider Acceptance manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-acceptance
+          path: artifacts/provider-acceptance
+          if-no-files-found: ignore

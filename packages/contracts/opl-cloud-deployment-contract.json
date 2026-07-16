@@ -222,7 +222,6 @@
       "OPL_VERIFY_ACCOUNT_ID",
       "OPL_VERIFY_SLOT_ID",
       "OPL_VERIFY_SLOT_DESCRIPTOR_JSON",
-      "OPL_VERIFY_PURCHASE_BUDGET_REMAINING",
       "OPL_VERIFY_URL_ATTEMPTS",
       "OPL_VERIFY_RETRY_DELAY_MS",
       "OPL_VERIFY_REQUEST_TIMEOUT_MS",
@@ -263,6 +262,48 @@
       "storage-volumes"
     ]
   },
+  "providerAcceptanceWorkflow": {
+    "file": ".github/workflows/provider-acceptance.yml",
+    "job": "accept",
+    "launchStatus": "active",
+    "releaseGate": false,
+    "mode": "operator_only_one_time_fixed_slot",
+    "runner": [
+      "ubuntu-latest"
+    ],
+    "inputs": [
+      "account_id",
+      "confirmation"
+    ],
+    "requiredInputs": [
+      "account_id",
+      "confirmation"
+    ],
+    "timeoutMinutes": 30,
+    "requiredEnv": [
+      "OPL_CONSOLE_ORIGIN",
+      "OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON",
+      "OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID",
+      "OPL_PROVIDER_ACCEPTANCE_CONFIRMATION",
+      "OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH"
+    ],
+    "secretEnv": [
+      "OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON"
+    ],
+    "steps": [
+      "Checkout",
+      "Set up Node",
+      "Run one-time Provider Acceptance",
+      "Upload Provider Acceptance manifest"
+    ],
+    "forbiddenRunTokens": [
+      "compute-allocations",
+      "storage-volumes",
+      "destroy",
+      "delete",
+      "renew"
+    ]
+  },
   "productionLiveQaJob": {
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "live-qa",
@@ -290,7 +331,6 @@
       "OPL_VERIFY_ACCOUNT_ID",
       "OPL_VERIFY_SLOT_ID",
       "OPL_VERIFY_SLOT_DESCRIPTOR_JSON",
-      "OPL_VERIFY_PURCHASE_BUDGET_REMAINING",
       "OPL_VERIFY_URL_ATTEMPTS",
       "OPL_VERIFY_RETRY_DELAY_MS",
       "OPL_VERIFY_REQUEST_TIMEOUT_MS",

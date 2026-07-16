@@ -257,7 +257,7 @@ test("production verification is read only and fixed to the reusable prepaid slo
   assert.equal(currentJob.env.OPL_VERIFY_AUTH_USERS_JSON, "${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}");
   assert.equal(currentJob.env.OPL_VERIFY_SLOT_ID, "verification-slot-01");
   assert.deepEqual(JSON.parse(currentJob.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON), fixedSlotDescriptor);
-  assert.equal(currentJob.env.OPL_VERIFY_PURCHASE_BUDGET_REMAINING, "${{ vars.OPL_VERIFY_PURCHASE_BUDGET_REMAINING }}");
+  assert.equal(Object.hasOwn(currentJob.env, "OPL_VERIFY_PURCHASE_BUDGET_REMAINING"), false);
   assert.match(runs, /node tools\/production-verifier\.ts --browser-e2e/);
   assert.doesNotMatch(runs, /paid.confirmation|compute-allocations|storage-volumes|destroy|detach/i);
 
@@ -277,7 +277,7 @@ test("TKE deploy runs separately gated real Workspace QA only after rollout", as
   assert.equal(liveQa.env.OPL_VERIFY_AUTH_USERS_JSON, "${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}");
   assert.equal(liveQa.env.OPL_VERIFY_SLOT_ID, "verification-slot-01");
   assert.deepEqual(JSON.parse(liveQa.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON), fixedSlotDescriptor);
-  assert.equal(liveQa.env.OPL_VERIFY_PURCHASE_BUDGET_REMAINING, "${{ vars.OPL_VERIFY_PURCHASE_BUDGET_REMAINING }}");
+  assert.equal(Object.hasOwn(liveQa.env, "OPL_VERIFY_PURCHASE_BUDGET_REMAINING"), false);
   assert.equal(liveQa.env.OPL_VERIFY_LIVE_QA_CONFIRMATION, "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST");
   assert.equal(Object.hasOwn(liveQa.env, "OPL_VERIFY_MODEL_ACCESS_KEY"), false);
   assert.match(runs, /npm ci/);

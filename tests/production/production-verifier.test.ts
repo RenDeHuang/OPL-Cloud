@@ -201,7 +201,6 @@ test("production verifier requires the dedicated account id before network acces
     authUsersJson: ownerSeed,
     slotDescriptor: fixedSlotDescriptor,
     runId: "missing-account",
-    purchaseBudgetRemaining: 0,
     fetchImpl: async () => { calls += 1; return json({}); }
   }), /verification_account_id_required/);
   assert.equal(calls, 0);
@@ -215,7 +214,6 @@ test("production verifier rejects a non-production Console host before network a
     accountId: "acct-alpha",
     slotDescriptor: fixedSlotDescriptor,
     runId: "wrong-console-host",
-    purchaseBudgetRemaining: 0,
     fetchImpl: async () => { calls += 1; return json({}); }
   }), /public_console_origin_required/);
   assert.equal(calls, 0);
@@ -255,18 +253,6 @@ test("production verifier requires an exact controlled slot descriptor before ne
   }
 });
 
-test("production verifier requires an explicit purchase budget before network access", async () => {
-  let calls = 0;
-  await assert.rejects(() => verifyProductionChain({
-    origin: "https://cloud.medopl.cn",
-    authUsersJson: ownerSeed,
-    slotDescriptor: fixedSlotDescriptor,
-    runId: "missing-purchase-budget",
-    fetchImpl: async () => { calls += 1; return json({}); }
-  }), /verification_slot_purchase_budget_required/);
-  assert.equal(calls, 0);
-});
-
 test("ordinary production verifier reuses exactly one fixed slot without resource mutations", async () => {
   const fixture = fixedSlotFixture();
   const result = await verifyProductionChain({
@@ -275,7 +261,6 @@ test("ordinary production verifier reuses exactly one fixed slot without resourc
     accountId: "acct-alpha",
     slotDescriptor: fixedSlotDescriptor,
     runId: "read-only-smoke",
-    purchaseBudgetRemaining: 0,
     fetchImpl: fixture.fetchImpl
   });
 
@@ -305,46 +290,48 @@ test("zero slots only reports that independent Provider Acceptance is required",
     accountId: "acct-alpha",
     slotDescriptor: fixedSlotDescriptor,
     runId: "slot-missing",
-    purchaseBudgetRemaining: 1,
     fetchImpl: fixture.fetchImpl
   });
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "provider_acceptance_required");
   assert.equal(result.slotId, FIXED_VERIFICATION_SLOT_ID);
-  assert.equal(result.purchaseBudgetRemaining, 1);
+  assert.equal(Object.hasOwn(result, "purchaseBudgetRemaining"), false);
   assert.equal(fixture.calls.some((call) => call.path.includes("compute-allocations") || call.path.includes("storage-volumes")), false);
 });
 
 test("same-name customer Workspaces cannot stand in for the server-marked fixed slot", async () => {
-  for (const fixture of [
-    fixedSlotFixture({ nameOnly: true }),
-    fixedSlotFixture({ customerProduct: true })
-  ]) {
-    await assert.rejects(() => verifyProductionChain({
-      origin: "https://cloud.medopl.cn",
-      authUsersJson: ownerSeed,
-      accountId: "acct-alpha",
-      slotDescriptor: fixedSlotDescriptor,
-      runId: "customer-workspace-rejected",
-      purchaseBudgetRemaining: 0,
-      fetchImpl: fixture.fetchImpl
-    }), /verification_slot_(?:purchase_budget_exhausted|ambiguous)/);
-  }
+  const nameOnly = await verifyProductionChain({
+    origin: "https://cloud.medopl.cn",
+    authUsersJson: ownerSeed,
+    accountId: "acct-alpha",
+    slotDescriptor: fixedSlotDescriptor,
+    runId: "same-name-not-slot",
+    fetchImpl: fixedSlotFixture({ nameOnly: true }).fetchImpl
+  });
+  assert.equal(nameOnly.status, "provider_acceptance_required");
+
+  const customerProduct = fixedSlotFixture({ customerProduct: true });
+  await assert.rejects(() => verifyProductionChain({
+    origin: "https://cloud.medopl.cn",
+    authUsersJson: ownerSeed,
+    accountId: "acct-alpha",
+    slotDescriptor: fixedSlotDescriptor,
+    runId: "customer-workspace-rejected",
+    fetchImpl: customerProduct.fetchImpl
+  }), /verification_slot_ambiguous/);
 });
 
-test("fixed-slot selection fails closed on exhausted budget, duplicates, or ambiguity", async () => {
-  const options = (fixture, purchaseBudgetRemaining = 1) => ({
+test("fixed-slot selection fails closed on duplicates or ambiguity", async () => {
+  const options = (fixture) => ({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
     accountId: "acct-alpha",
     slotDescriptor: fixedSlotDescriptor,
     runId: "slot-guard",
-    purchaseBudgetRemaining,
     fetchImpl: fixture.fetchImpl
   });
 
-  await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ slotCount: 0 }), 0)), /verification_slot_purchase_budget_exhausted/);
   await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ slotCount: 2 }))), /verification_slot_multiple/);
   await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ ambiguous: true }))), /verification_slot_ambiguous/);
   await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ inactive: true }))), /verification_slot_ambiguous/);
@@ -379,7 +366,6 @@ test("fixed-slot reuse requires prepaid shape, live deadlines, one zone, and acc
       accountId: "acct-alpha",
       slotDescriptor: fixedSlotDescriptor,
       runId: "slot-compliance",
-      purchaseBudgetRemaining: 0,
       fetchImpl: fixture.fetchImpl
     }), /verification_slot_ambiguous/);
   }
@@ -399,7 +385,6 @@ test("fixed-slot reuse requires exact one-month provider periods from resource s
       accountId: "acct-alpha",
       slotDescriptor: fixedSlotDescriptor,
       runId: "slot-internal-one-month",
-      purchaseBudgetRemaining: 0,
       fetchImpl: fixture.fetchImpl
     }), /verification_slot_ambiguous/);
   }
@@ -418,25 +403,6 @@ test("production verifier CLI rejects legacy paid flags before network access", 
 
   assert.equal(code, 1);
   assert.match(stderr, /production_verifier_read_only/);
-  assert.equal(calls, 0);
-});
-
-test("production verifier CLI requires an explicit purchase budget before network access", async () => {
-  let stderr = "";
-  let calls = 0;
-  const code = await runProductionVerifierCli({
-    env: {
-      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
-      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
-      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: JSON.stringify(fixedSlotDescriptor)
-    },
-    stdout: { write: () => {} },
-    stderr: { write: (chunk) => { stderr += chunk; } },
-    fetchImpl: async () => { calls += 1; return json({}); }
-  });
-
-  assert.equal(code, 1);
-  assert.match(stderr, /verification_slot_purchase_budget_required/);
   assert.equal(calls, 0);
 });
 

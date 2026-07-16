@@ -217,7 +217,6 @@ function options(fixture) {
     runId: "rollout-qa-1",
     confirmation: LIVE_QA_CONFIRMATION,
     slotDescriptor: fixedSlotDescriptor,
-    purchaseBudgetRemaining: 0,
     workspaceUrlAttempts: 1,
     retryDelayMs: 0,
     usageAttempts: 2,
@@ -263,10 +262,7 @@ test("rollout QA requires the model response to contain only the unique token", 
 
 test("rollout QA reports Provider Acceptance without starting a browser when the fixed slot is absent", async () => {
   const fixture = liveFixture({ slotMissing: true });
-  await assert.rejects(() => verifyProductionLiveQa({
-    ...options(fixture),
-    purchaseBudgetRemaining: 1
-  }), /provider_acceptance_required/);
+  await assert.rejects(() => verifyProductionLiveQa(options(fixture)), /provider_acceptance_required/);
   assert.equal(fixture.state.modelRequests, 0);
 });
 
@@ -305,8 +301,7 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
       OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
       OPL_VERIFY_ACCOUNT_ID: "acct-alpha",
       OPL_VERIFY_LIVE_QA_CONFIRMATION: LIVE_QA_CONFIRMATION,
-      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: "{",
-      OPL_VERIFY_PURCHASE_BUDGET_REMAINING: "0"
+      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: "{"
     },
     stdout: { write: () => {} },
     stderr: { write: (chunk) => { stderr += chunk; } },
@@ -314,26 +309,5 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
   });
   assert.equal(code, 1);
   assert.match(stderr, /verification_slot_descriptor_invalid/);
-  assert.equal(calls, 0);
-});
-
-test("rollout QA CLI requires an explicit purchase budget before network access", async () => {
-  let stderr = "";
-  let calls = 0;
-  const code = await runProductionLiveQaCli({
-    env: {
-      OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
-      OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
-      OPL_VERIFY_ACCOUNT_ID: "acct-alpha",
-      OPL_VERIFY_LIVE_QA_CONFIRMATION: LIVE_QA_CONFIRMATION,
-      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: JSON.stringify(fixedSlotDescriptor)
-    },
-    stdout: { write: () => {} },
-    stderr: { write: (chunk) => { stderr += chunk; } },
-    fetchImpl: async () => { calls += 1; return json({}); }
-  });
-
-  assert.equal(code, 1);
-  assert.match(stderr, /verification_slot_purchase_budget_required/);
   assert.equal(calls, 0);
 });

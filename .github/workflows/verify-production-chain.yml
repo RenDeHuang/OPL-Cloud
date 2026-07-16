@@ -49,7 +49,6 @@ jobs:
       OPL_VERIFY_ACCOUNT_ID: ${{ inputs.account_id }}
       OPL_VERIFY_SLOT_ID: verification-slot-01
       OPL_VERIFY_SLOT_DESCRIPTOR_JSON: '{"id":"verification-slot-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
-      OPL_VERIFY_PURCHASE_BUDGET_REMAINING: ${{ vars.OPL_VERIFY_PURCHASE_BUDGET_REMAINING }}
       OPL_VERIFY_URL_ATTEMPTS: ${{ inputs.url_attempts }}
       OPL_VERIFY_RETRY_DELAY_MS: ${{ inputs.retry_delay_ms }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ inputs.request_timeout_ms }}
