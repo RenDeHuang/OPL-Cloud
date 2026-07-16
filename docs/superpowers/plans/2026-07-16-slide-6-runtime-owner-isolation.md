@@ -33,7 +33,8 @@ Run:
 
 ```bash
 git status --short --branch
-go test ./services/control-plane/internal/server ./services/control-plane/internal/controlplane ./services/control-plane/internal/clients ./services/fabric/internal/fabric ./services/fabric/internal/http
+(cd services/control-plane && go test ./internal/server ./internal/controlplane ./internal/clients)
+(cd services/fabric && go test ./internal/fabric ./internal/http)
 ```
 
 Expected: branch `fix/slide-6-runtime-owner-isolation`, clean worktree, PASS.
@@ -58,7 +59,7 @@ Also assert the stored Workspace still contains no password.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run TestRuntimeStatusNeverReturnsCredential -count=1
+(cd services/control-plane && go test ./internal/server -run TestRuntimeStatusNeverReturnsCredential -count=1)
 ```
 
 Expected: FAIL because `workspaceRuntimeStatusResponse` includes the password.
@@ -83,7 +84,7 @@ version.
 Set `Cache-Control: private, no-store` before the status response. Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run TestRuntimeStatusNeverReturnsCredential -count=1
+(cd services/control-plane && go test ./internal/server -run TestRuntimeStatusNeverReturnsCredential -count=1)
 git add services/control-plane/internal/server/routes_workspace.go services/control-plane/internal/server/server.go services/control-plane/internal/server/runtime_owner_isolation_test.go
 git commit -m "fix(control-plane): remove password from runtime status"
 ```
@@ -139,7 +140,7 @@ unready Runtime, set `private, no-store`, and emit only
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'RuntimeCredentialReveal|RuntimeStatusNever' -count=1
+(cd services/control-plane && go test ./internal/server -run 'RuntimeCredentialReveal|RuntimeStatusNever' -count=1)
 git add services/control-plane/internal/server/routes_workspace.go services/control-plane/internal/server/runtime_owner_isolation_test.go
 git commit -m "feat(control-plane): restrict runtime credential reveal to owner"
 ```
@@ -169,7 +170,7 @@ opl.medopl.cn/credential-revision
 Run:
 
 ```bash
-go test ./services/fabric/internal/fabric -run TestWorkspaceCredentialRevisionRollsRuntime -count=1
+(cd services/fabric && go test ./internal/fabric -run TestWorkspaceCredentialRevisionRollsRuntime -count=1)
 ```
 
 Expected: FAIL.
@@ -190,7 +191,7 @@ password, session secret, or seed itself in metadata.
 Run:
 
 ```bash
-go test ./services/fabric/internal/fabric -run 'Workspace.*(Credential|Manifest|Runtime)' -count=1
+(cd services/fabric && go test ./internal/fabric -run 'Workspace.*(Credential|Manifest|Runtime)' -count=1)
 git add services/fabric/internal/fabric/tencent_provider.go services/fabric/internal/fabric/tencent_provider_test.go
 git commit -m "fix(fabric): roll runtime on credential revision"
 ```
@@ -240,7 +241,7 @@ receipt/response path.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server ./services/control-plane/internal/controlplane ./services/control-plane/internal/clients -run 'RuntimeCredential.*(Rotate|Replay|Owner|NoLeak)' -count=1
+(cd services/control-plane && go test ./internal/server ./internal/controlplane ./internal/clients -run 'RuntimeCredential.*(Rotate|Replay|Owner|NoLeak)' -count=1)
 git add services/control-plane/internal/server/routes_workspace.go services/control-plane/internal/server/runtime_owner_isolation_test.go services/control-plane/internal/controlplane/service.go services/control-plane/internal/clients/fabric.go services/control-plane/internal/server/server_test.go
 git commit -m "feat(control-plane): rotate owner runtime credentials"
 ```

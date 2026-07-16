@@ -49,7 +49,7 @@ merge base equals the integration HEAD used to create the worktree.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server ./services/control-plane/internal/controlplane ./services/control-plane/internal/clients
+(cd services/control-plane && go test ./internal/server ./internal/controlplane ./internal/clients)
 ```
 
 Expected: PASS before edits.
@@ -90,7 +90,7 @@ func TestWorkspacePricingPreviewRejectsInvalidStorage(t *testing.T) {
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'TestWorkspacePricingPreview' -count=1
+(cd services/control-plane && go test ./internal/server -run 'TestWorkspacePricingPreview' -count=1)
 ```
 
 Expected: FAIL because `workspace` is not an accepted resource type.
@@ -138,7 +138,7 @@ Use `math.MaxInt64-value` in `checkedAddInt64`; do not add a numeric package.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'TestWorkspacePricingPreview|TestMonthlyPricing' -count=1
+(cd services/control-plane && go test ./internal/server -run 'TestWorkspacePricingPreview|TestMonthlyPricing' -count=1)
 git add services/control-plane/internal/server/pricing.go services/control-plane/internal/server/pricing_monthly_test.go
 git commit -m "feat(control-plane): quote complete workspaces"
 ```
@@ -167,7 +167,7 @@ POST /api/users/{id}/reset-password
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run TestOperatorPasswordResetRevokesSessions -count=1
+(cd services/control-plane && go test ./internal/server -run TestOperatorPasswordResetRevokesSessions -count=1)
 ```
 
 Expected: FAIL with 404.
@@ -190,10 +190,10 @@ func (app *controlPlaneServer) resetUserPassword(ctx context.Context, userID, pa
 		return nil, err
 	}
 	user["passwordHash"] = hash
-	if err := app.tables.SaveUser(ctx, user); err != nil {
+	if err := app.revokeUserSessions(userID); err != nil {
 		return nil, err
 	}
-	if err := app.revokeUserSessions(userID); err != nil {
+	if err := app.tables.SaveUser(ctx, user); err != nil {
 		return nil, err
 	}
 	return sanitizeUser(user), nil
@@ -209,7 +209,7 @@ an audit event, and never echoes the password.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'PasswordReset|UserLifecycle|Login' -count=1
+(cd services/control-plane && go test ./internal/server -run 'PasswordReset|UserLifecycle|Login' -count=1)
 git add services/control-plane/internal/server/auth_accounts.go services/control-plane/internal/server/routes_admin.go services/control-plane/internal/server/console_tenant_isolation_test.go
 git commit -m "feat(control-plane): support operator password reset"
 ```
@@ -271,7 +271,7 @@ ID from time during a retry.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run TestWorkspaceLaunchOperation -count=1
+(cd services/control-plane && go test ./internal/server -run TestWorkspaceLaunchOperation -count=1)
 git add services/control-plane/internal/server/workspace_launch.go services/control-plane/internal/server/workspace_launch_test.go
 git commit -m "feat(control-plane): persist workspace launch state"
 ```
@@ -327,7 +327,7 @@ account ID. Unknown or cross-account IDs return 404.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'WorkspaceLaunch.*(Preflight|Replay|Fingerprint|Tenant|List)' -count=1
+(cd services/control-plane && go test ./internal/server -run 'WorkspaceLaunch.*(Preflight|Replay|Fingerprint|Tenant|List)' -count=1)
 git add services/control-plane/internal/server/routes_workspace_launch.go services/control-plane/internal/server/server.go services/control-plane/internal/server/workspace_launch.go services/control-plane/internal/server/workspace_launch_test.go
 git commit -m "feat(control-plane): accept durable workspace launches"
 ```
@@ -341,11 +341,15 @@ Expected: PASS.
 Use fakes to record calls and assert this order:
 
 ```text
-balance total preflight
-compute preflight
+launch compute preflight
+launch storage preflight
+launch total balance preflight
+compute safety preflight
+compute balance confirmation
 compute debit
 compute provider create/readback
-storage preflight
+storage safety preflight
+storage balance confirmation
 storage debit
 storage provider create/readback
 attachment
@@ -402,7 +406,7 @@ Workspace receipt.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'WorkspaceLaunch.*(Order|Resume|Restart|ManualReview)' -count=1
+(cd services/control-plane && go test ./internal/server -run 'WorkspaceLaunch.*(Order|Resume|Restart|ManualReview)' -count=1)
 git add services/control-plane/internal/server/workspace_launch.go services/control-plane/internal/server/provider_reconcile_worker.go services/control-plane/internal/server/workspace_launch_test.go
 git commit -m "feat(control-plane): resume workspace launches in background"
 ```

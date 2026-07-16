@@ -36,7 +36,8 @@ Run:
 
 ```bash
 git status --short --branch
-go test ./services/control-plane/internal/clients ./services/control-plane/internal/controlplane ./services/control-plane/internal/server ./services/ledger/...
+(cd services/control-plane && go test ./internal/clients ./internal/controlplane ./internal/server)
+(cd services/ledger && go test ./...)
 ```
 
 Expected: branch `feat/slides-5-7-customer-facts`, clean worktree, PASS.
@@ -70,7 +71,7 @@ rejected without embedding its body in the error.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/clients -run TestLedgerReceiptList -count=1
+(cd services/control-plane && go test ./internal/clients -run TestLedgerReceiptList -count=1)
 ```
 
 Expected: compile FAIL until the method exists.
@@ -102,7 +103,7 @@ Add `ListReceipts(context.Context, ReceiptQuery) (ReceiptPage, error)` to
 Run:
 
 ```bash
-go test ./services/control-plane/internal/clients -run 'Ledger.*Receipt' -count=1
+(cd services/control-plane && go test ./internal/clients -run 'Ledger.*Receipt' -count=1)
 git add services/control-plane/internal/clients/ledger.go services/control-plane/internal/clients/ledger_test.go
 git commit -m "feat(control-plane): read paginated ledger receipts"
 ```
@@ -148,7 +149,7 @@ zero.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'BillingReceipt.*(List|Detail|Tenant|Projection)' -count=1
+(cd services/control-plane && go test ./internal/server -run 'BillingReceipt.*(List|Detail|Tenant|Projection)' -count=1)
 git add services/control-plane/internal/controlplane/service.go services/control-plane/internal/server/routes_billing.go services/control-plane/internal/server/customer_facts_test.go services/control-plane/internal/server/server_test.go
 git commit -m "feat(control-plane): project customer billing history"
 ```
@@ -210,7 +211,7 @@ Decode only `code`, `type`, `value`, `status`, `used_by`, `used_at`, and
 Run:
 
 ```bash
-go test ./services/control-plane/internal/clients -run 'Sub2API.*(Usage|BalanceHistory)' -count=1
+(cd services/control-plane && go test ./internal/clients -run 'Sub2API.*(Usage|BalanceHistory)' -count=1)
 git add services/control-plane/internal/clients/sub2api.go services/control-plane/internal/clients/sub2api_test.go
 git commit -m "feat(control-plane): read scoped sub2api usage facts"
 ```
@@ -265,7 +266,7 @@ Stats use corresponding `total*` fields and `totalActualCostUsdMicros`.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'Gateway.*(Usage|Stats|Tenant|Unavailable)' -count=1
+(cd services/control-plane && go test ./internal/server -run 'Gateway.*(Usage|Stats|Tenant|Unavailable)' -count=1)
 git add services/control-plane/internal/controlplane/service.go services/control-plane/internal/server/routes_gateway.go services/control-plane/internal/server/customer_facts_test.go services/control-plane/internal/server/server_test.go
 git commit -m "feat(control-plane): project gateway request usage"
 ```
@@ -313,7 +314,7 @@ server and pass the computed report to existing `RecordReconciliation`.
 Run:
 
 ```bash
-go test ./services/control-plane/internal/server -run 'BillingReconciliation.*(Match|Mismatch|Unavailable|NoMutation)' -count=1
+(cd services/control-plane && go test ./internal/server -run 'BillingReconciliation.*(Match|Mismatch|Unavailable|NoMutation)' -count=1)
 git add services/control-plane/internal/server/routes_billing.go services/control-plane/internal/server/billing_projection.go services/control-plane/internal/server/customer_facts_test.go services/control-plane/internal/server/server_test.go
 git commit -m "feat(control-plane): reconcile authoritative billing facts"
 ```
