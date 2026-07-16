@@ -408,6 +408,66 @@ func TestWorkspaceManifestIsolatesTenantRuntime(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCredentialRevisionRollsRuntime(t *testing.T) {
+	t.Setenv("OPL_AIONUI_ADMIN_PASSWORD_SEED", "workspace-secret-2026-very-long")
+	compute := ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", PackageID: "basic"}
+	storage := StorageVolume{ProviderData: map[string]string{"pvcName": "opl-storage-alpha-data"}}
+	tags := map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": "ws-alpha", "opl_resource_id": "ws-alpha", "opl_operation_id": "op-alpha"}
+
+	manifest := func(seed string) ([]byte, map[string]any, map[string]any) {
+		t.Helper()
+		raw := workspaceManifest("ws-alpha", "Alpha", seed, "opl-compute-alpha", compute, storage, "opl-gateway-acct-alpha", tags)
+		var list map[string]any
+		if err := json.Unmarshal(raw, &list); err != nil {
+			t.Fatalf("decode manifest: %v", err)
+		}
+		var secret, deployment map[string]any
+		for _, item := range list["items"].([]any) {
+			candidate := item.(map[string]any)
+			switch candidate["kind"] {
+			case "Secret":
+				secret = candidate
+			case "Deployment":
+				deployment = candidate
+			}
+		}
+		return raw, secret["data"].(map[string]any), nested(deployment, "spec", "template", "metadata", "annotations").(map[string]any)
+	}
+
+	firstRaw, firstSecret, firstAnnotations := manifest("credential-seed-one")
+	replayRaw, replaySecret, replayAnnotations := manifest("credential-seed-one")
+	rotatedRaw, rotatedSecret, rotatedAnnotations := manifest("credential-seed-two")
+	if !bytes.Equal(firstRaw, replayRaw) || !reflect.DeepEqual(firstSecret, replaySecret) || !reflect.DeepEqual(firstAnnotations, replayAnnotations) {
+		t.Fatal("same credential seed must produce a byte-identical manifest")
+	}
+	if firstSecret["webui_password"] == rotatedSecret["webui_password"] || firstSecret["webui_session_secret"] == rotatedSecret["webui_session_secret"] {
+		t.Fatalf("rotated credential Secret did not change: before=%#v after=%#v", firstSecret, rotatedSecret)
+	}
+	if bytes.Equal(firstRaw, rotatedRaw) {
+		t.Fatal("new credential seed must change the manifest")
+	}
+	const revisionKey = "opl.medopl.cn/credential-revision"
+	if firstAnnotations[revisionKey] != stableID("workspace-credential", "ws-alpha", "credential-seed-one")[:16] {
+		t.Fatalf("credential revision annotation = %#v", firstAnnotations)
+	}
+	changed := 0
+	for key, value := range rotatedAnnotations {
+		if firstAnnotations[key] != value {
+			changed++
+			if key != revisionKey {
+				t.Fatalf("rotation changed unrelated pod annotation %q", key)
+			}
+		}
+	}
+	if changed != 1 || len(firstAnnotations) != len(rotatedAnnotations) {
+		t.Fatalf("rotation annotations changed by %d: before=%#v after=%#v", changed, firstAnnotations, rotatedAnnotations)
+	}
+	password := string(decodeSecretValue(t, firstSecret, "webui_password"))
+	if bytes.Contains(firstRaw, []byte(password)) || bytes.Contains(firstRaw, []byte("credential-seed-one")) {
+		t.Fatal("manifest metadata or payload leaked raw credential material")
+	}
+}
+
 func TestWorkspaceNetworkPolicyReadinessRejectsBroaderSelectors(t *testing.T) {
 	runtimeLabels := func() map[string]any {
 		return map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha"}
