@@ -35,8 +35,8 @@ import { customerSafeMessage, moneyCents, paidThrough, usdMicros } from "../shar
 
 type AnyRecord = Record<string, any>;
 
-const computeAllocationStages = Object.freeze(["已提交", "云资源准备中", "余额扣款中", "月度权益已激活", "Runtime 部署中", "URL 可用"]);
-const storageCreateStages = Object.freeze(["已提交", "存储准备中", "余额扣款中", "月度权益已激活", "可挂载"]);
+const computeAllocationStages = Object.freeze(["已提交", "只读资源预检中", "月费扣款中", "PREPAID 开通中", "资源认领中", "月度权益已激活", "Runtime 部署中", "URL 可用"]);
+const storageCreateStages = Object.freeze(["已提交", "只读资源预检中", "月费扣款中", "PREPAID 开通中", "资源认领中", "月度权益已激活", "可挂载"]);
 const storageDestroyStages = Object.freeze(["已提交", "停止续费", "销毁存储", "已删除"]);
 const attachmentCreateStages = Object.freeze(["已提交", "挂载中", "可创建入口"]);
 const attachmentDetachStages = Object.freeze(["已提交", "解除挂载", "存储保留"]);
@@ -230,7 +230,7 @@ export function CreateComputeAllocationPage({ state, session, runAction }: any) 
               return created && {
                 ...created,
                 status: created.status || "submitted",
-                nextStepMessage: "计算资源开通请求已提交，正在创建云资源、完成月费扣款并分发 Docker，通常需要 3-5 分钟。"
+                nextStepMessage: "计算资源开通请求已提交，正在完成只读资源预检和月费扣款；扣款成功后开通 PREPAID 资源、完成资源认领与权益激活，再部署 Runtime 并生成 URL，通常需要 3-5 分钟。"
               };
             });
           }}
@@ -445,7 +445,7 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
               return created && {
                 ...created,
                 status: created.status || "submitted",
-                nextStepMessage: "云硬盘开通请求已提交，正在创建并准备挂载。通常需要 3-5 分钟。"
+                nextStepMessage: "云硬盘开通请求已提交，正在完成只读资源预检和月费扣款；扣款成功后开通 PREPAID 存储、完成资源认领与权益激活，再进入可挂载状态，通常需要 3-5 分钟。"
               };
             });
           }}
@@ -474,7 +474,7 @@ export function CreateStorageVolumePage({ state, session, runAction }: any) {
           />
           <BalanceChargePanel balance={state.balance} chargeUsdMicros={pricingPreview?.chargeUsdMicros} resourceLabel="存储资源" />
           <ResourceSplit items={[{ label: "数据目录", value: "/data", meta: "用户文件保存位置", status: "可挂载", tone: "info" }]} />
-          <OperationTimeline operations={[]} stages={storageCreateStages} emptyText="提交后开始创建存储" />
+          <OperationTimeline operations={[]} stages={storageCreateStages} emptyText="提交后开始只读资源预检" />
           <OperationResultPanel pending={operationPending} result={operationResult} />
           {operationResult && operationResult.ok !== false && (
             <ActionGroup actions={[

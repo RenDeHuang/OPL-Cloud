@@ -23,6 +23,14 @@ export function getProductionReadiness() {
   return getJson("/api/production/readiness");
 }
 
+export function getPricingCatalog() {
+  return getJson("/api/pricing/catalog");
+}
+
+export function getGatewaySummary(reveal = false, signal?: AbortSignal) {
+  return getJson(`/api/gateway/summary${reveal ? "?reveal=true" : ""}`, { signal });
+}
+
 export function getManagementState(organizationId = "", includeDeleted = false) {
   const params = new URLSearchParams();
   if (organizationId) params.set("organizationId", organizationId);

@@ -108,7 +108,7 @@ test("human invariants reject paid per-run resource verification", async () => {
   assert.doesNotMatch(invariants, /Fabric prepares before charge/);
 });
 
-test("legacy paid verifier is blocked and removed from the release gate", async () => {
+test("read-only fixed-slot verification replaces the legacy paid release gate", async () => {
   const deployment = await json("packages/contracts/opl-cloud-deployment-contract.json");
   const [architecture, decisions, project, readme, runbook, status] = await Promise.all([
     text("docs/architecture.md"),
@@ -119,9 +119,12 @@ test("legacy paid verifier is blocked and removed from the release gate", async 
     text("docs/status.md")
   ]);
 
-  assert.equal(deployment.productionVerificationWorkflow.launchStatus, "blocked");
+  assert.equal(deployment.productionVerificationWorkflow.launchStatus, "active");
   assert.equal(deployment.productionVerificationWorkflow.releaseGate, false);
-  assert.equal(deployment.productionVerificationWorkflow.replacement, "reusable_prepaid_verification_slot");
+  assert.equal(deployment.productionVerificationWorkflow.mode, "read_only_fixed_slot");
+  assert.equal(deployment.productionLiveQaJob.releaseGate, true);
+  assert.equal(deployment.productionLiveQaJob.mode, "one_model_request_no_provider_mutation");
+  assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
   assert.equal(deployment.workspaceImage.sourceDigest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
   assert.equal(deployment.workspaceImage.productionReference, "repository@sha256");
   assert.match(runbook, /Do not run the legacy paid verifier/);

@@ -3,7 +3,7 @@ import { ProLayout } from "@ant-design/pro-components";
 import { Button, Tag } from "antd";
 import { LogOut, UserRound } from "lucide-react";
 import { useEffect } from "react";
-import { logout as logoutSession } from "../api/auth-api.ts";
+import { logoutLocalFirst } from "../api/auth-api.ts";
 import { navigate, routeTo } from "../consoleRoutes.ts";
 import { renderConsoleRoute } from "../routes/route-registry.tsx";
 import { useConsoleState } from "../store/console-state.ts";
@@ -16,12 +16,7 @@ export default function ConsolePage({ route, session, onLogout }: any) {
   const consoleState = useConsoleState({ isAdmin, path, csrfToken: session.csrfToken, accountId: session.user?.accountId || "" });
 
   async function logout() {
-    try {
-      await logoutSession(session.csrfToken);
-    } finally {
-      onLogout();
-      navigate(routeTo("public.home"));
-    }
+    await logoutLocalFirst(session.csrfToken, onLogout, () => navigate(routeTo("public.home")));
   }
 
   useEffect(() => {
@@ -40,7 +35,7 @@ export default function ConsolePage({ route, session, onLogout }: any) {
     );
   }
 
-  if (!consoleState.state) return <div className="loading">Loading OPL Console...</div>;
+  if (!consoleState.state) return <div className="loading" role="status" aria-live="polite">正在加载账号数据...</div>;
 
   const ctx = {
     route,

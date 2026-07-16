@@ -40,10 +40,10 @@
       "value": "workspace.medopl.cn"
     },
     "OPL_CLOUD_IMAGE": {
-      "value": "registry.example.com/opl/opl-cloud:2026-07-01"
+      "value": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
     "OPL_WORKSPACE_IMAGE": {
-      "value": "registry.example.com/opl/one-person-lab-app:2026-07-01"
+      "value": "registry.example.com/opl/one-person-lab-app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     },
     "OPL_WORKSPACE_WEBUI_PORT": {
       "value": "3000"
@@ -67,7 +67,7 @@
       "value": "cbs"
     },
     "OPL_TENCENT_ZONE": {
-      "value": "ap-guangzhou-3"
+      "value": "na-siliconvalley-1"
     },
     "OPL_BASIC_COMPUTE_INSTANCE_TYPE": {
       "value": "SA5.MEDIUM4"
@@ -89,9 +89,6 @@
     },
     "OPL_CODEX_BASE_URL": {
       "value": "https://gflabtoken.cn/v1"
-    },
-    "OPL_CODEX_API_KEY": {
-      "secretRef": "opl-cloud/codex-api-key"
     },
     "TENCENT_DEPLOY_KUBECONFIG_REF": {
       "secretRef": "opl-cloud/tencent-deploy-kubeconfig-ref"

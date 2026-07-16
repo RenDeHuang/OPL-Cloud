@@ -21,6 +21,7 @@ const REQUIRED_TKE_ENV = [
   "OPL_IMAGE_PULL_SECRET_NAME",
   "OPL_WORKSPACE_STORAGE_CLASS",
   "OPL_TENCENT_PROVISIONER_BIN",
+  "OPL_TENCENT_ZONE",
   "TENCENTCLOUD_SECRET_ID",
   "TENCENTCLOUD_SECRET_KEY",
   "TENCENTCLOUD_REGION",
@@ -53,22 +54,14 @@ function normalizeRegistry(registry) {
   return String(registry || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
-function hasContainerTag(image) {
-  const text = String(image || "");
-  const lastSlash = text.lastIndexOf("/");
-  const tagIndex = text.lastIndexOf(":");
-  const tag = tagIndex >= 0 ? text.slice(tagIndex + 1) : "";
-  return tagIndex > lastSlash && /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag);
-}
-
 function looksLikeRegistryImage({ image, registry }) {
   const normalizedRegistry = normalizeRegistry(registry);
+  const match = String(image || "").match(/^([^@]+)@sha256:[0-9a-f]{64}$/);
+  const repository = match?.[1] || "";
   return Boolean(
-    image &&
     normalizedRegistry &&
-    image.startsWith(`${normalizedRegistry}/`) &&
-    image.includes("/") &&
-    hasContainerTag(image)
+    repository.startsWith(`${normalizedRegistry}/`) &&
+    !repository.slice(repository.lastIndexOf("/") + 1).includes(":")
   );
 }
 
@@ -161,18 +154,23 @@ export async function productionReadiness({ env = process.env, commandExists = (
   const missingTools = [];
   const provider = env.OPL_RUNTIME_PROVIDER || "";
   const providerConfig = PROVIDER_CONFIG[provider] || { requiredEnv: [], requiredTools: [] };
+  const hasEnv = (key) => Boolean(String(env[key] ?? "").trim());
 
   const requiredEnv = [
     ...REQUIRED_COMMON_ENV,
     ...providerConfig.requiredEnv
   ];
   for (const key of requiredEnv) {
-    if (!env[key]) missingEnv.push(key);
+    if (!hasEnv(key)) missingEnv.push(key);
   }
   for (const tool of providerConfig.requiredTools) {
     const command = tool.startsWith("env:") ? env[tool.slice(4)] : tool;
     if (!command || !(await commandExists(command))) missingTools.push(command || tool);
   }
+  const providerEnvReady = providerConfig.requiredEnv.every(hasEnv) && (
+    provider !== PROVIDERS.TENCENT_TKE ||
+    String(env.OPL_TENCENT_ZONE).replace(/-\d+$/, "") === String(env.TENCENTCLOUD_REGION)
+  );
 
   const checks = [
     check("runtime_provider", provider === PROVIDERS.TENCENT_TKE, "OPL_RUNTIME_PROVIDER must be tencent-tke"),
@@ -180,14 +178,14 @@ export async function productionReadiness({ env = process.env, commandExists = (
       "registry_images",
       looksLikeRegistryImage({ image: env.OPL_CLOUD_IMAGE, registry: env.TENCENT_TCR_REGISTRY }) &&
         looksLikeRegistryImage({ image: env.OPL_WORKSPACE_IMAGE, registry: env.TENCENT_TCR_REGISTRY }),
-      "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must point to the configured TCR registry"
+      "OPL_CLOUD_IMAGE and OPL_WORKSPACE_IMAGE must use configured TCR repository@sha256 references"
     ),
     check("opl_app_contract", matchesOplAppContract(env), "one-person-lab-app WebUI must expose port 3000 and persist /data plus /projects"),
     check("aionui_admin_password_seed", hasAionUiAdminPasswordSeed(env), "AionUI WebUI login must use a strong per-Workspace password seed"),
     check("workspace_domain", looksLikeProductionDomain(env.OPL_WORKSPACE_DOMAIN), "OPL_WORKSPACE_DOMAIN must be a production wildcard domain"),
     check("database_url", Boolean(env.DATABASE_URL), "DATABASE_URL is required for production persistence"),
     check("auth_seed", hasProductionAuthSeed(env), "OPL_CONSOLE_USERS_JSON or explicit PI/Admin auth credentials are required for production"),
-    check("provider_env", providerConfig.requiredEnv.every((key) => Boolean(env[key])), "Runtime provider environment is incomplete"),
+    check("provider_env", providerEnvReady, "Runtime provider environment is incomplete or its Tencent zone and region do not match"),
     check("live_mutation_guard", env.RUN_TENCENT_CREATE_RELEASE_EXECUTION === "1", "RUN_TENCENT_CREATE_RELEASE_EXECUTION must be 1 for production compute allocation"),
     check("tools", missingTools.length === 0, "Required production tools are missing")
   ];

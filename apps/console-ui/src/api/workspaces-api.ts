@@ -1,8 +1,23 @@
 import { operationEnvelope, postJson } from "./console-api.ts";
 
-export function createWorkspace(input, csrfToken) {
-  return postJson("/api/workspaces", input, csrfToken)
-    .then((payload) => operationEnvelope(payload, { next: { detailRouteId: "workspace.detail" } }));
+const unknownCreateResult = "Workspace 创建结果未知，请重试以确认同一请求；不会重复创建。";
+
+export function createWorkspaceIntent(input, previous: any = null) {
+  if (previous) return previous;
+  return { input: { ...input }, idempotencyKey: crypto.randomUUID() };
+}
+
+export async function createWorkspace(intent, csrfToken) {
+  if (!intent?.idempotencyKey || !intent?.input) throw new Error("workspace_create_intent_required");
+  try {
+    const payload = await postJson("/api/workspaces", intent.input, csrfToken, intent.idempotencyKey);
+    return operationEnvelope(payload, { next: { detailRouteId: "workspace.detail" } });
+  } catch (error: any) {
+    if (error?.payload) throw error;
+    const unknown: any = new Error(unknownCreateResult, { cause: error });
+    unknown.payload = { status: "unknown", retryable: true, failureReason: unknownCreateResult };
+    throw unknown;
+  }
 }
 
 export function getWorkspaceRuntimeStatus(input, csrfToken) {

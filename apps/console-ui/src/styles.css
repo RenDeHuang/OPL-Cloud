@@ -862,6 +862,21 @@ button.primary {
   gap: 8px;
 }
 
+.launchGuide {
+  min-width: 0;
+}
+
+.launchGuide .ant-steps-item-description {
+  max-width: none;
+  color: #667085 !important;
+}
+
+.gatewaySecretValue {
+  width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .stackRow {
   display: flex;
   align-items: center;
@@ -978,6 +993,15 @@ button.primary {
     top: 50%;
     right: 8px;
     transform: translateY(-50%);
+  }
+
+  .launchGuide {
+    width: 100%;
+  }
+
+  .launchGuide .ant-steps-item-description,
+  .gatewaySecretValue {
+    max-width: 100%;
   }
 
   .overviewWorkspaceRow {

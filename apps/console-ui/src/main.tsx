@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { currentSession } from "./api/auth-api.ts";
@@ -26,7 +26,21 @@ function authRedirectTarget() {
 function App() {
   const [route, setRoute] = useState(currentRoute());
   const [session, setSession] = useState<any>(null);
-  const [authChecked, setAuthChecked] = useState(false);
+  const [authStatus, setAuthStatus] = useState("checking");
+  const [authError, setAuthError] = useState("");
+
+  const checkSession = useCallback(async () => {
+    setAuthStatus("checking");
+    setAuthError("");
+    try {
+      const payload = await currentSession();
+      setSession(payload?.user ? payload : null);
+      setAuthStatus("ready");
+    } catch (err) {
+      setAuthError(err.message || "session_check_failed");
+      setAuthStatus("error");
+    }
+  }, []);
 
   useEffect(() => {
     const onRouteChange = () => setRoute(currentRoute());
@@ -35,45 +49,36 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    currentSession()
-      .then((payload) => {
-        if (cancelled) return;
-        if (payload?.user) setSession(payload);
-      })
-      .finally(() => {
-        if (!cancelled) setAuthChecked(true);
-      });
-    return () => {
-      cancelled = true;
-      };
-  }, []);
+    void checkSession();
+  }, [checkSession]);
 
   useEffect(() => {
-    if (!authChecked) return;
+    if (authStatus !== "ready") return;
     if (route.redirect) {
       navigate(route.redirect);
       return;
     }
     if (route.requiresAuth && !session) {
-      redirectToLogin(window.location.pathname);
+      redirectToLogin(window.location.pathname + window.location.search + window.location.hash);
       return;
     }
     if (route.requiresAdmin && session?.isOperator !== true) {
       navigate(routeTo("error.forbidden"));
     }
-  }, [authChecked, route, session]);
+  }, [authStatus, route, session]);
 
   const page = useMemo(() => {
     if (route.area === "auth" && route.path !== "/logout") {
       return <LoginPage route={route} onLogin={(payload) => {
         setSession(payload);
+        setAuthStatus("ready");
         navigate(authRedirectTarget());
       }} />;
     }
     if (route.path === "/logout") {
       return <LoginPage route={route} onLogin={(payload) => {
         setSession(payload);
+        setAuthStatus("ready");
         navigate(routeTo("console.overview"));
       }} />;
     }
@@ -84,10 +89,22 @@ function App() {
     return <HomePage route={route} session={session} />;
   }, [route, session]);
 
-  if (!authChecked) return <div className="loading">Loading OPL Console...</div>;
+  if (authStatus === "checking") return <div className="loading" role="status" aria-live="polite">正在验证登录...</div>;
+
+  if (authStatus === "error") {
+    return (
+      <div className="loading">
+        <div className="loadFailure" role="alert">
+          <strong>无法验证登录状态</strong>
+          <span>{authError}</span>
+          <button className="primary" type="button" onClick={() => void checkSession()}>重试</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <Suspense fallback={<div className="loading">Loading OPL Console...</div>}>
+    <Suspense fallback={<div className="loading" role="status" aria-live="polite">正在加载 Console 界面...</div>}>
       {page}
     </Suspense>
   );
