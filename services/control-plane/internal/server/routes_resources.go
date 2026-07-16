@@ -160,6 +160,11 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
+		packageID := strings.TrimSpace(stringField(input, "packageId", "basic"))
+		if packageID != stringValue(compute["packageId"]) || (retained != nil && packageID != stringValue(retained["packageId"])) {
+			writeError(w, http.StatusConflict, "compute_storage_package_mismatch")
+			return
+		}
 		workspaceID := stringValue(compute["workspaceId"])
 		if workspaceID == "" || (retained != nil && stringValue(retained["workspaceId"]) != workspaceID) {
 			writeError(w, http.StatusConflict, "compute_storage_workspace_mismatch")
@@ -176,7 +181,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{
 			ResourceType: "storage", ResourceID: resourceID, BillingOperationID: "billing-" + stableID("storage", accountID, key)[:18],
 			AccountID: accountID, OwnerUserID: app.sessionUserID(r), WorkspaceID: workspaceID,
-			Name: stringField(input, "name", ""), PackageID: stringField(input, "packageId", "basic"),
+			Name: stringField(input, "name", ""), PackageID: packageID,
 			SizeGB: int(sizeGB), ComputeID: computeID, Zone: zone, Environment: monthlyEnvironment(),
 		})
 		if err != nil {

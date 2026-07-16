@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,6 +82,56 @@ func TestEntStateStoreSub2APIMappingAndMonthlyEntitlementRoundTrip(t *testing.T)
 		if row["postChargeBalanceKnown"] != true || int64(numberField(row, "postChargeBalanceUsdMicros", 0)) != 0 {
 			t.Fatalf("%s zero post-charge balance is not known: %#v", kind, row)
 		}
+	}
+}
+
+func TestAccountStoresRejectDuplicateSub2APIUserMapping(t *testing.T) {
+	ctx := context.Background()
+	for name, store := range map[string]StateStore{
+		"memory": newMemoryTableStore(),
+		"ent":    NewTestEntStateStore(t, t.TempDir()+"/account-mapping.sqlite"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := store.SaveAccount(ctx, map[string]any{"id": "acct-one", "status": "active", "sub2apiUserId": int64(41)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SaveAccount(ctx, map[string]any{"id": "acct-two", "status": "active", "sub2apiUserId": int64(41)}); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
+				t.Fatalf("duplicate mapping error = %v", err)
+			}
+		})
+	}
+}
+
+func TestMemoryAccountStoreSerializesDuplicateSub2APIUserMapping(t *testing.T) {
+	store := newMemoryTableStore()
+	start := make(chan struct{})
+	errorsByAccount := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, accountID := range []string{"acct-one", "acct-two"} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			errorsByAccount <- store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": int64(41)})
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errorsByAccount)
+
+	succeeded, conflicted := 0, 0
+	for err := range errorsByAccount {
+		switch {
+		case err == nil:
+			succeeded++
+		case err.Error() == "sub2api_account_mapping_conflict":
+			conflicted++
+		default:
+			t.Fatalf("unexpected save error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent mapping results: succeeded=%d conflicted=%d", succeeded, conflicted)
 	}
 }
 

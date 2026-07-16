@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -148,6 +149,49 @@ func TestSub2APIClientSelectsOneActiveWorkspaceKeyAcrossPages(t *testing.T) {
 	}
 }
 
+func TestSub2APIClientWorkspaceKeyRequiresUsageFieldsAndAcceptsZero(t *testing.T) {
+	base := map[string]any{
+		"id": int64(9), "user_id": int64(41), "name": "opl-workspace", "key": "workspace-key-secret", "status": "active",
+		"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
+	}
+	newClient := func(t *testing.T, item map[string]any) *Sub2APIHTTPClient {
+		t.Helper()
+		return newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v1/auth/login":
+				writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+			case "/api/v1/admin/system/version":
+				writeSub2APISuccess(t, w, map[string]any{"version": "0.1.155"})
+			case "/api/v1/admin/users/41/api-keys":
+				writeSub2APISuccess(t, w, map[string]any{"items": []any{item}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			default:
+				t.Fatalf("unexpected route %s", r.URL.Path)
+			}
+		}, []string{"0.1.155"}, time.Second)
+	}
+
+	for _, field := range []string{"quota", "quota_used", "usage_5h", "usage_1d", "usage_7d"} {
+		for _, mode := range []string{"missing", "null"} {
+			t.Run(field+" "+mode, func(t *testing.T) {
+				item := maps.Clone(base)
+				if mode == "missing" {
+					delete(item, field)
+				} else {
+					item[field] = nil
+				}
+				if _, err := newClient(t, item).WorkspaceKey(context.Background(), 41); err == nil || !strings.Contains(err.Error(), "invalid sub2api workspace key usage") {
+					t.Fatalf("%s %s error = %v", field, mode, err)
+				}
+			})
+		}
+	}
+
+	key, err := newClient(t, maps.Clone(base)).WorkspaceKey(context.Background(), 41)
+	if err != nil || key.QuotaUSDMicros != 0 || key.QuotaUsedUSDMicros != 0 || key.Usage5hUSDMicros != 0 || key.Usage1dUSDMicros != 0 || key.Usage7dUSDMicros != 0 {
+		t.Fatalf("zero usage key=%#v err=%v", key, err)
+	}
+}
+
 func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 	for name, tc := range map[string]struct {
 		items []map[string]any
@@ -155,8 +199,8 @@ func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 	}{
 		"missing": {items: []map[string]any{{"id": 1, "user_id": 41, "name": "other", "key": "other-key", "status": "active"}}, want: ErrSub2APIWorkspaceKeyMissing},
 		"ambiguous": {items: []map[string]any{
-			{"id": 1, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-one", "status": "active"},
-			{"id": 2, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-two", "status": "active"},
+			{"id": 1, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-one", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0},
+			{"id": 2, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-two", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0},
 		}, want: ErrSub2APIWorkspaceKeyAmbiguous},
 	} {
 		t.Run(name, func(t *testing.T) {

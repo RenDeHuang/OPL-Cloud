@@ -62,6 +62,10 @@ func (s *memoryTableStore) ListAccounts(_ context.Context, accountID string) ([]
 func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	accounts, _ := filteredRecords(s.accounts, "")
+	if err := validateSub2APIAccountMapping(accounts, row); err != nil {
+		return err
+	}
 	s.accounts[stringValue(row["id"])] = cloneMap(row)
 	return nil
 }

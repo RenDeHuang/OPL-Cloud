@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -139,6 +140,42 @@ func monthlyAutoRenew(row map[string]any) bool {
 	return ok && value
 }
 
+func monthlyRenewalProviderTruth(resourceType string, row map[string]any) (time.Time, bool) {
+	deadline, deadlineErr := monthlyProviderDeadline(row)
+	paidThrough, paidErr := time.Parse(time.RFC3339, stringValue(row["paidThrough"]))
+	if deadlineErr != nil || paidErr != nil || deadline.Before(paidThrough) || !monthlyPurchaseReadbackConfirmed(resourceType, row, row) {
+		return time.Time{}, false
+	}
+	if providerDeadline := strings.TrimSpace(providerDataValue(row, "deadline")); providerDeadline != "" {
+		parsed, err := time.Parse(time.RFC3339, providerDeadline)
+		if err != nil || !parsed.Equal(deadline) {
+			return time.Time{}, false
+		}
+	}
+	zone := strings.TrimSpace(stringValue(row["zone"]))
+	if providerZone := strings.TrimSpace(providerDataValue(row, "zone")); zone == "" || (providerZone != "" && providerZone != zone) {
+		return time.Time{}, false
+	}
+	if !monthlyProviderFactMatches(row, "chargeType", "PREPAID") || !monthlyProviderFactMatches(row, "renewFlag", "NOTIFY_AND_MANUAL_RENEW") {
+		return time.Time{}, false
+	}
+	if resourceType == "storage" {
+		sizeGB := numberField(row, "sizeGb", 0)
+		return deadline, sizeGB > 0 && sizeGB == math.Trunc(sizeGB)
+	}
+	providerID := stringValue(row["providerResourceId"])
+	instanceID, cvmInstanceID := stringValue(row["instanceId"]), stringValue(row["cvmInstanceId"])
+	if providerID == "" || firstNonEmpty(instanceID, cvmInstanceID) != providerID || (instanceID != "" && instanceID != providerID) || (cvmInstanceID != "" && cvmInstanceID != providerID) {
+		return time.Time{}, false
+	}
+	return deadline, true
+}
+
+func monthlyProviderFactMatches(row map[string]any, key, expected string) bool {
+	value, providerValue := strings.TrimSpace(stringValue(row[key])), strings.TrimSpace(providerDataValue(row, key))
+	return (value == "" || value == expected) && (providerValue == "" || providerValue == expected) && (value == expected || providerValue == expected)
+}
+
 func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service *controlplane.Service, resourceType string, existing map[string]any, now time.Time) (map[string]any, error) {
 	paidThrough, err := time.Parse(time.RFC3339, stringValue(existing["paidThrough"]))
 	if err != nil {
@@ -146,6 +183,7 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	}
 	operationID := "renewal-" + stableID(resourceType, stringValue(existing["id"]), paidThrough.Format(time.RFC3339))[:18]
 	row := cloneMap(existing)
+	row["resourceType"] = resourceType
 	row["billingStatus"], row["billingOperationId"] = "renewal_pending", operationID
 	row["billingOperationStartedAt"], row["lastRenewalAttemptAt"] = now.Format(time.RFC3339), now.Format(time.RFC3339)
 	row["sub2apiRedeemCode"] = monthlyRedeemCode(monthlyEnvironment(), operationID)
@@ -169,6 +207,14 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 			return row, err
 		}
 		return app.refundMonthlyOperation(ctx, service, row, userID)
+	}
+	providerDeadline, providerTruthValid := monthlyRenewalProviderTruth(resourceType, row)
+	if !providerTruthValid {
+		userID, err := app.sub2APIUserID(ctx, stringValue(row["accountId"]))
+		if err != nil {
+			return row, err
+		}
+		return app.markMonthlyManualReview(ctx, service, row, userID, "fabric_renewal_provider_truth_invalid")
 	}
 	row["lastReceiptId"] = ""
 	preflightInput := clients.MonthlyPreflightInput{
@@ -214,10 +260,6 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	}
 	anchorDay := int(numberField(row, "billingAnchorDay", float64(paidThrough.Day())))
 	renewedThrough := nextBillingMonth(paidThrough, anchorDay)
-	providerDeadline, err := monthlyProviderDeadline(row)
-	if err != nil {
-		return app.markMonthlyManualReview(ctx, service, row, userID, "fabric_renewal_deadline_unknown")
-	}
 	row, err = app.renewMonthlyProvider(ctx, service, resourceType, row, providerDeadline, renewedThrough, operationID+":provider-renew")
 	if err != nil {
 		if !errors.Is(err, errMonthlyChargeNeedsReview) {

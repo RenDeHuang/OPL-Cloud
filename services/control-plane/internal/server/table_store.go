@@ -12,6 +12,7 @@ import (
 var errWorkspaceResumeInProgress = errors.New("workspace_resume_in_progress")
 var errWorkspaceNotSuspended = errors.New("workspace_not_suspended")
 var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
+var errSub2APIAccountMappingConflict = errors.New("sub2api_account_mapping_conflict")
 
 type workspaceResumeOperationResult struct {
 	RequestHash    string                      `json:"requestHash"`
@@ -26,6 +27,12 @@ type workspaceCreateOperationResult struct {
 	Workspace   domain.WorkspaceProjection `json:"workspace"`
 }
 
+type workspaceGatewaySecretOperationResult struct {
+	RequestHash string `json:"requestHash"`
+	SecretRef   string `json:"secretRef"`
+	Fingerprint string `json:"fingerprint"`
+}
+
 func decodeWorkspaceCreateOperation(operation map[string]any) (workspaceCreateOperationResult, error) {
 	var result workspaceCreateOperationResult
 	if err := json.Unmarshal([]byte(stringValue(operation["result"])), &result); err != nil || result.RequestHash == "" || result.Workspace.ID == "" {
@@ -35,6 +42,19 @@ func decodeWorkspaceCreateOperation(operation map[string]any) (workspaceCreateOp
 }
 
 func encodeWorkspaceCreateOperation(result workspaceCreateOperationResult) string {
+	payload, _ := json.Marshal(result)
+	return string(payload)
+}
+
+func decodeWorkspaceGatewaySecretOperation(operation map[string]any) (workspaceGatewaySecretOperationResult, error) {
+	var result workspaceGatewaySecretOperationResult
+	if err := json.Unmarshal([]byte(stringValue(operation["result"])), &result); err != nil || result.RequestHash == "" || result.SecretRef == "" || result.Fingerprint == "" {
+		return workspaceGatewaySecretOperationResult{}, errors.New("invalid_workspace_gateway_secret_operation")
+	}
+	return result, nil
+}
+
+func encodeWorkspaceGatewaySecretOperation(result workspaceGatewaySecretOperationResult) string {
 	payload, _ := json.Marshal(result)
 	return string(payload)
 }
@@ -99,6 +119,20 @@ type controlPlaneTableStore interface {
 	SaveExecutionRequest(ctx context.Context, row map[string]any) error
 	BillingReconciliation(ctx context.Context) (map[string]any, bool, error)
 	SaveBillingReconciliation(ctx context.Context, row map[string]any) error
+}
+
+func validateSub2APIAccountMapping(accounts []map[string]any, row map[string]any) error {
+	userID := int64(numberField(row, "sub2apiUserId", 0))
+	if userID <= 0 {
+		return nil
+	}
+	accountID := stringValue(row["id"])
+	for _, existing := range accounts {
+		if stringValue(existing["id"]) != accountID && int64(numberField(existing, "sub2apiUserId", 0)) == userID {
+			return errSub2APIAccountMappingConflict
+		}
+	}
+	return nil
 }
 
 func billingOperationIdentityMatches(existing, requested map[string]any) bool {

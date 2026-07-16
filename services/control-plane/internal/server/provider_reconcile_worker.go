@@ -97,6 +97,9 @@ func (app *controlPlaneServer) reconcileMonthlyCompute(ctx context.Context, serv
 	if row, ok = app.getCompute(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
+	if stringValue(row["billingStatus"]) == "manual_review" {
+		return nil
+	}
 	if stringValue(row["billingStatus"]) == "preparing" {
 		_, err := app.resumeMonthlyPurchase(ctx, service, row)
 		return err
@@ -126,6 +129,9 @@ func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, serv
 	defer unlock()
 	var ok bool
 	if row, ok = app.getStorage(id); !ok || !providerSyncDue(row, now) {
+		return nil
+	}
+	if stringValue(row["billingStatus"]) == "manual_review" {
 		return nil
 	}
 	if stringValue(row["billingStatus"]) == "preparing" {

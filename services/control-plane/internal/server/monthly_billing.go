@@ -86,7 +86,7 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	chargeUSDMicros := int64(numberField(quote, "chargeUsdMicros", 0))
 	row := map[string]any{
 		"id": input.ResourceID, "accountId": input.AccountID, "ownerUserId": input.OwnerUserID, "workspaceId": input.WorkspaceID,
-		"name": input.Name, "packageId": input.PackageID, "billingStatus": "charge_pending", "billingOperationId": input.BillingOperationID,
+		"name": input.Name, "packageId": input.PackageID, "resourceType": input.ResourceType, "billingStatus": "charge_pending", "billingOperationId": input.BillingOperationID,
 		"billingOperationStartedAt": input.Now.Format(time.RFC3339), "sub2apiRedeemCode": monthlyRedeemCode(input.Environment, input.BillingOperationID),
 		"sub2apiRefundCode": monthlyRefundCode(input.Environment, input.BillingOperationID),
 		"pricingVersion":    stringValue(quote["pricingVersion"]), "monthlyPriceCnyCents": int64(numberField(quote, "monthlyPriceCnyCents", 0)),
@@ -106,12 +106,18 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	case "active":
 		return app.ensureMonthlyPurchaseReceipt(ctx, service, row, sub2APIUserID)
 	case "manual_review":
-		row, _ = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.charge_review_required.v1")
+		row, err = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.charge_review_required.v1")
+		if err != nil {
+			return row, err
+		}
 		return row, errMonthlyChargeNeedsReview
 	case "refund_pending":
 		return app.refundMonthlyOperation(ctx, service, row, sub2APIUserID)
 	case "refunded":
-		row, _ = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.resource_refunded.v1")
+		row, err = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.resource_refunded.v1")
+		if err != nil {
+			return row, err
+		}
 		return row, errMonthlyPurchaseRefunded
 	case "failed":
 		return row, errors.New("monthly_purchase_failed")
@@ -227,19 +233,25 @@ func (app *controlPlaneServer) chargeMonthlyOperation(ctx context.Context, servi
 		if errors.Is(err, clients.ErrSub2APIChargeConflict) {
 			row["billingStatus"] = "manual_review"
 		}
-		_ = app.saveMonthlyResource(ctx, monthlyResourceType(row), row)
+		if saveErr := app.saveMonthlyResource(ctx, monthlyResourceType(row), row); saveErr != nil {
+			return row, saveErr
+		}
 		return row, err
 	}
 	postCharge, err := service.Sub2APIBalance(ctx, sub2APIUserID)
 	if err != nil {
 		row["billingStatus"], row["lastBillingError"] = "manual_review", "post_charge_balance_unavailable"
-		_ = app.saveMonthlyResource(ctx, monthlyResourceType(row), row)
+		if saveErr := app.saveMonthlyResource(ctx, monthlyResourceType(row), row); saveErr != nil {
+			return row, saveErr
+		}
 		return row, errMonthlyChargeNeedsReview
 	}
 	row["postChargeBalanceKnown"], row["postChargeBalanceUsdMicros"] = true, postCharge.USDMicros
 	if postCharge.USDMicros < 0 || (verifyDelta && preChargeBalance > 0 && postCharge.USDMicros > preChargeBalance-chargeUSDMicros) {
 		row["billingStatus"], row["lastBillingError"] = "manual_review", errMonthlyChargeNeedsReview.Error()
-		_ = app.saveMonthlyResource(ctx, monthlyResourceType(row), row)
+		if err := app.saveMonthlyResource(ctx, monthlyResourceType(row), row); err != nil {
+			return row, err
+		}
 		return row, errMonthlyChargeNeedsReview
 	}
 	delete(row, "lastBillingError")
@@ -265,15 +277,24 @@ func (app *controlPlaneServer) refundMonthlyOperation(ctx context.Context, servi
 	if err := app.saveMonthlyResource(ctx, monthlyResourceType(row), row); err != nil {
 		return row, err
 	}
-	row, _ = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.resource_refunded.v1")
+	row, err = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.resource_refunded.v1")
+	if err != nil {
+		return row, err
+	}
 	return row, errMonthlyPurchaseRefunded
 }
 
 func (app *controlPlaneServer) markMonthlyManualReview(ctx context.Context, service *controlplane.Service, row map[string]any, sub2APIUserID int64, reason string) (map[string]any, error) {
 	row["billingStatus"], row["lastBillingError"] = "manual_review", reason
 	row["manualReviewReason"] = reason
-	_ = app.saveMonthlyResource(ctx, monthlyResourceType(row), row)
-	row, _ = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.charge_review_required.v1")
+	if err := app.saveMonthlyResource(ctx, monthlyResourceType(row), row); err != nil {
+		return row, err
+	}
+	var err error
+	row, err = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.charge_review_required.v1")
+	if err != nil {
+		return row, err
+	}
 	return row, errMonthlyChargeNeedsReview
 }
 
@@ -299,7 +320,9 @@ func (app *controlPlaneServer) ensureMonthlyReceipt(ctx context.Context, service
 	}, monthlyReceiptKey(row, receiptType))
 	if err != nil {
 		row["lastBillingError"] = "ledger_receipt_pending"
-		_ = app.saveMonthlyResource(ctx, resourceType, row)
+		if err := app.saveMonthlyResource(ctx, resourceType, row); err != nil {
+			return row, err
+		}
 		return row, nil
 	}
 	row["lastReceiptId"] = receipt.ReceiptID
@@ -445,6 +468,7 @@ func monthlyPurchaseReadbackConfirmed(resourceType string, row, facts map[string
 	}
 	return strings.HasPrefix(stringValue(facts["providerResourceId"]), "disk-") &&
 		stringValue(facts["diskType"]) != "" &&
+		(stringValue(facts["cbsStatus"]) == "UNATTACHED" || stringValue(facts["cbsStatus"]) == "ATTACHED") &&
 		int(numberField(facts, "sizeGb", 0)) == int(numberField(row, "sizeGb", 0))
 }
 
@@ -507,13 +531,16 @@ func (app *controlPlaneServer) monthlyResource(resourceType, id string) (map[str
 }
 
 func (app *controlPlaneServer) sub2APIUserID(ctx context.Context, accountID string) (int64, error) {
-	accounts, err := app.tables.ListAccounts(ctx, accountID)
+	accounts, err := app.tables.ListAccounts(ctx, "")
 	if err != nil {
 		return 0, err
 	}
 	for _, account := range accounts {
 		if stringValue(account["id"]) == accountID {
 			if userID := int64(numberField(account, "sub2apiUserId", 0)); userID > 0 {
+				if err := validateSub2APIAccountMapping(accounts, account); err != nil {
+					return 0, err
+				}
 				return userID, nil
 			}
 			break
@@ -547,6 +574,9 @@ func monthlyResourceConfirmedAbsent(resourceType string, row map[string]any) boo
 }
 
 func monthlyResourceType(row map[string]any) string {
+	if resourceType := stringValue(row["resourceType"]); resourceType == "compute" || resourceType == "storage" {
+		return resourceType
+	}
 	if numberField(row, "sizeGb", 0) > 0 {
 		return "storage"
 	}

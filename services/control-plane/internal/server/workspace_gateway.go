@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/domain"
 )
@@ -13,10 +14,34 @@ func (app *controlPlaneServer) workspaceStateRowsLocked(accountID string) []any 
 	rows := app.listWorkspaces(accountID)
 	output := make([]any, 0, len(rows))
 	for _, row := range rows {
-		workspace := workspaceResponse(cloneMap(row))
+		workspace := app.workspaceResponse(cloneMap(row))
 		output = append(output, workspace)
 	}
 	return output
+}
+
+func (app *controlPlaneServer) workspaceResponse(row map[string]any) map[string]any {
+	response, _ := app.workspaceAccessResponse(row, time.Now().UTC())
+	return response
+}
+
+func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now time.Time) (map[string]any, bool) {
+	response := workspaceResponse(row)
+	storage, ok := app.getStorage(stringValue(response["storageId"]))
+	if ok {
+		switch stringValue(storage["status"]) {
+		case "available", "ready", "bound", "attached":
+		default:
+			ok = false
+		}
+	}
+	paidThrough, err := time.Parse(time.RFC3339, stringValue(storage["paidThrough"]))
+	storageActive := ok && stringValue(storage["billingStatus"]) == "active" && err == nil && now.UTC().Before(paidThrough)
+	if !storageActive {
+		response["openable"] = false
+		response["accessState"] = "disabled"
+	}
+	return response, storageActive
 }
 
 func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.WorkspaceProjection) error {
@@ -153,7 +178,12 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "workspace_suspended")
 		return
 	}
-	if workspaceResponse(cloneMap(workspace))["openable"] != true {
+	response, storageActive := app.workspaceAccessResponse(cloneMap(workspace), time.Now().UTC())
+	if !storageActive {
+		writeError(w, http.StatusConflict, "workspace_storage_entitlement_inactive")
+		return
+	}
+	if response["openable"] != true {
 		writeError(w, http.StatusConflict, "workspace_runtime_not_ready")
 		return
 	}

@@ -33,3 +33,20 @@ func TestApplyExecutesEmbeddedMonthlyHardCut(t *testing.T) {
 		}
 	}
 }
+
+func TestApplySub2APIUserUniquenessFailsClosedAndAddsPartialIndex(t *testing.T) {
+	driver := &recordingDriver{}
+	if err := ApplySub2APIUserUniqueness(context.Background(), driver); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"GROUP BY sub2api_user_id",
+		"RAISE EXCEPTION 'duplicate sub2api_user_id mappings'",
+		"CREATE UNIQUE INDEX",
+		"WHERE sub2api_user_id > 0",
+	} {
+		if !strings.Contains(driver.query, required) {
+			t.Fatalf("embedded mapping migration missing %q", required)
+		}
+	}
+}

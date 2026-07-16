@@ -29,6 +29,8 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 	}
 	if resourceType == "storage" {
 		row["sizeGb"] = 10
+		row["diskType"] = "CLOUD_PREMIUM"
+		row["cbsStatus"] = "UNATTACHED"
 		row["monthlyPriceCnyCents"] = int64(1800)
 		row["chargeUsdMicros"] = int64(2_571_429)
 	} else {
@@ -37,6 +39,49 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 		row["providerData"].(map[string]any)["instanceType"] = "S5.MEDIUM4"
 	}
 	return row
+}
+
+func TestMonthlyRenewalRejectsInvalidExistingProviderTruthBeforeDebit(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	paidThrough := now.Add(24 * time.Hour)
+	tests := []struct {
+		name         string
+		resourceType string
+		mutate       func(map[string]any)
+	}{
+		{name: "provider resource identity", resourceType: "compute", mutate: func(row map[string]any) { row["providerResourceId"] = "" }},
+		{name: "zone", resourceType: "storage", mutate: func(row map[string]any) { row["zone"] = "" }},
+		{name: "compute package", resourceType: "compute", mutate: func(row map[string]any) { row["packageId"] = "unknown" }},
+		{name: "compute sku", resourceType: "compute", mutate: func(row map[string]any) { row["instanceType"] = "SA5.2XLARGE16" }},
+		{name: "compute instance identity", resourceType: "compute", mutate: func(row map[string]any) { row["instanceId"] = "ins-other" }},
+		{name: "storage size", resourceType: "storage", mutate: func(row map[string]any) { row["sizeGb"] = 0 }},
+		{name: "charge type", resourceType: "compute", mutate: func(row map[string]any) { row["chargeType"] = "POSTPAID_BY_HOUR" }},
+		{name: "renew flag", resourceType: "storage", mutate: func(row map[string]any) { row["renewFlag"] = "NOTIFY_AND_AUTO_RENEW" }},
+		{name: "invalid deadline", resourceType: "compute", mutate: func(row map[string]any) { row["deadline"] = "not-a-time" }},
+		{name: "early deadline", resourceType: "storage", mutate: func(row map[string]any) { row["deadline"] = paidThrough.Add(-time.Second).Format(time.RFC3339) }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+			row := monthlyActiveResource(tc.resourceType, tc.resourceType+"-invalid-provider", paidThrough)
+			tc.mutate(row)
+			if tc.resourceType == "storage" {
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+			} else {
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+			}
+
+			result, err := app.renewMonthlyResource(context.Background(), service, tc.resourceType, row, now)
+			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
+				t.Fatalf("invalid provider truth result=%#v err=%v", result, err)
+			}
+			eventLog := strings.Join(*events, ",")
+			if strings.Contains(eventLog, "sub2api.balance") || len(sub2API.charges) != 0 || len(fabric.computeRenewKeys) != 0 || len(fabric.storageRenewKeys) != 0 {
+				t.Fatalf("invalid provider truth caused side effects: events=%#v charges=%#v computeRenew=%#v storageRenew=%#v", *events, sub2API.charges, fabric.computeRenewKeys, fabric.storageRenewKeys)
+			}
+		})
+	}
 }
 
 func TestMonthlyRenewalPreflightStopsBeforeFinancialAndProviderCalls(t *testing.T) {

@@ -164,6 +164,13 @@ func TestBootstrapUsersUseOnlyFixedRoles(t *testing.T) {
 	}
 }
 
+func TestBootstrapUsersRejectDuplicateSub2APIUserMapping(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-one","email":"one@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-one","sub2apiUserId":41},{"id":"usr-two","email":"two@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-two","sub2apiUserId":41}]`)
+	if _, err := newControlPlaneAppWithStore(newMemoryTableStore()); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
+		t.Fatalf("duplicate bootstrap mapping error = %v", err)
+	}
+}
+
 func TestBootstrapOwnerGetsAnActiveTenantMembership(t *testing.T) {
 	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-seed-owner","email":"seed-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-seed","sub2apiUserId":41}]`)
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
@@ -392,7 +399,11 @@ func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 
 func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, organizationID, userID, email string) {
 	t.Helper()
-	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": int64(41)}))
+	sub2APIUserID := int64(41)
+	if accountID == "acct-beta" {
+		sub2APIUserID = 42
+	}
+	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": sub2APIUserID}))
 	mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": organizationID, "billingAccountId": accountID, "status": "active"}))
 	hash, err := hashPassword("CorrectHorseBatteryStaple!")
 	if err != nil {
@@ -705,8 +716,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 5 {
-		t.Fatalf("control-plane migration count = %d, want 5", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("control-plane migration count = %d, want 6", migrationCount)
 	}
 	if _, err := check.Exec(`CREATE TABLE control_plane_startup_probe (id text PRIMARY KEY, probe text); INSERT INTO control_plane_startup_probe VALUES ('probe', NULL)`); err != nil {
 		t.Fatal(err)

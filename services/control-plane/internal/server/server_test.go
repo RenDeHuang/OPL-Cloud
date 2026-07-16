@@ -413,7 +413,7 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 	admin := operatorSessionForTest(t, server)
 	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner-resume@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(ownerUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-resume@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-resume@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	owner := loginForTest(t, server, "owner-resume@lab.example", "CorrectHorseBatteryStaple!")
 	outsider := loginForTest(t, server, "outside-resume@lab.example", "CorrectHorseBatteryStaple!")
 	body := `{"computeAllocationId":"compute-replacement","attachmentId":"attachment-replacement"}`
@@ -761,6 +761,108 @@ func TestWorkspaceCreatePreservesGatewaySecretConflictStatus(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOwnerRotatesGatewaySecretIdempotentlyWithoutPersistingKey(t *testing.T) {
+	store := newMemoryTableStore()
+	passwordHash, err := hashPassword("CorrectHorseBatteryStaple!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range []struct {
+		accountID, organizationID, userID, email string
+		sub2APIUserID                            int64
+	}{
+		{accountID: "acct-alpha", organizationID: "org-alpha", userID: "usr-alpha", email: "alpha@example.com", sub2APIUserID: 41},
+		{accountID: "acct-beta", organizationID: "org-beta", userID: "usr-beta", email: "beta@example.com", sub2APIUserID: 42},
+	} {
+		mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": tenant.accountID, "status": "active", "sub2apiUserId": tenant.sub2APIUserID}))
+		mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": tenant.organizationID, "billingAccountId": tenant.accountID, "status": "active"}))
+		mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": tenant.userID, "email": tenant.email, "accountId": tenant.accountID, "role": "owner", "status": "active", "passwordHash": passwordHash}))
+		mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-" + tenant.userID, "organizationId": tenant.organizationID, "userId": tenant.userID, "accountId": tenant.accountID, "role": "owner", "status": "active"}))
+	}
+	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-alpha-member", "email": "alpha-member@example.com", "accountId": "acct-alpha", "role": "member", "status": "active", "passwordHash": passwordHash}))
+	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-usr-alpha-member", "organizationId": "org-alpha", "userId": "usr-alpha-member", "accountId": "acct-alpha", "role": "member", "status": "active"}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+		"id": "workspace-alpha", "accountId": "acct-alpha", "ownerUserId": "usr-alpha", "state": "running", "storageId": "storage-alpha",
+		"runtime": map[string]any{"serviceName": "runtime-alpha", "status": "running", "ready": true},
+	}))
+
+	sub2API := &testSub2APIClient{workspaceKey: clients.Sub2APIWorkspaceKey{ID: 9, UserID: 41, Name: "opl-workspace", Key: "rotated-workspace-key", Status: "active"}}
+	fabric := &fakeFabricClient{gatewaySecret: clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v1", Fingerprint: "sha256:first"}}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, sub2API), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	requestRotate := func(session *httptest.ResponseRecorder, key, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/workspaces/workspace-alpha/gateway-secret/rotate", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", key)
+		addAuth(req, session)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := requestRotate(owner, "rotate-once", `{"reason":"owner-request"}`)
+	replay := requestRotate(owner, "rotate-once", `{"reason":"owner-request"}`)
+	conflict := requestRotate(owner, "rotate-once", `{"reason":"different-request"}`)
+	if first.Code != http.StatusOK || replay.Code != http.StatusOK || conflict.Code != http.StatusConflict {
+		t.Fatalf("rotate statuses first=%d %s replay=%d %s conflict=%d %s", first.Code, first.Body.String(), replay.Code, replay.Body.String(), conflict.Code, conflict.Body.String())
+	}
+	if len(fabric.gatewaySecretInputs) != 1 || len(sub2API.workspaceKeyUserIDs) != 1 || sub2API.workspaceKeyUserIDs[0] != 41 {
+		t.Fatalf("idempotent rotate inputs=%#v key users=%#v", fabric.gatewaySecretInputs, sub2API.workspaceKeyUserIDs)
+	}
+	if strings.Contains(first.Body.String(), "rotated-workspace-key") || !strings.Contains(first.Body.String(), "opl-gateway-acct-alpha") || !strings.Contains(first.Body.String(), "sha256:first") {
+		t.Fatalf("rotate response leaked or omitted evidence: %s", first.Body.String())
+	}
+
+	sub2API.mu.Lock()
+	sub2API.workspaceKey = clients.Sub2APIWorkspaceKey{ID: 10, UserID: 41, Name: "opl-workspace", Key: "rotated-workspace-key-v2", Status: "active"}
+	sub2API.mu.Unlock()
+	fabric.gatewaySecret = clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v2", Fingerprint: "sha256:second"}
+	second := requestRotate(owner, "rotate-twice", `{"reason":"key-changed"}`)
+	if second.Code != http.StatusOK || len(fabric.gatewaySecretInputs) != 2 {
+		t.Fatalf("second rotate status=%d body=%s inputs=%#v", second.Code, second.Body.String(), fabric.gatewaySecretInputs)
+	}
+
+	operations, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("secret operations=%#v err=%v", operations, err)
+	}
+	persisted := string(mustJSON(operations))
+	for _, forbidden := range []string{"rotated-workspace-key", "rotated-workspace-key-v2", `"version"`, `"gatewayApiKey"`} {
+		if strings.Contains(persisted, forbidden) {
+			t.Fatalf("secret operation persisted %q: %s", forbidden, persisted)
+		}
+	}
+	if !strings.Contains(persisted, "opl-gateway-acct-alpha") || !strings.Contains(persisted, "sha256:first") || !strings.Contains(persisted, "sha256:second") {
+		t.Fatalf("secret operation omitted safe evidence: %s", persisted)
+	}
+
+	beta := loginForTest(t, server, "beta@example.com", "CorrectHorseBatteryStaple!")
+	member := loginForTest(t, server, "alpha-member@example.com", "CorrectHorseBatteryStaple!")
+	if response := requestRotate(beta, "rotate-foreign", `{}`); response.Code != http.StatusForbidden {
+		t.Fatalf("foreign owner rotate status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := requestRotate(member, "rotate-member", `{}`); response.Code != http.StatusForbidden {
+		t.Fatalf("member rotate status=%d body=%s", response.Code, response.Body.String())
+	}
+	workspaces, err := store.ListWorkspaces(context.Background(), "acct-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := findRecord(workspaces, "workspace-alpha")
+	workspace["state"] = "suspended"
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+	if response := requestRotate(owner, "rotate-suspended", `{}`); response.Code != http.StatusConflict {
+		t.Fatalf("suspended rotate status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(fabric.gatewaySecretInputs) != 2 {
+		t.Fatalf("rejected rotate reached Fabric: %#v", fabric.gatewaySecretInputs)
+	}
+}
+
 func TestStorageDestroyPreservesRetainedProviderStatus(t *testing.T) {
 	fabric := &fakeFabricClient{storageDestroyStatus: "retained"}
 	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
@@ -787,6 +889,33 @@ func TestProviderReconcilePreservesReleasedStorageStatus(t *testing.T) {
 	stored, _ := app.getStorage("storage-reconcile-released")
 	if stored["status"] != "released" || stored["desiredStatus"] != "destroyed" || stored["billingStatus"] != "stopped" {
 		t.Fatalf("reconciled storage=%#v", stored)
+	}
+}
+
+func TestProviderReconcileDoesNotOverwriteManualReview(t *testing.T) {
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			app := newControlPlaneAppEmpty()
+			row := map[string]any{
+				"id": resourceType + "-manual-review", "accountId": "acct-alpha", "status": "running",
+				"desiredStatus": "destroyed", "billingStatus": "manual_review", "manualReviewReason": "provider_unknown",
+			}
+			var err error
+			service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
+			if resourceType == "storage" {
+				row["status"] = "available"
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+				err = app.reconcileMonthlyStorage(context.Background(), service, row, time.Now().UTC())
+				row, _ = app.getStorage(stringValue(row["id"]))
+			} else {
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+				err = app.reconcileMonthlyCompute(context.Background(), service, row, time.Now().UTC())
+				row, _ = app.getCompute(stringValue(row["id"]))
+			}
+			if err != nil || row["billingStatus"] != "manual_review" || row["manualReviewReason"] != "provider_unknown" {
+				t.Fatalf("reconciled manual review=%#v err=%v", row, err)
+			}
+		})
 	}
 }
 
@@ -928,7 +1057,7 @@ func TestWorkspaceRuntimeStatusForbidsCrossAccountSecretRead(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	admin := tenantAdminSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	outsider := loginForTest(t, server, "outside@lab.example", "CorrectHorseBatteryStaple!")
 
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
@@ -1059,7 +1188,7 @@ func TestNonAdminRequestsCannotSelectAnotherAccount(t *testing.T) {
 	admin := operatorSessionForTest(t, server)
 	alphaUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"alpha@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(alphaUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"beta@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"beta@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	alpha := loginForTest(t, server, "alpha@lab.example", "CorrectHorseBatteryStaple!")
 
 	readOther := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-beta", nil)
@@ -1707,7 +1836,7 @@ func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
 		t.Fatalf("continuation status = %d: %s", continuationRec.Code, continuationRec.Body.String())
 	}
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	outsider := loginForTest(t, server, "outside-continuation@example.com", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, outsider, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
 	if forbidden.Code != http.StatusUnauthorized {
@@ -1758,7 +1887,7 @@ func TestExecutionRoutesAuthorizeActiveOrganizationMembers(t *testing.T) {
 		t.Fatalf("member status = %d body=%s, want created", rec.Code, rec.Body.String())
 	}
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	outsider := loginForTest(t, server, "outsider@execution.example", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, outsider, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	if forbidden.Code != http.StatusUnauthorized || !strings.Contains(forbidden.Body.String(), "not_authenticated") {
@@ -2326,9 +2455,11 @@ func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha",
-		"state":   "running",
-		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
+		"state":     "running",
+		"storageId": "storage-alpha",
+		"runtime":   map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	}))
 	req := httptest.NewRequest(http.MethodPost, "https://workspace.medopl.cn/login", bytes.NewBufferString(`{"username":"admin"}`))
 	req.Header.Set("Referer", "https://workspace.medopl.cn/w/ws-alpha/")
@@ -2353,9 +2484,11 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha",
-		"state":   "running",
-		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
+		"state":     "running",
+		"storageId": "storage-alpha",
+		"runtime":   map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	}))
 	entryReq := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
 	entryRec := httptest.NewRecorder()
@@ -2389,6 +2522,61 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 	}
 	if !slices.Equal(gotPaths, []string{"/", "/api/auth/user"}) {
 		t.Fatalf("proxied paths = %#v, want clean entry and root API paths", gotPaths)
+	}
+}
+
+func TestWorkspaceStateRequiresActiveUnexpiredStorageEntitlement(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		storageStatus string
+		billingStatus string
+		paidThrough   string
+		openable      bool
+	}{
+		{name: "active", storageStatus: "available", billingStatus: "active", paidThrough: "2099-01-01T00:00:00Z", openable: true},
+		{name: "past due", storageStatus: "available", billingStatus: "past_due", paidThrough: "2099-01-01T00:00:00Z"},
+		{name: "expired", storageStatus: "available", billingStatus: "active", paidThrough: "2000-01-01T00:00:00Z"},
+		{name: "invalid deadline", storageStatus: "available", billingStatus: "active", paidThrough: "not-a-time"},
+		{name: "retained", storageStatus: "retained", billingStatus: "active", paidThrough: "2099-01-01T00:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newControlPlaneApp()
+			mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
+				"id": "storage-alpha", "status": tc.storageStatus, "billingStatus": tc.billingStatus, "paidThrough": tc.paidThrough,
+			}))
+			mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
+				"id": "ws-alpha", "state": "running", "storageId": "storage-alpha", "runtime": map[string]any{"serviceName": "runtime-alpha", "ready": true},
+			}))
+			workspace := app.workspaceStateRowsLocked("")[0].(map[string]any)
+			if workspace["openable"] != tc.openable {
+				t.Fatalf("workspace openable=%#v, want %v: %#v", workspace["openable"], tc.openable, workspace)
+			}
+			if !tc.openable && workspace["accessState"] != "disabled" {
+				t.Fatalf("closed workspace accessState=%#v", workspace["accessState"])
+			}
+		})
+	}
+}
+
+func TestWorkspaceGatewayBlocksExpiredStorageEntitlementBeforeProxy(t *testing.T) {
+	proxied := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxied = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	app := newControlPlaneApp()
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2000-01-01T00:00:00Z"}))
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
+		"id": "ws-alpha", "state": "running", "storageId": "storage-alpha", "runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://"), "ready": true},
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil)
+	rec := httptest.NewRecorder()
+
+	app.proxyWorkspace(rec, req)
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "workspace_storage_entitlement_inactive") || proxied {
+		t.Fatalf("expired storage proxy status=%d body=%s proxied=%v", rec.Code, rec.Body.String(), proxied)
 	}
 }
 

@@ -83,6 +83,9 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202607150004_post_schema_backfill", Run: func(ctx context.Context) error {
 			return backfillControlPlaneMigrationNulls(ctx, driver)
 		}},
+		{Version: "202607160001_sub2api_user_unique", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplySub2APIUserUniqueness(ctx, driver)
+		}},
 	}); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -304,6 +307,7 @@ func billingJSONField(entityField, setter string) entRecordField {
 // ponytail: keep low-cardinality monthly state in one JSON column at the current
 // scale; promote fields to indexed columns only when renewal scans become measurable.
 var monthlyBillingStateKeys = []string{
+	"resourceType",
 	"billingOperationStartedAt",
 	"sub2apiRedeemCode",
 	"sub2apiRefundCode",
@@ -633,7 +637,36 @@ func (s *postgresEntStateStore) ListAccounts(ctx context.Context, accountID stri
 }
 
 func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Account.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Account.Create() }, accountEntFields)
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		if int64(numberField(row, "sub2apiUserId", 0)) > 0 && controlplaneent.IsConstraintError(err) {
+			return errSub2APIAccountMappingConflict
+		}
+		return err
+	}
+	accounts, err := loadRecordSet(ctx, tx.Account.Query().All, accountEntFields)
+	if err != nil {
+		return rollback(err)
+	}
+	accountRows, _ := filteredRecords(accounts, "")
+	if err := validateSub2APIAccountMapping(accountRows, row); err != nil {
+		return rollback(err)
+	}
+	id := stringValue(row["id"])
+	if id == "" {
+		return rollback(errors.New("missing_record_id"))
+	}
+	if err := tx.Account.DeleteOneID(id).Exec(ctx); err != nil && !controlplaneent.IsNotFound(err) {
+		return rollback(err)
+	}
+	if err := saveRecord(ctx, id, row, tx.Account.Create(), accountEntFields); err != nil {
+		return rollback(err)
+	}
+	return tx.Commit()
 }
 
 func (s *postgresEntStateStore) ListOrganizations(ctx context.Context) ([]map[string]any, error) {

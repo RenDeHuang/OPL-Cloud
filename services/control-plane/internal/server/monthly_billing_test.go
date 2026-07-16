@@ -238,6 +238,19 @@ type scopedReceiptLedger struct {
 	receipt clients.Receipt
 }
 
+type failingMonthlySaveStore struct {
+	*memoryTableStore
+	err error
+}
+
+func (s *failingMonthlySaveStore) SaveCompute(context.Context, map[string]any) error {
+	return s.err
+}
+
+func (s *failingMonthlySaveStore) SaveStorage(context.Context, map[string]any) error {
+	return s.err
+}
+
 func (l scopedReceiptLedger) Receipt(_ context.Context, receiptID string) (clients.Receipt, error) {
 	result := l.receipt
 	result.ReceiptID = receiptID
@@ -296,17 +309,21 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 		resourceType string
 		packageID    string
 		sizeGB       int
+		cbsStatus    string
 		charge       int64
 		cnyCents     int64
 	}{
 		{name: "basic", resourceType: "compute", packageID: "basic", charge: 50_000_000, cnyCents: 35000},
 		{name: "pro", resourceType: "compute", packageID: "pro", charge: 214_285_715, cnyCents: 150000},
-		{name: "10GB storage", resourceType: "storage", packageID: "basic", sizeGB: 10, charge: 2_571_429, cnyCents: 1800},
+		{name: "10GB attached storage", resourceType: "storage", packageID: "basic", sizeGB: 10, cbsStatus: "ATTACHED", charge: 2_571_429, cnyCents: 1800},
 		{name: "100GB storage", resourceType: "storage", packageID: "pro", sizeGB: 100, charge: 25_714_286, cnyCents: 18000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			initial := int64(1_000_000_000)
 			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{initial, initial - tc.charge})
+			if tc.cbsStatus != "" {
+				fabric.mutateStorage = func(v *clients.StorageVolume) { v.CBSStatus = tc.cbsStatus }
+			}
 			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
 				ResourceType: tc.resourceType, ResourceID: tc.resourceType + "-monthly", BillingOperationID: "billing-" + tc.name,
 				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: tc.packageID, SizeGB: tc.sizeGB,
@@ -460,6 +477,8 @@ func TestMonthlyPurchaseCommercialReadbackMismatchNeedsManualReviewWithoutRefund
 		{name: "storage size mismatches", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.SizeGB++ }},
 		{name: "storage zone mismatches", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.Zone = "ap-shanghai-3" }},
 		{name: "storage charge type wrong", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.ProviderData["chargeType"] = "POSTPAID_BY_HOUR" }},
+		{name: "storage CBS status missing", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.CBSStatus = "" }},
+		{name: "storage CBS status not ready", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.CBSStatus = "CREATING" }},
 	}
 
 	for _, tc := range tests {
@@ -636,6 +655,48 @@ func TestMonthlyPurchaseRetriesReceiptWithoutChargingAgain(t *testing.T) {
 	}
 }
 
+func TestMonthlyReviewAndReceiptPendingReturnPersistenceErrors(t *testing.T) {
+	persistErr := errors.New("monthly state unavailable")
+	row := map[string]any{
+		"id": "compute-review", "accountId": "acct-monthly", "packageId": "basic", "billingOperationId": "billing-review",
+		"pricingVersion": pricingCatalogVersion, "monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000),
+		"periodStart": "2026-07-16T00:00:00Z", "paidThrough": "2026-08-16T00:00:00Z",
+	}
+
+	t.Run("manual review", func(t *testing.T) {
+		events := &[]string{}
+		ledger := &monthlyLedger{events: events}
+		app := newControlPlaneAppEmpty()
+		app.tables = &failingMonthlySaveStore{memoryTableStore: newMemoryTableStore(), err: persistErr}
+		_, err := app.markMonthlyManualReview(context.Background(), controlplane.NewService(ledger, nil, nil), cloneMap(row), 41, "provider_unknown")
+		if !errors.Is(err, persistErr) || len(ledger.receipts) != 0 {
+			t.Fatalf("manual review err=%v receipts=%#v", err, ledger.receipts)
+		}
+	})
+
+	t.Run("ledger receipt pending", func(t *testing.T) {
+		events := &[]string{}
+		ledger := &monthlyLedger{events: events, receiptErrors: []error{errors.New("ledger unavailable")}}
+		app := newControlPlaneAppEmpty()
+		app.tables = &failingMonthlySaveStore{memoryTableStore: newMemoryTableStore(), err: persistErr}
+		_, err := app.ensureMonthlyReceipt(context.Background(), controlplane.NewService(ledger, nil, nil), cloneMap(row), 41, "billing.resource_purchased.v1")
+		if !errors.Is(err, persistErr) {
+			t.Fatalf("receipt pending persistence error = %v", err)
+		}
+	})
+
+	t.Run("charge conflict", func(t *testing.T) {
+		events := &[]string{}
+		sub2API := &monthlySub2API{events: events, chargeErrors: []error{clients.ErrSub2APIChargeConflict}}
+		app := newControlPlaneAppEmpty()
+		app.tables = &failingMonthlySaveStore{memoryTableStore: newMemoryTableStore(), err: persistErr}
+		_, err := app.chargeMonthlyOperation(context.Background(), controlplane.NewService(nil, nil, sub2API), cloneMap(row), 41, 100_000_000)
+		if !errors.Is(err, persistErr) {
+			t.Fatalf("charge review persistence error = %v", err)
+		}
+	})
+}
+
 func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
 	now := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
 	if !monthlyEntitlementActive(map[string]any{"billingStatus": "active", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}, now) {
@@ -695,6 +756,7 @@ func TestStoragePurchaseUsesOwnedComputeZone(t *testing.T) {
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
 		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running",
+		"packageId":     "basic",
 		"billingStatus": "active", "paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
 		"providerData": map[string]any{"zone": "ap-shanghai-2"},
 	}))
@@ -714,6 +776,40 @@ func TestStoragePurchaseUsesOwnedComputeZone(t *testing.T) {
 	}
 	if len(fabric.storageInputs) != 1 || fabric.storageInputs[0].ComputeID != "compute-alpha" || fabric.storageInputs[0].Zone != "ap-shanghai-2" || fabric.storageInputs[0].WorkspaceID != "workspace-alpha" {
 		t.Fatalf("storage placement = %#v", fabric.storageInputs)
+	}
+}
+
+func TestStoragePurchaseRejectsPackageMismatchBeforeExternalCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		computePackage string
+		requestPackage string
+	}{
+		{name: "requested package", computePackage: "basic", requestPackage: `,"packageId":"pro"`},
+		{name: "default package", computePackage: "pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := &[]string{}
+			store := newMemoryTableStore()
+			seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+			mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+				"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running",
+				"packageId": tc.computePackage, "billingStatus": "active", "paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+				"providerData": map[string]any{"zone": "ap-shanghai-2"},
+			}))
+			server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, &monthlySub2API{events: events}), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+			response := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha"`+tc.requestPackage+`}`)
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "compute_storage_package_mismatch") {
+				t.Fatalf("mismatch response=%d %s", response.Code, response.Body.String())
+			}
+			if len(*events) != 0 {
+				t.Fatalf("package mismatch reached external services: %#v", *events)
+			}
+		})
 	}
 }
 
@@ -756,7 +852,7 @@ func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-retained", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "status": "running", "billingStatus": "active",
+		"id": "compute-retained", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "running", "billingStatus": "active",
 		"paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "providerData": map[string]any{"zone": "ap-shanghai-2"},
 	}))
 	retained := monthlyActiveResource("storage", "storage-retained", time.Now().UTC().Add(-time.Hour))
@@ -805,6 +901,37 @@ func TestCreateUserRequiresAndPersistsSub2APIUserMapping(t *testing.T) {
 	account := findRecord(accounts, "acct-mapped")
 	if account == nil || int64(numberField(account, "sub2apiUserId", 0)) != 41 {
 		t.Fatalf("persisted account mapping = %#v", account)
+	}
+}
+
+func TestCreateUserRejectsSub2APIUserMappedToAnotherAccount(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	events := &[]string{}
+	service := controlplane.NewService(nil, nil, &monthlySub2API{events: events, balances: []int64{0, 0}})
+	for _, input := range []map[string]any{
+		{"email": "one@example.com", "accountId": "acct-one", "role": "owner", "password": "CorrectHorseBatteryStaple!", "sub2apiUserId": float64(41)},
+		{"email": "two@example.com", "accountId": "acct-two", "role": "owner", "password": "CorrectHorseBatteryStaple!", "sub2apiUserId": float64(41)},
+	} {
+		_, err := app.createUser(context.Background(), service, input)
+		if stringValue(input["accountId"]) == "acct-one" && err != nil {
+			t.Fatal(err)
+		}
+		if stringValue(input["accountId"]) == "acct-two" && (err == nil || err.Error() != "sub2api_account_mapping_conflict") {
+			t.Fatalf("duplicate account mapping error = %v", err)
+		}
+	}
+}
+
+func TestSub2APIUserIDRejectsDuplicateStoredMapping(t *testing.T) {
+	store := newMemoryTableStore()
+	store.mu.Lock()
+	store.accounts["acct-one"] = map[string]any{"id": "acct-one", "status": "active", "sub2apiUserId": int64(41)}
+	store.accounts["acct-two"] = map[string]any{"id": "acct-two", "status": "active", "sub2apiUserId": int64(41)}
+	store.mu.Unlock()
+	app := newControlPlaneAppEmpty()
+	app.tables = store
+	if _, err := app.sub2APIUserID(context.Background(), "acct-one"); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
+		t.Fatalf("duplicate stored mapping error = %v", err)
 	}
 }
 
@@ -924,7 +1051,6 @@ func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
-	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": "acct-beta", "status": "active", "sub2apiUserId": int64(42)}))
 	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
 	if err != nil {
 		t.Fatal(err)
@@ -1023,7 +1149,7 @@ func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
 			}
 			if tc.resourceType == "storage" {
 				mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-					"id": "compute-placement", "accountId": "acct-alpha", "workspaceId": "workspace-placement", "status": "running", "billingStatus": "active",
+					"id": "compute-placement", "accountId": "acct-alpha", "workspaceId": "workspace-placement", "packageId": "basic", "status": "running", "billingStatus": "active",
 					"paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "providerData": map[string]any{"zone": "ap-shanghai-2"},
 				}))
 				tc.createBody = `{"sizeGb":10,"computeAllocationId":"compute-placement"}`

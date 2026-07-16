@@ -220,17 +220,17 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 		}
 		var data struct {
 			Items []struct {
-				ID         int64       `json:"id"`
-				UserID     int64       `json:"user_id"`
-				Name       string      `json:"name"`
-				Key        string      `json:"key"`
-				Status     string      `json:"status"`
-				Quota      json.Number `json:"quota"`
-				QuotaUsed  json.Number `json:"quota_used"`
-				Usage5h    json.Number `json:"usage_5h"`
-				Usage1d    json.Number `json:"usage_1d"`
-				Usage7d    json.Number `json:"usage_7d"`
-				LastUsedAt *time.Time  `json:"last_used_at"`
+				ID         int64        `json:"id"`
+				UserID     int64        `json:"user_id"`
+				Name       string       `json:"name"`
+				Key        string       `json:"key"`
+				Status     string       `json:"status"`
+				Quota      *json.Number `json:"quota"`
+				QuotaUsed  *json.Number `json:"quota_used"`
+				Usage5h    *json.Number `json:"usage_5h"`
+				Usage1d    *json.Number `json:"usage_1d"`
+				Usage7d    *json.Number `json:"usage_7d"`
+				LastUsedAt *time.Time   `json:"last_used_at"`
 			} `json:"items"`
 			Page     int `json:"page"`
 			PageSize int `json:"page_size"`
@@ -253,11 +253,11 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 			if item.ID <= 0 || item.Key == "" {
 				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key")
 			}
-			values := []*json.Number{&item.Quota, &item.QuotaUsed, &item.Usage5h, &item.Usage1d, &item.Usage7d}
+			values := []*json.Number{item.Quota, item.QuotaUsed, item.Usage5h, item.Usage1d, item.Usage7d}
 			micros := make([]int64, len(values))
 			for i, value := range values {
-				if value.String() == "" {
-					continue
+				if value == nil {
+					return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
 				}
 				micros[i], err = decimalUSDMicros(*value)
 				if err != nil {

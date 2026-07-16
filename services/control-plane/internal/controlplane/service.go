@@ -486,18 +486,29 @@ func (s *Service) recordWorkspaceReceipt(ctx context.Context, workspace domain.W
 }
 
 func (s *Service) gatewaySecretRef(ctx context.Context, accountID string, userID int64, idempotencyKey string) (string, error) {
+	secret, err := s.SyncWorkspaceGatewaySecret(ctx, accountID, userID, idempotencyKey)
+	return secret.SecretRef, err
+}
+
+func (s *Service) SyncWorkspaceGatewaySecret(ctx context.Context, accountID string, userID int64, idempotencyKey string) (clients.GatewaySecretWriteResult, error) {
+	if accountID == "" || userID <= 0 || idempotencyKey == "" {
+		return clients.GatewaySecretWriteResult{}, errors.New("gateway_secret_write_failed")
+	}
 	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
 	if err != nil {
-		return "", err
+		return clients.GatewaySecretWriteResult{}, err
+	}
+	if key.UserID != userID || key.Name != "opl-workspace" || key.Status != "active" || key.Key == "" {
+		return clients.GatewaySecretWriteResult{}, errors.New("invalid_sub2api_workspace_key")
 	}
 	secret, err := s.fabric.WriteGatewaySecret(ctx, clients.GatewaySecretWriteInput{AccountID: accountID, GatewayAPIKey: key.Key}, idempotencyKey+":gateway-secret")
 	if err != nil {
-		return "", fmt.Errorf("gateway_secret_write_failed: %w", err)
+		return clients.GatewaySecretWriteResult{}, fmt.Errorf("gateway_secret_write_failed: %w", err)
 	}
-	if secret.SecretRef == "" {
-		return "", errors.New("gateway_secret_write_failed")
+	if secret.SecretRef == "" || secret.Fingerprint == "" {
+		return clients.GatewaySecretWriteResult{}, errors.New("gateway_secret_write_failed")
 	}
-	return secret.SecretRef, nil
+	return secret, nil
 }
 
 func workspaceRuntimeState(status string, ready bool) string {
