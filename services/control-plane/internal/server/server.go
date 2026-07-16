@@ -406,6 +406,10 @@ func resourceIDForMutation(prefix, accountID, key string) string {
 	return prefix + "_" + stableID(prefix, accountID, key)[:18]
 }
 
+func primaryWorkspaceID(accountID string) string {
+	return resourceIDForMutation("ws", accountID, "primary")
+}
+
 func structToMap(value any) map[string]any {
 	data, err := json.Marshal(value)
 	if err != nil {

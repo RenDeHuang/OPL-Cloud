@@ -136,34 +136,15 @@ func registerRecoveryRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 	}))
 
 	mux.HandleFunc("POST /api/workspace-backups/{backupId}/clone", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		backup, ok := authorizedWorkspaceBackup(w, r, app)
+		_, ok := authorizedWorkspaceBackup(w, r, app)
 		if !ok {
 			return
 		}
-		key, ok := executionMutationKey(w, r)
+		_, ok = executionMutationKey(w, r)
 		if !ok {
 			return
 		}
-		input := decodeJSON(r)
-		workspaceID := "ws_" + stableID("clone", stringValue(backup["id"]), key)[:18]
-		storageID := "vol_" + stableID("clone-storage", stringValue(backup["id"]), key)[:18]
-		volume, err := service.RestoreStorageSnapshot(r.Context(), stringValue(backup["snapshotId"]), clients.StorageRestoreInput{AccountID: stringValue(backup["accountId"]), WorkspaceID: workspaceID, TargetVolumeID: storageID}, key)
-		if err != nil {
-			writeUpstreamError(w, err)
-			return
-		}
-		now := time.Now().UTC().Format(time.RFC3339Nano)
-		workspace := map[string]any{"id": workspaceID, "accountId": backup["accountId"], "ownerAccountId": backup["accountId"], "name": firstNonEmpty(stringField(input, "name", ""), "Workspace Clone"), "storageId": volume.ID, "state": "suspended", "status": "suspended", "createdAt": now, "updatedAt": now}
-		storage := map[string]any{"id": volume.ID, "accountId": backup["accountId"], "workspaceId": workspaceID, "name": "Restored storage", "status": volume.Status, "sizeGb": volume.SizeGB, "billingStatus": "pending", "createdAt": now, "updatedAt": now}
-		if err := app.tables.SaveStorage(r.Context(), storage); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if err := app.tables.SaveWorkspace(r.Context(), workspace); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		writeJSON(w, http.StatusCreated, map[string]any{"workspaceId": workspaceID, "storageId": volume.ID, "status": "suspended", "sourceBackupId": backup["id"]})
+		writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
 	}))
 
 	mux.HandleFunc("POST /api/workspace-backups/{backupId}/destroy", app.protected(false, func(w http.ResponseWriter, r *http.Request) {

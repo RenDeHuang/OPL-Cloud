@@ -24,8 +24,10 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
 
   assert.equal(freeze.architectureAuthority.repository, "https://github.com/gaofeng21cn/one-person-lab-cloud");
-  assert.equal(freeze.architectureAuthority.reviewedRevision, "fdeb0e4df3e4905fb1c3551337b9dfda65bb2119");
-  assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "console", "fabric", "ledger"]);
+  assert.equal(freeze.architectureAuthority.reviewedRevision, "c349a41d860e706ed43a4090b9e75abb0b130971");
+  assert.deepEqual(Object.keys(freeze.productSurfaces), ["gateway", "workspace", "serve", "console", "fabric", "ledger"]);
+  assert.deepEqual(freeze.productSurfaces.serve, { product: "OPL Serve", launchStatus: "planned_not_in_launch" });
+  assert.match(freeze.machineBoundary, /Six product surfaces.*OPL Serve.*planned_not_in_launch/);
   assert.deepEqual(Object.keys(freeze.ownerLanes), ["console", "fabric", "gateway", "ledger"]);
   assert.deepEqual(freeze.customerProducts.basic, {
     compute: { cpu: 2, memoryGb: 4, cnyCents: 35000, usdMicros: 50000000 },
@@ -46,6 +48,7 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.providerProcurement.renewFlag, "NOTIFY_AND_MANUAL_RENEW");
   assert.deepEqual(freeze.providerProcurement.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
   assert.equal(freeze.workspaceRuntime.sourceImage.digest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
+  assert.equal(freeze.workspaceRuntime.primaryWorkspacePerAccount, 1);
   assert.equal(freeze.gateway.sub2apiMutable, false);
   assert.equal(freeze.gateway.backend, "Sub2API v0.1.156");
   assert.deepEqual(freeze.gateway.compatibleVersions, ["0.1.155", "0.1.156"]);
@@ -58,7 +61,13 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.verification.slot.customerProduct, false);
   assert.equal(freeze.verification.slot.reuseForBillingPeriod, true);
   assert.equal(freeze.verification.purchaseBudget, 1);
-  assert.equal(freeze.verification.purchaseBudgetRemaining, 1);
+  assert.equal("purchaseBudgetRemaining" in freeze.verification, false);
+  assert.deepEqual(freeze.verification.providerAcceptance, {
+    operatorOnly: true,
+    operationCardinality: 1,
+    fixedSlotOperationReplayable: true,
+    slotExistenceSource: ["workspace", "compute", "storage"]
+  });
   assert.equal(freeze.verification.perRunTencentPurchase, false);
   assert.equal(freeze.verification.monthlyBillingBackend, "fake");
   assert.equal(freeze.verification.gatewayRequest, "real_dedicated_test_key");

@@ -45,7 +45,7 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 			return
 		}
 		resourceID := resourceIDForMutation("ca", accountID, key)
-		workspaceID := resourceIDForMutation("ws", accountID, key)
+		workspaceID := primaryWorkspaceID(accountID)
 		unlock := app.lockResource("compute", resourceID)
 		defer unlock()
 		body, err := app.purchaseMonthlyResource(r.Context(), service, monthlyPurchaseInput{

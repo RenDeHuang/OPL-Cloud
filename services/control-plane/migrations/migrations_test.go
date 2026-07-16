@@ -50,3 +50,21 @@ func TestApplySub2APIUserUniquenessFailsClosedAndAddsPartialIndex(t *testing.T) 
 		}
 	}
 }
+
+func TestApplyPrimaryWorkspaceAddsClassificationAndFailsClosedOnDuplicates(t *testing.T) {
+	driver := &recordingDriver{}
+	if err := ApplyPrimaryWorkspace(context.Background(), driver); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS verification_slot_id",
+		"ADD COLUMN IF NOT EXISTS customer_product",
+		"duplicate primary Workspaces",
+		"COALESCE(NULLIF(account_id, ''), owner_account_id)",
+		"CREATE UNIQUE INDEX",
+	} {
+		if !strings.Contains(driver.query, required) {
+			t.Fatalf("embedded primary Workspace migration missing %q", required)
+		}
+	}
+}

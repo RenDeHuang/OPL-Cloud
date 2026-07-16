@@ -412,7 +412,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				return
 			}
 			if result.RequestHash != requestHash {
-				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
 				return
 			}
 			switch stringValue(operation["status"]) {
@@ -425,6 +425,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				return
 			case "receipt_pending":
 				workspace, retryReceipt = result.Workspace, true
+			case "started":
+				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+				return
 			default:
 				writeError(w, http.StatusInternalServerError, "state_read_failed")
 				return
@@ -447,10 +450,23 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 					stringValue(existing["attachmentId"]) != attachmentID || firstNonEmpty(stringValue(existing["computeAllocationId"]), stringValue(existing["currentComputeAllocationId"])) != computeID ||
 					stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
 					firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
-					writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
 					return
 				}
 				writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
+				return
+			}
+			claim := domain.WorkspaceProjection{
+				ID: workspaceID, AccountID: accountID, OwnerID: ownerID, Name: name, PackageID: packageID, Status: "provisioning",
+				ComputeID: computeID, VolumeID: storageID, AttachmentID: attachmentID,
+			}
+			claimOperation := workspaceCreateOperationRow(operationID, "started", workspaceCreateOperationResult{RequestHash: requestHash, Workspace: claim})
+			if err := app.tables.ClaimWorkspaceCreate(r.Context(), workspaceProjectionRow(claim), claimOperation); err != nil {
+				if errors.Is(err, errPrimaryWorkspaceExists) {
+					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
 			}
 			sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)

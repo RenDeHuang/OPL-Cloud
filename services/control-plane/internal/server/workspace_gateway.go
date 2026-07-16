@@ -65,6 +65,10 @@ func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now t
 }
 
 func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.WorkspaceProjection) error {
+	return app.tables.SaveWorkspace(context.Background(), workspaceProjectionRow(workspace))
+}
+
+func workspaceProjectionRow(workspace domain.WorkspaceProjection) map[string]any {
 	access := map[string]any{}
 	if workspace.RuntimeUsername != "" {
 		access["account"] = workspace.RuntimeUsername
@@ -100,7 +104,7 @@ func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.Workspac
 		"receiptId":                  workspace.ReceiptID,
 		"access":                     access,
 	}
-	return app.tables.SaveWorkspace(context.Background(), row)
+	return row
 }
 
 func (app *controlPlaneServer) suspendWorkspacesForCompute(computeID string) error {

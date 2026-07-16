@@ -13,6 +13,7 @@ var errWorkspaceResumeInProgress = errors.New("workspace_resume_in_progress")
 var errWorkspaceNotSuspended = errors.New("workspace_not_suspended")
 var errBillingOperationInProgress = errors.New("billing_operation_in_progress")
 var errSub2APIAccountMappingConflict = errors.New("sub2api_account_mapping_conflict")
+var errPrimaryWorkspaceExists = errors.New("primary_workspace_already_exists")
 
 type workspaceResumeOperationResult struct {
 	RequestHash    string                      `json:"requestHash"`
@@ -98,6 +99,7 @@ type controlPlaneTableStore interface {
 	DeleteAttachment(ctx context.Context, id string) error
 	ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveWorkspace(ctx context.Context, row map[string]any) error
+	ClaimWorkspaceCreate(ctx context.Context, workspace map[string]any, operation map[string]any) error
 	ClaimWorkspaceResume(ctx context.Context, workspaceID string, operation map[string]any) (map[string]any, bool, error)
 	FailWorkspaceResume(ctx context.Context, workspaceID string, operationID string, errorCode string) error
 	CommitWorkspaceResume(ctx context.Context, workspace map[string]any, audit map[string]any, operation map[string]any) error

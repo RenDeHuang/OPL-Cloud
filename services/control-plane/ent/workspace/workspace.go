@@ -61,6 +61,10 @@ const (
 	FieldCredentialSecretRef = "credential_secret_ref"
 	// FieldAccessRequiresLogin holds the string denoting the access_requires_login field in the database.
 	FieldAccessRequiresLogin = "access_requires_login"
+	// FieldVerificationSlotID holds the string denoting the verification_slot_id field in the database.
+	FieldVerificationSlotID = "verification_slot_id"
+	// FieldCustomerProduct holds the string denoting the customer_product field in the database.
+	FieldCustomerProduct = "customer_product"
 	// Table holds the table name of the workspace in the database.
 	Table = "control_plane_workspaces"
 )
@@ -92,6 +96,8 @@ var Columns = []string{
 	FieldCredentialVersion,
 	FieldCredentialSecretRef,
 	FieldAccessRequiresLogin,
+	FieldVerificationSlotID,
+	FieldCustomerProduct,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -155,6 +161,10 @@ var (
 	DefaultCredentialSecretRef string
 	// DefaultAccessRequiresLogin holds the default value on creation for the "access_requires_login" field.
 	DefaultAccessRequiresLogin bool
+	// DefaultVerificationSlotID holds the default value on creation for the "verification_slot_id" field.
+	DefaultVerificationSlotID string
+	// DefaultCustomerProduct holds the default value on creation for the "customer_product" field.
+	DefaultCustomerProduct bool
 	// IDValidator is a validator for the "id" field. It is called by the builders before save.
 	IDValidator func(string) error
 )
@@ -285,4 +295,14 @@ func ByCredentialSecretRef(opts ...sql.OrderTermOption) OrderOption {
 // ByAccessRequiresLogin orders the results by the access_requires_login field.
 func ByAccessRequiresLogin(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAccessRequiresLogin, opts...).ToFunc()
+}
+
+// ByVerificationSlotID orders the results by the verification_slot_id field.
+func ByVerificationSlotID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldVerificationSlotID, opts...).ToFunc()
+}
+
+// ByCustomerProduct orders the results by the customer_product field.
+func ByCustomerProduct(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCustomerProduct, opts...).ToFunc()
 }

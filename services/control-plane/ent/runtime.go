@@ -1336,6 +1336,14 @@ func init() {
 	workspaceDescAccessRequiresLogin := workspaceFields[24].Descriptor()
 	// workspace.DefaultAccessRequiresLogin holds the default value on creation for the access_requires_login field.
 	workspace.DefaultAccessRequiresLogin = workspaceDescAccessRequiresLogin.Default.(bool)
+	// workspaceDescVerificationSlotID is the schema descriptor for verification_slot_id field.
+	workspaceDescVerificationSlotID := workspaceFields[25].Descriptor()
+	// workspace.DefaultVerificationSlotID holds the default value on creation for the verification_slot_id field.
+	workspace.DefaultVerificationSlotID = workspaceDescVerificationSlotID.Default.(string)
+	// workspaceDescCustomerProduct is the schema descriptor for customer_product field.
+	workspaceDescCustomerProduct := workspaceFields[26].Descriptor()
+	// workspace.DefaultCustomerProduct holds the default value on creation for the customer_product field.
+	workspace.DefaultCustomerProduct = workspaceDescCustomerProduct.Default.(bool)
 	// workspaceDescID is the schema descriptor for id field.
 	workspaceDescID := workspaceFields[0].Descriptor()
 	// workspace.IDValidator is a validator for the "id" field. It is called by the builders before save.

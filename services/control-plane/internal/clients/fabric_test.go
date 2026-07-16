@@ -113,9 +113,9 @@ func TestFabricHTTPClientRenewsMonthlyResourcesWithReadback(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/fabric/compute-allocations/compute-alpha/renew":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "compute-alpha", "status": "running", "providerRequestId": "compute-renew", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-16T00:00:00Z", "providerData": map[string]any{"renewalResult": "renewed"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "compute-alpha", "status": "running", "providerRequestId": "compute-renew", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-16T00:00:00Z", "providerData": map[string]any{"renewalResult": "renewed"}, "costTags": map[string]string{"opl_account_id": "acct-alpha"}})
 		case "/fabric/storage-volumes/storage-alpha/renew":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "storage-alpha", "status": "available", "providerRequestId": "storage-renew", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-16T00:00:00Z", "cbsStatus": "UNATTACHED", "providerData": map[string]any{"chargeType": "PREPAID", "renewalResult": "already_renewed"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "storage-alpha", "status": "available", "providerRequestId": "storage-renew", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": "2026-09-16T00:00:00Z", "cbsStatus": "UNATTACHED", "providerData": map[string]any{"chargeType": "PREPAID", "renewalResult": "already_renewed"}, "costTags": map[string]string{"opl_account_id": "acct-alpha"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -124,11 +124,11 @@ func TestFabricHTTPClientRenewsMonthlyResourcesWithReadback(t *testing.T) {
 
 	client := NewFabricHTTPClient(upstream.URL, "internal-secret", upstream.Client()).(FabricRenewalClient)
 	compute, err := client.RenewComputeAllocation(context.Background(), "compute-alpha", "renew-once")
-	if err != nil || compute.ProviderRequestID != "compute-renew" || compute.ChargeType != "PREPAID" || compute.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || compute.Deadline != "2026-09-16T00:00:00Z" || compute.ProviderData["renewalResult"] != "renewed" {
+	if err != nil || compute.ProviderRequestID != "compute-renew" || compute.ChargeType != "PREPAID" || compute.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || compute.Deadline != "2026-09-16T00:00:00Z" || compute.ProviderData["renewalResult"] != "renewed" || compute.CostTags["opl_account_id"] != "acct-alpha" {
 		t.Fatalf("compute renewal = %#v err=%v", compute, err)
 	}
 	storage, err := client.RenewStorageVolume(context.Background(), "storage-alpha", "renew-once")
-	if err != nil || storage.ProviderRequestID != "storage-renew" || storage.Deadline != "2026-09-16T00:00:00Z" || storage.ProviderData["renewalResult"] != "already_renewed" {
+	if err != nil || storage.ProviderRequestID != "storage-renew" || storage.Deadline != "2026-09-16T00:00:00Z" || storage.ProviderData["renewalResult"] != "already_renewed" || storage.CostTags["opl_account_id"] != "acct-alpha" {
 		t.Fatalf("storage renewal = %#v err=%v", storage, err)
 	}
 	if strings.Join(paths, ",") != "/fabric/compute-allocations/compute-alpha/renew,/fabric/storage-volumes/storage-alpha/renew" {

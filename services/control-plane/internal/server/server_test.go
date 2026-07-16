@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -335,7 +336,7 @@ func TestWorkspaceCreateKeepsDraftIdentityAndReplaysWithoutHeader(t *testing.T) 
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"verification-slot-01"}`)
 	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"verification-slot-01","computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
-	draftID := resourceIDForMutation("ws", "acct-alpha", "test-/api/compute-allocations")
+	draftID := resourceIDForMutation("ws", "acct-alpha", "primary")
 	if compute["workspaceId"] != draftID || storage["workspaceId"] != draftID || attachment["workspaceId"] != draftID || attachment["packageId"] != "basic" {
 		t.Fatalf("draft identity compute=%#v storage=%#v attachment=%#v want=%s", compute, storage, attachment, draftID)
 	}
@@ -369,7 +370,7 @@ func TestWorkspaceCreateKeepsDraftIdentityAndReplaysWithoutHeader(t *testing.T) 
 	}
 	beforeCalls, beforeReceipts := len(calls), len(ledger.receipts)
 	conflict := postWorkspace("different-name")
-	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) || len(calls) != beforeCalls || len(ledger.receipts) != beforeReceipts {
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errPrimaryWorkspaceExists.Error()) || len(calls) != beforeCalls || len(ledger.receipts) != beforeReceipts {
 		t.Fatalf("conflict=%d %s calls=%#v receipts=%#v", conflict.Code, conflict.Body.String(), calls, ledger.receipts)
 	}
 }
@@ -828,6 +829,83 @@ func TestWorkspaceCreateBindsAuthenticatedOwnerForGatewaySecretRotation(t *testi
 	forged := `{"workspaceName":"Alpha Workspace","attachmentId":"attachment-alpha","ownerId":"usr-alpha-owner"}`
 	if response := requestWithSession(t, server, member, http.MethodPost, "/api/workspaces", forged); response.Code != http.StatusForbidden {
 		t.Fatalf("forged owner create status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceCreateRejectsSecondPrimaryBeforeFabric(t *testing.T) {
+	calls := []string{}
+	fabric := &fakeFabricClient{calls: &calls}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	owner := tenantOwnerSessionForTest(t, server)
+
+	firstAttachment := createWorkspaceAttachmentForTest(t, server, owner, "primary-first")
+	first := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"workspaceName":"Primary","attachmentId":"`+stringValue(firstAttachment["id"])+`"}`, "primary-first-workspace")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first Workspace status=%d body=%s", first.Code, first.Body.String())
+	}
+	secondAttachment := createWorkspaceAttachmentForTest(t, server, owner, "primary-second")
+	beforeSecond := len(calls)
+	second := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"workspaceName":"Second","attachmentId":"`+stringValue(secondAttachment["id"])+`"}`, "primary-second-workspace")
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "primary_workspace_already_exists") {
+		t.Fatalf("second Workspace status=%d body=%s", second.Code, second.Body.String())
+	}
+	if len(calls) != beforeSecond {
+		t.Fatalf("second Workspace reached Fabric: before=%d calls=%#v", beforeSecond, calls[beforeSecond:])
+	}
+}
+
+func TestWorkspaceCreateConcurrentClaimsReachFabricOnce(t *testing.T) {
+	fabric := &countingWorkspaceFabricClient{}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	owner := tenantOwnerSessionForTest(t, server)
+	attachments := []map[string]any{
+		createWorkspaceAttachmentForTest(t, server, owner, "concurrent-first"),
+		createWorkspaceAttachmentForTest(t, server, owner, "concurrent-second"),
+	}
+	requests := make([]*http.Request, 0, len(attachments))
+	for index, attachment := range attachments {
+		req := httptest.NewRequest(http.MethodPost, "/api/workspaces", bytes.NewBufferString(`{"workspaceName":"Concurrent","attachmentId":"`+stringValue(attachment["id"])+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("concurrent-workspace-%d", index))
+		addAuth(req, owner)
+		requests = append(requests, req)
+	}
+
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, len(requests))
+	var workers sync.WaitGroup
+	for _, req := range requests {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			responses <- rec
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(responses)
+
+	created, conflicted := 0, 0
+	for response := range responses {
+		switch response.Code {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			if !strings.Contains(response.Body.String(), "primary_workspace_already_exists") {
+				t.Fatalf("unexpected conflict body=%s", response.Body.String())
+			}
+			conflicted++
+		default:
+			t.Fatalf("concurrent Workspace status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	fabric.mu.Lock()
+	defer fabric.mu.Unlock()
+	if created != 1 || conflicted != 1 || fabric.gatewayWrites != 1 || fabric.runtimeCreates != 1 {
+		t.Fatalf("concurrent results created=%d conflicted=%d gateway=%d runtime=%d", created, conflicted, fabric.gatewayWrites, fabric.runtimeCreates)
 	}
 }
 
@@ -1489,6 +1567,35 @@ type fakeFabricClient struct {
 	runtimeInputs        []clients.WorkspaceRuntimeInput
 }
 
+type countingWorkspaceFabricClient struct {
+	fakeFabricClient
+	mu             sync.Mutex
+	gatewayWrites  int
+	runtimeCreates int
+}
+
+func (f *countingWorkspaceFabricClient) WriteGatewaySecret(ctx context.Context, input clients.GatewaySecretWriteInput, key string) (clients.GatewaySecretWriteResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gatewayWrites++
+	return f.fakeFabricClient.WriteGatewaySecret(ctx, input, key)
+}
+
+func (f *countingWorkspaceFabricClient) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runtimeCreates++
+	return f.fakeFabricClient.CreateWorkspaceRuntime(ctx, input, key)
+}
+
+func (f *countingWorkspaceFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
+	return clients.StorageAttachment{
+		ID: "attachment-" + stableID(input.ComputeID, input.VolumeID)[:12], WorkspaceID: input.WorkspaceID,
+		ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke",
+		ProviderAttachmentID: "deployment/runtime:pvc/storage:/data", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data",
+	}, nil
+}
+
 type provisioningComputeFabricClient struct{ fakeFabricClient }
 
 type pendingComputeFabricClient struct {
@@ -2100,6 +2207,37 @@ func createResourceWithSession(t *testing.T, server http.Handler, loginRec *http
 		t.Fatalf("decode %s %s: %v", method, path, err)
 	}
 	return payload
+}
+
+func createWorkspaceAttachmentForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, key string) map[string]any {
+	t.Helper()
+	compute := createResourceWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`, key+"-compute")
+	storage := createResourceWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/storage-volumes", `{"packageId":"basic","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`, key+"-storage")
+	return createResourceWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`, key+"-attachment")
+}
+
+func createResourceWithMutationKeyForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, body, key string) map[string]any {
+	t.Helper()
+	rec := requestWithMutationKeyForTest(t, server, session, method, path, body, key)
+	if rec.Code < 200 || rec.Code >= 300 {
+		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode %s %s: %v", method, path, err)
+	}
+	return payload
+}
+
+func requestWithMutationKeyForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, body, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	return rec
 }
 
 func requestWithSession(t *testing.T, server http.Handler, loginRec *httptest.ResponseRecorder, method string, path string, body string) *httptest.ResponseRecorder {

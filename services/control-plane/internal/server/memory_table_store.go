@@ -361,11 +361,40 @@ func (s *memoryTableStore) SaveWorkspace(_ context.Context, row map[string]any) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row = cloneMap(row)
+	if _, ok := row["customerProduct"]; !ok {
+		row["customerProduct"] = true
+	}
 	access, _ := row["access"].(map[string]any)
 	access = cloneMap(access)
 	delete(access, "password")
 	row["access"] = access
 	s.workspaces[stringValue(row["id"])] = row
+	return nil
+}
+
+func (s *memoryTableStore) ClaimWorkspaceCreate(_ context.Context, workspace map[string]any, operation map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+	if accountID == "" || stringValue(workspace["id"]) == "" || stringValue(operation["id"]) == "" {
+		return errors.New("invalid_workspace_create_claim")
+	}
+	for _, existing := range s.workspaces {
+		if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) == accountID {
+			return errPrimaryWorkspaceExists
+		}
+	}
+	for _, existing := range s.runtimeOps {
+		if stringValue(existing["id"]) == stringValue(operation["id"]) {
+			return errPrimaryWorkspaceExists
+		}
+	}
+	workspace = cloneMap(workspace)
+	if _, ok := workspace["customerProduct"]; !ok {
+		workspace["customerProduct"] = true
+	}
+	s.workspaces[stringValue(workspace["id"])] = workspace
+	s.runtimeOps = append(s.runtimeOps, cloneMap(operation))
 	return nil
 }
 

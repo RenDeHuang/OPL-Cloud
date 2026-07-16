@@ -182,6 +182,7 @@ type ComputeAllocation struct {
 	RenewFlag          string            `json:"renewFlag,omitempty"`
 	Deadline           string            `json:"deadline,omitempty"`
 	ProviderData       map[string]string `json:"providerData,omitempty"`
+	CostTags           map[string]string `json:"costTags,omitempty"`
 }
 
 type StorageVolumeInput struct {
@@ -209,6 +210,7 @@ type StorageVolume struct {
 	Deadline           string            `json:"deadline,omitempty"`
 	Zone               string            `json:"zone,omitempty"`
 	ProviderData       map[string]string `json:"providerData,omitempty"`
+	CostTags           map[string]string `json:"costTags,omitempty"`
 }
 
 type StorageSnapshotInput struct {

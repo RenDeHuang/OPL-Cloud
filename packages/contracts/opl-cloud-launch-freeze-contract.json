@@ -3,7 +3,7 @@
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved V2 launch products, debit-first settlement, prepaid Tencent procurement, account-owned Gateway access, and reusable verification boundary without claiming unfinished runtime evidence.",
   "state": "current",
-  "machineBoundary": "Five product surfaces, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and one guarded production verification slot.",
+  "machineBoundary": "Six product surfaces including OPL Serve planned_not_in_launch, four implementation owner lanes, two customer products, ten launch stages, six delivery phases, and one guarded production verification slot.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer approved launch freeze and matching contract tests."
@@ -11,7 +11,7 @@
   "architectureAuthority": {
     "repository": "https://github.com/gaofeng21cn/one-person-lab-cloud",
     "branch": "main",
-    "reviewedRevision": "fdeb0e4df3e4905fb1c3551337b9dfda65bb2119",
+    "reviewedRevision": "c349a41d860e706ed43a4090b9e75abb0b130971",
     "rule": "The upstream repository owns target product boundaries; this contract owns current implementation choices, exact prices, and delivery gaps."
   },
   "productSurfaces": {
@@ -24,6 +24,10 @@
       "product": "OPL Workspace",
       "deliveredBy": "fabric",
       "runtimeOwner": "gaofeng21cn/one-person-lab-app"
+    },
+    "serve": {
+      "product": "OPL Serve",
+      "launchStatus": "planned_not_in_launch"
     },
     "console": {
       "product": "OPL Console",
@@ -94,6 +98,7 @@
     "currentImplementation": "Fabric still requires POSTPAID_BY_HOUR CVM pools and does not create or prove PREPAID CBS."
   },
   "workspaceRuntime": {
+    "primaryWorkspacePerAccount": 1,
     "sourceImage": {
       "repository": "ghcr.io/gaofeng21cn/one-person-lab-webui",
       "tag": "26.7.13",
@@ -121,7 +126,12 @@
   },
   "verification": {
     "purchaseBudget": 1,
-    "purchaseBudgetRemaining": 1,
+    "providerAcceptance": {
+      "operatorOnly": true,
+      "operationCardinality": 1,
+      "fixedSlotOperationReplayable": true,
+      "slotExistenceSource": ["workspace", "compute", "storage"]
+    },
     "slot": {
       "id": "verification-slot-01",
       "computeInstanceType": "SA5.MEDIUM4",
@@ -139,7 +149,6 @@
     "providerResourcesDeletedPerRun": [],
     "perRunCleanup": ["test Workspace Deployment, Service, and Secret", "test-only data", "isolated application rows"],
     "purchaseRule": "Purchase once only when read-only inventory proves that no reusable compliant slot exists; ambiguous or multiple candidates stop without purchase.",
-    "providerAcceptance": "Explicit manual run only for the one initial purchase or a later separately approved renewal.",
     "productionSmoke": "Read-only service and existing-resource checks; no monthly charge and no provider mutation.",
     "currentImplementation": "The legacy verifier spends real monthly balance and creates then deletes provider resources; it is blocked until replaced."
   },

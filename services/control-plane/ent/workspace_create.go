@@ -356,6 +356,34 @@ func (wc *WorkspaceCreate) SetNillableAccessRequiresLogin(b *bool) *WorkspaceCre
 	return wc
 }
 
+// SetVerificationSlotID sets the "verification_slot_id" field.
+func (wc *WorkspaceCreate) SetVerificationSlotID(s string) *WorkspaceCreate {
+	wc.mutation.SetVerificationSlotID(s)
+	return wc
+}
+
+// SetNillableVerificationSlotID sets the "verification_slot_id" field if the given value is not nil.
+func (wc *WorkspaceCreate) SetNillableVerificationSlotID(s *string) *WorkspaceCreate {
+	if s != nil {
+		wc.SetVerificationSlotID(*s)
+	}
+	return wc
+}
+
+// SetCustomerProduct sets the "customer_product" field.
+func (wc *WorkspaceCreate) SetCustomerProduct(b bool) *WorkspaceCreate {
+	wc.mutation.SetCustomerProduct(b)
+	return wc
+}
+
+// SetNillableCustomerProduct sets the "customer_product" field if the given value is not nil.
+func (wc *WorkspaceCreate) SetNillableCustomerProduct(b *bool) *WorkspaceCreate {
+	if b != nil {
+		wc.SetCustomerProduct(*b)
+	}
+	return wc
+}
+
 // SetID sets the "id" field.
 func (wc *WorkspaceCreate) SetID(s string) *WorkspaceCreate {
 	wc.mutation.SetID(s)
@@ -493,6 +521,14 @@ func (wc *WorkspaceCreate) defaults() {
 		v := workspace.DefaultAccessRequiresLogin
 		wc.mutation.SetAccessRequiresLogin(v)
 	}
+	if _, ok := wc.mutation.VerificationSlotID(); !ok {
+		v := workspace.DefaultVerificationSlotID
+		wc.mutation.SetVerificationSlotID(v)
+	}
+	if _, ok := wc.mutation.CustomerProduct(); !ok {
+		v := workspace.DefaultCustomerProduct
+		wc.mutation.SetCustomerProduct(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -568,6 +604,12 @@ func (wc *WorkspaceCreate) check() error {
 	}
 	if _, ok := wc.mutation.AccessRequiresLogin(); !ok {
 		return &ValidationError{Name: "access_requires_login", err: errors.New(`ent: missing required field "Workspace.access_requires_login"`)}
+	}
+	if _, ok := wc.mutation.VerificationSlotID(); !ok {
+		return &ValidationError{Name: "verification_slot_id", err: errors.New(`ent: missing required field "Workspace.verification_slot_id"`)}
+	}
+	if _, ok := wc.mutation.CustomerProduct(); !ok {
+		return &ValidationError{Name: "customer_product", err: errors.New(`ent: missing required field "Workspace.customer_product"`)}
 	}
 	if v, ok := wc.mutation.ID(); ok {
 		if err := workspace.IDValidator(v); err != nil {
@@ -704,6 +746,14 @@ func (wc *WorkspaceCreate) createSpec() (*Workspace, *sqlgraph.CreateSpec) {
 	if value, ok := wc.mutation.AccessRequiresLogin(); ok {
 		_spec.SetField(workspace.FieldAccessRequiresLogin, field.TypeBool, value)
 		_node.AccessRequiresLogin = value
+	}
+	if value, ok := wc.mutation.VerificationSlotID(); ok {
+		_spec.SetField(workspace.FieldVerificationSlotID, field.TypeString, value)
+		_node.VerificationSlotID = value
+	}
+	if value, ok := wc.mutation.CustomerProduct(); ok {
+		_spec.SetField(workspace.FieldCustomerProduct, field.TypeBool, value)
+		_node.CustomerProduct = value
 	}
 	return _node, _spec
 }

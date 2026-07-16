@@ -356,6 +356,34 @@ func (wu *WorkspaceUpdate) SetNillableAccessRequiresLogin(b *bool) *WorkspaceUpd
 	return wu
 }
 
+// SetVerificationSlotID sets the "verification_slot_id" field.
+func (wu *WorkspaceUpdate) SetVerificationSlotID(s string) *WorkspaceUpdate {
+	wu.mutation.SetVerificationSlotID(s)
+	return wu
+}
+
+// SetNillableVerificationSlotID sets the "verification_slot_id" field if the given value is not nil.
+func (wu *WorkspaceUpdate) SetNillableVerificationSlotID(s *string) *WorkspaceUpdate {
+	if s != nil {
+		wu.SetVerificationSlotID(*s)
+	}
+	return wu
+}
+
+// SetCustomerProduct sets the "customer_product" field.
+func (wu *WorkspaceUpdate) SetCustomerProduct(b bool) *WorkspaceUpdate {
+	wu.mutation.SetCustomerProduct(b)
+	return wu
+}
+
+// SetNillableCustomerProduct sets the "customer_product" field if the given value is not nil.
+func (wu *WorkspaceUpdate) SetNillableCustomerProduct(b *bool) *WorkspaceUpdate {
+	if b != nil {
+		wu.SetCustomerProduct(*b)
+	}
+	return wu
+}
+
 // Mutation returns the WorkspaceMutation object of the builder.
 func (wu *WorkspaceUpdate) Mutation() *WorkspaceMutation {
 	return wu.mutation
@@ -477,6 +505,12 @@ func (wu *WorkspaceUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if value, ok := wu.mutation.AccessRequiresLogin(); ok {
 		_spec.SetField(workspace.FieldAccessRequiresLogin, field.TypeBool, value)
+	}
+	if value, ok := wu.mutation.VerificationSlotID(); ok {
+		_spec.SetField(workspace.FieldVerificationSlotID, field.TypeString, value)
+	}
+	if value, ok := wu.mutation.CustomerProduct(); ok {
+		_spec.SetField(workspace.FieldCustomerProduct, field.TypeBool, value)
 	}
 	if n, err = sqlgraph.UpdateNodes(ctx, wu.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -826,6 +860,34 @@ func (wuo *WorkspaceUpdateOne) SetNillableAccessRequiresLogin(b *bool) *Workspac
 	return wuo
 }
 
+// SetVerificationSlotID sets the "verification_slot_id" field.
+func (wuo *WorkspaceUpdateOne) SetVerificationSlotID(s string) *WorkspaceUpdateOne {
+	wuo.mutation.SetVerificationSlotID(s)
+	return wuo
+}
+
+// SetNillableVerificationSlotID sets the "verification_slot_id" field if the given value is not nil.
+func (wuo *WorkspaceUpdateOne) SetNillableVerificationSlotID(s *string) *WorkspaceUpdateOne {
+	if s != nil {
+		wuo.SetVerificationSlotID(*s)
+	}
+	return wuo
+}
+
+// SetCustomerProduct sets the "customer_product" field.
+func (wuo *WorkspaceUpdateOne) SetCustomerProduct(b bool) *WorkspaceUpdateOne {
+	wuo.mutation.SetCustomerProduct(b)
+	return wuo
+}
+
+// SetNillableCustomerProduct sets the "customer_product" field if the given value is not nil.
+func (wuo *WorkspaceUpdateOne) SetNillableCustomerProduct(b *bool) *WorkspaceUpdateOne {
+	if b != nil {
+		wuo.SetCustomerProduct(*b)
+	}
+	return wuo
+}
+
 // Mutation returns the WorkspaceMutation object of the builder.
 func (wuo *WorkspaceUpdateOne) Mutation() *WorkspaceMutation {
 	return wuo.mutation
@@ -977,6 +1039,12 @@ func (wuo *WorkspaceUpdateOne) sqlSave(ctx context.Context) (_node *Workspace, e
 	}
 	if value, ok := wuo.mutation.AccessRequiresLogin(); ok {
 		_spec.SetField(workspace.FieldAccessRequiresLogin, field.TypeBool, value)
+	}
+	if value, ok := wuo.mutation.VerificationSlotID(); ok {
+		_spec.SetField(workspace.FieldVerificationSlotID, field.TypeString, value)
+	}
+	if value, ok := wuo.mutation.CustomerProduct(); ok {
+		_spec.SetField(workspace.FieldCustomerProduct, field.TypeBool, value)
 	}
 	_node = &Workspace{config: wuo.config}
 	_spec.Assign = _node.assignValues
