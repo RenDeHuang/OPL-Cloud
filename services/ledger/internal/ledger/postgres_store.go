@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -307,7 +308,7 @@ func (s *PostgresStore) mutateReceipt(ctx context.Context, service, idempotencyK
 		return ReceiptRetentionResult{}, err
 	}
 	var stored receiptPayload
-	if err := json.Unmarshal([]byte(payloadJSON), &stored); err != nil {
+	if err := decodeStoredJSON(payloadJSON, &stored); err != nil {
 		return ReceiptRetentionResult{}, err
 	}
 	receipt := Receipt{ReceiptInput: stored.ReceiptInput, ReceiptID: receiptID, CreatedAt: createdAt, Retention: stored.Retention}
@@ -716,9 +717,7 @@ func (s *PostgresStore) receiptByIdempotencyKey(ctx context.Context, key string)
 func receiptFromEnt(row *ledgerent.EvidenceReceipt) (Receipt, error) {
 	// ponytail: payload is canonical; promote fields to columns only when a real query needs an index.
 	var stored receiptPayload
-	decoder := json.NewDecoder(strings.NewReader(row.PayloadJSON))
-	decoder.UseNumber()
-	if err := decoder.Decode(&stored); err != nil {
+	if err := decodeStoredJSON(row.PayloadJSON, &stored); err != nil {
 		return Receipt{}, err
 	}
 	input := stored.ReceiptInput
@@ -750,12 +749,26 @@ func (s *PostgresStore) reconciliationByIdempotencyKey(ctx context.Context, key 
 
 func reconciliationFromEnt(row *ledgerent.ReconciliationReport) (ReconciliationResult, error) {
 	result := ReconciliationResult{ID: row.ID, Status: row.Status, BlockNewWorkspaces: row.BlockNewWorkspaces, Reason: row.Reason, CreatedAt: row.CreatedAt}
-	decoder := json.NewDecoder(strings.NewReader(row.ReportJSON))
-	decoder.UseNumber()
-	if err := decoder.Decode(&result.Report); err != nil || validateReconciliationResult(result) != nil {
+	if err := decodeStoredJSON(row.ReportJSON, &result.Report); err != nil || validateReconciliationResult(result) != nil {
 		return ReconciliationResult{}, ErrInvalidReconciliationInput
 	}
 	return result, nil
+}
+
+func decodeStoredJSON(payload string, target any) error {
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return errors.New("stored JSON contains multiple values")
+	}
+	return nil
 }
 
 func postgresID(prefix string, t time.Time) string {

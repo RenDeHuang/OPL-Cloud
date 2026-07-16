@@ -123,6 +123,12 @@ func TestPostgresReceiptRowPreservesLargeInteger(t *testing.T) {
 	}
 }
 
+func TestPostgresReceiptRowRejectsTrailingJSON(t *testing.T) {
+	if _, err := receiptFromEnt(&ledgerent.EvidenceReceipt{PayloadJSON: `{"cost":{}} {}`}); err == nil {
+		t.Fatal("persisted receipt payload with trailing JSON must fail closed")
+	}
+}
+
 func TestPostgresReconciliationRowPreservesMaxInt64(t *testing.T) {
 	result, err := reconciliationFromEnt(&ledgerent.ReconciliationReport{
 		ID: "recon-max-int64", Status: "ok", BlockNewWorkspaces: false, Reason: "operator_reconciliation",
@@ -133,6 +139,16 @@ func TestPostgresReconciliationRowPreservesMaxInt64(t *testing.T) {
 	}
 	if got := fmt.Sprint(result.Report["counts"].(map[string]any)["billingOperations"]); got != "9223372036854775807" {
 		t.Fatalf("persisted reconciliation integer = %s", got)
+	}
+}
+
+func TestPostgresReconciliationRowRejectsTrailingJSON(t *testing.T) {
+	_, err := reconciliationFromEnt(&ledgerent.ReconciliationReport{
+		ID: "recon-trailing", Status: "ok", BlockNewWorkspaces: false, Reason: "operator_reconciliation",
+		ReportJSON: `{"id":"recon-trailing","status":"ok","counts":{"billingOperations":0,"matched":0,"exceptions":0},"exceptions":[]} {}`,
+	})
+	if err == nil {
+		t.Fatal("persisted reconciliation report with trailing JSON must fail closed")
 	}
 }
 
@@ -149,6 +165,15 @@ func TestPostgresEvidenceNumberReadback(t *testing.T) {
 	read, err := store.Receipt(ctx, created.ReceiptID)
 	if err != nil || fmt.Sprint(read.Cost["monthlyPriceCnyCents"]) != "9007199254740993" {
 		t.Fatalf("persisted receipt = %#v, %v", read.Cost, err)
+	}
+	if _, err := store.UpdateReceiptRetention(ctx, ReceiptRetentionInput{
+		ReceiptID: created.ReceiptID, RetainUntil: time.Date(2027, time.January, 1, 0, 0, 0, 0, time.UTC), IdempotencyKey: "postgres-large-receipt-retention",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read, err = store.Receipt(ctx, created.ReceiptID)
+	if err != nil || fmt.Sprint(read.Cost["monthlyPriceCnyCents"]) != "9007199254740993" {
+		t.Fatalf("mutated receipt = %#v, %v", read.Cost, err)
 	}
 
 	report := validReconciliationReport("ok")
