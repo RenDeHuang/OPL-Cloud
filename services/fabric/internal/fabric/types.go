@@ -21,6 +21,9 @@ var ErrComputeOperationFailed = errors.New("compute_operation_failed")
 var ErrRuntimeIdempotencyConflict = errors.New("runtime_idempotency_conflict")
 var ErrRuntimeOperationInProgress = errors.New("runtime_operation_in_progress")
 var ErrRuntimeOperationFailed = errors.New("runtime_operation_failed")
+var ErrStorageAttachmentIdempotencyConflict = errors.New("storage_attachment_idempotency_conflict")
+var ErrStorageAttachmentOperationInProgress = errors.New("storage_attachment_operation_in_progress")
+var ErrStorageAttachmentOperationFailed = errors.New("storage_attachment_operation_failed")
 var ErrGatewaySecretIdempotencyConflict = errors.New("gateway_secret_idempotency_conflict")
 
 type Catalog struct {

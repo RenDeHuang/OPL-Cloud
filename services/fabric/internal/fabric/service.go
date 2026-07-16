@@ -869,33 +869,71 @@ func (s *Service) RenewStorageVolume(ctx context.Context, volumeID, idempotencyK
 }
 
 func (s *Service) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput) (StorageAttachment, error) {
+	if strings.TrimSpace(input.IdempotencyKey) == "" {
+		return StorageAttachment{}, fmt.Errorf("storage_attachment_idempotency_key_required")
+	}
+	requestHash := hashInput(input)
 	s.mu.Lock()
 	compute := s.computes[input.ComputeID]
 	volume := s.volumes[input.VolumeID]
 	s.mu.Unlock()
-	operation := newOperation("create_storage_attachment", "storage_attachment", firstNonEmpty(input.IdempotencyKey, input.WorkspaceID, input.ComputeID, input.VolumeID, "pending"), compute.AccountID, input.WorkspaceID, input.IdempotencyKey, hashInput(input), time.Now().UTC())
-	input.OperationID = operation.OperationID
+	now := s.now()
+	operation := newOperation("create_storage_attachment", "storage_attachment", input.IdempotencyKey, compute.AccountID, input.WorkspaceID, input.IdempotencyKey, requestHash, now)
 	if err := validateAttachmentInput(input, compute, volume); err != nil {
 		operation.ProviderRequestID = providerRequestID("storage-attach", input.IdempotencyKey)
 		_ = s.recordOperation(ctx, operation, "rejected", StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ProviderRequestID: operation.ProviderRequestID}, err)
 		return StorageAttachment{}, err
 	}
-	if err := s.recordOperation(ctx, operation, "started", StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}, nil); err != nil {
+	operation.ID = "fop_attachment_claim_" + stableSuffix("create_storage_attachment", input.IdempotencyKey)
+	operation.Status = "started"
+	operation.CreatedAt = now
+	fillOperationResource(&operation, StorageAttachment{ID: operation.ResourceID, WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Provider: "tencent-tke", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)})
+	input.OperationID = operation.OperationID
+	stored, claimed, err := s.operations.ClaimRuntime(ctx, operation)
+	if err != nil {
 		return StorageAttachment{}, err
+	}
+	if !claimed {
+		return replayStorageAttachmentOperation(stored, requestHash)
 	}
 	attachment, err := s.provider.CreateStorageAttachment(ctx, input, compute, volume)
 	if err != nil {
-		_ = s.recordOperation(ctx, operation, "failed", attachment, err)
+		_ = s.saveStorageAttachmentOperation(ctx, stored, "failed", attachment, err)
 		return attachment, err
 	}
-	operation.ResourceID = attachment.ID
-	if err := s.recordOperation(ctx, operation, "succeeded", attachment, nil); err != nil {
+	if err := s.saveStorageAttachmentOperation(ctx, stored, "succeeded", attachment, nil); err != nil {
 		return attachment, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.attachments[attachment.ID] = attachment
+	s.mu.Unlock()
 	return attachment, nil
+}
+
+func replayStorageAttachmentOperation(operation FabricOperation, requestHash string) (StorageAttachment, error) {
+	if operation.RequestHash != requestHash {
+		return StorageAttachment{}, ErrStorageAttachmentIdempotencyConflict
+	}
+	switch operation.Status {
+	case "started":
+		return StorageAttachment{}, ErrStorageAttachmentOperationInProgress
+	case "succeeded":
+		var attachment StorageAttachment
+		if decodeOperationResource(operation, &attachment) {
+			return attachment, nil
+		}
+	}
+	// ponytail: provider attach is not safely repeatable; reconciliation must resolve failed or corrupt claims.
+	return StorageAttachment{}, ErrStorageAttachmentOperationFailed
+}
+
+func (s *Service) saveStorageAttachmentOperation(ctx context.Context, operation FabricOperation, status string, attachment StorageAttachment, operationErr error) error {
+	operation.Status = status
+	operation.FinishedAt = s.now()
+	operation.ErrorCode = errorCode(operationErr)
+	operation.Retryable = false
+	fillOperationResource(&operation, attachment)
+	return s.operations.SaveRuntime(ctx, operation)
 }
 
 func (s *Service) DetachStorageAttachment(ctx context.Context, attachmentID string) (StorageAttachment, error) {

@@ -1422,6 +1422,129 @@ func TestServiceReplaysResourceStateFromOperationStore(t *testing.T) {
 	}
 }
 
+type countingAttachmentProvider struct {
+	testProvider
+	calls atomic.Int32
+}
+
+type blockingAttachmentProvider struct {
+	testProvider
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *countingAttachmentProvider) CreateStorageAttachment(_ context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	p.calls.Add(1)
+	return StorageAttachment{ID: "attachment-alpha", WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}, nil
+}
+
+func (p *blockingAttachmentProvider) CreateStorageAttachment(ctx context.Context, input StorageAttachmentInput, _ ComputeAllocation, _ StorageVolume) (StorageAttachment, error) {
+	if p.calls.Add(1) == 1 {
+		close(p.entered)
+	}
+	select {
+	case <-p.release:
+		return StorageAttachment{ID: "attachment-alpha", WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", ProviderRequestID: providerRequestID("storage-attach", input.IdempotencyKey)}, nil
+	case <-ctx.Done():
+		return StorageAttachment{}, ctx.Err()
+	}
+}
+
+func TestCreateStorageAttachmentReplaysIdempotentlyAcrossRestart(t *testing.T) {
+	provider := &countingAttachmentProvider{}
+	store := NewMemoryOperationStore()
+	service := attachmentTestService(provider, store)
+	input := attachmentTestInput("attachment-once")
+
+	first, firstErr := service.CreateStorageAttachment(context.Background(), input)
+	replayed, replayErr := service.CreateStorageAttachment(context.Background(), input)
+	restarted := attachmentTestService(provider, store)
+	restartedResult, restartErr := restarted.CreateStorageAttachment(context.Background(), input)
+	changed := input
+	changed.VolumeID = "storage-other"
+	_, conflictErr := restarted.CreateStorageAttachment(context.Background(), changed)
+
+	if firstErr != nil || replayErr != nil || restartErr != nil || first.ID != "attachment-alpha" || replayed.ID != first.ID || restartedResult.ID != first.ID || provider.calls.Load() != 1 {
+		t.Fatalf("attachment replay first=%#v firstErr=%v replayed=%#v replayErr=%v restarted=%#v restartErr=%v calls=%d", first, firstErr, replayed, replayErr, restartedResult, restartErr, provider.calls.Load())
+	}
+	if conflictErr == nil || conflictErr.Error() != "storage_attachment_idempotency_conflict" || provider.calls.Load() != 1 {
+		t.Fatalf("changed attachment replay error=%v calls=%d", conflictErr, provider.calls.Load())
+	}
+}
+
+func TestCreateStorageAttachmentClaimsAcrossServiceInstances(t *testing.T) {
+	provider := &blockingAttachmentProvider{entered: make(chan struct{}), release: make(chan struct{})}
+	store := NewMemoryOperationStore()
+	firstService := attachmentTestService(provider, store)
+	secondService := attachmentTestService(provider, store)
+	input := attachmentTestInput("attachment-shared")
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := firstService.CreateStorageAttachment(context.Background(), input)
+		firstDone <- err
+	}()
+	select {
+	case <-provider.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first attachment provider call did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, secondErr := secondService.CreateStorageAttachment(ctx, input)
+	callsBeforeRelease := provider.calls.Load()
+	close(provider.release)
+	firstErr := <-firstDone
+	if firstErr != nil {
+		t.Fatalf("first attachment create: %v", firstErr)
+	}
+	if secondErr == nil || secondErr.Error() != "storage_attachment_operation_in_progress" || callsBeforeRelease != 1 {
+		t.Fatalf("concurrent attachment error=%v providerCalls=%d", secondErr, callsBeforeRelease)
+	}
+}
+
+func TestCreateStorageAttachmentDoesNotReapplyPersistedIncompleteOperation(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   string
+	}{
+		{status: "started", want: "storage_attachment_operation_in_progress"},
+		{status: "failed", want: "storage_attachment_operation_failed"},
+		{status: "succeeded", want: "storage_attachment_operation_failed"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			provider := &countingAttachmentProvider{}
+			store := NewMemoryOperationStore()
+			input := attachmentTestInput("attachment-" + tc.status)
+			now := time.Now().UTC()
+			operation := newOperation("create_storage_attachment", "storage_attachment", input.IdempotencyKey, "acct-alpha", input.WorkspaceID, input.IdempotencyKey, hashInput(input), now)
+			operation.ID = "persisted-attachment-" + tc.status
+			operation.Status = tc.status
+			operation.CreatedAt = now
+			if tc.status != "started" {
+				operation.FinishedAt = now
+			}
+			if tc.status == "failed" {
+				operation.ErrorCode = "provider_error"
+			}
+			if err := store.Append(context.Background(), operation); err != nil {
+				t.Fatalf("seed attachment operation: %v", err)
+			}
+
+			service := attachmentTestService(provider, store)
+			_, err := service.CreateStorageAttachment(context.Background(), input)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("persisted attachment %s error=%v want=%s", tc.status, err, tc.want)
+			}
+			if provider.calls.Load() != 0 {
+				t.Fatalf("persisted attachment %s providerCalls=%d", tc.status, provider.calls.Load())
+			}
+		})
+	}
+}
+
 func TestCreateWorkspaceRuntimeReplaysIdempotentlyBeforeProvider(t *testing.T) {
 	provider := &countingRuntimeProvider{}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
@@ -1561,6 +1684,18 @@ func runtimeTestService(provider Provider, store OperationStore) *Service {
 
 func runtimeTestInput(key string) WorkspaceRuntimeInput {
 	return WorkspaceRuntimeInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretName("acct-alpha"), IdempotencyKey: key}
+}
+
+func attachmentTestService(provider Provider, store OperationStore) *Service {
+	service := NewServiceWithOperationStore(provider, store)
+	service.computes["compute-alpha"] = ComputeAllocation{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "running"}
+	service.volumes["storage-alpha"] = StorageVolume{ID: "storage-alpha", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready"}
+	service.volumes["storage-other"] = StorageVolume{ID: "storage-other", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha", Status: "ready"}
+	return service
+}
+
+func attachmentTestInput(key string) StorageAttachmentInput {
+	return StorageAttachmentInput{WorkspaceID: "workspace-alpha", ComputeID: "compute-alpha", VolumeID: "storage-alpha", IdempotencyKey: key}
 }
 
 func waitForOperation(t *testing.T, service *Service, action string, resourceKind string, resourceID string, status string) {
