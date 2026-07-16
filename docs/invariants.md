@@ -14,6 +14,7 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 - Console calls only Control Plane product APIs.
 - Control Plane owns account-to-Sub2API mapping, quotes, monthly orchestration, entitlements, renewal, expiry, and operator review.
+- Pilot customer identities are provisioned and mapped manually. Operators can reset a customer's password and revoke existing sessions; self-registration and SSO are not Pilot claims.
 - Console displays live Sub2API balance, Key metadata, request usage, usage stats, and Ledger billing receipts without creating a wallet, Key database, usage database, or billing fact table.
 - Basic compute is `2c4g` for CNY 350/month; its default 10GB storage is billed separately at CNY 18/month.
 - Pro compute is `8c16g` for CNY 1,500/month; its default 100GB storage is billed separately at CNY 180/month.
@@ -35,7 +36,10 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 
 - Ledger records append-only debit, refund, fulfillment, claim, activation, renewal, expiry, review, and verification evidence.
 - Ledger never owns or changes spendable balance.
+- Customer billing history is read live from Ledger through an account-scoped paginated query and projected through a strict allowlist; Control Plane never copies receipt facts.
+- Operator reconciliation is computed by Control Plane from active billing operations, Sub2API balance history, Fabric provider operations, and Ledger receipts. Ledger appends the deterministic exception-only report; Control Plane stores only the latest purchase guard and never repairs money, provider resources, or receipts automatically.
 - Receipts contain stable account, Workspace, billing-operation, provider-operation, resource, pricing, period, and redacted Gateway request references.
+- `workspace.access_token_reset` uses the stable Runtime credential-rotation identity and records only owner, Runtime, resource, Secret-reference, and credential-version metadata.
 - API keys, passwords, raw tokens, provider secrets, and raw Sub2API responses are forbidden in evidence.
 - A missing receipt retries only the receipt and never repeats debit, refund, provider purchase, Secret write, or renewal.
 
@@ -68,12 +72,14 @@ validate account and quote
 ```
 
 - Debit, provider mutation, claim, activation, refund, Secret write, renewal, and receipt each use stable operation-scoped identities.
+- One authenticated `POST /api/workspace-launches` stores a durable `workspace.launch` RuntimeOperation. The existing provider reconciliation worker resumes its compute, storage, attachment, Gateway Secret, Runtime, and receipt phases after browser close or process restart.
+- The submission-time Sub2API total-balance read is a read-only preflight, not a hold or reservation. Each child purchase still performs its existing safety preflight and deterministic debit protocol.
 - Debit failure forbids every Tencent resource write.
 - A confirmed provider result showing no billable resource exists permits exactly one idempotent refund.
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.
 - A Ledger failure after activation leaves the entitlement active and retries only its receipt.
 - Replays never create a second debit, refund, purchase, renewal, Secret, or receipt.
-- The merged implementation follows debit before provider mutation; production rollout and live reconciliation evidence remain pending.
+- The merged implementation follows debit before provider mutation. Server-computed read-only reconciliation and its blocking purchase guard are CI-verified; production rollout and live reconciliation evidence remain pending.
 
 ## Products And Lifecycle
 
@@ -89,7 +95,10 @@ validate account and quote
 
 - Workspace URLs are stable and require Runtime password login.
 - A routing cookie selects a Runtime Service and is not an authentication credential.
-- Persisted Workspace, list, public, and evidence responses never expose credentials; only the authorized runtime-status command returns a password transiently.
+- Ordinary Runtime status is non-secret and never returns a password or Kubernetes Secret reference.
+- Only the signed-in user whose ID equals `Workspace.ownerUserId` may reveal or rotate the Runtime password. These responses are `private, no-store`; the password never enters Workspace persistence, RuntimeOperation, audit, logs, or Ledger.
+- Runtime credential rotation reuses stable Fabric and Ledger idempotency identities. A credential revision changes the Runtime Secret and Pod template so Kubernetes rolls the Deployment without exposing the password or seed in metadata.
+- Pilot Runtime isolation means only the owner receives the Runtime password. SSO and binding each Runtime HTTP request to the Console identity are not Pilot claims.
 - Workspace access requires active compute and storage entitlements plus real runtime readiness.
 - The pinned source image is `ghcr.io/gaofeng21cn/one-person-lab-webui:26.7.13@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76`.
 - Production mirrors that source to TCR and deploys the target `repository@sha256`; `latest` and tag-only production references are forbidden.
@@ -132,13 +141,13 @@ validate account and quote
 
 | Stage | Business | Owners | Current state | Required output and evidence |
 | --- | --- | --- | --- | --- |
-| 1. Offer and identity | Show mapped customers Basic and Pro without the verification SKU. | Console, Gateway | Basic mapping exists; Pro implementation evidence is incomplete. | Product contract, tenant tests, deployed account readback. |
-| 2. Wallet and quote | Show live balance and exact compute plus storage quote before side effects. | Console, Gateway | Basic exists; Pro and complete presentation remain incomplete. | Balance/quote tests, failure UI, period and retention disclosure. |
-| 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Debit-first ordering and replay are CI-verified; live Sub2API evidence is pending. | Deterministic debit, balance check, replay/concurrency evidence. |
+| 1. Offer and identity | Show mapped customers Basic and Pro without the verification SKU. | Console, Gateway | Manual mapping and operator password reset are CI-verified; self-registration and SSO are outside the Pilot, while Pro and deployed evidence remain incomplete. | Product contract, tenant tests, deployed account readback. |
+| 2. Wallet and quote | Show live balance and exact compute plus storage quote before side effects. | Console, Gateway | Integer Workspace compute-plus-storage quote is CI-verified; deployed presentation and live Sub2API evidence remain incomplete. | Balance/quote tests, failure UI, period and retention disclosure. |
+| 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, total balance preflight, debit-first child operations, restart recovery, and replay are CI-verified; deployed browser and live Sub2API evidence remain pending. | Deterministic debit, balance check, replay/concurrency evidence. |
 | 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request and readback are CI-verified; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
-| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, and manual-review resolution are CI-verified; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
-| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, and runtime isolation are CI-verified; browser, WebSocket, and live model evidence are pending. | Login, WebSocket 101, Secret rotation, digest readback. |
-| 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Balance and Key summary exist; request-level usage, aggregate stats, customer-safe projection, and live evidence remain incomplete. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
+| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, manual-review resolution, and server-computed read-only reconciliation with a blocking guard are CI-verified; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
+| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, non-secret status, owner-only password reveal/rotation, credential rollout, and redacted reset receipts are CI-verified; Runtime SSO is outside the Pilot, while browser, WebSocket, live model, and deployed rotation evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision and digest readback. |
+| 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Balance, Key summary, request-level usage, aggregate stats, and customer-safe integer-cost projections are CI-verified; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew customer and Tencent periods once with deterministic recovery. | All four lanes | Entitlement worker exists; provider PREPAID renewal does not. | Renewal replay, deadline readback, refund/review receipts. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Legacy verifier violates this rule. | Retained Slot, fake commercial chain, real Workspace/Gateway proof. |
 | 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | CI/rollout exist; remaining production evidence is incomplete. | CI, grouped rollback, read-only smoke, fixed-Slot receipt. |

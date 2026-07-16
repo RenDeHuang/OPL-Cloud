@@ -201,12 +201,31 @@
     "correctionProtocol": "append_superseding_receipt",
     "forbiddenContent": [
       "rawCredential",
+      "password",
       "token",
       "secret",
       "signedUrl",
       "presignedUrl",
       "objectKey",
       "kubeconfig"
+    ]
+  },
+  "workspaceAccessTokenResetReceipt": {
+    "type": "workspace.access_token_reset",
+    "idempotencyIdentity": "runtime-credential-rotate:<workspaceId>:<request-idempotency-key>",
+    "requiredRefs": [
+      "runtimeId",
+      "computeAllocationId",
+      "storageId",
+      "credentialVersion",
+      "credentialSecretRef",
+      "owner.userId"
+    ],
+    "forbiddenContent": [
+      "password",
+      "apiKey",
+      "rawCredential",
+      "rawProviderResponse"
     ]
   },
   "monthlyBillingReceiptV1": {

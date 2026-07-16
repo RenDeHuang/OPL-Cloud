@@ -49,6 +49,16 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.providerProcurement.forbiddenChargeTypes, ["POSTPAID_BY_HOUR"]);
   assert.equal(freeze.workspaceRuntime.sourceImage.digest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
   assert.equal(freeze.workspaceRuntime.primaryWorkspacePerAccount, 1);
+  assert.equal(freeze.workspaceRuntime.statusContainsPassword, false);
+  assert.equal(freeze.workspaceRuntime.runtimeRequestIdentityBinding, "not_in_pilot_requires_sso");
+  assert.deepEqual(freeze.workspaceRuntime.credentialCommands, {
+    reveal: "POST /api/workspaces/{workspaceId}/runtime-credentials/reveal",
+    rotate: "POST /api/workspaces/{workspaceId}/runtime-credentials/rotate",
+    authorization: "workspace.ownerUserId_equals_session_user.id",
+    cacheControl: "private, no-store",
+    passwordPersistence: "none",
+    rotationReceiptType: "workspace.access_token_reset"
+  });
   assert.equal(freeze.gateway.sub2apiMutable, false);
   assert.equal(freeze.gateway.backend, "Sub2API");
   assert.equal(freeze.gateway.compatibilityGate, "required_capabilities");

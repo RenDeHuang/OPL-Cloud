@@ -51,7 +51,14 @@ test("Ledger general receipt uses the shared execution identity and states", asy
     pagination: { cursor: "opaque_createdAt_receiptId", defaultLimit: 50, maxLimit: 100 }
   });
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("rawCredential"));
+  assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("password"));
   assert.ok(ledger.receiptTypes.includes("execution.receipt.v1"));
+  assert.deepEqual(ledger.workspaceAccessTokenResetReceipt, {
+    type: "workspace.access_token_reset",
+    idempotencyIdentity: "runtime-credential-rotate:<workspaceId>:<request-idempotency-key>",
+    requiredRefs: ["runtimeId", "computeAllocationId", "storageId", "credentialVersion", "credentialSecretRef", "owner.userId"],
+    forbiddenContent: ["password", "apiKey", "rawCredential", "rawProviderResponse"]
+  });
   assert.deepEqual(ledger.generalReceiptV1.reviewPolicy.statuses, ["active", "superseded"]);
   assert.equal(ledger.generalReceiptV1.reviewPolicy.idempotencyNamespace, "review_policy");
   assert.deepEqual(ledger.generalReceiptV1.reviewGate.statuses, ["accepted", "review_required", "review_blocked"]);

@@ -22,6 +22,7 @@ const (
 	sub2APIKeyPageSize       = 1000
 	maxSub2APIKeyPages       = 10
 	maxSub2APIKeys           = sub2APIKeyPageSize * maxSub2APIKeyPages
+	maxSub2APIUsagePage      = 1_000_000
 )
 
 var (
@@ -44,6 +45,12 @@ type Sub2APIWorkspaceKeyClient interface {
 
 type Sub2APIRefundClient interface {
 	Refund(context.Context, Sub2APIRefundInput) (Sub2APIRefund, error)
+}
+
+type Sub2APIUsageClient interface {
+	Usage(context.Context, Sub2APIUsageQuery) (Sub2APIUsagePage, error)
+	UsageStats(context.Context, Sub2APIUsageStatsQuery) (Sub2APIUsageStats, error)
+	BalanceHistory(context.Context, int64) ([]Sub2APIBalanceHistoryEntry, error)
 }
 
 type Sub2APIConfig struct {
@@ -71,6 +78,60 @@ type Sub2APIWorkspaceKey struct {
 	Usage1dUSDMicros   int64
 	Usage7dUSDMicros   int64
 	LastUsedAt         *time.Time
+}
+
+type Sub2APIUsageQuery struct {
+	UserID   int64
+	APIKeyID int64
+	Page     int
+	PageSize int
+}
+
+type Sub2APIUsageRecord struct {
+	UserID              int64     `json:"user_id"`
+	APIKeyID            int64     `json:"api_key_id"`
+	RequestID           string    `json:"request_id"`
+	CreatedAt           time.Time `json:"created_at"`
+	Model               string    `json:"model"`
+	InboundEndpoint     string    `json:"inbound_endpoint"`
+	RequestType         string    `json:"request_type"`
+	InputTokens         int64     `json:"input_tokens"`
+	OutputTokens        int64     `json:"output_tokens"`
+	CacheCreationTokens int64     `json:"cache_creation_tokens"`
+	CacheReadTokens     int64     `json:"cache_read_tokens"`
+	ActualCostUSDMicros int64     `json:"actual_cost_usd_micros"`
+}
+
+type Sub2APIUsagePage struct {
+	Items    []Sub2APIUsageRecord
+	Total    int64
+	Page     int
+	PageSize int
+	Pages    int
+}
+
+type Sub2APIUsageStatsQuery struct {
+	UserID   int64
+	APIKeyID int64
+	Period   string
+}
+
+type Sub2APIUsageStats struct {
+	TotalRequests            int64 `json:"total_requests"`
+	TotalInputTokens         int64 `json:"total_input_tokens"`
+	TotalOutputTokens        int64 `json:"total_output_tokens"`
+	TotalTokens              int64 `json:"total_tokens"`
+	TotalActualCostUSDMicros int64 `json:"total_actual_cost_usd_micros"`
+}
+
+type Sub2APIBalanceHistoryEntry struct {
+	Code           string     `json:"code"`
+	Type           string     `json:"type"`
+	ValueUSDMicros int64      `json:"value_usd_micros"`
+	Status         string     `json:"status"`
+	UsedBy         *int64     `json:"used_by"`
+	UsedAt         *time.Time `json:"used_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type Sub2APIChargeInput struct {
@@ -262,6 +323,179 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 		return Sub2APIWorkspaceKey{}, ErrSub2APIWorkspaceKeyAmbiguous
 	}
 	return matches[0], nil
+}
+
+func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) (Sub2APIUsagePage, error) {
+	if query.UserID <= 0 || query.APIKeyID <= 0 || query.Page <= 0 || query.Page > maxSub2APIUsagePage || query.PageSize <= 0 || query.PageSize > 100 {
+		return Sub2APIUsagePage{}, errors.New("invalid sub2api usage query")
+	}
+	values := url.Values{
+		"api_key_id": {strconv.FormatInt(query.APIKeyID, 10)},
+		"page":       {strconv.Itoa(query.Page)},
+		"page_size":  {strconv.Itoa(query.PageSize)},
+		"sort_by":    {"created_at"},
+		"sort_order": {"desc"},
+		"user_id":    {strconv.FormatInt(query.UserID, 10)},
+	}
+	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage?"+values.Encode(), nil, "")
+	if err != nil {
+		return Sub2APIUsagePage{}, err
+	}
+	type usageRow struct {
+		UserID              int64        `json:"user_id"`
+		APIKeyID            int64        `json:"api_key_id"`
+		RequestID           string       `json:"request_id"`
+		CreatedAt           *time.Time   `json:"created_at"`
+		Model               string       `json:"model"`
+		InboundEndpoint     *string      `json:"inbound_endpoint"`
+		RequestType         string       `json:"request_type"`
+		InputTokens         *int64       `json:"input_tokens"`
+		OutputTokens        *int64       `json:"output_tokens"`
+		CacheCreationTokens *int64       `json:"cache_creation_tokens"`
+		CacheReadTokens     *int64       `json:"cache_read_tokens"`
+		ActualCost          *json.Number `json:"actual_cost"`
+	}
+	var data struct {
+		Items    []usageRow `json:"items"`
+		Total    int64      `json:"total"`
+		Page     int        `json:"page"`
+		PageSize int        `json:"page_size"`
+		Pages    int        `json:"pages"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIUsagePage{}, err
+	}
+	if data.Total < 0 || data.Page != query.Page || data.PageSize != query.PageSize || data.Pages < data.Page || data.Pages < 1 || len(data.Items) > query.PageSize {
+		return Sub2APIUsagePage{}, errors.New("invalid sub2api usage pagination")
+	}
+	items := make([]Sub2APIUsageRecord, 0, len(data.Items))
+	for _, item := range data.Items {
+		if item.UserID != query.UserID || item.APIKeyID != query.APIKeyID {
+			return Sub2APIUsagePage{}, errors.New("sub2api usage identity mismatch")
+		}
+		if item.CreatedAt == nil || item.CreatedAt.IsZero() || item.RequestID == "" || item.Model == "" || item.RequestType == "" || !validUsageCounts(item.InputTokens, item.OutputTokens, item.CacheCreationTokens, item.CacheReadTokens) || item.ActualCost == nil {
+			return Sub2APIUsagePage{}, errors.New("invalid sub2api usage record")
+		}
+		actualCost, err := decimalUSDMicros(*item.ActualCost)
+		if err != nil || actualCost < 0 {
+			return Sub2APIUsagePage{}, errors.New("invalid sub2api usage actual cost")
+		}
+		inboundEndpoint := ""
+		if item.InboundEndpoint != nil {
+			inboundEndpoint = *item.InboundEndpoint
+		}
+		items = append(items, Sub2APIUsageRecord{
+			UserID: item.UserID, APIKeyID: item.APIKeyID, RequestID: item.RequestID, CreatedAt: *item.CreatedAt,
+			Model: item.Model, InboundEndpoint: inboundEndpoint, RequestType: item.RequestType,
+			InputTokens: *item.InputTokens, OutputTokens: *item.OutputTokens, CacheCreationTokens: *item.CacheCreationTokens,
+			CacheReadTokens: *item.CacheReadTokens, ActualCostUSDMicros: actualCost,
+		})
+	}
+	return Sub2APIUsagePage{Items: items, Total: data.Total, Page: data.Page, PageSize: data.PageSize, Pages: data.Pages}, nil
+}
+
+func (c *Sub2APIHTTPClient) UsageStats(ctx context.Context, query Sub2APIUsageStatsQuery) (Sub2APIUsageStats, error) {
+	period := strings.TrimSpace(query.Period)
+	if period == "" {
+		period = "month"
+	}
+	if query.UserID <= 0 || query.APIKeyID <= 0 || (period != "today" && period != "week" && period != "month") {
+		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats query")
+	}
+	values := url.Values{
+		"api_key_id": {strconv.FormatInt(query.APIKeyID, 10)},
+		"period":     {period},
+		"user_id":    {strconv.FormatInt(query.UserID, 10)},
+	}
+	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/usage/stats?"+values.Encode(), nil, "")
+	if err != nil {
+		return Sub2APIUsageStats{}, err
+	}
+	var data struct {
+		TotalRequests     *int64       `json:"total_requests"`
+		TotalInputTokens  *int64       `json:"total_input_tokens"`
+		TotalOutputTokens *int64       `json:"total_output_tokens"`
+		TotalTokens       *int64       `json:"total_tokens"`
+		TotalActualCost   *json.Number `json:"total_actual_cost"`
+	}
+	if err := decodeSub2APIEnvelope(body, &data); err != nil {
+		return Sub2APIUsageStats{}, err
+	}
+	if !validUsageCounts(data.TotalRequests, data.TotalInputTokens, data.TotalOutputTokens, data.TotalTokens) || data.TotalActualCost == nil {
+		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats")
+	}
+	actualCost, err := decimalUSDMicros(*data.TotalActualCost)
+	if err != nil || actualCost < 0 {
+		return Sub2APIUsageStats{}, errors.New("invalid sub2api usage stats actual cost")
+	}
+	return Sub2APIUsageStats{
+		TotalRequests: *data.TotalRequests, TotalInputTokens: *data.TotalInputTokens, TotalOutputTokens: *data.TotalOutputTokens,
+		TotalTokens: *data.TotalTokens, TotalActualCostUSDMicros: actualCost,
+	}, nil
+}
+
+func (c *Sub2APIHTTPClient) BalanceHistory(ctx context.Context, userID int64) ([]Sub2APIBalanceHistoryEntry, error) {
+	if userID <= 0 {
+		return nil, errors.New("sub2api user ID must be positive")
+	}
+	entries := make([]Sub2APIBalanceHistoryEntry, 0)
+	for page := 1; page <= maxSub2APIKeyPages; page++ {
+		values := url.Values{"page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(sub2APIKeyPageSize)}, "type": {"balance"}}
+		body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10)+"/balance-history?"+values.Encode(), nil, "")
+		if err != nil {
+			return nil, err
+		}
+		var data struct {
+			Items []struct {
+				Code      string       `json:"code"`
+				Type      string       `json:"type"`
+				Value     *json.Number `json:"value"`
+				Status    string       `json:"status"`
+				UsedBy    *int64       `json:"used_by"`
+				UsedAt    *time.Time   `json:"used_at"`
+				CreatedAt *time.Time   `json:"created_at"`
+			} `json:"items"`
+			Total    int64 `json:"total"`
+			Page     int   `json:"page"`
+			PageSize int   `json:"page_size"`
+			Pages    int   `json:"pages"`
+		}
+		if err := decodeSub2APIEnvelope(body, &data); err != nil {
+			return nil, err
+		}
+		if data.Total < 0 || data.Total > int64(maxSub2APIKeys) || data.Page != page || data.PageSize != sub2APIKeyPageSize || data.Pages < page || data.Pages < 1 || data.Pages > maxSub2APIKeyPages || len(data.Items) > sub2APIKeyPageSize {
+			return nil, errors.New("invalid sub2api balance history pagination")
+		}
+		for _, item := range data.Items {
+			if item.Code == "" || item.Type != "balance" || item.Status == "" || item.Value == nil || item.CreatedAt == nil || item.CreatedAt.IsZero() {
+				return nil, errors.New("invalid sub2api balance history entry")
+			}
+			if item.Status == "used" && (item.UsedBy == nil || *item.UsedBy != userID || item.UsedAt == nil) {
+				return nil, errors.New("sub2api balance history identity mismatch")
+			}
+			value, err := decimalUSDMicros(*item.Value)
+			if err != nil {
+				return nil, errors.New("invalid sub2api balance history amount")
+			}
+			entries = append(entries, Sub2APIBalanceHistoryEntry{Code: item.Code, Type: item.Type, ValueUSDMicros: value, Status: item.Status, UsedBy: item.UsedBy, UsedAt: item.UsedAt, CreatedAt: *item.CreatedAt})
+		}
+		if len(entries) > maxSub2APIKeys {
+			return nil, errors.New("invalid sub2api balance history size")
+		}
+		if page == data.Pages {
+			return entries, nil
+		}
+	}
+	return nil, errors.New("invalid sub2api balance history pagination")
+}
+
+func validUsageCounts(values ...*int64) bool {
+	for _, value := range values {
+		if value == nil || *value < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput) (Sub2APICharge, error) {

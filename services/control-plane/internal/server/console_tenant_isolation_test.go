@@ -211,6 +211,52 @@ func TestBootstrapAdminGetsAnActiveTenantMembership(t *testing.T) {
 	}
 }
 
+func TestOperatorPasswordResetRevokesSessions(t *testing.T) {
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSession := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	if forbidden := requestWithSession(t, server, oldSession, http.MethodPost, "/api/users/usr-alpha/reset-password", `{"password":"NewCorrectHorseBatteryStaple!"}`); forbidden.Code != http.StatusForbidden {
+		t.Fatalf("customer password reset status = %d, want 403: %s", forbidden.Code, forbidden.Body.String())
+	}
+	operator := reservedOperatorSessionForTest(t, server)
+	if missing := requestWithSession(t, server, operator, http.MethodPost, "/api/users/usr-alpha/reset-password", `{}`); missing.Code != http.StatusBadRequest {
+		t.Fatalf("empty password reset status = %d, want 400: %s", missing.Code, missing.Body.String())
+	}
+	reset := requestWithSession(t, server, operator, http.MethodPost, "/api/users/usr-alpha/reset-password", `{"password":"NewCorrectHorseBatteryStaple!"}`)
+	if reset.Code != http.StatusOK {
+		t.Fatalf("password reset status = %d, want 200: %s", reset.Code, reset.Body.String())
+	}
+	for _, secret := range []string{"NewCorrectHorseBatteryStaple!", "password", "passwordHash"} {
+		if strings.Contains(reset.Body.String(), secret) {
+			t.Fatalf("password reset response leaked %q: %s", secret, reset.Body.String())
+		}
+	}
+
+	assertSessionUnauthorized(t, server, oldSession)
+	if oldLogin := loginAttemptForTest(server, "alpha@example.com", "CorrectHorseBatteryStaple!", ""); oldLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("old password login status = %d, want 401: %s", oldLogin.Code, oldLogin.Body.String())
+	}
+	loginForTest(t, server, "alpha@example.com", "NewCorrectHorseBatteryStaple!")
+
+	audits, err := store.ListAuditEvents(context.Background(), "acct-alpha")
+	if err != nil || len(audits) == 0 || stringValue(audits[len(audits)-1]["action"]) != "user.password_reset" {
+		t.Fatalf("password reset audit = %#v err=%v", audits, err)
+	}
+	auditJSON, err := json.Marshal(audits[len(audits)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"NewCorrectHorseBatteryStaple!", `"password":`, `"passwordHash":`, passwordHashPrefix} {
+		if strings.Contains(string(auditJSON), secret) {
+			t.Fatalf("password reset audit leaked %q: %s", secret, auditJSON)
+		}
+	}
+}
+
 func TestOrganizationRejectsMissingBillingAccount(t *testing.T) {
 	app := newControlPlaneApp()
 	if _, err := app.createOrganization(map[string]any{"name": "Orphan", "billingAccountId": "acct-missing"}); err == nil {

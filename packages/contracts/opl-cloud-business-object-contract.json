@@ -24,7 +24,7 @@
   "principles": [
     "Active business object contract contains only current commercial objects.",
     "Workspace is the stable commercial object: stable URL, access state, lifecycle, persistent StorageVolume, and current runtime pointer.",
-    "Workspace passwords are returned only by the authorized runtime-status command and remain in browser component memory; they are never part of the persisted Workspace projection.",
+    "Ordinary Runtime status is non-secret; only the Workspace owner user may reveal or rotate the Runtime password through private, no-store commands, and passwords never enter the persisted Workspace projection, operation payloads, audit, logs, or Ledger.",
     "ComputeAllocation is one replaceable account-owned dedicated CVM or Kubernetes node selected from the package catalog.",
     "StorageVolume can exist without compute; StorageAttachment mounts one volume to one current ComputeAllocation runtime.",
     "RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity.",
@@ -201,6 +201,7 @@
         "url",
         "access.account",
         "access.credentialStatus",
+        "access.credentialVersion",
         "runtime.status",
         "state"
       ]

@@ -67,6 +67,9 @@ func (app *controlPlaneServer) startProviderReconcileWorker(ctx context.Context,
 
 func (app *controlPlaneServer) runProviderReconcileOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
 	var errs []error
+	if err := app.runWorkspaceLaunchesOnce(ctx, service); err != nil {
+		errs = append(errs, err)
+	}
 	operations, err := service.FabricOperations(ctx)
 	if err != nil {
 		errs = append(errs, err)

@@ -6,8 +6,59 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+func TestLedgerReceiptList(t *testing.T) {
+	t.Run("sends scoped pagination and authorization", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/ledger/receipts" || r.URL.RawQuery != "accountId=acct-alpha&cursor=opaque&limit=50" {
+				t.Fatalf("request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer internal-secret" {
+				t.Fatalf("authorization = %q", got)
+			}
+			_, _ = w.Write([]byte(`{"receipts":[{"receiptId":"receipt-1","type":"billing.resource_purchased.v1","status":"completed","accountId":"acct-alpha","workspaceId":"ws-alpha","createdAt":"2026-07-16T00:00:00Z"}],"nextCursor":"next","hasMore":true}`))
+		}))
+		defer server.Close()
+
+		client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client()).(LedgerReceiptListClient)
+		page, err := client.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-alpha", Cursor: "opaque", Limit: 50})
+		if err != nil || len(page.Receipts) != 1 || page.Receipts[0].ReceiptID != "receipt-1" || page.NextCursor != "next" || !page.HasMore {
+			t.Fatalf("page = %#v err=%v", page, err)
+		}
+	})
+
+	t.Run("rejects invalid limit before HTTP", func(t *testing.T) {
+		var called atomic.Bool
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called.Store(true)
+		}))
+		defer server.Close()
+
+		client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client()).(LedgerReceiptListClient)
+		if _, err := client.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-alpha", Limit: 101}); err == nil {
+			t.Fatal("expected invalid limit error")
+		}
+		if called.Load() {
+			t.Fatal("invalid query reached Ledger")
+		}
+	})
+
+	t.Run("rejects response over one MiB without echoing body", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"receipts":[],"padding":"` + strings.Repeat("sensitive", 1<<17) + `"}`))
+		}))
+		defer server.Close()
+
+		client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client()).(LedgerReceiptListClient)
+		_, err := client.ListReceipts(context.Background(), ReceiptQuery{AccountID: "acct-alpha"})
+		if err == nil || !strings.Contains(err.Error(), "response too large") || strings.Contains(err.Error(), "sensitive") {
+			t.Fatalf("bounded response error = %v", err)
+		}
+	})
+}
 
 func TestLedgerHTTPClientReturnsBoundedErrorForFailedEvidenceWrite(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,29 +123,5 @@ func TestLedgerHTTPClientReadsReviewAndContinuation(t *testing.T) {
 	continuation, err := client.Continuation(context.Background(), "receipt-alpha")
 	if err != nil || continuation["continuationId"] != "continuation-alpha" {
 		t.Fatalf("continuation = %#v err=%v", continuation, err)
-	}
-}
-
-func TestLedgerHTTPClientListsReceiptsForOneAccount(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer internal-secret" || r.URL.Path != "/ledger/receipts" {
-			t.Fatalf("request = %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
-		}
-		query := r.URL.Query()
-		if query.Get("accountId") != "acct-alpha" || query.Get("cursor") != "cursor-alpha" || query.Get("limit") != "20" {
-			t.Fatalf("query = %v", query)
-		}
-		_ = json.NewEncoder(w).Encode(ReceiptPage{
-			Receipts:   []Receipt{{ReceiptInput: ReceiptInput{Type: "billing.resource_purchased.v1", AccountID: "acct-alpha"}, ReceiptID: "receipt-alpha"}},
-			NextCursor: "cursor-beta",
-			HasMore:    true,
-		})
-	}))
-	defer server.Close()
-
-	client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
-	page, err := client.ListReceipts(context.Background(), ReceiptListQuery{AccountID: "acct-alpha", Cursor: "cursor-alpha", Limit: 20})
-	if err != nil || len(page.Receipts) != 1 || page.Receipts[0].ReceiptID != "receipt-alpha" || page.NextCursor != "cursor-beta" || !page.HasMore {
-		t.Fatalf("page = %#v err=%v", page, err)
 	}
 }

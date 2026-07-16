@@ -74,6 +74,7 @@
   "api": {
     "createOrganization": "POST /api/organizations",
     "createAccount": "POST /api/users",
+    "resetUserPassword": "POST /api/users/{id}/reset-password",
     "addOrganizationMember": "POST /api/organizations/members",
     "managementState": "GET /api/management/state?organizationId=<id>",
     "supportTicketMappings": "GET /api/support/tickets",

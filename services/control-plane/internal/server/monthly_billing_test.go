@@ -241,9 +241,7 @@ type monthlyLedger struct {
 
 type scopedReceiptLedger struct {
 	fakeLedgerClient
-	receipt  clients.Receipt
-	page     clients.ReceiptPage
-	lastList clients.ReceiptListQuery
+	receipt clients.Receipt
 }
 
 type failingMonthlySaveStore struct {
@@ -263,11 +261,6 @@ func (l scopedReceiptLedger) Receipt(_ context.Context, receiptID string) (clien
 	result := l.receipt
 	result.ReceiptID = receiptID
 	return result, nil
-}
-
-func (l *scopedReceiptLedger) ListReceipts(_ context.Context, query clients.ReceiptListQuery) (clients.ReceiptPage, error) {
-	l.lastList = query
-	return l.page, nil
 }
 
 func (l *monthlyLedger) RecordReceipt(_ context.Context, input clients.ReceiptInput, _ string) (clients.Receipt, error) {
@@ -1368,45 +1361,17 @@ func TestBillingReceiptRouteIsScopedToTheSessionAccount(t *testing.T) {
 		{name: "other account receipt", accountID: "acct-beta", wantStatus: http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ledger := scopedReceiptLedger{receipt: clients.Receipt{ReceiptInput: clients.ReceiptInput{
-				Type: "billing.resource_purchased.v1", Status: "completed", AccountID: tc.accountID, WorkspaceID: "workspace-monthly",
-				Cost:      map[string]any{"resourceType": "compute", "chargeUsdMicros": int64(50_000_000), "rawKey": "must-not-leak"},
-				Execution: map[string]any{"prompt": "must-not-leak"},
-			}}}
-			server := NewServer(newTestService(&ledger, &fakeFabricClient{}))
+			receipt := customerBillingReceipt()
+			receipt.AccountID = tc.accountID
+			ledger := scopedReceiptLedger{receipt: receipt}
+			server := NewServer(newTestService(ledger, &fakeFabricClient{}))
 			response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts/receipt-monthly", "")
 			if response.Code != tc.wantStatus {
 				t.Fatalf("receipt status = %d, want %d: %s", response.Code, tc.wantStatus, response.Body.String())
 			}
-			if tc.wantStatus == http.StatusOK {
-				body := response.Body.String()
-				if !strings.Contains(body, `"resourceType":"compute"`) || !strings.Contains(body, `"chargeUsdMicros":50000000`) {
-					t.Fatalf("owned receipt response = %s", body)
-				}
-				for _, forbidden := range []string{"accountId", "rawKey", "must-not-leak", "execution"} {
-					if strings.Contains(body, forbidden) {
-						t.Fatalf("customer receipt leaked %q: %s", forbidden, body)
-					}
-				}
+			if tc.wantStatus == http.StatusOK && (!strings.Contains(response.Body.String(), `"receiptId":"receipt-monthly"`) || strings.Contains(response.Body.String(), `"accountId"`)) {
+				t.Fatalf("owned receipt response = %s", response.Body.String())
 			}
 		})
-	}
-}
-
-func TestBillingReceiptListRouteScopesLedgerQueryToSessionAccount(t *testing.T) {
-	ledger := &scopedReceiptLedger{page: clients.ReceiptPage{
-		Receipts: []clients.Receipt{{ReceiptInput: clients.ReceiptInput{Type: "billing.resource_purchased.v1", Status: "completed", AccountID: "acct-alpha", WorkspaceID: "workspace-monthly"}, ReceiptID: "receipt-monthly"}},
-		HasMore:  false,
-	}}
-	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
-	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts?cursor=cursor-alpha&limit=20", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("receipt list status = %d: %s", response.Code, response.Body.String())
-	}
-	if ledger.lastList.AccountID != "acct-alpha" || ledger.lastList.Cursor != "cursor-alpha" || ledger.lastList.Limit != 20 {
-		t.Fatalf("ledger query = %#v", ledger.lastList)
-	}
-	if !strings.Contains(response.Body.String(), `"receiptId":"receipt-monthly"`) {
-		t.Fatalf("receipt list response = %s", response.Body.String())
 	}
 }

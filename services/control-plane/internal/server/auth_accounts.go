@@ -14,7 +14,10 @@ import (
 
 const maxJSONSafeInteger = float64(1<<53 - 1)
 
-var errSub2APIUserMappingUnverified = errors.New("sub2api_user_mapping_unverified")
+var (
+	errMissingPassword              = errors.New("missing_password")
+	errSub2APIUserMappingUnverified = errors.New("sub2api_user_mapping_unverified")
+)
 
 func (app *controlPlaneServer) createUser(ctx context.Context, service *controlplane.Service, input map[string]any) (map[string]any, error) {
 	role := stringField(input, "role", "owner")
@@ -34,7 +37,7 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 	id := "usr-" + compactID(email+"-"+time.Now().UTC().Format("20060102150405.000000000"))
 	password := stringField(input, "password", "")
 	if password == "" {
-		return nil, errors.New("missing_password")
+		return nil, errMissingPassword
 	}
 	passwordHash, err := hashPassword(password)
 	if err != nil {
@@ -52,6 +55,31 @@ func (app *controlPlaneServer) createUser(ctx context.Context, service *controlp
 		return nil, err
 	}
 	user := map[string]any{"id": id, "email": email, "accountId": accountID, "role": role, "status": "active", "passwordHash": passwordHash}
+	return sanitizeUser(user), app.tables.SaveUser(ctx, user)
+}
+
+func (app *controlPlaneServer) resetUserPassword(ctx context.Context, userID, password string) (map[string]any, error) {
+	if password == "" {
+		return nil, errMissingPassword
+	}
+	user, err := app.findUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errUserNotFound
+	}
+	if stringValue(user["status"]) != "active" {
+		return nil, errUserDeleted
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	if err := app.revokeUserSessions(userID); err != nil {
+		return nil, err
+	}
+	user["passwordHash"] = hash
 	return sanitizeUser(user), app.tables.SaveUser(ctx, user)
 }
 

@@ -76,10 +76,11 @@ test("Workspace contract is the stable URL, storage, and current runtime pointer
     "url",
     "access.account",
     "access.credentialStatus",
+    "access.credentialVersion",
     "runtime.status",
     "state"
   ]);
-  assert.ok(contract.principles.includes("Workspace passwords are returned only by the authorized runtime-status command and remain in browser component memory; they are never part of the persisted Workspace projection."));
+  assert.ok(contract.principles.includes("Ordinary Runtime status is non-secret; only the Workspace owner user may reveal or rotate the Runtime password through private, no-store commands, and passwords never enter the persisted Workspace projection, operation payloads, audit, logs, or Ledger."));
   assert.ok(contract.principles.includes("Destroying compute suspends the Workspace URL and retains storage; rebuilding compute reuses the same Workspace URL and StorageVolume."));
   assert.ok(contract.principles.includes("Destroying storage makes the Workspace unrecoverable because the file body is gone."));
 });

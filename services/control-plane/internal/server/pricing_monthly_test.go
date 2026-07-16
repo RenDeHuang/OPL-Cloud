@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestMonthlyPricingCatalogUsesIntegerCharges(t *testing.T) {
 	catalog := pricingCatalogResponse()
@@ -57,6 +60,29 @@ func TestMonthlyProComputePrice(t *testing.T) {
 	preview, err := pricingPreviewResponse(map[string]any{"resourceType": "compute", "packageId": "pro"})
 	if err != nil || preview["monthlyPriceCnyCents"] != int64(150000) || preview["chargeUsdMicros"] != int64(214_285_715) {
 		t.Fatalf("Pro preview = %#v err=%v", preview, err)
+	}
+}
+
+func TestWorkspacePricingPreviewAddsComputeAndStorageOnce(t *testing.T) {
+	preview, err := pricingPreviewResponse(map[string]any{
+		"resourceType": "workspace", "packageId": "basic", "sizeGb": 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview["totalMonthlyPriceCnyCents"] != int64(36_800) || preview["totalChargeUsdMicros"] != int64(52_571_429) {
+		t.Fatalf("workspace preview = %#v", preview)
+	}
+	if mapField(preview, "compute")["chargeUsdMicros"] != int64(50_000_000) || mapField(preview, "storage")["chargeUsdMicros"] != int64(2_571_429) {
+		t.Fatalf("workspace components = %#v", preview)
+	}
+}
+
+func TestWorkspacePricingPreviewRejectsInvalidStorage(t *testing.T) {
+	if _, err := pricingPreviewResponse(map[string]any{
+		"resourceType": "workspace", "packageId": "basic", "sizeGb": 11,
+	}); !errors.Is(err, errInvalidPricingInput) {
+		t.Fatalf("error = %v, want invalid pricing input", err)
 	}
 }
 

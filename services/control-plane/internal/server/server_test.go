@@ -1130,7 +1130,7 @@ func TestProviderReconcileDoesNotOverwriteManualReview(t *testing.T) {
 	}
 }
 
-func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
+func TestWorkspaceRuntimeStatusPassesFabricChecksWithoutCredentials(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantOwnerSessionForTest(t, server)
@@ -1157,8 +1157,8 @@ func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 		t.Fatalf("ready must come from Fabric runtime state: %#v", body)
 	}
 	access := body["access"].(map[string]any)
-	if access["password"] != "runtime-password-alpha" || access["secretRef"] != "opl-compute-from-fabric-env" {
-		t.Fatalf("runtime status must return transient Fabric credentials: %#v", body)
+	if access["username"] != "opl" || access["credentialStatus"] != "configured" || access["password"] != nil || access["secretRef"] != nil {
+		t.Fatalf("runtime status must return safe credential metadata only: %#v", body)
 	}
 	checks := body["checks"].([]any)
 	if len(checks) != 2 || checks[0].(map[string]any)["name"] != "deployment_ready" || checks[1].(map[string]any)["name"] != "service_endpoints_ready" {
@@ -1191,8 +1191,8 @@ func TestWorkspaceRuntimeStatusPromotesProjectionWithoutPersistingPassword(t *te
 	if err := json.NewDecoder(response.Body).Decode(&runtime); err != nil {
 		t.Fatalf("decode runtime status: %v", err)
 	}
-	if runtime["ready"] != true || nested(runtime, "access", "password") != "runtime-password-alpha" {
-		t.Fatalf("runtime status must return transient ready credentials: %#v", runtime)
+	if runtime["ready"] != true || nested(runtime, "access", "credentialStatus") != "configured" || nested(runtime, "access", "password") != nil || nested(runtime, "access", "secretRef") != nil {
+		t.Fatalf("runtime status must return ready state without credentials: %#v", runtime)
 	}
 	stored, err := store.ListWorkspaces(context.Background(), "acct-alpha")
 	if err != nil || len(stored) != 1 {
@@ -1435,7 +1435,7 @@ func TestBillingReconciliationAppendsAuditEvent(t *testing.T) {
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
 	admin := operatorSessionForTest(t, server)
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-audit","status":"ok"}}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
 	addSessionCookies(req, admin)
@@ -1469,10 +1469,6 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 }
 
 type fakeLedgerClient struct{}
-
-func (fakeLedgerClient) ListReceipts(context.Context, clients.ReceiptListQuery) (clients.ReceiptPage, error) {
-	return clients.ReceiptPage{}, nil
-}
 
 type testSub2APIClient struct {
 	mu                  sync.Mutex
@@ -2733,7 +2729,7 @@ func TestReconciliationGuardBlocksNewResourceProvisioning(t *testing.T) {
 	server := NewServer(newTestService(fakeBlockingReconciliationLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantAdminSessionForTest(t, server)
 
-	createResourceWithSession(t, server, session, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true,"report":{"id":"recon-mismatch","status":"mismatch"}}`)
+	createResourceWithSession(t, server, session, http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`)
 
 	stateReq := httptest.NewRequest(http.MethodGet, "/api/management/state", nil)
 	addAuth(stateReq, operatorSessionForTest(t, server))
