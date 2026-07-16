@@ -25,6 +25,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}
+		if stringValue(user["role"]) != "owner" {
+			writeError(w, http.StatusForbidden, "workspace_owner_required")
+			return
+		}
 		name := strings.TrimSpace(stringField(input, "name", stringField(input, "workspaceName", "Workspace")))
 		packageID := strings.TrimSpace(stringField(input, "packageId", "basic"))
 		storageGB, validSize := positiveIntegerField(input, "sizeGb")

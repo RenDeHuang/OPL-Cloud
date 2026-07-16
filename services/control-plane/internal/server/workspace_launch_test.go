@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -97,6 +98,7 @@ func newWorkspaceLaunchHTTPFixture(t *testing.T, balances ...int64) workspaceLau
 	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	promoteWorkspaceLaunchOwner(t, store, "usr-alpha")
 	events := []string{}
 	sub2API := &monthlySub2API{events: &events, balances: balances}
 	fabric := &monthlyFabric{events: &events}
@@ -108,6 +110,20 @@ func newWorkspaceLaunchHTTPFixture(t *testing.T, balances ...int64) workspaceLau
 		server: server, store: store, session: loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"),
 		events: &events, sub2API: sub2API, fabric: fabric,
 	}
+}
+
+func promoteWorkspaceLaunchOwner(t *testing.T, store controlPlaneTableStore, userID string) {
+	t.Helper()
+	users, err := store.ListUsers(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := findRecord(users, userID)
+	if user == nil {
+		t.Fatalf("workspace launch owner %s not found", userID)
+	}
+	user["role"] = "owner"
+	mustStore(t, store.SaveUser(context.Background(), user))
 }
 
 func (f workspaceLaunchHTTPFixture) launch(t *testing.T, body, key string) *httptest.ResponseRecorder {
@@ -214,6 +230,26 @@ func TestWorkspaceLaunchPreflightGuardsRunBeforeExternalCalls(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchRequiresOwnerBeforeExternalCalls(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	users, err := fixture.store.ListUsers(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := findRecord(users, "usr-alpha")
+	user["role"] = "member"
+	mustStore(t, fixture.store.SaveUser(context.Background(), user))
+
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "workspace_owner_required") {
+		t.Fatalf("member launch status = %d, want 403: %s", response.Code, response.Body.String())
+	}
+	operations, _ := fixture.store.ListRuntimeOperations(context.Background())
+	if len(*fixture.events) != 0 || len(operations) != 0 {
+		t.Fatalf("member launch reached dependencies: events=%#v operations=%#v", *fixture.events, operations)
+	}
+}
+
 func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
 	created := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
@@ -311,6 +347,7 @@ func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeError
 	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
 	store := &recordingWorkspaceLaunchStore{memoryTableStore: newMemoryTableStore()}
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	promoteWorkspaceLaunchOwner(t, store, "usr-alpha")
 	events := []string{}
 	sub2API := &workspaceLaunchSub2API{monthlySub2API: &monthlySub2API{events: &events, balances: balances, chargeErrors: chargeErrors}}
 	fabric := &monthlyFabric{fakeFabricClient: fakeFabricClient{calls: &events, runtimeErr: runtimeErr}, events: &events}
@@ -430,6 +467,65 @@ func TestWorkspaceLaunchRestartResumesWithoutRepeatingCompletedPurchases(t *test
 	}
 	if operation := fixture.operation(t); operation.Status != "succeeded" || operation.Phase != "complete" || fixture.ledger.workspaceReceiptCalls != 1 {
 		t.Fatalf("resumed workspace launch = %#v receipt calls=%d", operation, fixture.ledger.workspaceReceiptCalls)
+	}
+}
+
+func TestWorkspaceLaunchWaitsForChildResourceMutation(t *testing.T) {
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			fixture := newWorkspaceLaunchWorkerFixture(t,
+				[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_428_571}, nil, nil,
+			)
+			operation := fixture.operation(t)
+			resourceID := operation.ComputeID
+			if resourceType == "storage" {
+				resourceID = operation.StorageID
+			}
+			unlock := fixture.app.lockResource(resourceType, resourceID)
+			done := make(chan error, 1)
+			go func() { done <- fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service) }()
+			select {
+			case err := <-done:
+				unlock()
+				t.Fatalf("workspace launch crossed %s lock: %v", resourceType, err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			unlock()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("workspace launch did not resume after %s unlock", resourceType)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchResumesAfterBalanceTopUp(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 49_999_999}, nil, nil)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("insufficient child balance did not leave a retryable launch")
+	}
+	operation := fixture.operation(t)
+	computes, _ := fixture.store.ListComputes(context.Background(), "acct-alpha")
+	if operation.Status != "retryable" || operation.Phase != "compute" || len(computes) != 1 || computes[0]["billingStatus"] != "charge_pending" {
+		t.Fatalf("insufficient child balance launch=%#v computes=%#v", operation, computes)
+	}
+	if len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("insufficient child balance caused side effects: charges=%#v compute=%#v storage=%#v", fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+
+	fixture.sub2API.balances = []int64{1_000_000_000, 950_000_000, 950_000_000, 947_428_571}
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if operation = fixture.operation(t); operation.Status != "succeeded" || operation.Phase != "complete" {
+		t.Fatalf("topped-up workspace launch = %#v", operation)
+	}
+	if len(fixture.sub2API.charges) != 2 || len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 {
+		t.Fatalf("topped-up launch side effects: charges=%#v compute=%#v storage=%#v", fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
 	}
 }
 

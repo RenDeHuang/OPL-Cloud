@@ -139,7 +139,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	for range 6 {
 		switch operation.Phase {
 		case "compute":
-			row, err := app.purchaseMonthlyResource(ctx, service, monthlyPurchaseInput{
+			row, err := app.purchaseWorkspaceLaunchResource(ctx, service, monthlyPurchaseInput{
 				ResourceType: "compute", ResourceID: operation.ComputeID, BillingOperationID: operation.ComputeBillingOperationID,
 				AccountID: operation.AccountID, OwnerUserID: operation.OwnerUserID, WorkspaceID: operation.WorkspaceID,
 				Name: operation.Name, PackageID: operation.PackageID, Zone: monthlyComputeLaunchZone(), Environment: monthlyEnvironment(),
@@ -164,7 +164,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 			if zone == "" {
 				return app.retryWorkspaceLaunch(ctx, operation, "workspace_launch_compute_zone_unavailable")
 			}
-			row, err := app.purchaseMonthlyResource(ctx, service, monthlyPurchaseInput{
+			row, err := app.purchaseWorkspaceLaunchResource(ctx, service, monthlyPurchaseInput{
 				ResourceType: "storage", ResourceID: operation.StorageID, BillingOperationID: operation.StorageBillingOperationID,
 				AccountID: operation.AccountID, OwnerUserID: operation.OwnerUserID, WorkspaceID: operation.WorkspaceID,
 				Name: operation.Name, PackageID: operation.PackageID, SizeGB: operation.StorageGB, ComputeID: operation.ComputeID,
@@ -274,6 +274,12 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	return app.retryWorkspaceLaunch(ctx, operation, "workspace_launch_transition_limit")
 }
 
+func (app *controlPlaneServer) purchaseWorkspaceLaunchResource(ctx context.Context, service *controlplane.Service, input monthlyPurchaseInput) (map[string]any, error) {
+	unlock := app.lockResource(input.ResourceType, input.ResourceID)
+	defer unlock()
+	return app.purchaseMonthlyResource(ctx, service, input)
+}
+
 func (app *controlPlaneServer) workspaceLaunchOperation(ctx context.Context, operationID string) (workspaceLaunchOperation, bool, error) {
 	rows, err := app.tables.ListRuntimeOperations(ctx)
 	if err != nil {
@@ -316,6 +322,13 @@ func (app *controlPlaneServer) manualReviewWorkspaceLaunch(ctx context.Context, 
 
 func (app *controlPlaneServer) failWorkspaceLaunchPurchase(ctx context.Context, operation workspaceLaunchOperation, row map[string]any, cause error) error {
 	status := stringValue(row["billingStatus"])
+	if status == "failed" && errors.Is(cause, errMonthlyInsufficientBalance) {
+		row["billingStatus"] = "charge_pending"
+		if err := app.saveMonthlyResource(ctx, operation.Phase, row); err != nil {
+			return err
+		}
+		return app.retryWorkspaceLaunch(ctx, operation, "workspace_launch_"+operation.Phase+"_balance_insufficient")
+	}
 	if status == "manual_review" || status == "failed" || errors.Is(cause, errMonthlyChargeNeedsReview) || errors.Is(cause, errMonthlyInsufficientBalance) || errors.Is(cause, errMonthlyPurchaseRefunded) || errors.Is(cause, errIdempotencyConflict) {
 		return app.manualReviewWorkspaceLaunch(ctx, operation, "workspace_launch_"+operation.Phase+"_manual_review")
 	}
