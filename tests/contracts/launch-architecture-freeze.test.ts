@@ -77,6 +77,23 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.deliveryPhases.length, 6);
 });
 
+test("human launch contract pins the approved architecture authority revision", async () => {
+  const [freeze, invariants] = await Promise.all([
+    json("packages/contracts/opl-cloud-launch-freeze-contract.json"),
+    text("docs/invariants.md")
+  ]);
+
+  assert.match(invariants, new RegExp(freeze.architectureAuthority.reviewedRevision));
+});
+
+test("public Workspace contract permits one primary Workspace only", async () => {
+  const readme = await text("README.md");
+
+  assert.match(readme, /one account owns exactly one\s+primary Workspace/i);
+  assert.match(readme, /second Workspace.*409/i);
+  assert.doesNotMatch(readme, /one account can create\s+multiple Workspaces/i);
+});
+
 test("every launch stage declares business, current state, deliverables, and evidence", async () => {
   const freeze = await json("packages/contracts/opl-cloud-launch-freeze-contract.json");
   const expected = [

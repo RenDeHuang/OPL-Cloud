@@ -76,9 +76,9 @@ Workspace URLs use:
 https://workspace.medopl.cn/w/<workspaceId>/
 ```
 
-Opening a Workspace requires the Runtime password. One account can create
-multiple Workspaces; no separate organization resource-pool abstraction is
-required for that behavior.
+Opening a Workspace requires the Runtime password. One account owns exactly one
+primary Workspace. A second Workspace creation returns 409; project, backup
+clone, and collaboration flows cannot bypass that limit.
 
 Destroying compute does not delete storage. Storage deletion always requires an
 explicit destructive command.
