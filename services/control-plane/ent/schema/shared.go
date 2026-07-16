@@ -179,6 +179,8 @@ func workspaceFields() []ent.Field {
 		field.String("credential_version").Default(""),
 		field.String("credential_secret_ref").Default(""),
 		field.Bool("access_requires_login").Default(false),
+		field.String("verification_slot_id").Default(""),
+		field.Bool("customer_product").Default(true),
 	)
 }
 

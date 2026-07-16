@@ -184,6 +184,16 @@ func AccessRequiresLogin(v bool) predicate.Workspace {
 	return predicate.Workspace(sql.FieldEQ(FieldAccessRequiresLogin, v))
 }
 
+// VerificationSlotID applies equality check predicate on the "verification_slot_id" field. It's identical to VerificationSlotIDEQ.
+func VerificationSlotID(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEQ(FieldVerificationSlotID, v))
+}
+
+// CustomerProduct applies equality check predicate on the "customer_product" field. It's identical to CustomerProductEQ.
+func CustomerProduct(v bool) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEQ(FieldCustomerProduct, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Workspace {
 	return predicate.Workspace(sql.FieldEQ(FieldCreatedAt, v))
@@ -1637,6 +1647,81 @@ func AccessRequiresLoginEQ(v bool) predicate.Workspace {
 // AccessRequiresLoginNEQ applies the NEQ predicate on the "access_requires_login" field.
 func AccessRequiresLoginNEQ(v bool) predicate.Workspace {
 	return predicate.Workspace(sql.FieldNEQ(FieldAccessRequiresLogin, v))
+}
+
+// VerificationSlotIDEQ applies the EQ predicate on the "verification_slot_id" field.
+func VerificationSlotIDEQ(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEQ(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDNEQ applies the NEQ predicate on the "verification_slot_id" field.
+func VerificationSlotIDNEQ(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldNEQ(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDIn applies the In predicate on the "verification_slot_id" field.
+func VerificationSlotIDIn(vs ...string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldIn(FieldVerificationSlotID, vs...))
+}
+
+// VerificationSlotIDNotIn applies the NotIn predicate on the "verification_slot_id" field.
+func VerificationSlotIDNotIn(vs ...string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldNotIn(FieldVerificationSlotID, vs...))
+}
+
+// VerificationSlotIDGT applies the GT predicate on the "verification_slot_id" field.
+func VerificationSlotIDGT(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldGT(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDGTE applies the GTE predicate on the "verification_slot_id" field.
+func VerificationSlotIDGTE(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldGTE(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDLT applies the LT predicate on the "verification_slot_id" field.
+func VerificationSlotIDLT(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldLT(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDLTE applies the LTE predicate on the "verification_slot_id" field.
+func VerificationSlotIDLTE(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldLTE(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDContains applies the Contains predicate on the "verification_slot_id" field.
+func VerificationSlotIDContains(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldContains(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDHasPrefix applies the HasPrefix predicate on the "verification_slot_id" field.
+func VerificationSlotIDHasPrefix(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldHasPrefix(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDHasSuffix applies the HasSuffix predicate on the "verification_slot_id" field.
+func VerificationSlotIDHasSuffix(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldHasSuffix(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDEqualFold applies the EqualFold predicate on the "verification_slot_id" field.
+func VerificationSlotIDEqualFold(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEqualFold(FieldVerificationSlotID, v))
+}
+
+// VerificationSlotIDContainsFold applies the ContainsFold predicate on the "verification_slot_id" field.
+func VerificationSlotIDContainsFold(v string) predicate.Workspace {
+	return predicate.Workspace(sql.FieldContainsFold(FieldVerificationSlotID, v))
+}
+
+// CustomerProductEQ applies the EQ predicate on the "customer_product" field.
+func CustomerProductEQ(v bool) predicate.Workspace {
+	return predicate.Workspace(sql.FieldEQ(FieldCustomerProduct, v))
+}
+
+// CustomerProductNEQ applies the NEQ predicate on the "customer_product" field.
+func CustomerProductNEQ(v bool) predicate.Workspace {
+	return predicate.Workspace(sql.FieldNEQ(FieldCustomerProduct, v))
 }
 
 // And groups predicates with the AND operator between them.

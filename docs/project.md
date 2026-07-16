@@ -13,7 +13,7 @@ This repository implements the OPL Cloud product defined by
   provider evidence, content transfer, and snapshot boundary.
 - Ledger receipts, reviews, artifacts, audit, retention, continuation, and
   reconciliation evidence.
-- TKE manifests, deployment workflow, readiness, and paid production E2E.
+- TKE manifests, deployment workflow, readiness, and reusable-slot verification.
 
 ## External
 

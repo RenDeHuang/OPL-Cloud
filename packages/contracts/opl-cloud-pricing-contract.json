@@ -10,7 +10,7 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current pricing contract and matching entitlement migration."
   },
-  "catalogVersion": "2026-07-14-opl-monthly-v1",
+  "catalogVersion": "2026-07-16-opl-monthly-v2",
   "billingUnit": "calendar_month",
   "displayCurrency": "CNY",
   "walletCurrency": "USD",
@@ -19,11 +19,25 @@
     "basic": {
       "cnyCents": 35000,
       "usdMicros": 50000000
+    },
+    "pro": {
+      "cnyCents": 150000,
+      "usdMicros": 214285715
     }
   },
   "storagePer10GbMonthly": {
     "cnyCents": 1800,
     "usdMicros": 2571429
+  },
+  "storageMonthly": {
+    "10": {
+      "cnyCents": 1800,
+      "usdMicros": 2571429
+    },
+    "100": {
+      "cnyCents": 18000,
+      "usdMicros": 25714286
+    }
   },
   "storageSize": {
     "minimumGb": 10,

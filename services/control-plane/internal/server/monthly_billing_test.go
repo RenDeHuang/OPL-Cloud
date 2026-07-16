@@ -21,9 +21,11 @@ type monthlySub2API struct {
 	balanceErr   error
 	chargeErrors []error
 	charges      []clients.Sub2APIChargeInput
+	refundErrors []error
+	refunds      []clients.Sub2APIRefundInput
 }
 
-func (s *monthlySub2API) Version(context.Context) (string, error) { return "0.1.151", nil }
+func (s *monthlySub2API) Version(context.Context) (string, error) { return "0.1.155", nil }
 
 func (s *monthlySub2API) Balance(_ context.Context, userID int64) (clients.Sub2APIBalance, error) {
 	*s.events = append(*s.events, "sub2api.balance")
@@ -51,42 +53,92 @@ func (s *monthlySub2API) Charge(_ context.Context, input clients.Sub2APIChargeIn
 	return clients.Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: input.ChargeUSDMicros, Status: "used"}, nil
 }
 
+func (s *monthlySub2API) Refund(_ context.Context, input clients.Sub2APIRefundInput) (clients.Sub2APIRefund, error) {
+	*s.events = append(*s.events, "sub2api.refund")
+	s.refunds = append(s.refunds, input)
+	if len(s.refundErrors) > 0 {
+		err := s.refundErrors[0]
+		s.refundErrors = s.refundErrors[1:]
+		if err != nil {
+			return clients.Sub2APIRefund{}, err
+		}
+	}
+	return clients.Sub2APIRefund{Code: input.Code, UserID: input.UserID, RefundUSDMicros: input.RefundUSDMicros, Status: "used"}, nil
+}
+
 type monthlyFabric struct {
 	fakeFabricClient
-	events     *[]string
-	createErr  error
-	cleanupErr error
-	computeIDs []string
-	storageIDs []string
+	events           *[]string
+	createErr        error
+	cleanupErr       error
+	cleanupStatus    string
+	syncErr          error
+	preflightResult  *clients.MonthlyPreflight
+	preflightErr     error
+	preflightInputs  []clients.MonthlyPreflightInput
+	mutateCompute    func(*clients.ComputeAllocation)
+	mutateStorage    func(*clients.StorageVolume)
+	computeIDs       []string
+	storageIDs       []string
+	storageInputs    []clients.StorageVolumeInput
+	computeSync      clients.ComputeAllocation
+	storageSync      clients.StorageVolume
+	computeRenew     clients.ComputeAllocation
+	storageRenew     clients.StorageVolume
+	computeRenewErr  error
+	storageRenewErr  error
+	computeRenewKeys []string
+	storageRenewKeys []string
 }
 
 type provisioningMonthlyFabric struct {
 	monthlyFabric
-	syncCalls int
+	syncCalls    int
+	computeInput clients.ComputeAllocationInput
+	storageInput clients.StorageVolumeInput
+}
+
+func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
+	*f.events = append(*f.events, "fabric.monthly.preflight")
+	f.preflightInputs = append(f.preflightInputs, input)
+	if f.preflightResult != nil {
+		return *f.preflightResult, f.preflightErr
+	}
+	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
+	if input.ResourceType == "compute" {
+		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
+	}
+	return clients.MonthlyPreflight{
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
+	}, f.preflightErr
 }
 
 func (f *provisioningMonthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.prepare")
 	f.computeIDs = append(f.computeIDs, input.ID)
+	f.computeInput = input
 	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: "req-" + input.ID}, nil
 }
 
 func (f *provisioningMonthlyFabric) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.sync")
 	f.syncCalls++
-	return clients.ComputeAllocation{ID: id, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + id, ProviderRequestID: "req-" + id}, nil
+	return clients.ComputeAllocation{ID: id, AccountID: f.computeInput.AccountID, WorkspaceID: f.computeInput.WorkspaceID, PackageID: f.computeInput.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + id, ProviderRequestID: "req-" + id, InstanceID: "ins-" + id, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}, nil
 }
 
 func (f *provisioningMonthlyFabric) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
 	*f.events = append(*f.events, "fabric.storage.prepare")
 	f.storageIDs = append(f.storageIDs, input.ID)
+	f.storageInput = input
 	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "provisioning", Provider: "tencent-tke", ProviderRequestID: "req-" + input.ID}, nil
 }
 
 func (f *provisioningMonthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
 	*f.events = append(*f.events, "fabric.storage.sync")
 	f.syncCalls++
-	return clients.StorageVolume{ID: id, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-" + id, ProviderRequestID: "req-" + id}, nil
+	return clients.StorageVolume{ID: id, AccountID: f.storageInput.AccountID, WorkspaceID: f.storageInput.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-" + id, ProviderRequestID: "req-" + id, SizeGB: f.storageInput.SizeGB, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", Zone: f.storageInput.Zone, ProviderData: map[string]string{"chargeType": "PREPAID"}}, nil
 }
 
 func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
@@ -95,16 +147,67 @@ func (f *monthlyFabric) CreateComputeAllocation(_ context.Context, input clients
 	if f.createErr != nil {
 		return clients.ComputeAllocation{ID: input.ID}, f.createErr
 	}
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + input.ID, ProviderRequestID: "req-" + input.ID}, nil
+	instanceType := "S5.MEDIUM4"
+	if input.PackageID == "pro" {
+		instanceType = "SA5.2XLARGE16"
+	}
+	result := clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "ins-" + input.ID, ProviderRequestID: "req-" + input.ID, InstanceID: "ins-" + input.ID, InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType}}
+	if f.mutateCompute != nil {
+		f.mutateCompute(&result)
+	}
+	return result, nil
 }
 
 func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
 	*f.events = append(*f.events, "fabric.storage.prepare")
 	f.storageIDs = append(f.storageIDs, input.ID)
+	f.storageInputs = append(f.storageInputs, input)
 	if f.createErr != nil {
 		return clients.StorageVolume{ID: input.ID}, f.createErr
 	}
-	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-" + input.ID, ProviderRequestID: "req-" + input.ID}, nil
+	result := clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, SizeGB: input.SizeGB, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-" + input.ID, ProviderRequestID: "req-" + input.ID, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone, ProviderData: map[string]string{"chargeType": "PREPAID"}}
+	if f.mutateStorage != nil {
+		f.mutateStorage(&result)
+	}
+	return result, nil
+}
+
+func (f *monthlyFabric) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
+	*f.events = append(*f.events, "fabric.compute.sync")
+	result := f.computeSync
+	if result.ID == "" {
+		result.ID = id
+	}
+	return result, f.syncErr
+}
+
+func (f *monthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
+	*f.events = append(*f.events, "fabric.storage.sync")
+	result := f.storageSync
+	if result.ID == "" {
+		result.ID = id
+	}
+	return result, f.syncErr
+}
+
+func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string) (clients.ComputeAllocation, error) {
+	*f.events = append(*f.events, "fabric.compute.renew")
+	f.computeRenewKeys = append(f.computeRenewKeys, key)
+	result := f.computeRenew
+	if result.ID == "" {
+		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "ins-" + id, ProviderRequestID: "renew-" + id, InstanceID: "ins-" + id, CVMInstanceID: "ins-" + id, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}
+	}
+	return result, f.computeRenewErr
+}
+
+func (f *monthlyFabric) RenewStorageVolume(_ context.Context, id, key string) (clients.StorageVolume, error) {
+	*f.events = append(*f.events, "fabric.storage.renew")
+	f.storageRenewKeys = append(f.storageRenewKeys, key)
+	result := f.storageRenew
+	if result.ID == "" {
+		result = clients.StorageVolume{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available", ProviderResourceID: "disk-" + id, ProviderRequestID: "renew-" + id, CBSStatus: "UNATTACHED", SizeGB: 10, Zone: "ap-shanghai-2", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2"}}
+	}
+	return result, f.storageRenewErr
 }
 
 func (f *monthlyFabric) DestroyComputeAllocation(_ context.Context, id, _ string) (clients.ComputeAllocation, error) {
@@ -120,7 +223,7 @@ func (f *monthlyFabric) DestroyStorageVolume(_ context.Context, id, _ string) (c
 	if f.cleanupErr != nil {
 		return clients.StorageVolume{ID: id}, f.cleanupErr
 	}
-	return clients.StorageVolume{ID: id, Status: "destroyed"}, nil
+	return clients.StorageVolume{ID: id, Status: firstNonEmpty(f.cleanupStatus, "destroyed")}, nil
 }
 
 type monthlyLedger struct {
@@ -133,6 +236,19 @@ type monthlyLedger struct {
 type scopedReceiptLedger struct {
 	fakeLedgerClient
 	receipt clients.Receipt
+}
+
+type failingMonthlySaveStore struct {
+	*memoryTableStore
+	err error
+}
+
+func (s *failingMonthlySaveStore) SaveCompute(context.Context, map[string]any) error {
+	return s.err
+}
+
+func (s *failingMonthlySaveStore) SaveStorage(context.Context, map[string]any) error {
+	return s.err
 }
 
 func (l scopedReceiptLedger) Receipt(_ context.Context, receiptID string) (clients.Receipt, error) {
@@ -156,6 +272,9 @@ func (l *monthlyLedger) RecordReceipt(_ context.Context, input clients.ReceiptIn
 
 func newMonthlyBillingTest(t *testing.T, balances []int64) (*controlPlaneServer, *controlplane.Service, *monthlySub2API, *monthlyFabric, *monthlyLedger, *[]string) {
 	t.Helper()
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	events := &[]string{}
 	sub2API := &monthlySub2API{events: events, balances: balances}
 	fabric := &monthlyFabric{events: events}
@@ -190,23 +309,30 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 		resourceType string
 		packageID    string
 		sizeGB       int
+		cbsStatus    string
 		charge       int64
 		cnyCents     int64
 	}{
 		{name: "basic", resourceType: "compute", packageID: "basic", charge: 50_000_000, cnyCents: 35000},
-		{name: "30GB storage", resourceType: "storage", packageID: "basic", sizeGB: 30, charge: 7_714_286, cnyCents: 5400},
+		{name: "pro", resourceType: "compute", packageID: "pro", charge: 214_285_715, cnyCents: 150000},
+		{name: "10GB attached storage", resourceType: "storage", packageID: "basic", sizeGB: 10, cbsStatus: "ATTACHED", charge: 2_571_429, cnyCents: 1800},
+		{name: "100GB storage", resourceType: "storage", packageID: "pro", sizeGB: 100, charge: 25_714_286, cnyCents: 18000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			initial := int64(1_000_000_000)
-			app, service, sub2API, _, ledger, events := newMonthlyBillingTest(t, []int64{initial, initial, initial - tc.charge})
+			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{initial, initial - tc.charge})
+			if tc.cbsStatus != "" {
+				fabric.mutateStorage = func(v *clients.StorageVolume) { v.CBSStatus = tc.cbsStatus }
+			}
 			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
 				ResourceType: tc.resourceType, ResourceID: tc.resourceType + "-monthly", BillingOperationID: "billing-" + tc.name,
-				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: tc.packageID, SizeGB: tc.sizeGB, Environment: "test", Now: now,
+				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: tc.packageID, SizeGB: tc.sizeGB,
+				ComputeID: "compute-placement", Zone: "ap-shanghai-2", Environment: "test", Now: now,
 			})
 			if err != nil {
 				t.Fatalf("purchase %s: %v", tc.name, err)
 			}
-			if result["billingStatus"] != "active" || int64(numberField(result, "chargeUsdMicros", 0)) != tc.charge || int64(numberField(result, "monthlyPriceCnyCents", 0)) != tc.cnyCents || result["paidThrough"] != "2026-08-14T08:30:00Z" {
+			if result["billingStatus"] != "active" || result["autoRenew"] != false || int64(numberField(result, "chargeUsdMicros", 0)) != tc.charge || int64(numberField(result, "monthlyPriceCnyCents", 0)) != tc.cnyCents || result["paidThrough"] != "2026-08-14T08:30:00Z" {
 				t.Fatalf("monthly result = %#v", result)
 			}
 			if len(sub2API.charges) != 1 || sub2API.charges[0].Code != monthlyRedeemCode("test", "billing-"+tc.name) || sub2API.charges[0].ChargeUSDMicros != tc.charge {
@@ -215,13 +341,78 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 			if len(ledger.receipts) != 1 || int64(numberField(ledger.receipts[0].Cost, "chargeUsdMicros", 0)) != tc.charge {
 				t.Fatalf("receipts = %#v", ledger.receipts)
 			}
+			if len(fabric.preflightInputs) != 1 || fabric.preflightInputs[0].ResourceType != tc.resourceType || fabric.preflightInputs[0].PackageID != tc.packageID || fabric.preflightInputs[0].SizeGB != tc.sizeGB {
+				t.Fatalf("preflight inputs = %#v", fabric.preflightInputs)
+			}
 			wantPrepare := "fabric.compute.prepare"
 			if tc.resourceType == "storage" {
 				wantPrepare = "fabric.storage.prepare"
+				if len(fabric.storageInputs) != 1 || fabric.storageInputs[0].ComputeID != "compute-placement" || fabric.storageInputs[0].Zone != "ap-shanghai-2" {
+					t.Fatalf("storage placement = %#v", fabric.storageInputs)
+				}
 			}
-			want := []string{"sub2api.balance", wantPrepare, "sub2api.balance", "sub2api.charge", "sub2api.balance", "ledger.receipt"}
+			want := []string{"fabric.monthly.preflight", "sub2api.balance", "sub2api.charge", "sub2api.balance", wantPrepare, "ledger.receipt"}
 			if strings.Join(*events, ",") != strings.Join(want, ",") {
 				t.Fatalf("events = %#v, want %#v", *events, want)
+			}
+		})
+	}
+}
+
+func TestRetainedStorageReactivationRecordsNewReceipt(t *testing.T) {
+	now := time.Date(2026, 7, 16, 8, 30, 0, 0, time.UTC)
+	tests := []struct {
+		name            string
+		mutateSync      func(*clients.StorageVolume)
+		wantStatus      string
+		wantReceiptType string
+		wantErr         error
+	}{
+		{name: "purchased", wantStatus: "active", wantReceiptType: "billing.resource_purchased.v1"},
+		{name: "refunded", mutateSync: func(result *clients.StorageVolume) {
+			result.Status, result.CBSStatus = "external_deleted", "NOT_FOUND"
+		}, wantStatus: "refunded", wantReceiptType: "billing.resource_refunded.v1", wantErr: errMonthlyPurchaseRefunded},
+		{name: "manual review", mutateSync: func(result *clients.StorageVolume) {
+			result.ProviderRequestID = ""
+		}, wantStatus: "manual_review", wantReceiptType: "billing.charge_review_required.v1", wantErr: errMonthlyChargeNeedsReview},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 97_428_571})
+			resourceID := "storage-reactivation-" + strings.ReplaceAll(tc.name, " ", "-")
+			retained := monthlyActiveResource("storage", resourceID, now.Add(-time.Hour))
+			retained["billingStatus"] = "retained"
+			oldReceiptID := stringValue(retained["lastReceiptId"])
+			mustStore(t, app.tables.SaveStorage(context.Background(), retained))
+
+			syncResult := clients.StorageVolume{
+				ID: resourceID, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "available",
+				Provider: "tencent-tke", ProviderResourceID: "disk-" + resourceID, ProviderRequestID: "req-" + resourceID,
+				SizeGB: 10, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+				Deadline: "2099-01-01T00:00:00Z", Zone: "ap-shanghai-2", ProviderData: map[string]string{"chargeType": "PREPAID"},
+			}
+			if tc.mutateSync != nil {
+				tc.mutateSync(&syncResult)
+			}
+			fabric.storageSync = syncResult
+			operationID := "billing-reactivation-" + strings.ReplaceAll(tc.name, " ", "-")
+
+			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+				ResourceType: "storage", ResourceID: resourceID, BillingOperationID: operationID,
+				AccountID: "acct-monthly", Environment: "test", Now: now,
+			})
+			if !errors.Is(err, tc.wantErr) || result["billingStatus"] != tc.wantStatus {
+				t.Fatalf("reactivation result=%#v err=%v, want status=%q err=%v", result, err, tc.wantStatus, tc.wantErr)
+			}
+			if len(ledger.receipts) != 1 || ledger.receipts[0].Type != tc.wantReceiptType || ledger.receipts[0].RequestID != operationID {
+				t.Fatalf("receipts=%#v, want one %s receipt for %s", ledger.receipts, tc.wantReceiptType, operationID)
+			}
+			if receiptID := stringValue(result["lastReceiptId"]); receiptID == "" || receiptID == oldReceiptID {
+				t.Fatalf("lastReceiptId=%q, old=%q", receiptID, oldReceiptID)
+			}
+			if len(fabric.storageIDs) != 0 {
+				t.Fatalf("retained storage was recreated: %#v", fabric.storageIDs)
 			}
 		})
 	}
@@ -245,30 +436,215 @@ func TestMonthlyPurchaseRejectsInvalidInputBeforeExternalCalls(t *testing.T) {
 	}
 }
 
-func TestMonthlyPurchaseFabricFailureDoesNotCharge(t *testing.T) {
-	app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000})
-	fabric.createErr = errors.New("fabric unavailable")
-	fabric.cleanupErr = errors.New("cleanup unavailable")
-	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-fail", BillingOperationID: "billing-fail", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()})
-	if err == nil || result["billingStatus"] != "failed" || result["desiredStatus"] != "destroyed" || result["lastBillingError"] != "fabric_prepare_cleanup_failed" || len(sub2API.charges) != 0 {
-		t.Fatalf("fabric failure result=%#v charges=%#v err=%v", result, sub2API.charges, err)
+func TestMonthlyPurchasePreflightFailureHasNoFinancialOrProviderSideEffects(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *clients.MonthlyPreflight
+		err    error
+	}{
+		{name: "upstream failure", err: errors.New("fabric preflight unavailable")},
+		{name: "partial response", result: &clients.MonthlyPreflight{ResourceType: "compute", PackageID: "basic", Zone: "ap-shanghai-2", Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 12.34}},
 	}
-	if strings.Join(*events, ",") != "sub2api.balance,fabric.compute.prepare,fabric.compute.cleanup" {
-		t.Fatalf("events = %#v", *events)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000})
+			fabric.preflightResult, fabric.preflightErr = tc.result, tc.err
+			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+				ResourceType: "compute", ResourceID: "compute-preflight", BillingOperationID: "billing-preflight-" + strings.ReplaceAll(tc.name, " ", "-"),
+				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC),
+			})
+			if err == nil || result["billingStatus"] != "charge_pending" {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+			if strings.Join(*events, ",") != "fabric.monthly.preflight" || len(sub2API.charges) != 0 || len(sub2API.refunds) != 0 || len(fabric.computeIDs) != 0 || len(ledger.receipts) != 0 {
+				t.Fatalf("events=%#v charges=%#v refunds=%#v creates=%#v receipts=%#v", *events, sub2API.charges, sub2API.refunds, fabric.computeIDs, ledger.receipts)
+			}
+		})
 	}
-	fabric.cleanupErr = nil
-	if err := app.reconcileMonthlyCompute(context.Background(), service, result, time.Now().UTC()); err != nil {
-		t.Fatal(err)
+}
+
+func TestMonthlyPurchaseDebitFailureDoesNotMutateFabric(t *testing.T) {
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000})
+	sub2API.chargeErrors = []error{errors.New("debit failed")}
+	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-debit-fail", BillingOperationID: "billing-debit-fail", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()})
+	if err == nil || result["billingStatus"] != "charge_pending" || len(fabric.computeIDs) != 0 || len(fabric.storageIDs) != 0 || len(ledger.receipts) != 0 {
+		t.Fatalf("debit failure result=%#v fabric=%#v/%#v receipts=%#v err=%v", result, fabric.computeIDs, fabric.storageIDs, ledger.receipts, err)
 	}
-	recovered, _ := app.getCompute("compute-fail")
-	if recovered["status"] != "destroyed" || recovered["billingStatus"] != "stopped" || strings.Count(strings.Join(*events, ","), "fabric.compute.cleanup") != 2 {
-		t.Fatalf("cleanup recovery row=%#v events=%#v", recovered, *events)
+	if strings.Join(*events, ",") != "fabric.monthly.preflight,sub2api.balance,sub2api.charge" {
+		t.Fatalf("debit failure events = %#v", *events)
+	}
+}
+
+func TestMonthlyPurchaseConfirmedAbsenceRefundsOnce(t *testing.T) {
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+	fabric.createErr = errors.New("create response lost")
+	fabric.computeSync = clients.ComputeAllocation{ID: "compute-absent", AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}
+	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-absent", BillingOperationID: "billing-absent", AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
+
+	result, err := app.purchaseMonthlyResource(context.Background(), service, input)
+	if !errors.Is(err, errMonthlyPurchaseRefunded) || result["billingStatus"] != "refunded" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_refunded.v1" {
+		t.Fatalf("absence result=%#v charges=%#v refunds=%#v receipts=%#v err=%v", result, sub2API.charges, sub2API.refunds, ledger.receipts, err)
+	}
+	if sub2API.refunds[0].RefundUSDMicros != 50_000_000 || sub2API.refunds[0].Code != monthlyRefundCode("test", "billing-absent") || sub2API.refunds[0].RefundUSDMicros <= 0 {
+		t.Fatalf("refund = %#v", sub2API.refunds[0])
+	}
+	before := len(*events)
+	if _, err := app.purchaseMonthlyResource(context.Background(), service, input); !errors.Is(err, errMonthlyPurchaseRefunded) {
+		t.Fatalf("refund replay err=%v", err)
+	}
+	if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(fabric.computeIDs) != 1 || len(ledger.receipts) != 1 {
+		t.Fatalf("refund replay duplicated work: events=%#v charges=%#v refunds=%#v creates=%#v", *events, sub2API.charges, sub2API.refunds, fabric.computeIDs)
+	}
+}
+
+func TestMonthlyPurchaseUnknownProviderResultNeedsManualReviewWithoutRefund(t *testing.T) {
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+	fabric.createErr = errors.New("create response lost")
+	fabric.syncErr = errors.New("provider readback unavailable")
+	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-unknown", BillingOperationID: "billing-unknown", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC)}
+
+	result, err := app.purchaseMonthlyResource(context.Background(), service, input)
+	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+		t.Fatalf("unknown result=%#v charges=%#v refunds=%#v receipts=%#v err=%v", result, sub2API.charges, sub2API.refunds, ledger.receipts, err)
+	}
+	before := len(*events)
+	if _, err := app.purchaseMonthlyResource(context.Background(), service, input); !errors.Is(err, errMonthlyChargeNeedsReview) {
+		t.Fatalf("manual review replay err=%v", err)
+	}
+	if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(fabric.preflightInputs) != 1 || len(fabric.computeIDs) != 1 || fabric.computeIDs[0] != "compute-unknown" || len(ledger.receipts) != 1 {
+		t.Fatalf("manual review changed identity or retried: events=%#v charges=%#v refunds=%#v creates=%#v", *events, sub2API.charges, sub2API.refunds, fabric.computeIDs)
+	}
+}
+
+func TestMonthlyPurchaseCommercialReadbackMismatchNeedsManualReviewWithoutRefund(t *testing.T) {
+	tests := []struct {
+		name          string
+		resourceType  string
+		mutateCompute func(*clients.ComputeAllocation)
+		mutateStorage func(*clients.StorageVolume)
+	}{
+		{name: "compute account missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.AccountID = "" }},
+		{name: "compute workspace missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.WorkspaceID = "" }},
+		{name: "compute provider id missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.ProviderResourceID = "" }},
+		{name: "compute charge type wrong", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.ChargeType = "POSTPAID_BY_HOUR" }},
+		{name: "compute renew flag missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.RenewFlag = "" }},
+		{name: "compute deadline too early", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.Deadline = "2026-07-31T00:00:00Z" }},
+		{name: "compute zone missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.Zone, v.ProviderData["zone"] = "", "" }},
+		{name: "compute zone mismatches", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.Zone, v.ProviderData["zone"] = "ap-shanghai-3", "ap-shanghai-3" }},
+		{name: "compute instance type missing", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.InstanceType, v.ProviderData["instanceType"] = "", "" }},
+		{name: "compute instance type conflicts", resourceType: "compute", mutateCompute: func(v *clients.ComputeAllocation) { v.ProviderData["instanceType"] = "SA5.2XLARGE16" }},
+		{name: "storage size mismatches", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.SizeGB++ }},
+		{name: "storage zone mismatches", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.Zone = "ap-shanghai-3" }},
+		{name: "storage charge type wrong", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.ProviderData["chargeType"] = "POSTPAID_BY_HOUR" }},
+		{name: "storage CBS status missing", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.CBSStatus = "" }},
+		{name: "storage CBS status not ready", resourceType: "storage", mutateStorage: func(v *clients.StorageVolume) { v.CBSStatus = "CREATING" }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{1_000_000_000, 950_000_000})
+			fabric.mutateCompute, fabric.mutateStorage = tc.mutateCompute, tc.mutateStorage
+			input := monthlyPurchaseInput{
+				ResourceType: tc.resourceType, ResourceID: tc.resourceType + "-readback", BillingOperationID: "billing-" + strings.ReplaceAll(tc.name, " ", "-"),
+				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test",
+				Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC),
+			}
+			if tc.resourceType == "storage" {
+				input.SizeGB, input.ComputeID, input.Zone = 10, "compute-placement", "ap-shanghai-2"
+			}
+
+			result, err := app.purchaseMonthlyResource(context.Background(), service, input)
+			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+				t.Fatalf("charges=%#v refunds=%#v receipts=%#v", sub2API.charges, sub2API.refunds, ledger.receipts)
+			}
+		})
+	}
+}
+
+func TestMonthlyPurchaseRejectsConsistentButWrongComputeSKU(t *testing.T) {
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
+	for _, tc := range []struct {
+		packageID string
+		wrongSKU  string
+	}{
+		{packageID: "basic", wrongSKU: "SA5.2XLARGE16"},
+		{packageID: "pro", wrongSKU: "S5.MEDIUM4"},
+	} {
+		t.Run(tc.packageID, func(t *testing.T) {
+			app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{1_000_000_000, 0})
+			fabric.mutateCompute = func(result *clients.ComputeAllocation) {
+				result.InstanceType = tc.wrongSKU
+				result.ProviderData["instanceType"] = tc.wrongSKU
+			}
+
+			result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+				ResourceType: "compute", ResourceID: "compute-wrong-sku-" + tc.packageID,
+				BillingOperationID: "billing-wrong-sku-" + tc.packageID, AccountID: "acct-monthly",
+				WorkspaceID: "workspace-monthly", PackageID: tc.packageID, Environment: "test",
+				Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC),
+			})
+			if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" {
+				t.Fatalf("wrong %s SKU activated: result=%#v err=%v", tc.packageID, result, err)
+			}
+			if len(sub2API.charges) != 1 || len(sub2API.refunds) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+				t.Fatalf("charges=%#v refunds=%#v receipts=%#v", sub2API.charges, sub2API.refunds, ledger.receipts)
+			}
+		})
+	}
+}
+
+func TestMonthlyPurchaseClampsEntitlementToCanonicalProviderDeadline(t *testing.T) {
+	app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
+	fabric.mutateCompute = func(result *clients.ComputeAllocation) {
+		result.Deadline = "2026-08-16T08:00:00+08:00"
+		result.ProviderData["deadline"] = result.Deadline
+	}
+	now := time.Date(2026, 7, 16, 8, 30, 0, 0, time.UTC)
+
+	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+		ResourceType: "compute", ResourceID: "compute-deadline", BillingOperationID: "billing-deadline",
+		AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test", Now: now,
+	})
+	if err != nil || result["billingStatus"] != "active" {
+		t.Fatalf("purchase result=%#v err=%v", result, err)
+	}
+	wantDeadline := "2026-08-16T00:00:00Z"
+	if result["deadline"] != wantDeadline || result["paidThrough"] != wantDeadline || providerDataValue(result, "deadline") != wantDeadline {
+		t.Fatalf("deadline was not canonical and bounded: %#v", result)
+	}
+	stored, ok := app.getCompute("compute-deadline")
+	if !ok || stored["deadline"] != wantDeadline || stored["paidThrough"] != wantDeadline {
+		t.Fatalf("stored compute=%#v", stored)
+	}
+	if len(ledger.receipts) != 1 || ledger.receipts[0].Cost["paidThrough"] != wantDeadline {
+		t.Fatalf("receipt=%#v", ledger.receipts)
+	}
+}
+
+func TestMonthlyProviderDeadlineRejectsTimestampWithoutTimezone(t *testing.T) {
+	if _, err := monthlyProviderDeadline(map[string]any{"deadline": "2026-08-16 12:34:56"}); err == nil {
+		t.Fatal("provider deadline without timezone must fail closed")
+	}
+}
+
+func TestCleanupMonthlyStoragePreservesFabricRetentionStatus(t *testing.T) {
+	app, service, _, fabric, _, _ := newMonthlyBillingTest(t, nil)
+	fabric.cleanupStatus = "retained"
+	row := monthlyActiveResource("storage", "storage-cleanup-retained", time.Now().UTC().Add(time.Hour))
+
+	result, err := app.cleanupMonthlyResource(context.Background(), service, row)
+	if err != nil || result["status"] != "retained" || result["desiredStatus"] != "destroyed" {
+		t.Fatalf("cleanup result=%#v err=%v", result, err)
 	}
 }
 
 func TestMonthlyPurchaseResumesProvisioningThroughFabricSync(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 100_000_000, 50_000_000}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000}}
 	fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
 	ledger := &monthlyLedger{events: events}
 	app := newControlPlaneAppEmpty()
@@ -279,22 +655,22 @@ func TestMonthlyPurchaseResumesProvisioningThroughFabricSync(t *testing.T) {
 	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-provisioning", BillingOperationID: "billing-provisioning", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)}
 
 	first, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || first["billingStatus"] != "preparing" || len(sub2API.charges) != 0 {
+	if err != nil || first["billingStatus"] != "preparing" || len(sub2API.charges) != 1 {
 		t.Fatalf("first purchase=%#v charges=%#v err=%v", first, sub2API.charges, err)
 	}
 	second, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || second["billingStatus"] != "active" || len(fabric.computeIDs) != 1 || fabric.syncCalls != 1 || len(sub2API.charges) != 1 {
+	if err != nil || second["billingStatus"] != "active" || len(fabric.preflightInputs) != 1 || len(fabric.computeIDs) != 1 || fabric.syncCalls != 1 || len(sub2API.charges) != 1 {
 		t.Fatalf("recovered purchase=%#v creates=%#v syncs=%d charges=%#v err=%v", second, fabric.computeIDs, fabric.syncCalls, sub2API.charges, err)
 	}
 }
 
-func TestMonthlyPurchaseSecondBalanceFailureCleansPreparedResource(t *testing.T) {
-	app, service, sub2API, _, _, events := newMonthlyBillingTest(t, []int64{100_000_000, 40_000_000})
-	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-low", BillingOperationID: "billing-low", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()})
-	if !errors.Is(err, errMonthlyInsufficientBalance) || result["billingStatus"] != "failed" || result["status"] != "destroyed" || result["desiredStatus"] != "destroyed" || len(sub2API.charges) != 0 {
-		t.Fatalf("insufficient result=%#v charges=%#v err=%v", result, sub2API.charges, err)
+func TestMonthlyPurchaseUnconfirmedDebitDoesNotMutateFabric(t *testing.T) {
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, 60_000_000})
+	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-unconfirmed", BillingOperationID: "billing-unconfirmed", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()})
+	if !errors.Is(err, errMonthlyChargeNeedsReview) || result["billingStatus"] != "manual_review" || len(sub2API.charges) != 1 || len(fabric.computeIDs) != 0 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+		t.Fatalf("unconfirmed debit result=%#v charges=%#v creates=%#v err=%v", result, sub2API.charges, fabric.computeIDs, err)
 	}
-	if strings.Join(*events, ",") != "sub2api.balance,fabric.compute.prepare,sub2api.balance,fabric.compute.cleanup" {
+	if strings.Join(*events, ",") != "fabric.monthly.preflight,sub2api.balance,sub2api.charge,sub2api.balance,ledger.receipt" {
 		t.Fatalf("events = %#v", *events)
 	}
 }
@@ -304,7 +680,7 @@ func TestMonthlyPurchaseRecoversLostChargeResponseWithSameCode(t *testing.T) {
 	sub2API.chargeErrors = []error{clients.ErrSub2APIChargeUnknown, nil}
 	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-recover", BillingOperationID: "billing-recover", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)}
 	first, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if !errors.Is(err, clients.ErrSub2APIChargeUnknown) || first["billingStatus"] != "manual_review" {
+	if !errors.Is(err, clients.ErrSub2APIChargeUnknown) || first["billingStatus"] != "charge_pending" {
 		t.Fatalf("first result=%#v err=%v", first, err)
 	}
 	second, err := app.purchaseMonthlyResource(context.Background(), service, input)
@@ -317,7 +693,7 @@ func TestMonthlyPurchaseRecoversLostChargeResponseWithSameCode(t *testing.T) {
 }
 
 func TestMonthlyPurchaseAllowsExactBalance(t *testing.T) {
-	app, service, sub2API, _, ledger, _ := newMonthlyBillingTest(t, []int64{50_000_000, 50_000_000, 0})
+	app, service, sub2API, _, ledger, _ := newMonthlyBillingTest(t, []int64{50_000_000, 0})
 	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-zero", BillingOperationID: "billing-zero", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()})
 	if err != nil || result["billingStatus"] != "active" || result["postChargeBalanceUsdMicros"] != int64(0) || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
 		t.Fatalf("exact balance result=%#v charges=%#v receipts=%#v err=%v", result, sub2API.charges, ledger.receipts, err)
@@ -325,17 +701,59 @@ func TestMonthlyPurchaseAllowsExactBalance(t *testing.T) {
 }
 
 func TestMonthlyPurchaseRetriesReceiptWithoutChargingAgain(t *testing.T) {
-	app, service, sub2API, _, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 100_000_000, 50_000_000})
+	app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 50_000_000})
 	ledger.receiptErrors = []error{errors.New("ledger unavailable"), nil}
 	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-receipt", BillingOperationID: "billing-receipt", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Now().UTC()}
 	first, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || first["billingStatus"] != "active" || first["lastReceiptId"] != nil {
+	if err != nil || first["billingStatus"] != "active" || stringValue(first["lastReceiptId"]) != "" {
 		t.Fatalf("receipt outage result=%#v err=%v", first, err)
 	}
 	second, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || second["lastReceiptId"] != "receipt-monthly" || len(sub2API.charges) != 1 || len(ledger.receipts) != 2 {
+	if err != nil || second["lastReceiptId"] != "receipt-monthly" || len(fabric.preflightInputs) != 1 || len(sub2API.charges) != 1 || len(ledger.receipts) != 2 {
 		t.Fatalf("receipt retry result=%#v charges=%d receipts=%d err=%v", second, len(sub2API.charges), len(ledger.receipts), err)
 	}
+}
+
+func TestMonthlyReviewAndReceiptPendingReturnPersistenceErrors(t *testing.T) {
+	persistErr := errors.New("monthly state unavailable")
+	row := map[string]any{
+		"id": "compute-review", "accountId": "acct-monthly", "packageId": "basic", "billingOperationId": "billing-review",
+		"pricingVersion": pricingCatalogVersion, "monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000),
+		"periodStart": "2026-07-16T00:00:00Z", "paidThrough": "2026-08-16T00:00:00Z",
+	}
+
+	t.Run("manual review", func(t *testing.T) {
+		events := &[]string{}
+		ledger := &monthlyLedger{events: events}
+		app := newControlPlaneAppEmpty()
+		app.tables = &failingMonthlySaveStore{memoryTableStore: newMemoryTableStore(), err: persistErr}
+		_, err := app.markMonthlyManualReview(context.Background(), controlplane.NewService(ledger, nil, nil), cloneMap(row), 41, "provider_unknown")
+		if !errors.Is(err, persistErr) || len(ledger.receipts) != 0 {
+			t.Fatalf("manual review err=%v receipts=%#v", err, ledger.receipts)
+		}
+	})
+
+	t.Run("ledger receipt pending", func(t *testing.T) {
+		events := &[]string{}
+		ledger := &monthlyLedger{events: events, receiptErrors: []error{errors.New("ledger unavailable")}}
+		app := newControlPlaneAppEmpty()
+		app.tables = &failingMonthlySaveStore{memoryTableStore: newMemoryTableStore(), err: persistErr}
+		_, err := app.ensureMonthlyReceipt(context.Background(), controlplane.NewService(ledger, nil, nil), cloneMap(row), 41, "billing.resource_purchased.v1")
+		if !errors.Is(err, persistErr) {
+			t.Fatalf("receipt pending persistence error = %v", err)
+		}
+	})
+
+	t.Run("charge conflict", func(t *testing.T) {
+		events := &[]string{}
+		sub2API := &monthlySub2API{events: events, chargeErrors: []error{clients.ErrSub2APIChargeConflict}}
+		app := newControlPlaneAppEmpty()
+		app.tables = &failingMonthlySaveStore{memoryTableStore: newMemoryTableStore(), err: persistErr}
+		_, err := app.chargeMonthlyOperation(context.Background(), controlplane.NewService(nil, nil, sub2API), cloneMap(row), 41, 100_000_000)
+		if !errors.Is(err, persistErr) {
+			t.Fatalf("charge review persistence error = %v", err)
+		}
+	})
 }
 
 func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
@@ -355,8 +773,9 @@ func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
 }
 
 func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 100_000_000, 50_000_000}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000}}
 	fabric := &monthlyFabric{events: events}
 	ledger := &monthlyLedger{events: events}
 	store := newMemoryTableStore()
@@ -368,7 +787,7 @@ func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 		t.Fatalf("new monthly server: %v", err)
 	}
 	session := tenantAdminSessionForTest(t, server)
-	rec := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute"}`)
+	rec := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute","zone":"ap-guangzhou-3"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("purchase status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -376,8 +795,80 @@ func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 		t.Fatalf("decode purchase: %v", err)
 	}
-	if result["billingStatus"] != "active" || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
+	if result["billingStatus"] != "active" || result["zone"] != "ap-shanghai-2" || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 {
 		t.Fatalf("purchase result=%#v charges=%#v receipts=%#v", result, sub2API.charges, ledger.receipts)
+	}
+	if len(fabric.preflightInputs) != 1 || fabric.preflightInputs[0].Zone != "ap-shanghai-2" {
+		t.Fatalf("compute preflight input = %#v", fabric.preflightInputs)
+	}
+	computes, err := store.ListComputes(context.Background(), "acct-alpha")
+	if err != nil || len(computes) != 1 || computes[0]["zone"] != "ap-shanghai-2" {
+		t.Fatalf("stored computes=%#v err=%v", computes, err)
+	}
+}
+
+func TestStoragePurchaseUsesOwnedComputeZone(t *testing.T) {
+	events := &[]string{}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 97_428_571}}
+	fabric := &monthlyFabric{events: events}
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running",
+		"packageId":     "basic",
+		"billingStatus": "active", "paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+		"providerData": map[string]any{"zone": "ap-shanghai-2"},
+	}))
+	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+
+	missing := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10}`)
+	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "compute_allocation_required") || len(*events) != 0 {
+		t.Fatalf("missing compute response=%d %s events=%#v", missing.Code, missing.Body.String(), *events)
+	}
+	created := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha","workspaceId":"workspace-alpha"}`)
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("storage purchase status=%d body=%s", created.Code, created.Body.String())
+	}
+	if len(fabric.storageInputs) != 1 || fabric.storageInputs[0].ComputeID != "compute-alpha" || fabric.storageInputs[0].Zone != "ap-shanghai-2" || fabric.storageInputs[0].WorkspaceID != "workspace-alpha" {
+		t.Fatalf("storage placement = %#v", fabric.storageInputs)
+	}
+}
+
+func TestStoragePurchaseRejectsPackageMismatchBeforeExternalCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		computePackage string
+		requestPackage string
+	}{
+		{name: "requested package", computePackage: "basic", requestPackage: `,"packageId":"pro"`},
+		{name: "default package", computePackage: "pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := &[]string{}
+			store := newMemoryTableStore()
+			seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+			mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+				"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running",
+				"packageId": tc.computePackage, "billingStatus": "active", "paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339),
+				"providerData": map[string]any{"zone": "ap-shanghai-2"},
+			}))
+			server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, &monthlySub2API{events: events}), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+			response := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha"`+tc.requestPackage+`}`)
+			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "compute_storage_package_mismatch") {
+				t.Fatalf("mismatch response=%d %s", response.Code, response.Body.String())
+			}
+			if len(*events) != 0 {
+				t.Fatalf("package mismatch reached external services: %#v", *events)
+			}
+		})
 	}
 }
 
@@ -414,20 +905,26 @@ func TestPaidResourceRoutesRejectCallerSelectedNewResourceIDsBeforeExternalCalls
 
 func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 92_285_714}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_285_714}}
 	fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
+	fabric.storageInput = clients.StorageVolumeInput{ID: "storage-retained", AccountID: "acct-alpha", WorkspaceID: "workspace-monthly", ComputeID: "compute-retained", Zone: "ap-shanghai-2", SizeGB: 30}
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-retained", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "running", "billingStatus": "active",
+		"paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "providerData": map[string]any{"zone": "ap-shanghai-2"},
+	}))
 	retained := monthlyActiveResource("storage", "storage-retained", time.Now().UTC().Add(-time.Hour))
 	retained["accountId"], retained["ownerUserId"], retained["billingStatus"] = "acct-alpha", "usr-alpha", "retained"
 	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_714_286)
+	retained["computeAllocationId"], retained["zone"] = "compute-retained", "ap-shanghai-2"
 	mustStore(t, store.SaveStorage(context.Background(), retained))
 	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	rec := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"id":"storage-retained","sizeGb":10}`)
+	rec := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"id":"storage-retained","sizeGb":10,"computeAllocationId":"compute-retained"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("retained reactivation status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -463,6 +960,37 @@ func TestCreateUserRequiresAndPersistsSub2APIUserMapping(t *testing.T) {
 	account := findRecord(accounts, "acct-mapped")
 	if account == nil || int64(numberField(account, "sub2apiUserId", 0)) != 41 {
 		t.Fatalf("persisted account mapping = %#v", account)
+	}
+}
+
+func TestCreateUserRejectsSub2APIUserMappedToAnotherAccount(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	events := &[]string{}
+	service := controlplane.NewService(nil, nil, &monthlySub2API{events: events, balances: []int64{0, 0}})
+	for _, input := range []map[string]any{
+		{"email": "one@example.com", "accountId": "acct-one", "role": "owner", "password": "CorrectHorseBatteryStaple!", "sub2apiUserId": float64(41)},
+		{"email": "two@example.com", "accountId": "acct-two", "role": "owner", "password": "CorrectHorseBatteryStaple!", "sub2apiUserId": float64(41)},
+	} {
+		_, err := app.createUser(context.Background(), service, input)
+		if stringValue(input["accountId"]) == "acct-one" && err != nil {
+			t.Fatal(err)
+		}
+		if stringValue(input["accountId"]) == "acct-two" && (err == nil || err.Error() != "sub2api_account_mapping_conflict") {
+			t.Fatalf("duplicate account mapping error = %v", err)
+		}
+	}
+}
+
+func TestSub2APIUserIDRejectsDuplicateStoredMapping(t *testing.T) {
+	store := newMemoryTableStore()
+	store.mu.Lock()
+	store.accounts["acct-one"] = map[string]any{"id": "acct-one", "status": "active", "sub2apiUserId": int64(41)}
+	store.accounts["acct-two"] = map[string]any{"id": "acct-two", "status": "active", "sub2apiUserId": int64(41)}
+	store.mu.Unlock()
+	app := newControlPlaneAppEmpty()
+	app.tables = store
+	if _, err := app.sub2APIUserID(context.Background(), "acct-one"); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
+		t.Fatalf("duplicate stored mapping error = %v", err)
 	}
 }
 
@@ -575,22 +1103,13 @@ func TestStateRouteDegradesWhenSub2APIBalanceIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestMonthlyPurchaseRejectsProBeforeExternalCalls(t *testing.T) {
-	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{1_000_000_000})
-	_, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-pro", BillingOperationID: "billing-pro", AccountID: "acct-monthly", PackageID: "pro", Environment: "test", Now: time.Now().UTC()})
-	if !errors.Is(err, errInvalidPricingInput) || len(sub2API.charges) != 0 || len(fabric.computeIDs) != 0 || len(ledger.receipts) != 0 || len(*events) != 0 {
-		t.Fatalf("pro purchase err=%v charges=%#v computes=%#v receipts=%#v events=%#v", err, sub2API.charges, fabric.computeIDs, ledger.receipts, *events)
-	}
-}
-
 func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000, 100_000_000, 100_000_000, 50_000_000}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 100_000_000, 50_000_000}}
 	fabric := &monthlyFabric{events: events}
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	seedTenantMember(t, store, "acct-beta", "org-beta", "usr-beta", "beta@example.com")
-	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": "acct-beta", "status": "active", "sub2apiUserId": int64(42)}))
 	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
 	if err != nil {
 		t.Fatal(err)
@@ -613,6 +1132,59 @@ func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
 	}
 }
 
+func TestVerificationSlotUsesNormalIdempotentCommercialPurchase(t *testing.T) {
+	events := &[]string{}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 50_000_000, 47_428_571}}
+	fabric := &monthlyFabric{events: events}
+	ledger := &monthlyLedger{events: events}
+	store := newMemoryTableStore()
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+
+	computeBody := `{"packageId":"basic","name":"verification-slot-01"}`
+	compute := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", computeBody)
+	computeReplay := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", computeBody)
+	if compute.Code != http.StatusAccepted || computeReplay.Code != http.StatusAccepted {
+		t.Fatalf("compute=%d %s replay=%d %s", compute.Code, compute.Body.String(), computeReplay.Code, computeReplay.Body.String())
+	}
+	var computeResult, computeReplayResult map[string]any
+	if err := json.NewDecoder(compute.Body).Decode(&computeResult); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(computeReplay.Body).Decode(&computeReplayResult); err != nil {
+		t.Fatal(err)
+	}
+	storageBody := `{"packageId":"basic","sizeGb":10,"name":"verification-slot-01","computeAllocationId":"` + stringValue(computeResult["id"]) + `"}`
+	storage := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", storageBody)
+	storageReplay := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", storageBody)
+	if storage.Code != http.StatusAccepted || storageReplay.Code != http.StatusAccepted {
+		t.Fatalf("storage=%d %s replay=%d %s", storage.Code, storage.Body.String(), storageReplay.Code, storageReplay.Body.String())
+	}
+	var storageResult, storageReplayResult map[string]any
+	if err := json.NewDecoder(storage.Body).Decode(&storageResult); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(storageReplay.Body).Decode(&storageReplayResult); err != nil {
+		t.Fatal(err)
+	}
+
+	if computeResult["id"] != computeReplayResult["id"] || storageResult["id"] != storageReplayResult["id"] || computeResult["name"] != "verification-slot-01" || storageResult["name"] != "verification-slot-01" {
+		t.Fatalf("compute=%#v replay=%#v storage=%#v replay=%#v", computeResult, computeReplayResult, storageResult, storageReplayResult)
+	}
+	if len(sub2API.charges) != 2 || len(fabric.preflightInputs) != 2 || len(fabric.computeIDs) != 1 || len(fabric.storageIDs) != 1 || len(ledger.receipts) != 2 {
+		t.Fatalf("charges=%#v preflights=%#v computes=%#v storages=%#v receipts=%#v", sub2API.charges, fabric.preflightInputs, fabric.computeIDs, fabric.storageIDs, ledger.receipts)
+	}
+	for _, receipt := range ledger.receipts {
+		if receipt.AccountID != "acct-alpha" || receipt.Type != "billing.resource_purchased.v1" {
+			t.Fatalf("verification slot escaped normal tenant receipt: %#v", receipt)
+		}
+	}
+}
+
 func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -627,12 +1199,19 @@ func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			events := &[]string{}
 			initial := int64(100_000_000)
-			sub2API := &monthlySub2API{events: events, balances: []int64{initial, initial, initial, initial, initial - tc.charge}}
+			sub2API := &monthlySub2API{events: events, balances: []int64{initial, initial, initial - tc.charge}}
 			fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
 			ledger := &monthlyLedger{events: events}
 			store := newMemoryTableStore()
 			if err := store.SaveAccount(context.Background(), map[string]any{"id": "acct-alpha", "status": "active", "sub2apiUserId": int64(41)}); err != nil {
 				t.Fatal(err)
+			}
+			if tc.resourceType == "storage" {
+				mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+					"id": "compute-placement", "accountId": "acct-alpha", "workspaceId": "workspace-placement", "packageId": "basic", "status": "running", "billingStatus": "active",
+					"paidThrough": time.Now().UTC().Add(time.Hour).Format(time.RFC3339), "providerData": map[string]any{"zone": "ap-shanghai-2"},
+				}))
+				tc.createBody = `{"sizeGb":10,"computeAllocationId":"compute-placement"}`
 			}
 			server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
 			if err != nil {
@@ -641,7 +1220,7 @@ func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
 			session := tenantAdminSessionForTest(t, server)
 			created := requestWithSession(t, server, session, http.MethodPost, tc.createPath, tc.createBody)
 			if created.Code != http.StatusAccepted {
-				t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+				t.Fatalf("create status=%d body=%s events=%#v", created.Code, created.Body.String(), *events)
 			}
 			var pending map[string]any
 			if err := json.NewDecoder(created.Body).Decode(&pending); err != nil {
@@ -679,17 +1258,17 @@ func TestMonthlyRoutesRejectInactiveEntitlementsBeforeFabric(t *testing.T) {
 	ledger := &monthlyLedger{events: events}
 	store := newMemoryTableStore()
 	now := time.Now().UTC()
-	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-inactive", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "status": "running", "billingStatus": "preparing", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
+	if err := store.SaveCompute(context.Background(), map[string]any{"id": "compute-inactive", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "running", "billingStatus": "preparing", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveStorage(context.Background(), map[string]any{"id": "storage-active", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "status": "available", "billingStatus": "active", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
+	if err := store.SaveStorage(context.Background(), map[string]any{"id": "storage-active", "accountId": "acct-alpha", "workspaceId": "workspace-monthly", "packageId": "basic", "status": "available", "billingStatus": "active", "paidThrough": now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), store)
 	if err != nil {
 		t.Fatalf("new monthly server: %v", err)
 	}
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
 	attachment := requestWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"workspace-monthly","computeAllocationId":"compute-inactive","storageId":"storage-active"}`)
 	if attachment.Code != http.StatusConflict || !strings.Contains(attachment.Body.String(), "monthly_entitlement_inactive") {
 		t.Fatalf("attachment status = %d: %s", attachment.Code, attachment.Body.String())

@@ -62,6 +62,10 @@ func (s *memoryTableStore) ListAccounts(_ context.Context, accountID string) ([]
 func (s *memoryTableStore) SaveAccount(_ context.Context, row map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	accounts, _ := filteredRecords(s.accounts, "")
+	if err := validateSub2APIAccountMapping(accounts, row); err != nil {
+		return err
+	}
 	s.accounts[stringValue(row["id"])] = cloneMap(row)
 	return nil
 }
@@ -316,6 +320,9 @@ func (s *memoryTableStore) ClaimResourceBillingOperation(_ context.Context, reso
 		return cloneMap(existing), false, errBillingOperationInProgress
 	}
 	claimed := mergeMaps(existing, row)
+	if lastReceiptID, reset := row["lastReceiptId"].(string); reset && lastReceiptID == "" {
+		claimed["lastReceiptId"] = ""
+	}
 	records[id] = claimed
 	return cloneMap(claimed), true, nil
 }
@@ -357,11 +364,55 @@ func (s *memoryTableStore) SaveWorkspace(_ context.Context, row map[string]any) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row = cloneMap(row)
+	if _, ok := row["customerProduct"]; !ok {
+		row["customerProduct"] = true
+	}
 	access, _ := row["access"].(map[string]any)
 	access = cloneMap(access)
 	delete(access, "password")
 	row["access"] = access
 	s.workspaces[stringValue(row["id"])] = row
+	return nil
+}
+
+func (s *memoryTableStore) ClaimWorkspaceCreate(_ context.Context, workspace map[string]any, operation map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+	if accountID == "" || stringValue(workspace["id"]) == "" || stringValue(operation["id"]) == "" {
+		return errors.New("invalid_workspace_create_claim")
+	}
+	for index, existing := range s.runtimeOps {
+		if stringValue(existing["id"]) != stringValue(operation["id"]) {
+			continue
+		}
+		current, currentErr := decodeWorkspaceCreateOperation(existing)
+		claim, claimErr := decodeWorkspaceCreateOperation(operation)
+		if currentErr != nil || claimErr != nil || current.RequestHash != claim.RequestHash || current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID {
+			return errPrimaryWorkspaceExists
+		}
+		status := stringValue(existing["status"])
+		if status != "retryable" && (status != "started" || current.LeaseExpiresAt != nil && current.LeaseExpiresAt.After(time.Now().UTC())) {
+			return errPrimaryWorkspaceExists
+		}
+		persisted := s.workspaces[stringValue(workspace["id"])]
+		if persisted == nil || firstNonEmpty(stringValue(persisted["accountId"]), stringValue(persisted["ownerAccountId"])) != accountID {
+			return errPrimaryWorkspaceExists
+		}
+		s.runtimeOps[index] = cloneMap(operation)
+		return nil
+	}
+	for _, existing := range s.workspaces {
+		if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) == accountID {
+			return errPrimaryWorkspaceExists
+		}
+	}
+	workspace = cloneMap(workspace)
+	if _, ok := workspace["customerProduct"]; !ok {
+		workspace["customerProduct"] = true
+	}
+	s.workspaces[stringValue(workspace["id"])] = workspace
+	s.runtimeOps = append(s.runtimeOps, cloneMap(operation))
 	return nil
 }
 

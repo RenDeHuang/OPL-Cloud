@@ -1,7 +1,7 @@
 import React from "react";
 import { Alert, Button, Empty, Typography } from "antd";
-import { Eye, EyeOff, Headphones, Link as LinkIcon, WalletCards } from "lucide-react";
-import { getWorkspaceRuntimeStatus } from "../../api/workspaces-api.ts";
+import { Eye, EyeOff, Headphones, KeyRound, Link as LinkIcon, RefreshCw, WalletCards } from "lucide-react";
+import { getWorkspaceRuntimeStatus, rotateWorkspaceGatewaySecret } from "../../api/workspaces-api.ts";
 import { navigate, routeTo } from "../../consoleRoutes.ts";
 import {
   ActionGroup,
@@ -13,6 +13,10 @@ import {
 import { mergeWorkspaceRuntime, moneyCents, packageText, paidThrough, statusColor, statusLabel, usdMicros, valueLabel, workspaceAccessLabel, workspaceAccessTone, workspaceOpenActionLabel, workspaceUrlReady } from "../shared/formatters.ts";
 
 type AnyRecord = Record<string, any>;
+
+const RUNTIME_POLL_INTERVAL_MS = 10_000;
+const RUNTIME_POLL_MAX_ATTEMPTS = 30;
+const terminalRuntimeStates = new Set(["failed", "suspended", "data_deleted", "unrecoverable", "storage_missing", "destroyed"]);
 
 function toneForStatus(value) {
   const color = statusColor(value);
@@ -34,25 +38,50 @@ function workspaceCredential(workspace: AnyRecord = {}) {
   };
 }
 
-export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: any) {
+export function WorkspaceDetailPage({ selected, selectedPlan, state, session, runAction }: any) {
   const [runtimeStatus, setRuntimeStatus] = React.useState<AnyRecord | null>(null);
   const [showPassword, setShowPassword] = React.useState(false);
+  const [pollAttempts, setPollAttempts] = React.useState(0);
+  const [pollError, setPollError] = React.useState("");
+  const [pollRun, setPollRun] = React.useState(0);
+  const [gatewaySyncPending, setGatewaySyncPending] = React.useState(false);
+  const [gatewaySyncResult, setGatewaySyncResult] = React.useState<AnyRecord | null>(null);
+  const gatewaySyncKey = React.useRef(crypto.randomUUID());
   React.useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    let attempts = 0;
     setRuntimeStatus(null);
     setShowPassword(false);
-    if (!selected?.id || ["suspended", "data_deleted", "unrecoverable", "storage_missing", "destroyed"].includes(selected.state)) {
+    setPollAttempts(0);
+    setPollError("");
+    if (!selected?.id) {
+      return () => { active = false; };
+    }
+    if (terminalRuntimeStates.has(selected.state)) {
+      setPollError(selected.safeMessage || selected.errorCode || `Runtime 已停止：${selected.state}`);
       return () => { active = false; };
     }
     const poll = async () => {
+      attempts += 1;
+      setPollAttempts(attempts);
       try {
         const current = await getWorkspaceRuntimeStatus({ workspaceId: selected.id }, session.csrfToken);
         if (!active) return;
         setRuntimeStatus(current);
-        if (!current.ready) timer = window.setTimeout(poll, 10_000);
-      } catch {
-        if (active) timer = window.setTimeout(poll, 10_000);
+        if (current.ready === true) return;
+        const status = current.status || current.state;
+        if (terminalRuntimeStates.has(status)) {
+          setPollError(current.safeMessage || current.errorCode || `Runtime 启动失败：${status}`);
+          return;
+        }
+        if (attempts >= RUNTIME_POLL_MAX_ATTEMPTS) {
+          setPollError("等待已超过 5 分钟，请检查 Runtime 状态后手动重试。");
+          return;
+        }
+        timer = window.setTimeout(poll, RUNTIME_POLL_INTERVAL_MS);
+      } catch (err) {
+        if (active) setPollError(err.message || "runtime_status_unavailable");
       }
     };
     void poll();
@@ -60,7 +89,7 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: 
       active = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [selected?.id, selected?.state, session.csrfToken]);
+  }, [selected?.id, selected?.state, session.csrfToken, pollRun]);
 
   if (!selected) {
     return (
@@ -74,7 +103,29 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: 
   const computeId = workspace.currentComputeAllocationId || workspace.computeAllocationId;
   const compute = (state.computeAllocations || []).find((item) => item.id === computeId) || {};
   const storage = (state.storageVolumes || []).find((item) => item.id === workspace.storageId) || {};
+  const canRotateGateway = session.user?.role === "owner"
+    && (workspace.ownerUserId || workspace.ownerId) === session.user?.id;
   const supportPath = `${routeTo("support.create")}?category=Workspace&resourceId=${encodeURIComponent(workspace.id)}&operationId=${encodeURIComponent(workspace.currentAttachmentId || workspace.currentComputeAllocationId || "")}`;
+
+  async function syncGatewaySecret() {
+    if (gatewaySyncPending) return;
+    setGatewaySyncPending(true);
+    const result = await runAction(
+      () => rotateWorkspaceGatewaySecret(
+        { workspaceId: workspace.id, reason: "owner-request" },
+        session.csrfToken,
+        gatewaySyncKey.current
+      ),
+      "Gateway Key 已同步",
+      { returnFailure: true, actionKey: gatewaySyncKey.current }
+    );
+    setGatewaySyncResult(result);
+    if (result?.ok !== false && result?.status === "succeeded") {
+      gatewaySyncKey.current = crypto.randomUUID();
+    }
+    setGatewaySyncPending(false);
+  }
+
   return (
     <ConsoleSurface
       title={workspace.name}
@@ -89,12 +140,20 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: 
           actions={<StatusPill label={workspaceAccessLabel(workspace)} tone={workspaceAccessTone(workspace)} />}
         >
           <div className="stackList">
-            {!workspaceUrlReady(workspace) && workspace.accessState === "distributing" && (
+            {pollError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="Runtime 尚未就绪"
+                description={pollError}
+                action={<Button onClick={() => setPollRun((value) => value + 1)}>手动重试</Button>}
+              />
+            ) : !workspaceUrlReady(workspace) && workspace.accessState === "distributing" && (
               <Alert
                 type="info"
                 showIcon
-                message="正在分发 Docker"
-                description="访问 URL 已生成，Runtime 仍在部署。通常需要 3-5 分钟，请稍后再打开。"
+                message="Runtime 正在启动"
+                description={`每 10 秒检查一次（${pollAttempts}/${RUNTIME_POLL_MAX_ATTEMPTS}），就绪或失败后自动停止。`}
               />
             )}
             <div className="credentialStack">
@@ -139,6 +198,35 @@ export function WorkspaceDetailPage({ selected, selectedPlan, state, session }: 
           />
         </InsightPanel>
       </div>
+
+      {canRotateGateway && (
+        <InsightPanel
+          title="Gateway Key"
+          eyebrow="Owner 操作"
+          actions={<StatusPill label={gatewaySyncResult?.status || "可同步"} tone={gatewaySyncResult?.status === "succeeded" ? "good" : gatewaySyncResult?.ok === false ? "danger" : "info"} />}
+        >
+          <ResourceSplit items={[
+            { label: "状态", value: gatewaySyncResult?.status || "未同步", meta: "账户范围", status: workspace.openable ? "可操作" : "Workspace 未就绪", tone: workspace.openable ? "good" : "warn" },
+            { label: "Fingerprint", value: gatewaySyncResult?.fingerprint || "-", meta: "最近同步结果", status: "SHA-256", tone: "info" }
+          ]} />
+          {gatewaySyncResult?.ok === false && <Alert type="error" showIcon message="Gateway Key 同步失败" description={gatewaySyncResult.failureReason || gatewaySyncResult.status} />}
+          <ActionGroup actions={[
+            {
+              label: "同步/轮换 Gateway Key",
+              icon: <KeyRound size={15} />,
+              disabled: !workspace.openable,
+              loading: gatewaySyncPending,
+              onClick: syncGatewaySecret
+            },
+            gatewaySyncResult?.ok === false && {
+              label: "重试同一请求",
+              icon: <RefreshCw size={15} />,
+              disabled: !workspace.openable,
+              onClick: syncGatewaySecret
+            }
+          ].filter(Boolean)} />
+        </InsightPanel>
+      )}
     </ConsoleSurface>
   );
 }

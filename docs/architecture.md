@@ -5,13 +5,15 @@
 ```text
 Browser Console
   -> Control Plane product API
-       -> Sub2API management API: live balance and exact adjustment
+       -> Sub2API management API: live balance, account Key/usage, idempotent debit/refund
        -> Fabric API: CVM, CBS, attachment, runtime, provider facts
        -> Ledger API: receipts and review evidence
 ```
 
 Sub2API is external and remains the only spendable-balance, API-key, routing,
-and request-usage owner. The repository does not mirror those records.
+and request-usage owner. The repository reads those records on demand and does
+not mirror them. Its code, image, database, configuration, and deployment remain
+outside this repository's mutation boundary.
 
 ## Service Ownership
 
@@ -52,10 +54,17 @@ dual write, historical billing schema, or old-state importer.
 
 ## Resource And Billing State
 
-Fabric preparation happens before the external charge. Control Plane persists a
-stable billing operation and redeem code before side effects. Only a confirmed
-Sub2API adjustment activates the monthly entitlement. Ledger receipt failure is
-retryable and does not reverse a confirmed charge.
+Sub2API v0.1.156 has no generic hold/capture API. The approved launch path must
+validate the account and quote, run read-only provider preflight, confirm balance,
+and debit the exact monthly amount before Fabric mutates provider resources. It
+then claims every PREPAID CVM/CBS fact and may activate the entitlements. A
+confirmed zero-resource result permits one idempotent refund; partial or unknown
+provider results enter manual review without refund or repurchase. Ledger receipt
+failure retries only the receipt.
+
+The current implementation still prepares Fabric before a direct Sub2API debit.
+That path is an explicit delivery gap, not an approved settlement protocol;
+`docs/invariants.md` and the launch freeze contract define its replacement.
 
 All attachment and Workspace runtime operations require an active entitlement.
 Compute expiration destroys compute; storage expiration retains data but blocks
@@ -83,11 +92,16 @@ persisted Workspace state becomes `running`.
 Fabric runs the Workspace image in `cloud` deployment mode with `password`
 authentication. Fabric derives the runtime password and session secret from a
 stable per-Workspace credential seed and stores them in a Kubernetes Secret.
+Control Plane resolves exactly one active account-owned `opl-workspace` Sub2API
+Key and hands it transiently to Fabric; Fabric writes or rotates an account-scoped
+Kubernetes Secret and records only its ref, version, and fingerprint.
 The authorized runtime-status command returns the password transiently; Control
 Plane never persists it, and Console retains it only in Workspace detail
-component memory. Production currently selects the Workspace image through a
-mutable `latest` tag, so the exact deployed digest-to-source revision remains
-unverified.
+component memory. The V2 target pins source
+`ghcr.io/gaofeng21cn/one-person-lab-webui:26.7.13` at digest
+`sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76`,
+mirrors it to TCR, and deploys only a target `repository@sha256`. Production
+currently still uses a mutable tag, so this remains a delivery gap.
 
 This is a real exception to the Control Plane product-command boundary: it
 carries Workspace HTML, API, and WebSocket data-plane traffic. The available
@@ -116,8 +130,9 @@ security-model change is authorized by this document.
 
 Production runs Control Plane, Fabric, and Ledger as separate Kubernetes
 Deployments. Secrets are Kubernetes Secret references, configuration is a shared
-ConfigMap, and the deploy workflow waits for all three rollouts. The single paid
-production verifier uses the public Console product chain.
+ConfigMap, and the deploy workflow waits for all three rollouts. The legacy paid
+production verifier is blocked by `docs/invariants.md` and is not a release gate;
+its approved replacement reuses a fixed prepaid Verification Slot.
 
 Control Plane remains one Pod. Its opt-in PostgreSQL capacity gate covers 1,000
 accounts/resources, 100 concurrent Console requests, 20 concurrent resource

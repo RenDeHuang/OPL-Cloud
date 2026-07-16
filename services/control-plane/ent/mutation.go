@@ -20667,6 +20667,8 @@ type WorkspaceMutation struct {
 	credential_version            *string
 	credential_secret_ref         *string
 	access_requires_login         *bool
+	verification_slot_id          *string
+	customer_product              *bool
 	clearedFields                 map[string]struct{}
 	done                          bool
 	oldValue                      func(context.Context) (*Workspace, error)
@@ -21641,6 +21643,78 @@ func (m *WorkspaceMutation) ResetAccessRequiresLogin() {
 	m.access_requires_login = nil
 }
 
+// SetVerificationSlotID sets the "verification_slot_id" field.
+func (m *WorkspaceMutation) SetVerificationSlotID(s string) {
+	m.verification_slot_id = &s
+}
+
+// VerificationSlotID returns the value of the "verification_slot_id" field in the mutation.
+func (m *WorkspaceMutation) VerificationSlotID() (r string, exists bool) {
+	v := m.verification_slot_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVerificationSlotID returns the old "verification_slot_id" field's value of the Workspace entity.
+// If the Workspace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WorkspaceMutation) OldVerificationSlotID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVerificationSlotID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVerificationSlotID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVerificationSlotID: %w", err)
+	}
+	return oldValue.VerificationSlotID, nil
+}
+
+// ResetVerificationSlotID resets all changes to the "verification_slot_id" field.
+func (m *WorkspaceMutation) ResetVerificationSlotID() {
+	m.verification_slot_id = nil
+}
+
+// SetCustomerProduct sets the "customer_product" field.
+func (m *WorkspaceMutation) SetCustomerProduct(b bool) {
+	m.customer_product = &b
+}
+
+// CustomerProduct returns the value of the "customer_product" field in the mutation.
+func (m *WorkspaceMutation) CustomerProduct() (r bool, exists bool) {
+	v := m.customer_product
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCustomerProduct returns the old "customer_product" field's value of the Workspace entity.
+// If the Workspace object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *WorkspaceMutation) OldCustomerProduct(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCustomerProduct is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCustomerProduct requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCustomerProduct: %w", err)
+	}
+	return oldValue.CustomerProduct, nil
+}
+
+// ResetCustomerProduct resets all changes to the "customer_product" field.
+func (m *WorkspaceMutation) ResetCustomerProduct() {
+	m.customer_product = nil
+}
+
 // Where appends a list predicates to the WorkspaceMutation builder.
 func (m *WorkspaceMutation) Where(ps ...predicate.Workspace) {
 	m.predicates = append(m.predicates, ps...)
@@ -21675,7 +21749,7 @@ func (m *WorkspaceMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *WorkspaceMutation) Fields() []string {
-	fields := make([]string, 0, 24)
+	fields := make([]string, 0, 26)
 	if m.created_at != nil {
 		fields = append(fields, workspace.FieldCreatedAt)
 	}
@@ -21748,6 +21822,12 @@ func (m *WorkspaceMutation) Fields() []string {
 	if m.access_requires_login != nil {
 		fields = append(fields, workspace.FieldAccessRequiresLogin)
 	}
+	if m.verification_slot_id != nil {
+		fields = append(fields, workspace.FieldVerificationSlotID)
+	}
+	if m.customer_product != nil {
+		fields = append(fields, workspace.FieldCustomerProduct)
+	}
 	return fields
 }
 
@@ -21804,6 +21884,10 @@ func (m *WorkspaceMutation) Field(name string) (ent.Value, bool) {
 		return m.CredentialSecretRef()
 	case workspace.FieldAccessRequiresLogin:
 		return m.AccessRequiresLogin()
+	case workspace.FieldVerificationSlotID:
+		return m.VerificationSlotID()
+	case workspace.FieldCustomerProduct:
+		return m.CustomerProduct()
 	}
 	return nil, false
 }
@@ -21861,6 +21945,10 @@ func (m *WorkspaceMutation) OldField(ctx context.Context, name string) (ent.Valu
 		return m.OldCredentialSecretRef(ctx)
 	case workspace.FieldAccessRequiresLogin:
 		return m.OldAccessRequiresLogin(ctx)
+	case workspace.FieldVerificationSlotID:
+		return m.OldVerificationSlotID(ctx)
+	case workspace.FieldCustomerProduct:
+		return m.OldCustomerProduct(ctx)
 	}
 	return nil, fmt.Errorf("unknown Workspace field %s", name)
 }
@@ -22038,6 +22126,20 @@ func (m *WorkspaceMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAccessRequiresLogin(v)
 		return nil
+	case workspace.FieldVerificationSlotID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVerificationSlotID(v)
+		return nil
+	case workspace.FieldCustomerProduct:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCustomerProduct(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Workspace field %s", name)
 }
@@ -22158,6 +22260,12 @@ func (m *WorkspaceMutation) ResetField(name string) error {
 		return nil
 	case workspace.FieldAccessRequiresLogin:
 		m.ResetAccessRequiresLogin()
+		return nil
+	case workspace.FieldVerificationSlotID:
+		m.ResetVerificationSlotID()
+		return nil
+	case workspace.FieldCustomerProduct:
+		m.ResetCustomerProduct()
 		return nil
 	}
 	return fmt.Errorf("unknown Workspace field %s", name)

@@ -50,6 +50,7 @@ test("workspace and support click targets are route/action registry backed", () 
     "workspace.create",
     "workspace.detail",
     "workspace.openUrl",
+    "workspace.gatewaySecret.rotate",
     "billing.overview",
     "support.create",
     "support.detail",

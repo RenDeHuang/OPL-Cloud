@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
+	"opl-cloud/services/control-plane/internal/domain"
 )
 
 func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
@@ -92,6 +93,89 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeJSON(w, http.StatusOK, workspaceRuntimeStatusResponse(runtime))
 	}))
+	mux.HandleFunc("POST /api/workspaces/{workspaceId}/gateway-secret/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		input := decodeJSON(r)
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		workspaceID := r.PathValue("workspaceId")
+		workspace, ok := app.getWorkspace(workspaceID)
+		if !ok {
+			writeError(w, http.StatusNotFound, "workspace_not_found")
+			return
+		}
+		if !app.canAccessResource(r, workspace) {
+			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		user, ok := app.sessionUserContext(r)
+		if !ok || stringValue(user["role"]) != "owner" || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
+			writeError(w, http.StatusForbidden, "workspace_owner_required")
+			return
+		}
+		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+		unlock := app.lockResource("gateway-secret", accountID)
+		defer unlock()
+		workspace, ok = app.getWorkspace(workspaceID)
+		if !ok || !app.canAccessResource(r, workspace) || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
+			writeError(w, http.StatusForbidden, "workspace_owner_required")
+			return
+		}
+		if app.workspaceResponse(cloneMap(workspace))["openable"] != true {
+			writeError(w, http.StatusConflict, "workspace_not_running")
+			return
+		}
+		requestHash := stableID(accountID, workspaceID, string(mustJSON(input)))
+		operationID := "gateway-secret-" + stableID(workspaceID, key)[:18]
+		operations, err := app.tables.ListRuntimeOperations(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		for _, operation := range operations {
+			if stringValue(operation["id"]) != operationID {
+				continue
+			}
+			if stringValue(operation["accountId"]) != accountID || stringValue(operation["workspaceId"]) != workspaceID || stringValue(operation["action"]) != "workspace.gateway_secret.rotate" {
+				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+				return
+			}
+			result, err := decodeWorkspaceGatewaySecretOperation(operation)
+			if err != nil || stringValue(operation["status"]) != "succeeded" {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			if result.RequestHash != requestHash {
+				writeError(w, http.StatusConflict, errIdempotencyConflict.Error())
+				return
+			}
+			w.Header().Set("Cache-Control", "private, no-store")
+			writeJSON(w, http.StatusOK, map[string]any{"operationId": operationID, "workspaceId": workspaceID, "status": "succeeded", "secretRef": result.SecretRef, "fingerprint": result.Fingerprint})
+			return
+		}
+		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
+		secret, err := service.SyncWorkspaceGatewaySecret(r.Context(), accountID, sub2APIUserID, operationID)
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
+		}
+		result := workspaceGatewaySecretOperationResult{RequestHash: requestHash, SecretRef: secret.SecretRef, Fingerprint: secret.Fingerprint}
+		operation := map[string]any{
+			"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID,
+			"resourceId": workspaceID, "resourceKind": "gateway_secret", "action": "workspace.gateway_secret.rotate",
+			"provider": "tencent-tke", "status": "succeeded", "result": encodeWorkspaceGatewaySecretOperation(result),
+		}
+		if err := app.tables.SaveRuntimeOperation(r.Context(), operation); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"operationId": operationID, "workspaceId": workspaceID, "status": "succeeded", "secretRef": result.SecretRef, "fingerprint": result.Fingerprint})
+	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/resume", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		workspaceID := r.PathValue("workspaceId")
@@ -102,6 +186,11 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		if !app.canAccessResource(r, workspace) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		user, ok := app.sessionUserContext(r)
+		if !ok || stringValue(user["role"]) != "owner" || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
+			writeError(w, http.StatusForbidden, "workspace_owner_required")
 			return
 		}
 		key, ok := executionMutationKey(w, r)
@@ -132,9 +221,35 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				writeJSON(w, http.StatusOK, result.Response)
 				return
 			}
+			if stringValue(operation["status"]) == "receipt_pending" && result.Workspace != nil {
+				before := cloneMap(workspace)
+				resumed, err := service.RecordWorkspaceResumedReceipt(r.Context(), *result.Workspace, key)
+				if err != nil {
+					writeUpstreamError(w, err)
+					return
+				}
+				workspace = applyWorkspaceRuntimeProjection(workspace, resumed)
+				body := app.workspaceResponse(cloneMap(workspace))
+				result.LeaseExpiresAt = nil
+				result.Response, result.Workspace = body, &resumed
+				operation = cloneMap(operation)
+				operation["status"] = "succeeded"
+				operation["result"] = encodeWorkspaceResumeOperation(result)
+				audit := app.auditEvent(r, "workspace.resume", "workspace", workspaceID, firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])), before, body, "succeeded")
+				if err := app.tables.CommitWorkspaceResume(r.Context(), workspace, audit, operation); err != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
+				writeJSON(w, http.StatusOK, body)
+				return
+			}
 			break
 		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
 		storageID := stringValue(workspace["storageId"])
 		computeID := stringField(input, "computeAllocationId", "")
 		attachmentID := stringField(input, "attachmentId", "")
@@ -199,7 +314,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusConflict, "workspace_not_suspended")
 			return
 		}
-		resumed, err := service.ResumeWorkspace(r.Context(), controlplane.ResumeWorkspaceInput{WorkspaceID: workspaceID, AccountID: accountID, OwnerID: stringValue(workspace["ownerUserId"]), Name: stringValue(workspace["name"]), PackageID: stringValue(workspace["packageId"]), URL: stringValue(workspace["url"]), AttachmentID: attachmentID, ComputeID: computeID, VolumeID: storageID}, key)
+		resumed, err := service.PrepareWorkspaceResume(r.Context(), controlplane.ResumeWorkspaceInput{WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID, OwnerID: stringValue(workspace["ownerUserId"]), Name: stringValue(workspace["name"]), PackageID: stringValue(workspace["packageId"]), URL: stringValue(workspace["url"]), AttachmentID: attachmentID, ComputeID: computeID, VolumeID: storageID}, key)
 		if err != nil {
 			if failErr := app.tables.FailWorkspaceResume(r.Context(), workspaceID, operationID, "fabric_resume_failed"); failErr != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
@@ -208,32 +323,25 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeUpstreamError(w, err)
 			return
 		}
-		workspace["state"], workspace["status"] = resumed.Status, resumed.Status
-		workspace["computeAllocationId"], workspace["currentComputeAllocationId"] = resumed.ComputeID, resumed.ComputeID
-		workspace["attachmentId"], workspace["currentAttachmentId"] = resumed.AttachmentID, resumed.AttachmentID
-		workspace["runtimeId"] = resumed.RuntimeID
-		workspace["runtime"] = map[string]any{"serviceName": resumed.RuntimeServiceName, "status": resumed.Status, "ready": resumed.RuntimeReady}
-		workspace["runtimeServiceName"], workspace["serviceName"] = resumed.RuntimeServiceName, resumed.RuntimeServiceName
-		workspace["receiptId"] = resumed.ReceiptID
-		workspace["url"] = resumed.URL
-		access := cloneMap(mapField(workspace, "access"))
-		delete(access, "tokenStatus")
-		delete(access, "requiresLogin")
-		if resumed.RuntimeUsername != "" {
-			access["account"], access["username"] = resumed.RuntimeUsername, resumed.RuntimeUsername
+		resumed, err = service.RecordWorkspaceResumedReceipt(r.Context(), resumed, key)
+		if err != nil {
+			workspace = applyWorkspaceRuntimeProjection(workspace, resumed)
+			body := app.workspaceResponse(cloneMap(workspace))
+			operation := map[string]any{"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID, "resourceId": workspaceID, "resourceKind": "workspace_runtime", "action": "workspace.resume", "provider": stringValue(workspace["provider"]), "providerRequestId": resumed.RuntimeID, "status": "receipt_pending", "result": encodeWorkspaceResumeOperation(workspaceResumeOperationResult{RequestHash: requestHash, Response: body, Workspace: &resumed}), "computeAllocationId": resumed.ComputeID, "storageId": resumed.VolumeID, "attachmentId": resumed.AttachmentID, "runtimeServiceName": resumed.RuntimeServiceName}
+			if saveErr := app.tables.SaveRuntimeOperation(r.Context(), operation); saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			if saveErr := app.tables.SaveWorkspace(r.Context(), workspace); saveErr != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			writeUpstreamError(w, err)
+			return
 		}
-		if resumed.CredentialStatus != "" {
-			access["credentialStatus"] = resumed.CredentialStatus
-		}
-		if resumed.CredentialVersion != "" {
-			access["credentialVersion"] = resumed.CredentialVersion
-		}
-		if resumed.CredentialSecretRef != "" {
-			access["secretRef"] = resumed.CredentialSecretRef
-		}
-		workspace["access"] = access
-		body := workspaceResponse(cloneMap(workspace))
-		operation := map[string]any{"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID, "resourceId": workspaceID, "resourceKind": "workspace_runtime", "action": "workspace.resume", "provider": stringValue(workspace["provider"]), "providerRequestId": resumed.RuntimeID, "status": "succeeded", "result": encodeWorkspaceResumeOperation(workspaceResumeOperationResult{RequestHash: requestHash, Response: body}), "computeAllocationId": resumed.ComputeID, "storageId": resumed.VolumeID, "attachmentId": resumed.AttachmentID, "runtimeServiceName": resumed.RuntimeServiceName}
+		workspace = applyWorkspaceRuntimeProjection(workspace, resumed)
+		body := app.workspaceResponse(cloneMap(workspace))
+		operation := map[string]any{"id": operationID, "operationId": operationID, "accountId": accountID, "workspaceId": workspaceID, "resourceId": workspaceID, "resourceKind": "workspace_runtime", "action": "workspace.resume", "provider": stringValue(workspace["provider"]), "providerRequestId": resumed.RuntimeID, "status": "succeeded", "result": encodeWorkspaceResumeOperation(workspaceResumeOperationResult{RequestHash: requestHash, Response: body, Workspace: &resumed}), "computeAllocationId": resumed.ComputeID, "storageId": resumed.VolumeID, "attachmentId": resumed.AttachmentID, "runtimeServiceName": resumed.RuntimeServiceName}
 		audit := app.auditEvent(r, "workspace.resume", "workspace", workspaceID, accountID, before, body, "succeeded")
 		if err := app.tables.CommitWorkspaceResume(r.Context(), workspace, audit, operation); err != nil {
 			_ = app.tables.FailWorkspaceResume(r.Context(), workspaceID, operationID, "resume_commit_failed")
@@ -248,6 +356,12 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		if !ok {
 			return
 		}
+		user, ok := app.sessionUserContext(r)
+		if !ok || stringValue(user["role"]) != "owner" {
+			writeError(w, http.StatusForbidden, "workspace_owner_required")
+			return
+		}
+		ownerID := stringValue(user["id"])
 		attachmentID := stringField(input, "attachmentId", "")
 		attachment, ok := app.getAttachment(attachmentID)
 		if !ok {
@@ -275,28 +389,194 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			}
 			return
 		}
-		workspace, err := service.CreateWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
-			AccountID:    accountID,
-			OwnerID:      firstNonEmpty(stringField(input, "ownerId", ""), stringField(input, "ownerUserId", "")),
-			Name:         firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace")),
-			PackageID:    firstNonEmpty(stringField(input, "packageId", ""), stringValue(attachment["packageId"]), "basic"),
-			AttachmentID: attachmentID,
-			ComputeID:    computeID,
-			VolumeID:     storageID,
-		}, mutationKey(r, input))
+		workspaceID := stringValue(attachment["workspaceId"])
+		packageID := stringValue(compute["packageId"])
+		if workspaceID == "" || stringValue(compute["workspaceId"]) != workspaceID || stringValue(storage["workspaceId"]) != workspaceID ||
+			packageID == "" || stringValue(storage["packageId"]) != packageID || (stringValue(attachment["packageId"]) != "" && stringValue(attachment["packageId"]) != packageID) {
+			writeError(w, http.StatusConflict, "compute_storage_workspace_mismatch")
+			return
+		}
+		name := firstNonEmpty(stringField(input, "name", ""), stringField(input, "workspaceName", "Workspace"))
+		requestHash := stableID(accountID, ownerID, name, packageID, attachmentID, computeID, storageID)
+		operationID := "create-" + stableID(workspaceID)[:18]
+		idempotencyKey := "workspace-create:" + workspaceID
+		operations, err := app.tables.ListRuntimeOperations(r.Context())
 		if err != nil {
-			writeUpstreamError(w)
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		var workspace domain.WorkspaceProjection
+		retryReceipt, retryPrepare := false, false
+		for _, operation := range operations {
+			if stringValue(operation["id"]) != operationID {
+				continue
+			}
+			result, err := decodeWorkspaceCreateOperation(operation)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			if result.RequestHash != requestHash {
+				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+				return
+			}
+			switch stringValue(operation["status"]) {
+			case "succeeded":
+				if err := app.saveWorkspaceProjection(result.Workspace); err != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
+				writeJSON(w, http.StatusCreated, app.workspaceResponse(structToMap(result.Workspace)))
+				return
+			case "receipt_pending":
+				workspace, retryReceipt = result.Workspace, true
+			case "started":
+				if result.LeaseExpiresAt != nil && result.LeaseExpiresAt.After(time.Now().UTC()) {
+					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+					return
+				}
+				workspace, retryPrepare = result.Workspace, true
+			case "retryable":
+				workspace, retryPrepare = result.Workspace, true
+			default:
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			break
+		}
+		if retryReceipt {
+			if err := app.saveWorkspaceProjection(workspace); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			workspace, err = service.RecordWorkspaceCreatedReceipt(r.Context(), workspace, idempotencyKey)
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
+		} else {
+			if !retryPrepare {
+				if existing, exists := app.getWorkspace(workspaceID); exists {
+					if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != accountID ||
+						stringValue(existing["attachmentId"]) != attachmentID || firstNonEmpty(stringValue(existing["computeAllocationId"]), stringValue(existing["currentComputeAllocationId"])) != computeID ||
+						stringValue(existing["storageId"]) != storageID || stringValue(existing["name"]) != name || stringValue(existing["packageId"]) != packageID ||
+						firstNonEmpty(stringValue(existing["ownerId"]), stringValue(existing["ownerUserId"])) != ownerID {
+						writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
+					return
+				}
+				workspace = domain.WorkspaceProjection{
+					ID: workspaceID, AccountID: accountID, OwnerID: ownerID, Name: name, PackageID: packageID, Status: "provisioning",
+					ComputeID: computeID, VolumeID: storageID, AttachmentID: attachmentID,
+				}
+			}
+			leaseExpiresAt := time.Now().UTC().Add(2 * time.Minute)
+			claimResult := workspaceCreateOperationResult{RequestHash: requestHash, LeaseExpiresAt: &leaseExpiresAt, Workspace: workspace}
+			claimOperation := workspaceCreateOperationRow(operationID, "started", claimResult)
+			if err := app.tables.ClaimWorkspaceCreate(r.Context(), workspaceProjectionRow(workspace), claimOperation); err != nil {
+				if errors.Is(err, errPrimaryWorkspaceExists) {
+					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+			if !ok {
+				claimResult.LeaseExpiresAt = nil
+				_ = app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "retryable", claimResult))
+				return
+			}
+			prepared, err := service.PrepareWorkspace(r.Context(), controlplane.CreateWorkspaceInput{
+				WorkspaceID:   workspaceID,
+				AccountID:     accountID,
+				Sub2APIUserID: sub2APIUserID,
+				OwnerID:       ownerID,
+				Name:          name,
+				PackageID:     packageID,
+				AttachmentID:  attachmentID,
+				ComputeID:     computeID,
+				VolumeID:      storageID,
+			}, idempotencyKey)
+			if err != nil {
+				claimResult.LeaseExpiresAt = nil
+				if saveErr := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "retryable", claimResult)); saveErr != nil {
+					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+					return
+				}
+				writeUpstreamError(w, err)
+				return
+			}
+			workspace = prepared
+			result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace}
+			if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "receipt_pending", result)); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			if err := app.saveWorkspaceProjection(workspace); err != nil {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				return
+			}
+			workspace, err = service.RecordWorkspaceCreatedReceipt(r.Context(), workspace, idempotencyKey)
+			if err != nil {
+				writeUpstreamError(w, err)
+				return
+			}
+		}
+		result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace}
+		if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "succeeded", result)); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		if err := app.saveWorkspaceProjection(workspace); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		body := workspaceResponse(structToMap(workspace))
+		body := app.workspaceResponse(structToMap(workspace))
 		if err := app.appendAuditEvent(r, "workspace.create", "workspace", workspace.ID, workspace.AccountID, nil, body, "succeeded"); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
 		writeJSON(w, http.StatusCreated, body)
 	}))
+}
+
+func workspaceCreateOperationRow(operationID, status string, result workspaceCreateOperationResult) map[string]any {
+	workspace := result.Workspace
+	return map[string]any{
+		"id": operationID, "operationId": operationID, "accountId": workspace.AccountID, "workspaceId": workspace.ID,
+		"resourceId": workspace.ID, "resourceKind": "workspace_runtime", "action": "workspace.create", "provider": workspace.Provider,
+		"providerRequestId": workspace.RuntimeID, "status": status, "result": encodeWorkspaceCreateOperation(result),
+		"computeAllocationId": workspace.ComputeID, "storageId": workspace.VolumeID, "attachmentId": workspace.AttachmentID, "runtimeServiceName": workspace.RuntimeServiceName,
+	}
+}
+
+func applyWorkspaceRuntimeProjection(workspace map[string]any, resumed domain.WorkspaceProjection) map[string]any {
+	workspace["state"], workspace["status"] = resumed.Status, resumed.Status
+	workspace["computeAllocationId"], workspace["currentComputeAllocationId"] = resumed.ComputeID, resumed.ComputeID
+	workspace["attachmentId"], workspace["currentAttachmentId"] = resumed.AttachmentID, resumed.AttachmentID
+	workspace["runtimeId"] = resumed.RuntimeID
+	workspace["runtime"] = map[string]any{"serviceName": resumed.RuntimeServiceName, "status": resumed.Status, "ready": resumed.RuntimeReady}
+	workspace["runtimeServiceName"], workspace["serviceName"] = resumed.RuntimeServiceName, resumed.RuntimeServiceName
+	workspace["receiptId"] = resumed.ReceiptID
+	workspace["url"] = resumed.URL
+	access := cloneMap(mapField(workspace, "access"))
+	delete(access, "tokenStatus")
+	delete(access, "requiresLogin")
+	if resumed.RuntimeUsername != "" {
+		access["account"], access["username"] = resumed.RuntimeUsername, resumed.RuntimeUsername
+	}
+	if resumed.CredentialStatus != "" {
+		access["credentialStatus"] = resumed.CredentialStatus
+	}
+	if resumed.CredentialVersion != "" {
+		access["credentialVersion"] = resumed.CredentialVersion
+	}
+	if resumed.CredentialSecretRef != "" {
+		access["secretRef"] = resumed.CredentialSecretRef
+	}
+	workspace["access"] = access
+	return workspace
 }

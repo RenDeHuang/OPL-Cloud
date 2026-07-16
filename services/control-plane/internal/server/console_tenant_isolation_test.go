@@ -18,7 +18,135 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	_ "github.com/lib/pq"
+
+	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/controlplane"
 )
+
+func TestGatewaySummaryUsesCurrentAccountAndOwnerReveal(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-owner","email":"gateway-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-gateway","sub2apiUserId":41}]`)
+	lastUsedAt := time.Date(2026, 7, 16, 8, 9, 10, 0, time.UTC)
+	sub2API := &testSub2APIClient{
+		balance: 123,
+		charges: map[string]int64{},
+		workspaceKey: clients.Sub2APIWorkspaceKey{
+			ID: 9, UserID: 41, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active",
+			QuotaUSDMicros: 50_000_000, QuotaUsedUSDMicros: 7_000_000, Usage5hUSDMicros: 1_000_000,
+			Usage1dUSDMicros: 2_000_000, Usage7dUSDMicros: 3_000_000, LastUsedAt: &lastUsedAt,
+		},
+	}
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+	session := loginForTest(t, server, "gateway-owner@example.com", "correct horse battery staple")
+
+	masked := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?sub2apiUserId=999", "")
+	if masked.Code != http.StatusOK {
+		t.Fatalf("masked Gateway summary status = %d, want 200: %s", masked.Code, masked.Body.String())
+	}
+	if got := masked.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("masked Gateway Cache-Control = %q", got)
+	}
+	var summary map[string]any
+	if err := json.NewDecoder(masked.Body).Decode(&summary); err != nil {
+		t.Fatal(err)
+	}
+	account, balance := mapField(summary, "account"), mapField(summary, "balance")
+	key, usage := mapField(summary, "apiKey"), mapField(summary, "usage")
+	if numberField(account, "sub2apiUserId", 0) != 41 || stringValue(account["status"]) != "active" {
+		t.Fatalf("Gateway account = %#v", account)
+	}
+	if stringValue(balance["source"]) != "sub2api" || stringValue(balance["status"]) != "available" || balance["available"] != true || numberField(balance, "usdMicros", 0) != 123 {
+		t.Fatalf("Gateway balance = %#v", balance)
+	}
+	if numberField(key, "id", 0) != 9 || stringValue(key["maskedValue"]) != "work...cret" || key["revealed"] != false {
+		t.Fatalf("masked Gateway key = %#v", key)
+	}
+	if _, ok := key["value"]; ok || strings.Contains(masked.Body.String(), "workspace-key-secret") {
+		t.Fatalf("masked Gateway response leaked Key: %s", masked.Body.String())
+	}
+	if numberField(usage, "quotaUsdMicros", 0) != 50_000_000 || numberField(usage, "quotaUsedUsdMicros", 0) != 7_000_000 ||
+		numberField(usage, "usage5hUsdMicros", 0) != 1_000_000 || numberField(usage, "usage1dUsdMicros", 0) != 2_000_000 ||
+		numberField(usage, "usage7dUsdMicros", 0) != 3_000_000 || stringValue(usage["lastUsedAt"]) != lastUsedAt.Format(time.RFC3339) {
+		t.Fatalf("Gateway usage = %#v", usage)
+	}
+
+	revealed := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?reveal=true&sub2apiUserId=999", "")
+	if revealed.Code != http.StatusOK || revealed.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("revealed Gateway response = %d Cache-Control %q: %s", revealed.Code, revealed.Header().Get("Cache-Control"), revealed.Body.String())
+	}
+	if err := json.NewDecoder(revealed.Body).Decode(&summary); err != nil {
+		t.Fatal(err)
+	}
+	key = mapField(summary, "apiKey")
+	if key["revealed"] != true || stringValue(key["value"]) != "workspace-key-secret" {
+		t.Fatalf("revealed Gateway key = %#v", key)
+	}
+
+	crossAccount := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?accountId=acct-other", "")
+	if crossAccount.Code != http.StatusForbidden || !strings.Contains(crossAccount.Body.String(), "account_scope_forbidden") {
+		t.Fatalf("cross-account Gateway status = %d, want 403: %s", crossAccount.Code, crossAccount.Body.String())
+	}
+	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
+	if state.Code != http.StatusOK {
+		t.Fatalf("state status = %d: %s", state.Code, state.Body.String())
+	}
+	if strings.Contains(state.Body.String(), "workspace-key-secret") || strings.Contains(state.Body.String(), "maskedValue") || strings.Contains(state.Body.String(), "usage5hUsdMicros") {
+		t.Fatalf("state leaked Gateway Key projection: %s", state.Body.String())
+	}
+	if len(sub2API.workspaceKeyUserIDs) != 2 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) {
+		t.Fatalf("Gateway used caller-supplied Sub2API identity: %#v", sub2API.workspaceKeyUserIDs)
+	}
+}
+
+func TestGatewaySummaryRejectsTenantAdminReveal(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-admin","email":"gateway-admin@example.com","password":"correct horse battery staple","role":"admin","accountId":"acct-gateway","sub2apiUserId":41}]`)
+	sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}}
+	server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+	session := loginForTest(t, server, "gateway-admin@example.com", "correct horse battery staple")
+
+	rec := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?reveal=true", "")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "gateway_key_reveal_forbidden") {
+		t.Fatalf("tenant admin reveal status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "private, no-store" || len(sub2API.workspaceKeyUserIDs) != 0 {
+		t.Fatalf("tenant admin reveal fetched Key or allowed caching: calls=%#v headers=%#v", sub2API.workspaceKeyUserIDs, rec.Header())
+	}
+}
+
+func TestGatewaySummaryFailsClosed(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		operator   bool
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "unmapped account", operator: true, wantStatus: http.StatusConflict, wantCode: "sub2api_account_mapping_required"},
+		{name: "missing Key", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict, wantCode: "gateway_key_missing"},
+		{name: "ambiguous Key", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous"},
+		{name: "upstream unavailable", err: fmt.Errorf("Sub2API unavailable"), wantStatus: http.StatusBadGateway, wantCode: "upstream_unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}, workspaceKeyErr: tt.err}
+			server := NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+			var session *httptest.ResponseRecorder
+			if tt.operator {
+				session = reservedOperatorSessionForTest(t, server)
+			} else {
+				t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-gateway-owner","email":"gateway-owner@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-gateway","sub2apiUserId":41}]`)
+				server = NewServer(controlplane.NewService(fakeLedgerClient{}, &fakeFabricClient{}, sub2API))
+				session = loginForTest(t, server, "gateway-owner@example.com", "correct horse battery staple")
+			}
+			rec := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary", "")
+			if rec.Code != tt.wantStatus || !strings.Contains(rec.Body.String(), tt.wantCode) {
+				t.Fatalf("Gateway error response = %d, want %d %s: %s", rec.Code, tt.wantStatus, tt.wantCode, rec.Body.String())
+			}
+			if rec.Header().Get("Cache-Control") != "private, no-store" {
+				t.Fatalf("Gateway error Cache-Control = %q", rec.Header().Get("Cache-Control"))
+			}
+		})
+	}
+}
 
 func TestBootstrapUsersUseOnlyFixedRoles(t *testing.T) {
 	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"email":"owner@example.com","password":"correct horse battery staple","sub2apiUserId":41}]`)
@@ -33,6 +161,13 @@ func TestBootstrapUsersUseOnlyFixedRoles(t *testing.T) {
 	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"email":"pi@example.com","password":"correct horse battery staple","role":"pi","sub2apiUserId":41}]`)
 	if _, err := bootstrapUsersFromEnv(); err == nil || !strings.Contains(err.Error(), "invalid_role") {
 		t.Fatalf("invalid explicit role error = %v, want invalid_role", err)
+	}
+}
+
+func TestBootstrapUsersRejectDuplicateSub2APIUserMapping(t *testing.T) {
+	t.Setenv("OPL_CONSOLE_USERS_JSON", `[{"id":"usr-one","email":"one@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-one","sub2apiUserId":41},{"id":"usr-two","email":"two@example.com","password":"correct horse battery staple","role":"owner","accountId":"acct-two","sub2apiUserId":41}]`)
+	if _, err := newControlPlaneAppWithStore(newMemoryTableStore()); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
+		t.Fatalf("duplicate bootstrap mapping error = %v", err)
 	}
 }
 
@@ -264,7 +399,11 @@ func TestCustomerSupportScopeAllRemainsTenantScoped(t *testing.T) {
 
 func seedTenantMember(t *testing.T, store controlPlaneTableStore, accountID, organizationID, userID, email string) {
 	t.Helper()
-	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": int64(41)}))
+	sub2APIUserID := int64(41)
+	if accountID == "acct-beta" {
+		sub2APIUserID = 42
+	}
+	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": sub2APIUserID}))
 	mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": organizationID, "billingAccountId": accountID, "status": "active"}))
 	hash, err := hashPassword("CorrectHorseBatteryStaple!")
 	if err != nil {
@@ -577,8 +716,8 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 	if err := check.QueryRow(`SELECT count(*) FROM opl_schema_migrations WHERE service = 'control-plane'`).Scan(&migrationCount); err != nil {
 		t.Fatalf("read control-plane migration journal: %v", err)
 	}
-	if migrationCount != 5 {
-		t.Fatalf("control-plane migration count = %d, want 5", migrationCount)
+	if migrationCount != 7 {
+		t.Fatalf("control-plane migration count = %d, want 7", migrationCount)
 	}
 	if _, err := check.Exec(`CREATE TABLE control_plane_startup_probe (id text PRIMARY KEY, probe text); INSERT INTO control_plane_startup_probe VALUES ('probe', NULL)`); err != nil {
 		t.Fatal(err)

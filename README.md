@@ -38,22 +38,27 @@ charges use exact integer USD micros at `1 USD = 7 CNY`.
 | --- | ---: | ---: |
 | Basic compute, 2 CPU / 4 GB | CNY 350/month | 50,000,000 USD micros |
 | Pro compute, 8 CPU / 16 GB | CNY 1,500/month | 214,285,715 USD micros |
-| Storage, each 10 GB block | CNY 18/month | 2,571,429 USD micros |
+| Basic default storage, 10 GB | CNY 18/month | 2,571,429 USD micros |
+| Pro default storage, 100 GB | CNY 180/month | 25,714,286 USD micros |
 
 Storage must be at least 10 GB and divisible by 10 GB. Unknown compute plans and
 invalid storage sizes are rejected at both Control Plane and Fabric boundaries.
 
-Purchase follows one persisted operation:
+The approved launch settlement reuses the deployed Sub2API v0.1.156 deterministic
+Redeem Code and Idempotency-Key path:
 
 ```text
-validate -> Fabric prepare -> confirm balance -> Sub2API charge
-         -> activate monthly entitlement -> Ledger receipt
+validate -> read-only prepaid capacity/price preflight -> confirm balance
+         -> Sub2API debit -> Fabric provision and claim
+         -> activate monthly entitlements -> Ledger receipt
 ```
 
-A stable redeem code makes retries safe. An ambiguous charge response enters
-manual review instead of guessing. Renewal extends from the current
-`paidThrough`; expired compute is destroyed, while expired storage is retained
-but cannot be attached until reactivated.
+Stable operation identities make debit, provider mutation, claim, activation,
+refund, and receipt retries safe. A confirmed no-resource result permits one
+idempotent refund; a partial or ambiguous provider result enters manual review
+without refund or repurchase. The current implementation still prepares Fabric
+before debit and uses postpaid CVM; see `docs/invariants.md` for the frozen target
+and per-stage delivery gaps.
 
 ## Workspace Model
 
@@ -68,12 +73,12 @@ but cannot be attached until reactivated.
 Workspace URLs use:
 
 ```text
-https://workspace.medopl.cn/w/<workspaceId>/?token=<share-token>
+https://workspace.medopl.cn/w/<workspaceId>/
 ```
 
-Opening a shared URL does not require Console login. One account can create
-multiple Workspaces and share their URLs; no separate organization resource-pool
-abstraction is required for that behavior.
+Opening a Workspace requires the Runtime password. One account owns exactly one
+primary Workspace. A second Workspace creation returns 409; project, backup
+clone, and collaboration flows cannot bypass that limit.
 
 Destroying compute does not delete storage. Storage deletion always requires an
 explicit destructive command.
@@ -85,7 +90,7 @@ explicit destructive command.
 - `services/fabric`: cloud resource and runtime owner.
 - `services/ledger`: evidence owner.
 - `packages/contracts`: current machine-readable product contracts.
-- `deploy` and `.github/workflows`: TKE deployment and the single paid verifier.
+- `deploy` and `.github/workflows`: TKE deployment and verification workflow definitions.
 - `docs`: current architecture, invariants, status, and operations only.
 
 ## Local Verification
@@ -131,19 +136,11 @@ The `Deploy TKE Production` workflow installs database, internal-service,
 Console auth, Sub2API, Tencent, image-pull, and Workspace secrets; renders the
 manifest; restarts Control Plane, Fabric, and Ledger; and waits for each rollout.
 
-Production E2E spends real Sub2API balance and creates real Tencent resources.
-It fails closed without the exact confirmation value:
-
-```bash
-OPL_CONSOLE_ORIGIN=https://cloud.medopl.cn \
-OPL_VERIFY_AUTH_USERS_JSON='<secret auth seed>' \
-OPL_VERIFY_PAID_CONFIRMATION=I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE \
-npm run verify:production -- --browser-e2e
-```
-
-The verifier proves exact balance delta, stable redeem codes, compute and
-storage readiness, attachment, Workspace access, two Ledger receipts, and exact
-cleanup of only the resources created by that run.
+The legacy production verifier is blocked by the launch freeze and is not a
+release gate. It charges a real monthly product and creates then deletes Tencent
+resources on every run. Its replacement must reuse the fixed prepaid
+`SA5.MEDIUM4` and 10GB CBS Verification Slot, use fake monthly settlement, and
+pay only for a dedicated test-key Gateway request.
 
 See [docs/runtime/production-runbook.md](./docs/runtime/production-runbook.md)
 for rollout and recovery commands.

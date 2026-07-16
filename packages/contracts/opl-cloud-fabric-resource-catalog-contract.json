@@ -18,9 +18,11 @@
     "consoleSelectableOnlyWhen": "available=true",
     "unavailableError": "package_unavailable:<packageId>:<reason>"
   },
-  "currentAvailablePackages": [
-    "basic"
+  "supportedPackages": [
+    "basic",
+    "pro"
   ],
+  "availabilityAuthority": "GET /fabric/catalog workspacePackages[].available",
   "readinessSurface": {
     "endpoint": "GET /api/runtime/readiness",
     "field": "resourceCatalog"

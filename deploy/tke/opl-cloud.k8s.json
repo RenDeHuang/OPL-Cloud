@@ -41,8 +41,8 @@
         "OPL_PUBLIC_URL": "https://cloud.medopl.cn",
         "OPL_CONSOLE_DOMAIN": "cloud.medopl.cn",
         "OPL_WORKSPACE_DOMAIN": "workspace.medopl.cn",
-        "OPL_CLOUD_IMAGE": "registry.example.com/opl/opl-cloud:2026-07-01",
-        "OPL_WORKSPACE_IMAGE": "registry.example.com/opl/one-person-lab-app:2026-07-01",
+        "OPL_CLOUD_IMAGE": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "OPL_WORKSPACE_IMAGE": "registry.example.com/opl/one-person-lab-app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "OPL_K8S_NAMESPACE": "opl-cloud",
         "OPL_INGRESS_CLASS": "qcloud",
         "OPL_IMAGE_PULL_SECRET_NAME": "tcr-pull-secret",
@@ -61,6 +61,7 @@
         "OPL_MONTHLY_BILLING_WORKER_ENABLED": "1",
         "OPL_MONTHLY_BILLING_INTERVAL_MS": "3600000",
         "OPL_PROVIDER_RECONCILE_WORKER_ENABLED": "1",
+        "OPL_TENCENT_ZONE": "ap-guangzhou-3",
         "OPL_BASIC_COMPUTE_INSTANCE_TYPE": "SA5.MEDIUM4",
         "OPL_BASIC_COMPUTE_NODE_POOL_ID": "",
         "OPL_PRO_COMPUTE_INSTANCE_TYPE": "SA5.2XLARGE16",
@@ -69,10 +70,11 @@
         "OPL_CODEX_REASONING_EFFORT": "xhigh",
         "OPL_CODEX_BASE_URL": "https://gflabtoken.cn/v1",
         "OPL_SUB2API_BASE_URL": "https://gflabtoken.cn",
-        "OPL_SUB2API_SUPPORTED_VERSIONS": "0.1.153",
+        "OPL_SUB2API_SUPPORTED_VERSIONS": "0.1.156,0.1.155",
         "OPL_SUB2API_REQUEST_TIMEOUT_MS": "5000",
         "OPL_TENCENT_PROVISIONER_BIN": "/usr/local/bin/opl-tencent-provisioner",
-        "TENCENTCLOUD_REGION": "ap-guangzhou",
+        "OPL_TENCENT_ZONE": "na-siliconvalley-1",
+        "TENCENTCLOUD_REGION": "na-siliconvalley",
         "TENCENT_CVM_SUBNET_ID": "subnet-xxxxxxxx",
         "TENCENT_CVM_SECURITY_GROUP_IDS": "sg-xxxxxxxx",
         "TENCENT_CVM_SYSTEM_DISK_TYPE": "CLOUD_BSSD",
@@ -130,7 +132,7 @@
             "containers": [
               {
                 "name": "control-plane",
-                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
+                "image": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "imagePullPolicy": "IfNotPresent",
                 "ports": [
                   {
@@ -193,16 +195,6 @@
                       "secretKeyRef": {
                         "name": "opl-cloud-aionui",
                         "key": "OPL_AIONUI_ADMIN_PASSWORD_SEED"
-                      }
-                    }
-                  },
-                  {
-                    "name": "OPL_CODEX_API_KEY",
-                    "valueFrom": {
-                      "secretKeyRef": {
-                        "name": "opl-cloud-workspace-codex",
-                        "key": "OPL_CODEX_API_KEY",
-                        "optional": true
                       }
                     }
                   },
@@ -387,7 +379,7 @@
             "containers": [
               {
                 "name": "ledger",
-                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
+                "image": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "imagePullPolicy": "Always",
                 "ports": [
                   {
@@ -544,7 +536,7 @@
             "containers": [
               {
                 "name": "fabric",
-                "image": "registry.example.com/opl/opl-cloud:2026-07-01",
+                "image": "registry.example.com/opl/opl-cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "imagePullPolicy": "IfNotPresent",
                 "ports": [
                   {

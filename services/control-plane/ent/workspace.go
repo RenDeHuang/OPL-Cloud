@@ -65,7 +65,11 @@ type Workspace struct {
 	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
 	// AccessRequiresLogin holds the value of the "access_requires_login" field.
 	AccessRequiresLogin bool `json:"access_requires_login,omitempty"`
-	selectValues        sql.SelectValues
+	// VerificationSlotID holds the value of the "verification_slot_id" field.
+	VerificationSlotID string `json:"verification_slot_id,omitempty"`
+	// CustomerProduct holds the value of the "customer_product" field.
+	CustomerProduct bool `json:"customer_product,omitempty"`
+	selectValues    sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -73,9 +77,9 @@ func (*Workspace) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case workspace.FieldAccessRequiresLogin:
+		case workspace.FieldAccessRequiresLogin, workspace.FieldCustomerProduct:
 			values[i] = new(sql.NullBool)
-		case workspace.FieldID, workspace.FieldAccountID, workspace.FieldOwnerAccountID, workspace.FieldOwnerUserID, workspace.FieldUserID, workspace.FieldName, workspace.FieldURL, workspace.FieldState, workspace.FieldStatus, workspace.FieldStorageID, workspace.FieldCurrentComputeAllocationID, workspace.FieldCurrentAttachmentID, workspace.FieldRuntimeID, workspace.FieldRuntimeServiceName, workspace.FieldRuntimeServiceNameRoot, workspace.FieldServiceName, workspace.FieldAccessTokenStatus, workspace.FieldAccessAccount, workspace.FieldAccessUsername, workspace.FieldCredentialStatus, workspace.FieldCredentialVersion, workspace.FieldCredentialSecretRef:
+		case workspace.FieldID, workspace.FieldAccountID, workspace.FieldOwnerAccountID, workspace.FieldOwnerUserID, workspace.FieldUserID, workspace.FieldName, workspace.FieldURL, workspace.FieldState, workspace.FieldStatus, workspace.FieldStorageID, workspace.FieldCurrentComputeAllocationID, workspace.FieldCurrentAttachmentID, workspace.FieldRuntimeID, workspace.FieldRuntimeServiceName, workspace.FieldRuntimeServiceNameRoot, workspace.FieldServiceName, workspace.FieldAccessTokenStatus, workspace.FieldAccessAccount, workspace.FieldAccessUsername, workspace.FieldCredentialStatus, workspace.FieldCredentialVersion, workspace.FieldCredentialSecretRef, workspace.FieldVerificationSlotID:
 			values[i] = new(sql.NullString)
 		case workspace.FieldCreatedAt, workspace.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -244,6 +248,18 @@ func (w *Workspace) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				w.AccessRequiresLogin = value.Bool
 			}
+		case workspace.FieldVerificationSlotID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field verification_slot_id", values[i])
+			} else if value.Valid {
+				w.VerificationSlotID = value.String
+			}
+		case workspace.FieldCustomerProduct:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field customer_product", values[i])
+			} else if value.Valid {
+				w.CustomerProduct = value.Bool
+			}
 		default:
 			w.selectValues.Set(columns[i], values[i])
 		}
@@ -351,6 +367,12 @@ func (w *Workspace) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("access_requires_login=")
 	builder.WriteString(fmt.Sprintf("%v", w.AccessRequiresLogin))
+	builder.WriteString(", ")
+	builder.WriteString("verification_slot_id=")
+	builder.WriteString(w.VerificationSlotID)
+	builder.WriteString(", ")
+	builder.WriteString("customer_product=")
+	builder.WriteString(fmt.Sprintf("%v", w.CustomerProduct))
 	builder.WriteByte(')')
 	return builder.String()
 }

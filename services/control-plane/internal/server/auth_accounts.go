@@ -71,7 +71,7 @@ func (app *controlPlaneServer) ensureMappedAccount(ctx context.Context, accountI
 		}
 		existing := int64(numberField(account, "sub2apiUserId", 0))
 		if existing != 0 && existing != sub2APIUserID {
-			return errors.New("sub2api_account_mapping_conflict")
+			return errSub2APIAccountMappingConflict
 		}
 		account["sub2apiUserId"] = sub2APIUserID
 		return app.tables.SaveAccount(ctx, account)

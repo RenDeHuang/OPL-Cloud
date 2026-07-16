@@ -108,6 +108,30 @@ func testRequest(method, path string, body io.Reader) *http.Request {
 	return req
 }
 
+func createReadyCompute(t *testing.T, service *fabric.Service, server http.Handler, accountID, workspaceID, key string) fabric.ComputeAllocation {
+	t.Helper()
+	request := testRequest(http.MethodPost, "/fabric/compute-allocations", bytes.NewBufferString(fmt.Sprintf(`{"accountId":%q,"workspaceId":%q,"packageId":"basic"}`, accountID, workspaceID)))
+	request.Header.Set("Idempotency-Key", key)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("create compute status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var created fabric.ComputeAllocation
+	if err := json.NewDecoder(recorder.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if current, ok := service.GetComputeAllocation(context.Background(), created.ID); ok && current.Status == "running" {
+			return current
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("compute %s did not become ready", created.ID)
+	return fabric.ComputeAllocation{}
+}
+
 func TestServerDestroysWorkspaceRuntime(t *testing.T) {
 	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
 	req := httptest.NewRequest(http.MethodPost, "/fabric/workspace-runtimes/workspace-alpha/destroy", nil)
@@ -119,6 +143,100 @@ func TestServerDestroysWorkspaceRuntime(t *testing.T) {
 
 	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"status":"destroyed"`) || !strings.Contains(rec.Body.String(), `"workspaceId":"workspace-alpha"`) {
 		t.Fatalf("destroy status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestServerWritesGatewaySecretWithoutReturningRawKey(t *testing.T) {
+	server := NewServer(fabric.NewService(testProvider{}), "internal-secret")
+	req := testRequest(http.MethodPost, "/fabric/gateway-secrets", bytes.NewBufferString(`{"accountId":"acct-alpha","gatewayApiKey":"raw-gateway-key"}`))
+	req.Header.Set("Idempotency-Key", "gateway-once")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted || strings.Contains(rec.Body.String(), "raw-gateway-key") {
+		t.Fatalf("gateway secret status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var secret fabric.GatewaySecret
+	if err := json.NewDecoder(rec.Body).Decode(&secret); err != nil || secret.SecretRef == "" || secret.Version == "" || secret.Fingerprint == "" {
+		t.Fatalf("gateway secret=%#v err=%v", secret, err)
+	}
+}
+
+func TestServerMonthlyPreflightNeedsNoIdempotencyKeyAndRecordsNoOperation(t *testing.T) {
+	store := fabric.NewMemoryOperationStore()
+	server := NewServer(fabric.NewServiceWithOperationStore(testProvider{}, store), "internal-secret")
+	req := testRequest(http.MethodPost, "/fabric/monthly-preflight", bytes.NewBufferString(`{"resourceType":"storage","packageId":"basic","sizeGb":10,"zone":"na-siliconvalley-1"}`))
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preflight status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var result fabric.MonthlyPreflight
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil || result.ResourceType != "storage" || result.PackageID != "basic" || result.SizeGB != 10 || result.Zone != "na-siliconvalley-1" || !result.Available || result.ChargeType != "PREPAID" || result.PeriodMonths != 1 || result.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || result.ProviderPriceCNY <= 0 || len(result.ProviderRequestIDs) == 0 {
+		t.Fatalf("preflight=%#v err=%v", result, err)
+	}
+	operations := httptest.NewRecorder()
+	server.ServeHTTP(operations, testRequest(http.MethodGet, "/fabric/operations", nil))
+	if operations.Code != http.StatusOK || strings.TrimSpace(operations.Body.String()) != "[]" {
+		t.Fatalf("operations status=%d body=%s", operations.Code, operations.Body.String())
+	}
+}
+
+type unavailablePreflightProvider struct{ testProvider }
+
+func (unavailablePreflightProvider) MonthlyPreflight(context.Context, fabric.MonthlyPreflightInput) (fabric.MonthlyPreflight, error) {
+	return fabric.MonthlyPreflight{}, errors.New("private Tencent response")
+}
+
+func TestServerMonthlyPreflightFailsClosedWithStableErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider fabric.Provider
+		body     string
+		want     int
+		message  string
+	}{
+		{name: "invalid compute size", provider: testProvider{}, body: `{"resourceType":"compute","packageId":"basic","sizeGb":10,"zone":"na-siliconvalley-1"}`, want: http.StatusBadRequest, message: "invalid_monthly_preflight"},
+		{name: "provider unavailable", provider: unavailablePreflightProvider{}, body: `{"resourceType":"storage","packageId":"basic","sizeGb":10,"zone":"na-siliconvalley-1"}`, want: http.StatusServiceUnavailable, message: "monthly_preflight_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(fabric.NewService(tc.provider), "internal-secret")
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, testRequest(http.MethodPost, "/fabric/monthly-preflight", bytes.NewBufferString(tc.body)))
+			if recorder.Code != tc.want || !strings.Contains(recorder.Body.String(), tc.message) || strings.Contains(recorder.Body.String(), "private Tencent response") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestServerRenewsComputeAllocation(t *testing.T) {
+	service := fabric.NewService(testProvider{})
+	allocation, err := service.CreateComputeAllocation(context.Background(), fabric.ComputeAllocationInput{ID: "compute-alpha", AccountID: "acct-alpha", WorkspaceID: "ws-alpha", PackageID: "basic", IdempotencyKey: "compute-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if current, ok := service.GetComputeAllocation(context.Background(), allocation.ID); ok && current.Status == "running" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	server := NewServer(service, "internal-secret")
+	req := testRequest(http.MethodPost, "/fabric/compute-allocations/compute-alpha/renew", bytes.NewBufferString(`{}`))
+	req.Header.Set("Idempotency-Key", "compute-renew-once")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("renew status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var renewed fabric.ComputeAllocation
+	if err := json.NewDecoder(rec.Body).Decode(&renewed); err != nil || renewed.Deadline != "2026-09-16T00:00:00Z" || renewed.ProviderData["renewalResult"] != "renewed" {
+		t.Fatalf("renewed allocation=%#v err=%v", renewed, err)
 	}
 }
 
@@ -142,7 +260,7 @@ func TestTransferServiceFailureIsLogged(t *testing.T) {
 }
 
 func TestRuntimeOperationConflictsAreHTTPConflict(t *testing.T) {
-	for _, err := range []error{fabric.ErrRuntimeIdempotencyConflict, fabric.ErrRuntimeOperationInProgress, fabric.ErrRuntimeOperationFailed} {
+	for _, err := range []error{fabric.ErrRuntimeIdempotencyConflict, fabric.ErrRuntimeOperationInProgress, fabric.ErrRuntimeOperationFailed, fabric.ErrGatewaySecretIdempotencyConflict} {
 		recorder := httptest.NewRecorder()
 		writeResult(recorder, fabric.WorkspaceRuntime{}, err)
 		if recorder.Code != http.StatusConflict {
@@ -212,7 +330,8 @@ func TestCatalogHTTP(t *testing.T) {
 func TestStorageSnapshotHTTPCreateRestoreAndDestroy(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	server := NewServer(service, "internal-secret")
-	createVolume := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(`{"id":"vol-source","accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`))
+	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "snapshot-compute")
+	createVolume := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"id":"vol-source","accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
 	createVolume.Header.Set("Idempotency-Key", "volume-once")
 	volumeRec := httptest.NewRecorder()
 	server.ServeHTTP(volumeRec, createVolume)
@@ -314,15 +433,20 @@ func TestSyncComputeAllocationHTTPWaitsForMachineOwnership(t *testing.T) {
 func TestSyncStorageVolumeHTTPRefreshesProviderState(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	server := NewServer(service, "internal-secret")
-	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`))
+	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "sync-storage-compute")
+	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
 	create.Header.Set("Idempotency-Key", "sync-http-storage")
 	createRec := httptest.NewRecorder()
 	server.ServeHTTP(createRec, create)
 	if createRec.Code != http.StatusAccepted {
 		t.Fatalf("create status = %d, want %d: %s", createRec.Code, http.StatusAccepted, createRec.Body.String())
 	}
+	var created fabric.StorageVolume
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil || created.ID == "" {
+		t.Fatalf("decode created storage: volume=%#v err=%v", created, err)
+	}
 
-	req := testRequest(http.MethodPost, "/fabric/storage-volumes/vol-test/sync", bytes.NewBufferString(`{}`))
+	req := testRequest(http.MethodPost, "/fabric/storage-volumes/"+created.ID+"/sync", bytes.NewBufferString(`{}`))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
@@ -341,8 +465,9 @@ func TestSyncStorageVolumeHTTPRefreshesProviderState(t *testing.T) {
 func TestOperationsHTTPReturnsFabricAuditFacts(t *testing.T) {
 	service := fabric.NewService(testProvider{})
 	server := NewServer(service, "internal-secret")
+	compute := createReadyCompute(t, service, server, "acct-alpha", "ws-alpha", "ops-storage-compute")
 
-	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","sizeGb":10}`))
+	create := testRequest(http.MethodPost, "/fabric/storage-volumes", bytes.NewBufferString(fmt.Sprintf(`{"accountId":"acct-alpha","workspaceId":"ws-alpha","computeId":%q,"zone":"ap-guangzhou-3","sizeGb":10}`, compute.ID)))
 	create.Header.Set("Idempotency-Key", "http-ops-storage")
 	createRec := httptest.NewRecorder()
 	server.ServeHTTP(createRec, create)
@@ -527,9 +652,22 @@ func (testProvider) ReconcileComputePool(_ context.Context, input fabric.Compute
 	machines := make([]fabric.ProviderMachine, 0, input.DesiredReplicas)
 	for index := int64(0); index < input.DesiredReplicas; index++ {
 		id := fmt.Sprintf("%s-%03d", input.PoolID, index+1)
-		machines = append(machines, fabric.ProviderMachine{MachineID: id, InstanceID: "ins-" + id, NodeName: id, InstanceType: input.InstanceType, Ready: true})
+		machines = append(machines, fabric.ProviderMachine{MachineID: id, InstanceID: "ins-" + id, NodeName: id, InstanceType: input.InstanceType, Zone: "ap-guangzhou-3", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-08-16T00:00:00Z", Ready: true})
 	}
 	return fabric.ComputePoolState{PoolID: input.PoolID, NodePoolID: "np-" + input.PoolID, DesiredReplicas: input.DesiredReplicas, CurrentReplicas: input.DesiredReplicas, ProviderRequestID: "pool-test", Machines: machines}, nil
+}
+
+func (testProvider) MonthlyPreflight(_ context.Context, input fabric.MonthlyPreflightInput) (fabric.MonthlyPreflight, error) {
+	requestIDs := map[string]string{"nodePool": "req-pool", "subnets": "req-subnets", "availability": "req-capacity"}
+	price := 142.91
+	if input.ResourceType == "storage" {
+		requestIDs = map[string]string{"quota": "req-quota", "price": "req-price"}
+		price = 7.5
+	}
+	return fabric.MonthlyPreflight{
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: price, ProviderRequestIDs: requestIDs,
+	}, nil
 }
 
 func (testProvider) TagComputeMachine(_ context.Context, _ fabric.ProviderMachine, _ fabric.MachineOwnership) error {
@@ -541,7 +679,20 @@ func (testProvider) DeleteComputeMachine(_ context.Context, _ fabric.ProviderMac
 }
 
 func (testProvider) SyncComputeAllocation(_ context.Context, allocation fabric.ComputeAllocation) (fabric.ComputeAllocation, error) {
-	allocation.Status = "external_deleted"
+	allocation.Status = "running"
+	return allocation, nil
+}
+
+func (testProvider) RenewComputeAllocation(_ context.Context, allocation fabric.ComputeAllocation) (fabric.ComputeAllocation, error) {
+	allocation.Deadline = "2026-09-16T00:00:00Z"
+	allocation.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	allocation.ChargeType = "PREPAID"
+	if allocation.ProviderData == nil {
+		allocation.ProviderData = map[string]string{}
+	}
+	allocation.ProviderData["deadline"] = allocation.Deadline
+	allocation.ProviderData["renewFlag"] = allocation.RenewFlag
+	allocation.ProviderData["renewalResult"] = "renewed"
 	return allocation, nil
 }
 
@@ -556,6 +707,19 @@ func (testProvider) CreateStorageVolume(_ context.Context, input fabric.StorageV
 
 func (testProvider) SyncStorageVolume(_ context.Context, volume fabric.StorageVolume) (fabric.StorageVolume, error) {
 	volume.Status = "external_deleted"
+	return volume, nil
+}
+
+func (testProvider) RenewStorageVolume(_ context.Context, volume fabric.StorageVolume) (fabric.StorageVolume, error) {
+	volume.Deadline = "2026-09-16T00:00:00Z"
+	volume.RenewFlag = "NOTIFY_AND_MANUAL_RENEW"
+	if volume.ProviderData == nil {
+		volume.ProviderData = map[string]string{}
+	}
+	volume.ProviderData["diskChargeType"] = "PREPAID"
+	volume.ProviderData["deadline"] = volume.Deadline
+	volume.ProviderData["renewFlag"] = volume.RenewFlag
+	volume.ProviderData["renewalResult"] = "renewed"
 	return volume, nil
 }
 
@@ -600,6 +764,11 @@ func (testProvider) DestroyWorkspaceRuntime(_ context.Context, workspaceID strin
 
 func (testProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (fabric.WorkspaceRuntime, error) {
 	return fabric.WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found"}, nil
+}
+
+func (testProvider) UpsertGatewaySecret(_ context.Context, input fabric.GatewaySecretInput) (fabric.GatewaySecret, error) {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(input.GatewayAPIKey)))
+	return fabric.GatewaySecret{SecretRef: "opl-gateway-acct-alpha", Version: digest[:16], Fingerprint: "sha256:" + digest}, nil
 }
 
 func (testProvider) Readiness(_ context.Context) (map[string]any, error) {

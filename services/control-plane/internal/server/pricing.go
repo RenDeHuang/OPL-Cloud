@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	pricingCatalogVersion        = "2026-07-14-opl-monthly-v1"
+	pricingCatalogVersion        = "2026-07-16-opl-monthly-v2"
 	pricingCurrency              = "CNY"
 	pricingWalletCurrency        = "USD"
 	pricingBillingUnit           = "calendar_month"
@@ -48,14 +48,17 @@ func defaultPricingCatalog() pricingCatalogData {
 		BillingUnit: pricingBillingUnit, ExchangeRate: pricingExchangeRateCNYPerUSD,
 		Packages: []pricingPackageData{
 			{ID: "basic", Name: "Basic", Available: true, CPU: 2, MemoryGB: 4, DiskGB: 10, Server: "2c4g", MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
+			{ID: "pro", Name: "Pro", Available: true, CPU: 8, MemoryGB: 16, DiskGB: 100, Server: "8c16g", MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214285715},
 		},
 	}
 }
 
 func pricingCatalogResponse() map[string]any { return pricingCatalogDTO(defaultPricingCatalog()) }
 
-func (app *controlPlaneServer) pricingCatalogResponse(context.Context) (map[string]any, error) {
-	return pricingCatalogResponse(), nil
+func (app *controlPlaneServer) pricingCatalogResponse(_ context.Context, computePools []any) (map[string]any, error) {
+	response := pricingCatalogResponse()
+	response["packages"] = packageRowsForComputePools(defaultPricingCatalog(), computePools)
+	return response, nil
 }
 
 func pricingCatalogDTO(catalog pricingCatalogData) map[string]any {
@@ -119,6 +122,21 @@ func packageRows(catalog pricingCatalogData) []any {
 			"memoryGb": plan.MemoryGB, "diskGb": plan.DiskGB, "server": plan.Server,
 			"price": map[string]any{"monthlyPriceCnyCents": plan.MonthlyPriceCNYCents, "chargeUsdMicros": plan.ChargeUSDMicros},
 		})
+	}
+	return rows
+}
+
+func packageRowsForComputePools(catalog pricingCatalogData, computePools []any) []any {
+	available := map[string]bool{}
+	for _, raw := range computePools {
+		pool, _ := raw.(map[string]any)
+		packageID := stringValue(pool["packageId"])
+		available[packageID] = available[packageID] || pool["available"] == true
+	}
+	rows := packageRows(catalog)
+	for _, raw := range rows {
+		row := raw.(map[string]any)
+		row["available"] = row["available"] == true && available[stringValue(row["id"])]
 	}
 	return rows
 }

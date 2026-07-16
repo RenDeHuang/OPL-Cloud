@@ -27,8 +27,10 @@ func (s *Service) reconcileComputePool(packageID string, dryRun bool) error {
 func (s *Service) reconcileComputePoolLocked(ctx context.Context, packageID string, dryRun bool) error {
 	var lastErr error
 	var providerErr error
+	providerResultUnknown := false
 	for attempt := 0; attempt < poolReconcileAttempts; attempt++ {
 		complete, progressed, err := s.reconcileComputePoolOnce(ctx, packageID, dryRun)
+		providerResultUnknown = err != nil
 		if err == nil && complete {
 			return nil
 		}
@@ -45,7 +47,7 @@ func (s *Service) reconcileComputePoolLocked(ctx context.Context, packageID stri
 	if providerErr != nil {
 		lastErr = providerErr
 	}
-	if err := s.preparePendingComputeFailures(ctx, packageID, lastErr); err != nil {
+	if err := s.preparePendingComputeFailures(ctx, packageID, lastErr, providerResultUnknown); err != nil {
 		return err
 	}
 	if err := s.reconcileFailedComputeCleanup(ctx, packageID, dryRun); err != nil {
@@ -57,7 +59,7 @@ func (s *Service) reconcileComputePoolLocked(ctx context.Context, packageID stri
 	return lastErr
 }
 
-func (s *Service) preparePendingComputeFailures(ctx context.Context, packageID string, cause error) error {
+func (s *Service) preparePendingComputeFailures(ctx context.Context, packageID string, cause error, providerResultUnknown bool) error {
 	pending, err := s.pendingComputeOperations(ctx, packageID)
 	if err != nil {
 		return err
@@ -81,6 +83,22 @@ func (s *Service) preparePendingComputeFailures(ctx context.Context, packageID s
 			resource.CVMInstanceID = ownership.InstanceID
 			resource.NodeName = ownership.NodeName
 			if err := s.recordOperation(ctx, operation, "failed", resource, cause); err != nil {
+				return err
+			}
+			s.mu.Lock()
+			s.computes[resource.ID] = resource
+			s.mu.Unlock()
+			continue
+		}
+		currentReplicas, currentErr := strconv.ParseInt(resource.ProviderData["currentReplicas"], 10, 64)
+		observedMachines, machinesErr := strconv.Atoi(resource.ProviderData["observedMachines"])
+		if providerResultUnknown || currentErr != nil || currentReplicas != 0 || machinesErr != nil || observedMachines != 0 {
+			if resource.ProviderData == nil {
+				resource.ProviderData = map[string]string{}
+			}
+			resource.Status = "provisioning"
+			resource.ProviderData["recoveryAction"] = "manual_review"
+			if err := s.recordOperation(ctx, operation, "started", resource, cause); err != nil {
 				return err
 			}
 			s.mu.Lock()
@@ -160,7 +178,7 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		if ownership.Status != "released" {
 			ownedMachines[ownership.MachineID] = true
 		}
-		if ownership.PackageID == packageID && (ownership.Status == "claimed" || ownership.Status == "active") {
+		if ownership.PackageID == packageID && (ownership.Status == "claimed" || ownership.Status == "active" || ownership.Status == "quarantined") {
 			active = append(active, ownership)
 		}
 	}
@@ -174,7 +192,7 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 	}
 	machines := make([]ProviderMachine, 0, len(state.Machines))
 	for _, machine := range state.Machines {
-		if machine.Ready && machine.MachineID != "" && !ownedMachines[machine.MachineID] && (machine.InstanceType == "" || machine.InstanceType == plan.InstanceType) {
+		if machine.MachineID != "" && !ownedMachines[machine.MachineID] {
 			machines = append(machines, machine)
 		}
 	}
@@ -201,22 +219,7 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		if err != nil {
 			continue
 		}
-		if err := s.provider.TagComputeMachine(ctx, machine, claimed); err != nil {
-			if deleteErr := s.provider.DeleteComputeMachine(ctx, machine, claimed); deleteErr == nil {
-				now := s.now()
-				claimed.Status = "released"
-				claimed.ReleasedAt = &now
-			} else {
-				claimed.Status = "quarantined"
-			}
-			_ = s.operations.SaveMachineOwnership(ctx, claimed)
-			continue
-		}
-		claimed.Status = "active"
-		if err := s.operations.SaveMachineOwnership(ctx, claimed); err != nil {
-			continue
-		}
-		resource.Status = "running"
+		resource.Status = "provisioning"
 		resource.Provider = "tencent-tke"
 		resource.ProviderRequestID = state.ProviderRequestID
 		resource.ProviderResourceID = "machine/" + machine.MachineID
@@ -228,7 +231,74 @@ func (s *Service) reconcileComputePoolOnce(ctx context.Context, packageID string
 		resource.NodeName = machine.NodeName
 		resource.PrivateIP = machine.PrivateIP
 		resource.PublicIP = machine.PublicIP
+		resource.ChargeType = machine.ChargeType
+		resource.RenewFlag = machine.RenewFlag
+		resource.Deadline = machine.Deadline
+		resource.ProviderData = map[string]string{"instanceType": machine.InstanceType, "zone": machine.Zone, "chargeType": machine.ChargeType, "renewFlag": machine.RenewFlag, "deadline": machine.Deadline, "machineName": machine.MachineID}
+		resource.CostTags = oplCostTags(resource.AccountID, resource.WorkspaceID, resource.ID, claimed.ID)
 		resource.CreatedAt = firstTime(resource.CreatedAt, s.now())
+		if !machine.Ready || machine.InstanceType != plan.InstanceType || machine.Zone == "" || machine.ChargeType != "PREPAID" || machine.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || machine.Deadline == "" {
+			resource.Status = "quarantined"
+			resource.ProviderData["recoveryAction"] = "manual_review"
+			claimed.Status = "quarantined"
+			if err := s.operations.SaveMachineOwnership(ctx, claimed); err != nil {
+				return false, i > 0, err
+			}
+			if err := s.recordOperation(ctx, operation, "failed", resource, fmt.Errorf("compute_provider_readback_mismatch")); err != nil {
+				return false, i > 0, err
+			}
+			s.mu.Lock()
+			s.computes[resource.ID] = resource
+			s.mu.Unlock()
+			continue
+		}
+		if tagErr := s.provider.TagComputeMachine(ctx, machine, claimed); tagErr != nil {
+			resource.Status = "quarantined"
+			claimed.Status = "quarantined"
+			if err := s.operations.SaveMachineOwnership(ctx, claimed); err != nil {
+				return false, i > 0, err
+			}
+			if err := s.recordOperation(ctx, operation, "failed", resource, tagErr); err != nil {
+				return false, i > 0, err
+			}
+			s.mu.Lock()
+			s.computes[resource.ID] = resource
+			s.mu.Unlock()
+			continue
+		}
+		verified, verifyErr := s.provider.SyncComputeAllocation(ctx, resource)
+		if verified.ID != "" {
+			resource = verified
+		}
+		if verifyErr == nil && !isExternallyDeletedComputeStatus(resource.Status) &&
+			(!isReadyResourceStatus(resource.Status) || resource.ChargeType != "PREPAID" || resource.RenewFlag != "NOTIFY_AND_MANUAL_RENEW" || resource.Deadline == "" || resource.ProviderData["zone"] == "" || resource.ProviderData["instanceType"] != plan.InstanceType) {
+			verifyErr = fmt.Errorf("compute_provider_readback_mismatch")
+		}
+		if verifyErr != nil {
+			resource.Status = "quarantined"
+			claimed.Status = "quarantined"
+			if err := s.operations.SaveMachineOwnership(ctx, claimed); err != nil {
+				return false, i > 0, err
+			}
+			if err := s.recordOperation(ctx, operation, "failed", resource, verifyErr); err != nil {
+				return false, i > 0, err
+			}
+			s.mu.Lock()
+			s.computes[resource.ID] = resource
+			s.mu.Unlock()
+			continue
+		}
+		if isExternallyDeletedComputeStatus(resource.Status) {
+			now := s.now()
+			claimed.Status = "released"
+			claimed.ReleasedAt = &now
+			_ = s.operations.SaveMachineOwnership(ctx, claimed)
+			continue
+		}
+		claimed.Status = "active"
+		if err := s.operations.SaveMachineOwnership(ctx, claimed); err != nil {
+			continue
+		}
 		if err := s.recordOperation(ctx, operation, "succeeded", resource, nil); err != nil {
 			return false, i > 0, err
 		}
@@ -256,6 +326,7 @@ func (s *Service) recordPoolReconcileEvidence(ctx context.Context, pending []Fab
 		resource.ProviderData["poolReconcileAttempt"] = strconv.Itoa(attempt + 1)
 		resource.ProviderData["desiredReplicas"] = strconv.FormatInt(state.DesiredReplicas, 10)
 		resource.ProviderData["currentReplicas"] = strconv.FormatInt(state.CurrentReplicas, 10)
+		resource.ProviderData["observedMachines"] = strconv.Itoa(len(state.Machines))
 		resource.ProviderData["nodePoolId"] = state.NodePoolID
 		resource.ProviderData["describeMachinesRequestId"] = state.ProviderRequestID
 		resource.PoolID = firstNonEmpty(state.PoolID, resource.PoolID)

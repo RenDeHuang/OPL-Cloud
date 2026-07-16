@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 	controlplaneenttest "opl-cloud/services/control-plane/ent/enttest"
 	"opl-cloud/services/control-plane/internal/clients"
+	"opl-cloud/services/control-plane/internal/domain"
 )
 
 func NewTestEntStateStore(t *testing.T, path string) StateStore {
@@ -53,9 +56,14 @@ func TestEntStateStoreSub2APIMappingAndMonthlyEntitlementRoundTrip(t *testing.T)
 		"lastReceiptId":              "receipt-41",
 		"postChargeBalanceUsdMicros": int64(0),
 		"postChargeBalanceKnown":     true,
+		"requestedPeriodMonths":      int64(1),
+		"periodMonths":               int64(1),
+		"verificationSlotId":         "verification-slot-01",
+		"customerProduct":            false,
+		"costTags":                   map[string]string{"opl_account_id": "acct-monthly", "opl_workspace_id": "ws-monthly"},
 	}
-	compute := mergeMaps(monthly, map[string]any{"id": "compute-monthly", "packageId": "basic"})
-	storage := mergeMaps(monthly, map[string]any{"id": "storage-monthly", "packageId": "basic", "sizeGb": 30})
+	compute := mergeMaps(monthly, map[string]any{"id": "compute-monthly", "packageId": "basic", "nodePoolId": "np-slot-01", "instanceType": "SA5.MEDIUM4"})
+	storage := mergeMaps(monthly, map[string]any{"id": "storage-monthly", "packageId": "basic", "sizeGb": 30, "pvName": "pv-slot-01", "persistentVolumeName": "pv-slot-01"})
 	if err := store.SaveCompute(ctx, compute); err != nil {
 		t.Fatalf("save monthly compute: %v", err)
 	}
@@ -81,6 +89,68 @@ func TestEntStateStoreSub2APIMappingAndMonthlyEntitlementRoundTrip(t *testing.T)
 		if row["postChargeBalanceKnown"] != true || int64(numberField(row, "postChargeBalanceUsdMicros", 0)) != 0 {
 			t.Fatalf("%s zero post-charge balance is not known: %#v", kind, row)
 		}
+		if int64(numberField(row, "requestedPeriodMonths", 0)) != 1 || int64(numberField(row, "periodMonths", 0)) != 1 || row["verificationSlotId"] != "verification-slot-01" || row["customerProduct"] != false {
+			t.Fatalf("%s verifier classification fields = %#v", kind, row)
+		}
+		if tags := mapField(row, "costTags"); tags["opl_account_id"] != "acct-monthly" || tags["opl_workspace_id"] != "ws-monthly" {
+			t.Fatalf("%s cost tags = %#v", kind, tags)
+		}
+		if kind == "compute" && (row["nodePoolId"] != "np-slot-01" || row["instanceType"] != "SA5.MEDIUM4") {
+			t.Fatalf("compute provider fields = %#v", row)
+		}
+		if kind == "storage" && (row["pvName"] != "pv-slot-01" || row["persistentVolumeName"] != "pv-slot-01") {
+			t.Fatalf("storage provider fields = %#v", row)
+		}
+	}
+}
+
+func TestAccountStoresRejectDuplicateSub2APIUserMapping(t *testing.T) {
+	ctx := context.Background()
+	for name, store := range map[string]StateStore{
+		"memory": newMemoryTableStore(),
+		"ent":    NewTestEntStateStore(t, t.TempDir()+"/account-mapping.sqlite"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := store.SaveAccount(ctx, map[string]any{"id": "acct-one", "status": "active", "sub2apiUserId": int64(41)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SaveAccount(ctx, map[string]any{"id": "acct-two", "status": "active", "sub2apiUserId": int64(41)}); err == nil || err.Error() != "sub2api_account_mapping_conflict" {
+				t.Fatalf("duplicate mapping error = %v", err)
+			}
+		})
+	}
+}
+
+func TestMemoryAccountStoreSerializesDuplicateSub2APIUserMapping(t *testing.T) {
+	store := newMemoryTableStore()
+	start := make(chan struct{})
+	errorsByAccount := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, accountID := range []string{"acct-one", "acct-two"} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			errorsByAccount <- store.SaveAccount(context.Background(), map[string]any{"id": accountID, "status": "active", "sub2apiUserId": int64(41)})
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errorsByAccount)
+
+	succeeded, conflicted := 0, 0
+	for err := range errorsByAccount {
+		switch {
+		case err == nil:
+			succeeded++
+		case err.Error() == "sub2api_account_mapping_conflict":
+			conflicted++
+		default:
+			t.Fatalf("unexpected save error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent mapping results: succeeded=%d conflicted=%d", succeeded, conflicted)
 	}
 }
 
@@ -124,6 +194,47 @@ func TestEntStateStoreBillingOperationReplayConflictsOnAmountOrPeriod(t *testing
 	}
 }
 
+func TestStateStoreNewBillingOperationClearsPreviousReceipt(t *testing.T) {
+	ctx := context.Background()
+	stores := []struct {
+		name  string
+		store StateStore
+	}{
+		{name: "memory", store: newMemoryTableStore()},
+		{name: "ent", store: NewTestEntStateStore(t, t.TempDir()+"/billing-receipt-reset.sqlite")},
+	}
+	for _, tc := range stores {
+		t.Run(tc.name, func(t *testing.T) {
+			old := monthlyActiveResource("storage", "storage-receipt-reset", time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC))
+			old["billingStatus"] = "retained"
+			if err := tc.store.SaveStorage(ctx, old); err != nil {
+				t.Fatal(err)
+			}
+			operation := cloneMap(old)
+			operation["billingStatus"], operation["billingOperationId"] = "charge_pending", "billing-reactivation"
+			operation["lastReceiptId"] = ""
+
+			claimed, fresh, err := tc.store.ClaimResourceBillingOperation(ctx, "storage", operation)
+			if err != nil || !fresh || stringValue(claimed["lastReceiptId"]) != "" {
+				t.Fatalf("new operation fresh=%v row=%#v err=%v", fresh, claimed, err)
+			}
+			rows, err := tc.store.ListStorages(ctx, "acct-monthly")
+			if err != nil || stringValue(recordByID(rows, "storage-receipt-reset")["lastReceiptId"]) != "" {
+				t.Fatalf("persisted new operation rows=%#v err=%v", rows, err)
+			}
+
+			claimed["lastReceiptId"] = "receipt-reactivation"
+			if err := tc.store.SaveStorage(ctx, claimed); err != nil {
+				t.Fatal(err)
+			}
+			replayed, fresh, err := tc.store.ClaimResourceBillingOperation(ctx, "storage", operation)
+			if err != nil || fresh || stringValue(replayed["lastReceiptId"]) != "receipt-reactivation" {
+				t.Fatalf("same operation replay fresh=%v row=%#v err=%v", fresh, replayed, err)
+			}
+		})
+	}
+}
+
 func recordByID(rows []map[string]any, id string) map[string]any {
 	for _, row := range rows {
 		if stringValue(row["id"]) == id {
@@ -147,6 +258,29 @@ func TestEntStateStoreNeverPersistsWorkspacePassword(t *testing.T) {
 	}
 	if password := stringValue(nested(rows[0], "access", "password")); password != "" {
 		t.Fatalf("Workspace password persisted: %q", password)
+	}
+}
+
+func TestEntStateStorePersistsWorkspaceVerificationClassification(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/workspace-classification.sqlite")
+	if err := store.SaveWorkspace(context.Background(), map[string]any{
+		"id": "ws-slot", "accountId": "acct-alpha", "verificationSlotId": "verification-slot-01", "customerProduct": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListWorkspaces(context.Background(), "acct-alpha")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("list Workspaces: rows=%#v err=%v", rows, err)
+	}
+	if rows[0]["verificationSlotId"] != "verification-slot-01" || rows[0]["customerProduct"] != false {
+		t.Fatalf("Workspace verification classification = %#v", rows[0])
+	}
+	if err := store.SaveWorkspace(context.Background(), map[string]any{"id": "ws-customer", "accountId": "acct-beta"}); err != nil {
+		t.Fatal(err)
+	}
+	customers, err := store.ListWorkspaces(context.Background(), "acct-beta")
+	if err != nil || len(customers) != 1 || customers[0]["customerProduct"] != true {
+		t.Fatalf("customer Workspace default = %#v err=%v", customers, err)
 	}
 }
 
@@ -202,6 +336,211 @@ func TestEntStateStoreWorkspaceResumeClaimIsRetryableAndExclusive(t *testing.T) 
 	if _, replayed, err := store.ClaimWorkspaceResume(ctx, "workspace-alpha", operation); err != nil || replayed {
 		t.Fatalf("retry claim = replayed:%v err:%v", replayed, err)
 	}
+}
+
+func TestMemoryWorkspaceCreateClaimIsAtomic(t *testing.T) {
+	store := newMemoryTableStore()
+	start := make(chan struct{})
+	errorsByRequest := make(chan error, 20)
+	var workers sync.WaitGroup
+	for index := range 20 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			workspace, operation := workspaceCreateClaimForTest(fmt.Sprintf("hash-%d", index), fmt.Sprintf("attachment-%d", index))
+			errorsByRequest <- store.ClaimWorkspaceCreate(context.Background(), workspace, operation)
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errorsByRequest)
+
+	claimed, conflicted := 0, 0
+	for err := range errorsByRequest {
+		switch {
+		case err == nil:
+			claimed++
+		case errors.Is(err, errPrimaryWorkspaceExists):
+			conflicted++
+		default:
+			t.Fatalf("unexpected claim error: %v", err)
+		}
+	}
+	workspaces, _ := store.ListWorkspaces(context.Background(), "acct-alpha")
+	operations, _ := store.ListRuntimeOperations(context.Background())
+	if claimed != 1 || conflicted != 19 || len(workspaces) != 1 || len(operations) != 1 {
+		t.Fatalf("claims=%d conflicts=%d workspaces=%#v operations=%#v", claimed, conflicted, workspaces, operations)
+	}
+}
+
+func TestEntWorkspaceCreateClaimSurvivesRestart(t *testing.T) {
+	path := t.TempDir() + "/workspace-create-claim.sqlite"
+	first := NewTestEntStateStore(t, path)
+	workspace, operation := workspaceCreateClaimForTest("hash-first", "attachment-first")
+	if err := first.ClaimWorkspaceCreate(context.Background(), workspace, operation); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+
+	restarted := NewTestEntStateStore(t, path)
+	workspace, operation = workspaceCreateClaimForTest("hash-second", "attachment-second")
+	if err := restarted.ClaimWorkspaceCreate(context.Background(), workspace, operation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("restart claim error=%v", err)
+	}
+	workspaces, _ := restarted.ListWorkspaces(context.Background(), "acct-alpha")
+	operations, _ := restarted.ListRuntimeOperations(context.Background())
+	if len(workspaces) != 1 || len(operations) != 1 || operations[0]["status"] != "started" {
+		t.Fatalf("restart claim facts: workspaces=%#v operations=%#v", workspaces, operations)
+	}
+}
+
+func TestEntWorkspaceCreateClaimRetriesExpiredSameRequest(t *testing.T) {
+	store := NewTestEntStateStore(t, t.TempDir()+"/workspace-create-retry.sqlite")
+	workspace, operation := workspaceCreateClaimForTest("hash-first", "attachment-first")
+	expired := time.Now().UTC().Add(-time.Minute)
+	result, err := decodeWorkspaceCreateOperation(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.LeaseExpiresAt = &expired
+	operation["result"] = encodeWorkspaceCreateOperation(result)
+	if err := store.ClaimWorkspaceCreate(context.Background(), workspace, operation); err != nil {
+		t.Fatal(err)
+	}
+
+	retryWorkspace, retryOperation := workspaceCreateClaimForTest("hash-first", "attachment-first")
+	lease := time.Now().UTC().Add(time.Minute)
+	retryResult, err := decodeWorkspaceCreateOperation(retryOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryResult.LeaseExpiresAt = &lease
+	retryOperation["result"] = encodeWorkspaceCreateOperation(retryResult)
+	if err := store.ClaimWorkspaceCreate(context.Background(), retryWorkspace, retryOperation); err != nil {
+		t.Fatalf("retry same expired claim: %v", err)
+	}
+	if err := store.ClaimWorkspaceCreate(context.Background(), retryWorkspace, retryOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("active retry claim error=%v", err)
+	}
+
+	changedWorkspace, changedOperation := workspaceCreateClaimForTest("hash-changed", "attachment-first")
+	if err := store.ClaimWorkspaceCreate(context.Background(), changedWorkspace, changedOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("changed retry claim error=%v", err)
+	}
+	secondWorkspace, secondOperation := workspaceCreateClaimForAccountForTest("acct-alpha", "workspace-second", "hash-second", "attachment-second")
+	if err := store.ClaimWorkspaceCreate(context.Background(), secondWorkspace, secondOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("second Workspace claim error=%v", err)
+	}
+}
+
+func TestPostgresPrimaryWorkspaceAndVerifierFactsSurviveRestart(t *testing.T) {
+	admin := openControlPlaneTestPostgres(t)
+	schema := fmt.Sprintf("control_plane_primary_workspace_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_ = admin.Close()
+	})
+	databaseURL := controlPlaneTestPostgresURL("postgres", schema)
+
+	stateStore, err := NewPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := stateStore.(*postgresEntStateStore)
+	workspace, operation := workspaceCreateClaimForTest("postgres-first", "attachment-first")
+	workspace["verificationSlotId"], workspace["customerProduct"] = "verification-slot-01", false
+	if err := first.ClaimWorkspaceCreate(context.Background(), workspace, operation); err != nil {
+		t.Fatalf("claim primary Workspace: %v", err)
+	}
+	costTags := map[string]string{"opl_account_id": "acct-alpha", "opl_workspace_id": stringValue(workspace["id"])}
+	if err := first.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-slot", "accountId": "acct-alpha", "workspaceId": workspace["id"], "costTags": costTags,
+		"nodePoolId": "np-slot-01", "instanceType": "SA5.MEDIUM4", "requestedPeriodMonths": 1, "periodMonths": 1,
+		"verificationSlotId": "verification-slot-01", "customerProduct": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.SaveStorage(context.Background(), map[string]any{
+		"id": "storage-slot", "accountId": "acct-alpha", "workspaceId": workspace["id"], "costTags": costTags,
+		"requestedPeriodMonths": 1, "periodMonths": 1, "verificationSlotId": "verification-slot-01", "customerProduct": false,
+		"pvName": "pv-slot-01", "persistentVolumeName": "pv-slot-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedState, err := NewPostgresEntStateStore(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := restartedState.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = restarted.client.Close() })
+	workspaces, _ := restarted.ListWorkspaces(context.Background(), "acct-alpha")
+	computes, _ := restarted.ListComputes(context.Background(), "acct-alpha")
+	storages, _ := restarted.ListStorages(context.Background(), "acct-alpha")
+	if len(workspaces) != 1 || workspaces[0]["verificationSlotId"] != "verification-slot-01" || workspaces[0]["customerProduct"] != false {
+		t.Fatalf("restarted Workspaces=%#v", workspaces)
+	}
+	compute, storage := recordByID(computes, "compute-slot"), recordByID(storages, "storage-slot")
+	if compute["nodePoolId"] != "np-slot-01" || compute["instanceType"] != "SA5.MEDIUM4" || mapField(compute, "costTags")["opl_account_id"] != "acct-alpha" {
+		t.Fatalf("restarted compute=%#v", compute)
+	}
+	if storage["pvName"] != "pv-slot-01" || storage["persistentVolumeName"] != "pv-slot-01" || mapField(storage, "costTags")["opl_workspace_id"] != workspace["id"] {
+		t.Fatalf("restarted storage=%#v", storage)
+	}
+	secondWorkspace, secondOperation := workspaceCreateClaimForAccountForTest("acct-alpha", "ws-other", "postgres-second", "attachment-second")
+	if err := restarted.ClaimWorkspaceCreate(context.Background(), secondWorkspace, secondOperation); !errors.Is(err, errPrimaryWorkspaceExists) {
+		t.Fatalf("second primary claim error=%v", err)
+	}
+
+	start := make(chan struct{})
+	errorsByRequest := make(chan error, 10)
+	var workers sync.WaitGroup
+	for index := range 10 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			workspaceID := fmt.Sprintf("ws-race-%d", index)
+			row, op := workspaceCreateClaimForAccountForTest("acct-race", workspaceID, fmt.Sprintf("race-%d", index), fmt.Sprintf("attachment-%d", index))
+			errorsByRequest <- restarted.ClaimWorkspaceCreate(context.Background(), row, op)
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errorsByRequest)
+	claimed, conflicted := 0, 0
+	for err := range errorsByRequest {
+		if err == nil {
+			claimed++
+		} else if errors.Is(err, errPrimaryWorkspaceExists) {
+			conflicted++
+		} else {
+			t.Fatalf("Postgres concurrent claim error=%v", err)
+		}
+	}
+	if claimed != 1 || conflicted != 9 {
+		t.Fatalf("Postgres concurrent claims=%d conflicts=%d", claimed, conflicted)
+	}
+}
+
+func workspaceCreateClaimForTest(requestHash, attachmentID string) (map[string]any, map[string]any) {
+	return workspaceCreateClaimForAccountForTest("acct-alpha", primaryWorkspaceID("acct-alpha"), requestHash, attachmentID)
+}
+
+func workspaceCreateClaimForAccountForTest(accountID, workspaceID, requestHash, attachmentID string) (map[string]any, map[string]any) {
+	projection := domain.WorkspaceProjection{ID: workspaceID, AccountID: accountID, OwnerID: "usr-owner", Name: "Primary", ComputeID: "compute-alpha", VolumeID: "storage-alpha", AttachmentID: attachmentID, Status: "provisioning"}
+	workspace := map[string]any{
+		"id": workspaceID, "accountId": accountID, "ownerAccountId": accountID, "ownerUserId": "usr-owner", "name": "Primary",
+		"state": "provisioning", "status": "provisioning", "storageId": "storage-alpha", "currentComputeAllocationId": "compute-alpha", "currentAttachmentId": attachmentID,
+	}
+	operation := workspaceCreateOperationRow("create-"+stableID(workspaceID)[:18], "started", workspaceCreateOperationResult{RequestHash: requestHash, Workspace: projection})
+	return workspace, operation
 }
 
 func TestEntStateStorePersistsExecutionIdentityAndApproval(t *testing.T) {

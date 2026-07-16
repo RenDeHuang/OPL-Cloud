@@ -83,6 +83,12 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202607150004_post_schema_backfill", Run: func(ctx context.Context) error {
 			return backfillControlPlaneMigrationNulls(ctx, driver)
 		}},
+		{Version: "202607160001_sub2api_user_unique", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplySub2APIUserUniqueness(ctx, driver)
+		}},
+		{Version: "202607160002_primary_workspace", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyPrimaryWorkspace(ctx, driver)
+		}},
 	}); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -304,8 +310,10 @@ func billingJSONField(entityField, setter string) entRecordField {
 // ponytail: keep low-cardinality monthly state in one JSON column at the current
 // scale; promote fields to indexed columns only when renewal scans become measurable.
 var monthlyBillingStateKeys = []string{
+	"resourceType",
 	"billingOperationStartedAt",
 	"sub2apiRedeemCode",
+	"sub2apiRefundCode",
 	"monthlyPriceCnyCents",
 	"chargeUsdMicros",
 	"billingAnchorDay",
@@ -317,6 +325,23 @@ var monthlyBillingStateKeys = []string{
 	"lastReceiptId",
 	"postChargeBalanceUsdMicros",
 	"postChargeBalanceKnown",
+	"computeAllocationId",
+	"zone",
+	"chargeType",
+	"renewFlag",
+	"deadline",
+	"cbsStatus",
+	"diskType",
+	"providerData",
+	"costTags",
+	"nodePoolId",
+	"instanceType",
+	"requestedPeriodMonths",
+	"periodMonths",
+	"verificationSlotId",
+	"customerProduct",
+	"pvName",
+	"persistentVolumeName",
 }
 
 var (
@@ -441,6 +466,8 @@ var (
 		textField("CredentialStatus", "SetCredentialStatus", "access", "credentialStatus"),
 		textField("CredentialVersion", "SetCredentialVersion", "access", "credentialVersion"),
 		textField("CredentialSecretRef", "SetCredentialSecretRef", "access", "secretRef"),
+		textField("VerificationSlotID", "SetVerificationSlotID", "verificationSlotId"),
+		boolField("CustomerProduct", "SetCustomerProduct", "customerProduct"),
 	}
 	workspaceBackupEntFields = []entRecordField{
 		textField("AccountID", "SetAccountID", "accountId"),
@@ -624,7 +651,36 @@ func (s *postgresEntStateStore) ListAccounts(ctx context.Context, accountID stri
 }
 
 func (s *postgresEntStateStore) SaveAccount(ctx context.Context, row map[string]any) error {
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Account.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Account.Create() }, accountEntFields)
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	rollback := func(err error) error {
+		_ = tx.Rollback()
+		if int64(numberField(row, "sub2apiUserId", 0)) > 0 && controlplaneent.IsConstraintError(err) {
+			return errSub2APIAccountMappingConflict
+		}
+		return err
+	}
+	accounts, err := loadRecordSet(ctx, tx.Account.Query().All, accountEntFields)
+	if err != nil {
+		return rollback(err)
+	}
+	accountRows, _ := filteredRecords(accounts, "")
+	if err := validateSub2APIAccountMapping(accountRows, row); err != nil {
+		return rollback(err)
+	}
+	id := stringValue(row["id"])
+	if id == "" {
+		return rollback(errors.New("missing_record_id"))
+	}
+	if err := tx.Account.DeleteOneID(id).Exec(ctx); err != nil && !controlplaneent.IsNotFound(err) {
+		return rollback(err)
+	}
+	if err := saveRecord(ctx, id, row, tx.Account.Create(), accountEntFields); err != nil {
+		return rollback(err)
+	}
+	return tx.Commit()
 }
 
 func (s *postgresEntStateStore) ListOrganizations(ctx context.Context) ([]map[string]any, error) {
@@ -985,7 +1041,11 @@ func claimEntBillingOperation(ctx context.Context, row map[string]any, load func
 			return nil, false, err
 		}
 		if updated == 1 {
-			return mergeMaps(existing, row), true, nil
+			claimed := mergeMaps(existing, row)
+			if lastReceiptID, reset := row["lastReceiptId"].(string); reset && lastReceiptID == "" {
+				claimed["lastReceiptId"] = ""
+			}
+			return claimed, true, nil
 		}
 	}
 	return nil, false, errors.New("billing_operation_claim_retry_exhausted")
@@ -1036,7 +1096,72 @@ func (s *postgresEntStateStore) ListWorkspaces(ctx context.Context, accountID st
 }
 
 func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[string]any) error {
+	row = cloneMap(row)
+	if _, ok := row["customerProduct"]; !ok {
+		row["customerProduct"] = true
+	}
 	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Workspace.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Workspace.Create() }, workspaceEntFields)
+}
+
+func (s *postgresEntStateStore) ClaimWorkspaceCreate(ctx context.Context, workspaceRow map[string]any, operation map[string]any) error {
+	accountID := firstNonEmpty(stringValue(workspaceRow["accountId"]), stringValue(workspaceRow["ownerAccountId"]))
+	workspaceID, operationID := stringValue(workspaceRow["id"]), stringValue(operation["id"])
+	if accountID == "" || workspaceID == "" || operationID == "" {
+		return errors.New("invalid_workspace_create_claim")
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	existing, err := tx.RuntimeOperation.Get(ctx, operationID)
+	if err == nil {
+		current, currentErr := decodeWorkspaceCreateOperation(recordFromEnt(existing, runtimeOpEntFields))
+		claim, claimErr := decodeWorkspaceCreateOperation(operation)
+		if currentErr != nil || claimErr != nil || current.RequestHash != claim.RequestHash || current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID || existing.AccountID != accountID || existing.WorkspaceID != workspaceID {
+			return errPrimaryWorkspaceExists
+		}
+		if existing.Status != "retryable" && (existing.Status != "started" || current.LeaseExpiresAt != nil && current.LeaseExpiresAt.After(time.Now().UTC())) {
+			return errPrimaryWorkspaceExists
+		}
+		_, err := tx.RuntimeOperation.UpdateOneID(existing.ID).
+			Where(runtimeoperation.StatusEQ(existing.Status), runtimeoperation.ResultEQ(existing.Result)).
+			SetStatus("started").
+			SetResult(stringValue(operation["result"])).
+			Save(ctx)
+		if err != nil {
+			if controlplaneent.IsNotFound(err) {
+				return errPrimaryWorkspaceExists
+			}
+			return err
+		}
+		return tx.Commit()
+	}
+	if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	if _, err := tx.Workspace.Query().Where(workspace.Or(workspace.AccountID(accountID), workspace.And(workspace.AccountID(""), workspace.OwnerAccountID(accountID)))).First(ctx); err == nil {
+		return errPrimaryWorkspaceExists
+	} else if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	workspaceRow = cloneMap(workspaceRow)
+	if _, ok := workspaceRow["customerProduct"]; !ok {
+		workspaceRow["customerProduct"] = true
+	}
+	if err := saveRecord(ctx, stringValue(workspaceRow["id"]), workspaceRow, tx.Workspace.Create(), workspaceEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errPrimaryWorkspaceExists
+		}
+		return err
+	}
+	if err := saveRecord(ctx, stringValue(operation["id"]), operation, tx.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errPrimaryWorkspaceExists
+		}
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *postgresEntStateStore) ClaimWorkspaceResume(ctx context.Context, workspaceID string, operation map[string]any) (map[string]any, bool, error) {
@@ -1504,7 +1629,7 @@ func recordFromEnt(entity any, fields []entRecordField) controlPlaneRecord {
 			}
 			continue
 		}
-		if isZero(raw) {
+		if isZero(raw) && field.Kind != "bool" {
 			continue
 		}
 		setPath(row, field.Path, raw)

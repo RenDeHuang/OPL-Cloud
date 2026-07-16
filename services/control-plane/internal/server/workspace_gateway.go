@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/domain"
 )
@@ -13,13 +14,61 @@ func (app *controlPlaneServer) workspaceStateRowsLocked(accountID string) []any 
 	rows := app.listWorkspaces(accountID)
 	output := make([]any, 0, len(rows))
 	for _, row := range rows {
-		workspace := workspaceResponse(cloneMap(row))
+		workspace := app.workspaceResponse(cloneMap(row))
 		output = append(output, workspace)
 	}
 	return output
 }
 
+func (app *controlPlaneServer) workspaceResponse(row map[string]any) map[string]any {
+	response, _ := app.workspaceAccessResponse(row, time.Now().UTC())
+	return response
+}
+
+func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now time.Time) (map[string]any, string) {
+	response := workspaceResponse(row)
+	storage, ok := app.getStorage(stringValue(response["storageId"]))
+	if ok {
+		switch stringValue(storage["status"]) {
+		case "available", "ready", "bound", "attached":
+		default:
+			ok = false
+		}
+	}
+	paidThrough, err := time.Parse(time.RFC3339, stringValue(storage["paidThrough"]))
+	storageActive := ok && stringValue(storage["billingStatus"]) == "active" && err == nil && now.UTC().Before(paidThrough)
+	if !storageActive {
+		response["openable"] = false
+		response["accessState"] = "disabled"
+		return response, "workspace_storage_entitlement_inactive"
+	}
+
+	compute, ok := app.getCompute(firstNonEmpty(stringValue(response["currentComputeAllocationId"]), stringValue(response["computeAllocationId"])))
+	if ok {
+		switch stringValue(compute["status"]) {
+		case "running", "ready", "available", "active":
+		default:
+			ok = false
+		}
+	}
+	paidThrough, err = time.Parse(time.RFC3339, stringValue(compute["paidThrough"]))
+	computeActive := ok &&
+		app.resourceBelongsToAccount(compute, firstNonEmpty(stringValue(response["accountId"]), stringValue(response["ownerAccountId"]))) &&
+		stringValue(compute["workspaceId"]) == stringValue(response["id"]) &&
+		stringValue(compute["billingStatus"]) == "active" && err == nil && now.UTC().Before(paidThrough)
+	if !computeActive {
+		response["openable"] = false
+		response["accessState"] = "disabled"
+		return response, "workspace_compute_entitlement_inactive"
+	}
+	return response, ""
+}
+
 func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.WorkspaceProjection) error {
+	return app.tables.SaveWorkspace(context.Background(), workspaceProjectionRow(workspace))
+}
+
+func workspaceProjectionRow(workspace domain.WorkspaceProjection) map[string]any {
 	access := map[string]any{}
 	if workspace.RuntimeUsername != "" {
 		access["account"] = workspace.RuntimeUsername
@@ -55,7 +104,7 @@ func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.Workspac
 		"receiptId":                  workspace.ReceiptID,
 		"access":                     access,
 	}
-	return app.tables.SaveWorkspace(context.Background(), row)
+	return row
 }
 
 func (app *controlPlaneServer) suspendWorkspacesForCompute(computeID string) error {
@@ -153,7 +202,12 @@ func (app *controlPlaneServer) proxyWorkspaceTo(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "workspace_suspended")
 		return
 	}
-	if workspaceResponse(cloneMap(workspace))["openable"] != true {
+	response, blockReason := app.workspaceAccessResponse(cloneMap(workspace), time.Now().UTC())
+	if blockReason != "" {
+		writeError(w, http.StatusConflict, blockReason)
+		return
+	}
+	if response["openable"] != true {
 		writeError(w, http.StatusConflict, "workspace_runtime_not_ready")
 		return
 	}

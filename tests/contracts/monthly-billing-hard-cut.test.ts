@@ -43,15 +43,20 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("pricing contract fixes exact integer monthly charges", async () => {
   const pricing = await readJson("opl-cloud-pricing-contract.json");
 
-  assert.equal(pricing.catalogVersion, "2026-07-14-opl-monthly-v1");
+  assert.equal(pricing.catalogVersion, "2026-07-16-opl-monthly-v2");
   assert.equal(pricing.billingUnit, "calendar_month");
   assert.equal(pricing.displayCurrency, "CNY");
   assert.equal(pricing.walletCurrency, "USD");
   assert.equal(pricing.exchangeRateCnyPerUsd, 7);
   assert.deepEqual(pricing.computeMonthly, {
-    basic: { cnyCents: 35000, usdMicros: 50000000 }
+    basic: { cnyCents: 35000, usdMicros: 50000000 },
+    pro: { cnyCents: 150000, usdMicros: 214285715 }
   });
   assert.deepEqual(pricing.storagePer10GbMonthly, { cnyCents: 1800, usdMicros: 2571429 });
+  assert.deepEqual(pricing.storageMonthly, {
+    "10": { cnyCents: 1800, usdMicros: 2571429 },
+    "100": { cnyCents: 18000, usdMicros: 25714286 }
+  });
   assert.deepEqual(pricing.storageSize, { minimumGb: 10, stepGb: 10 });
   assert.equal(pricing.computeHourly, undefined);
   assert.equal(pricing.storageGbMonth, undefined);
@@ -65,6 +70,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
     "billing.resource_purchased.v1",
     "billing.resource_renewed.v1",
     "billing.resource_expired.v1",
+    "billing.resource_refunded.v1",
     "billing.charge_review_required.v1",
     "billing.reconciliation.v1"
   ]) {

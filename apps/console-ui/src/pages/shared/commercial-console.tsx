@@ -40,8 +40,10 @@ function statusText(value = "") {
 
 const resourceOperationStages = Object.freeze([
   "已提交",
-  "云资源准备中",
-  "余额扣款中",
+  "只读资源预检中",
+  "月费扣款中",
+  "PREPAID 开通中",
+  "资源认领中",
   "月度权益已激活",
   "Runtime 部署中",
   "存储挂载中",
@@ -182,19 +184,20 @@ export function OperationResultPanel({ result, pending = false }: any) {
         type="info"
         showIcon
         message="操作已提交"
-        description="正在创建云资源、完成月费扣款并部署 Runtime，通常需要 3-5 分钟。"
+        description="请求正在处理中，请稍候。"
       />
     );
   }
   if (!result) return null;
-  const failed = result.ok === false || result.status === "failed" || Boolean(result.failureReason);
+  const unknown = result.status === "unknown";
+  const failed = !unknown && (result.ok === false || result.status === "failed" || Boolean(result.failureReason));
   const submitted = ["submitted", "provisioning", "creating", "attaching", "pending"].includes(result.status);
   return (
     <Alert
-      type={failed ? "error" : submitted ? "info" : "success"}
+      type={unknown ? "warning" : failed ? "error" : submitted ? "info" : "success"}
       showIcon
-      message={failed ? "操作失败" : submitted ? "操作已提交" : "操作完成"}
-      description={failed
+      message={unknown ? "结果待确认" : failed ? "操作失败" : submitted ? "操作已提交" : "操作完成"}
+      description={unknown || failed
         ? customerSafeMessage(result.failureReason, "请查看失败原因后重试。")
         : result.nextStepMessage || `资源 ${result.resourceId || result.id || "-"} 已更新。`}
     />

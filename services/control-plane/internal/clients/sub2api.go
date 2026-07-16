@@ -19,19 +19,32 @@ import (
 const (
 	maxSub2APIResponseBytes  = 1 << 20
 	maxSub2APIRequestTimeout = 30 * time.Second
+	sub2APIKeyPageSize       = 1000
+	maxSub2APIKeyPages       = 10
+	maxSub2APIKeys           = sub2APIKeyPageSize * maxSub2APIKeyPages
 )
 
 var (
-	ErrSub2APIUnsupportedVersion = errors.New("sub2api unsupported version")
-	ErrSub2APIChargeConflict     = errors.New("sub2api charge conflict")
-	ErrSub2APIChargeUnknown      = errors.New("sub2api charge result unknown")
-	ErrSub2APIResponseTooLarge   = errors.New("sub2api response too large")
+	ErrSub2APIUnsupportedVersion    = errors.New("sub2api unsupported version")
+	ErrSub2APIChargeConflict        = errors.New("sub2api charge conflict")
+	ErrSub2APIChargeUnknown         = errors.New("sub2api charge result unknown")
+	ErrSub2APIResponseTooLarge      = errors.New("sub2api response too large")
+	ErrSub2APIWorkspaceKeyMissing   = errors.New("sub2api workspace key missing")
+	ErrSub2APIWorkspaceKeyAmbiguous = errors.New("sub2api workspace key ambiguous")
 )
 
 type Sub2APIClient interface {
 	Version(context.Context) (string, error)
 	Balance(context.Context, int64) (Sub2APIBalance, error)
 	Charge(context.Context, Sub2APIChargeInput) (Sub2APICharge, error)
+}
+
+type Sub2APIWorkspaceKeyClient interface {
+	WorkspaceKey(context.Context, int64) (Sub2APIWorkspaceKey, error)
+}
+
+type Sub2APIRefundClient interface {
+	Refund(context.Context, Sub2APIRefundInput) (Sub2APIRefund, error)
 }
 
 type Sub2APIConfig struct {
@@ -45,6 +58,21 @@ type Sub2APIConfig struct {
 type Sub2APIBalance struct {
 	UserID    int64
 	USDMicros int64
+	Status    string
+}
+
+type Sub2APIWorkspaceKey struct {
+	ID                 int64
+	UserID             int64
+	Name               string
+	Key                string
+	Status             string
+	QuotaUSDMicros     int64
+	QuotaUsedUSDMicros int64
+	Usage5hUSDMicros   int64
+	Usage1dUSDMicros   int64
+	Usage7dUSDMicros   int64
+	LastUsedAt         *time.Time
 }
 
 type Sub2APIChargeInput struct {
@@ -58,6 +86,20 @@ type Sub2APICharge struct {
 	Code            string
 	UserID          int64
 	ChargeUSDMicros int64
+	Status          string
+}
+
+type Sub2APIRefundInput struct {
+	UserID          int64
+	Code            string
+	RefundUSDMicros int64
+	Notes           string
+}
+
+type Sub2APIRefund struct {
+	Code            string
+	UserID          int64
+	RefundUSDMicros int64
 	Status          string
 }
 
@@ -137,6 +179,9 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 	if userID <= 0 {
 		return Sub2APIBalance{}, errors.New("sub2api user ID must be positive")
 	}
+	if err := c.ensureSupportedVersion(ctx); err != nil {
+		return Sub2APIBalance{}, err
+	}
 	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10), nil, "")
 	if err != nil {
 		return Sub2APIBalance{}, err
@@ -144,6 +189,7 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 	var data struct {
 		ID      int64       `json:"id"`
 		Balance json.Number `json:"balance"`
+		Status  string      `json:"status"`
 	}
 	if err := decodeSub2APIEnvelope(body, &data); err != nil {
 		return Sub2APIBalance{}, err
@@ -155,19 +201,113 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 	if err != nil {
 		return Sub2APIBalance{}, fmt.Errorf("invalid sub2api balance: %w", err)
 	}
-	return Sub2APIBalance{UserID: userID, USDMicros: micros}, nil
+	return Sub2APIBalance{UserID: userID, USDMicros: micros, Status: data.Status}, nil
+}
+
+func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub2APIWorkspaceKey, error) {
+	if userID <= 0 {
+		return Sub2APIWorkspaceKey{}, errors.New("sub2api user ID must be positive")
+	}
+	if err := c.ensureSupportedVersion(ctx); err != nil {
+		return Sub2APIWorkspaceKey{}, err
+	}
+	matches := make([]Sub2APIWorkspaceKey, 0, 1)
+	for page := 1; page <= maxSub2APIKeyPages; page++ {
+		query := url.Values{"page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(sub2APIKeyPageSize)}}
+		body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10)+"/api-keys?"+query.Encode(), nil, "")
+		if err != nil {
+			return Sub2APIWorkspaceKey{}, err
+		}
+		var data struct {
+			Items []struct {
+				ID         int64        `json:"id"`
+				UserID     int64        `json:"user_id"`
+				Name       string       `json:"name"`
+				Key        string       `json:"key"`
+				Status     string       `json:"status"`
+				Quota      *json.Number `json:"quota"`
+				QuotaUsed  *json.Number `json:"quota_used"`
+				Usage5h    *json.Number `json:"usage_5h"`
+				Usage1d    *json.Number `json:"usage_1d"`
+				Usage7d    *json.Number `json:"usage_7d"`
+				LastUsedAt *time.Time   `json:"last_used_at"`
+			} `json:"items"`
+			Page     int `json:"page"`
+			PageSize int `json:"page_size"`
+			Pages    int `json:"pages"`
+			Total    int `json:"total"`
+		}
+		if err := decodeSub2APIEnvelope(body, &data); err != nil {
+			return Sub2APIWorkspaceKey{}, err
+		}
+		if data.Page != page || data.PageSize <= 0 || data.Pages < page || data.Pages > maxSub2APIKeyPages || data.Total < 0 || data.Total > maxSub2APIKeys {
+			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+		}
+		for _, item := range data.Items {
+			if item.UserID != userID {
+				return Sub2APIWorkspaceKey{}, errors.New("sub2api user identity mismatch")
+			}
+			if item.Name != "opl-workspace" || item.Status != "active" {
+				continue
+			}
+			if item.ID <= 0 || item.Key == "" {
+				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key")
+			}
+			values := []*json.Number{item.Quota, item.QuotaUsed, item.Usage5h, item.Usage1d, item.Usage7d}
+			micros := make([]int64, len(values))
+			for i, value := range values {
+				if value == nil {
+					return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
+				}
+				micros[i], err = decimalUSDMicros(*value)
+				if err != nil {
+					return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
+				}
+			}
+			matches = append(matches, Sub2APIWorkspaceKey{
+				ID: item.ID, UserID: item.UserID, Name: item.Name, Key: item.Key, Status: item.Status,
+				QuotaUSDMicros: micros[0], QuotaUsedUSDMicros: micros[1], Usage5hUSDMicros: micros[2],
+				Usage1dUSDMicros: micros[3], Usage7dUSDMicros: micros[4], LastUsedAt: item.LastUsedAt,
+			})
+		}
+		if page == data.Pages {
+			break
+		}
+	}
+	if len(matches) == 0 {
+		return Sub2APIWorkspaceKey{}, ErrSub2APIWorkspaceKeyMissing
+	}
+	if len(matches) != 1 {
+		return Sub2APIWorkspaceKey{}, ErrSub2APIWorkspaceKeyAmbiguous
+	}
+	return matches[0], nil
 }
 
 func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput) (Sub2APICharge, error) {
 	if input.UserID <= 0 || strings.TrimSpace(input.Code) == "" || input.ChargeUSDMicros <= 0 {
 		return Sub2APICharge{}, errors.New("sub2api charge identity and positive amount are required")
 	}
-	version, err := c.Version(ctx)
+	status, err := c.redeemBalance(ctx, input.UserID, input.Code, -input.ChargeUSDMicros, input.Notes)
 	if err != nil {
 		return Sub2APICharge{}, err
 	}
-	if _, ok := c.supportedVersions[version]; !ok {
-		return Sub2APICharge{}, fmt.Errorf("%w: %s", ErrSub2APIUnsupportedVersion, version)
+	return Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: input.ChargeUSDMicros, Status: status}, nil
+}
+
+func (c *Sub2APIHTTPClient) Refund(ctx context.Context, input Sub2APIRefundInput) (Sub2APIRefund, error) {
+	if input.UserID <= 0 || strings.TrimSpace(input.Code) == "" || input.RefundUSDMicros <= 0 {
+		return Sub2APIRefund{}, errors.New("sub2api refund identity and positive amount are required")
+	}
+	status, err := c.redeemBalance(ctx, input.UserID, input.Code, input.RefundUSDMicros, input.Notes)
+	if err != nil {
+		return Sub2APIRefund{}, err
+	}
+	return Sub2APIRefund{Code: input.Code, UserID: input.UserID, RefundUSDMicros: input.RefundUSDMicros, Status: status}, nil
+}
+
+func (c *Sub2APIHTTPClient) redeemBalance(ctx context.Context, userID int64, code string, valueUSDMicros int64, notes string) (string, error) {
+	if err := c.ensureSupportedVersion(ctx); err != nil {
+		return "", err
 	}
 	payload := struct {
 		Code   string          `json:"code"`
@@ -176,18 +316,18 @@ func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput
 		UserID int64           `json:"user_id"`
 		Notes  string          `json:"notes,omitempty"`
 	}{
-		Code: input.Code, Type: "balance", Value: negativeUSDMicrosJSON(input.ChargeUSDMicros), UserID: input.UserID, Notes: input.Notes,
+		Code: code, Type: "balance", Value: usdMicrosJSON(valueUSDMicros), UserID: userID, Notes: notes,
 	}
-	body, err := c.doAuthenticated(ctx, http.MethodPost, "/api/v1/admin/redeem-codes/create-and-redeem", payload, input.Code)
+	body, err := c.doAuthenticated(ctx, http.MethodPost, "/api/v1/admin/redeem-codes/create-and-redeem", payload, code)
 	if err != nil {
 		var httpErr *Sub2APIHTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict {
-			return Sub2APICharge{}, fmt.Errorf("%w: redeem code rejected", ErrSub2APIChargeConflict)
+			return "", fmt.Errorf("%w: redeem code rejected", ErrSub2APIChargeConflict)
 		}
 		if !errors.As(err, &httpErr) || httpErr.StatusCode >= http.StatusInternalServerError || errors.Is(err, ErrSub2APIResponseTooLarge) {
-			return Sub2APICharge{}, fmt.Errorf("%w: request did not produce a confirmed response", ErrSub2APIChargeUnknown)
+			return "", fmt.Errorf("%w: request did not produce a confirmed response", ErrSub2APIChargeUnknown)
 		}
-		return Sub2APICharge{}, err
+		return "", err
 	}
 	var data struct {
 		RedeemCode struct {
@@ -199,16 +339,27 @@ func (c *Sub2APIHTTPClient) Charge(ctx context.Context, input Sub2APIChargeInput
 		} `json:"redeem_code"`
 	}
 	if err := decodeSub2APIEnvelope(body, &data); err != nil {
-		return Sub2APICharge{}, fmt.Errorf("%w: response could not be confirmed", ErrSub2APIChargeUnknown)
+		return "", fmt.Errorf("%w: response could not be confirmed", ErrSub2APIChargeUnknown)
 	}
 	valueMicros, err := decimalUSDMicros(data.RedeemCode.Value)
 	if err != nil {
-		return Sub2APICharge{}, fmt.Errorf("%w: response amount could not be confirmed", ErrSub2APIChargeUnknown)
+		return "", fmt.Errorf("%w: response amount could not be confirmed", ErrSub2APIChargeUnknown)
 	}
-	if data.RedeemCode.Code != input.Code || data.RedeemCode.Type != "balance" || data.RedeemCode.Status != "used" || data.RedeemCode.UsedBy == nil || *data.RedeemCode.UsedBy != input.UserID || valueMicros != -input.ChargeUSDMicros {
-		return Sub2APICharge{}, fmt.Errorf("%w: redeem record differs from requested charge", ErrSub2APIChargeConflict)
+	if data.RedeemCode.Code != code || data.RedeemCode.Type != "balance" || data.RedeemCode.Status != "used" || data.RedeemCode.UsedBy == nil || *data.RedeemCode.UsedBy != userID || valueMicros != valueUSDMicros {
+		return "", fmt.Errorf("%w: redeem record differs from requested balance adjustment", ErrSub2APIChargeConflict)
 	}
-	return Sub2APICharge{Code: input.Code, UserID: input.UserID, ChargeUSDMicros: input.ChargeUSDMicros, Status: data.RedeemCode.Status}, nil
+	return data.RedeemCode.Status, nil
+}
+
+func (c *Sub2APIHTTPClient) ensureSupportedVersion(ctx context.Context) error {
+	version, err := c.Version(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := c.supportedVersions[version]; !ok {
+		return fmt.Errorf("%w: %s", ErrSub2APIUnsupportedVersion, version)
+	}
+	return nil
 }
 
 func (c *Sub2APIHTTPClient) doAuthenticated(ctx context.Context, method, path string, input any, idempotencyKey string) ([]byte, error) {
@@ -340,6 +491,10 @@ func decimalUSDMicros(value json.Number) (int64, error) {
 	return rational.Num().Int64(), nil
 }
 
-func negativeUSDMicrosJSON(micros int64) json.RawMessage {
-	return json.RawMessage(fmt.Sprintf("-%d.%06d", micros/1_000_000, micros%1_000_000))
+func usdMicrosJSON(micros int64) json.RawMessage {
+	sign := ""
+	if micros < 0 {
+		sign, micros = "-", -micros
+	}
+	return json.RawMessage(fmt.Sprintf("%s%d.%06d", sign, micros/1_000_000, micros%1_000_000))
 }

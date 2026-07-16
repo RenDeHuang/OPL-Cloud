@@ -516,6 +516,8 @@ var (
 		{Name: "credential_version", Type: field.TypeString, Default: ""},
 		{Name: "credential_secret_ref", Type: field.TypeString, Default: ""},
 		{Name: "access_requires_login", Type: field.TypeBool, Default: false},
+		{Name: "verification_slot_id", Type: field.TypeString, Default: ""},
+		{Name: "customer_product", Type: field.TypeBool, Default: true},
 	}
 	// ControlPlaneWorkspacesTable holds the schema information for the "control_plane_workspaces" table.
 	ControlPlaneWorkspacesTable = &schema.Table{

@@ -28,12 +28,14 @@ on:
           - "true"
           - "false"
       workspace_source_image:
-        description: Existing one-person-lab-app/WebUI image to mirror into the oplcloud TCR namespace.
+        description: Approved one-person-lab-app/WebUI source digest (26.7.13 primary or 26.7.12 fallback).
         required: false
+        default: ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76
         type: string
       workspace_image_tag:
-        description: Optional Workspace image tag. Defaults to the source image tag.
+        description: Approved mirror tag paired with its exact source digest.
         required: false
+        default: "26.7.13"
         type: string
 
 permissions:
@@ -45,11 +47,19 @@ jobs:
     name: Build and Push OPL Cloud Images
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      cloud_image: ${{ steps.images.outputs.cloud_image }}
+      workspace_image: ${{ steps.images.outputs.workspace_image }}
     env:
       OPL_CLOUD_IMAGE_CONTEXT: .
       OPL_CLOUD_IMAGE_DOCKERFILE: Dockerfile
       OPL_CLOUD_IMAGE_REPOSITORY: uswccr.ccs.tencentyun.com/oplcloud/opl-cloud
       OPL_WORKSPACE_IMAGE_REPOSITORY: uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app
+      REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
+      REQUESTED_WORKSPACE_SOURCE_IMAGE: ${{ inputs.workspace_source_image }}
+      REQUESTED_WORKSPACE_IMAGE_TAG: ${{ inputs.workspace_image_tag }}
+      PUBLISH_CLOUD_IMAGE: ${{ inputs.publish_cloud_image }}
+      MIRROR_WORKSPACE_IMAGE: ${{ inputs.mirror_workspace_image }}
       TCR_ID: ${{ secrets.TCR_USERNAME }}
       TCR_SECRET: ${{ secrets.TCR_PASSWORD }}
       GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
@@ -65,65 +75,132 @@ jobs:
         id: meta
         shell: bash
         run: |
-          head_sha="$(git rev-parse HEAD)"
-          short_sha="${head_sha::12}"
-          image_tag="${{ inputs.image_tag }}"
-          if [ -z "$image_tag" ]; then
-            image_tag="$short_sha"
+          set -euo pipefail
+          if [ "$PUBLISH_CLOUD_IMAGE" = "true" ]; then
+            head_sha="$(git rev-parse HEAD)"
+            short_sha="${head_sha::12}"
+            image_tag="$REQUESTED_IMAGE_TAG"
+            if [ -z "$image_tag" ]; then
+              image_tag="$short_sha"
+            fi
+            if ! printf '%s' "$image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+              echo "image_tag is outside the allowed container tag format." >&2
+              exit 1
+            fi
+            if [ "$image_tag" = "latest" ] || [ "$image_tag" = "stable" ]; then
+              echo "Mutable production image tags are forbidden." >&2
+              exit 1
+            fi
+            image="${OPL_CLOUD_IMAGE_REPOSITORY}:${image_tag}"
+            echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+            echo "image=${image}" >> "$GITHUB_OUTPUT"
+            echo "OPL_CLOUD_IMAGE_REF=${image}" >> "$GITHUB_ENV"
           fi
-          if ! printf '%s' "$image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
-            echo "image_tag is outside the allowed container tag format." >&2
-            exit 1
+          if [ "$MIRROR_WORKSPACE_IMAGE" = "true" ]; then
+            workspace_source_image="$REQUESTED_WORKSPACE_SOURCE_IMAGE"
+            workspace_image_tag="$REQUESTED_WORKSPACE_IMAGE_TAG"
+            case "$workspace_image_tag:$workspace_source_image" in
+              "26.7.13:ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76")
+                expected_workspace_tag_commit="faeb0d6f9d1fe18ac6ea1433168c5696fd7d7918"
+                expected_workspace_config_digest="sha256:5a5335ffa7e03303b8d57019dcbe8dfdea329d11481bfa4dd152f629666c14b9"
+                expected_workspace_oci_revision="0d45e6c9f954ec63b029b678db5d7929a049a958"
+                ;;
+              "26.7.12:ghcr.io/gaofeng21cn/one-person-lab-webui@sha256:6e1491a3693a820a37b81ab9a26f8efc4262fb9581f981641c6de084b0fa654f")
+                expected_workspace_tag_commit="6339a48dee84cf290173b2efbb34f62647abdfe6"
+                expected_workspace_config_digest="sha256:4d89f20226b140c99102ba5fdc757755f954bed990b2f842ebb3e4d2410e8f05"
+                expected_workspace_oci_revision="35a9584f92d3fa2acad0d459a10a7caffaa04c0e"
+                ;;
+              *) echo "workspace_image_tag and workspace_source_image must be an approved exact pair." >&2; exit 1 ;;
+            esac
+            workspace_image="${OPL_WORKSPACE_IMAGE_REPOSITORY}:${workspace_image_tag}"
+            echo "workspace_image_tag=${workspace_image_tag}" >> "$GITHUB_OUTPUT"
+            echo "workspace_image=${workspace_image}" >> "$GITHUB_OUTPUT"
+            echo "OPL_WORKSPACE_IMAGE_REF=${workspace_image}" >> "$GITHUB_ENV"
+            echo "WORKSPACE_SOURCE_IMAGE=${workspace_source_image}" >> "$GITHUB_ENV"
+            echo "EXPECTED_WORKSPACE_TAG_COMMIT=${expected_workspace_tag_commit}" >> "$GITHUB_ENV"
+            echo "EXPECTED_WORKSPACE_CONFIG_DIGEST=${expected_workspace_config_digest}" >> "$GITHUB_ENV"
+            echo "EXPECTED_WORKSPACE_OCI_REVISION=${expected_workspace_oci_revision}" >> "$GITHUB_ENV"
           fi
-          workspace_source_image="${{ inputs.workspace_source_image }}"
-          workspace_image_tag="${{ inputs.workspace_image_tag }}"
-          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && [ -z "$workspace_source_image" ]; then
-            echo "workspace_source_image is required when mirror_workspace_image is true." >&2
-            exit 1
-          fi
-          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && [ -z "$workspace_image_tag" ]; then
-            workspace_image_tag="${workspace_source_image##*:}"
-          fi
-          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && [ "$workspace_image_tag" = "$workspace_source_image" ]; then
-            echo "workspace_source_image must include an explicit tag." >&2
-            exit 1
-          fi
-          if [ "${{ inputs.mirror_workspace_image }}" = "true" ] && ! printf '%s' "$workspace_image_tag" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
-            echo "workspace_image_tag is outside the allowed container tag format." >&2
-            exit 1
-          fi
-          image="${OPL_CLOUD_IMAGE_REPOSITORY}:${image_tag}"
-          workspace_image="${OPL_WORKSPACE_IMAGE_REPOSITORY}:${workspace_image_tag}"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          echo "workspace_image_tag=${workspace_image_tag}" >> "$GITHUB_OUTPUT"
-          echo "workspace_image=${workspace_image}" >> "$GITHUB_OUTPUT"
-          echo "OPL_CLOUD_IMAGE_REF=${image}" >> "$GITHUB_ENV"
-          echo "OPL_WORKSPACE_IMAGE_REF=${workspace_image}" >> "$GITHUB_ENV"
-          echo "WORKSPACE_SOURCE_IMAGE=${workspace_source_image}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push images
+        id: images
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s' "$TCR_SECRET" | docker login uswccr.ccs.tencentyun.com --username "$TCR_ID" --password-stdin
-          if [ "${{ inputs.publish_cloud_image }}" = "true" ]; then
-            docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
+          printf 'cloud_image=\nworkspace_image=\n' >> "$GITHUB_OUTPUT"
+          echo "OPL_CLOUD_IMAGE=" >> "$GITHUB_ENV"
+          echo "OPL_WORKSPACE_IMAGE=" >> "$GITHUB_ENV"
+          if [ "$PUBLISH_CLOUD_IMAGE" = "true" ] || [ "$MIRROR_WORKSPACE_IMAGE" = "true" ]; then
+            printf '%s' "$TCR_SECRET" | docker login uswccr.ccs.tencentyun.com --username "$TCR_ID" --password-stdin
           fi
-          if [ "${{ inputs.mirror_workspace_image }}" = "true" ]; then
-            case "$WORKSPACE_SOURCE_IMAGE" in
-              ghcr.io/*)
-                printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
-                ;;
-            esac
-            docker buildx imagetools create -t "$OPL_WORKSPACE_IMAGE_REF" "$WORKSPACE_SOURCE_IMAGE"
+          if [ "$PUBLISH_CLOUD_IMAGE" = "true" ]; then
+            docker buildx build --push -f Dockerfile -t "$OPL_CLOUD_IMAGE_REF" "$OPL_CLOUD_IMAGE_CONTEXT"
+            cloud_digest="$(docker buildx imagetools inspect "$OPL_CLOUD_IMAGE_REF" --format '{{.Manifest.Digest}}')"
+            if ! printf '%s' "$cloud_digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Cloud target image digest readback failed." >&2
+              exit 1
+            fi
+            echo "OPL_CLOUD_IMAGE=${OPL_CLOUD_IMAGE_REPOSITORY}@${cloud_digest}" >> "$GITHUB_ENV"
+            echo "cloud_image=${OPL_CLOUD_IMAGE_REPOSITORY}@${cloud_digest}" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$MIRROR_WORKSPACE_IMAGE" = "true" ]; then
+            printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USERNAME" --password-stdin
+            source_digest="$(docker buildx imagetools inspect "$WORKSPACE_SOURCE_IMAGE" --format '{{.Manifest.Digest}}')"
+            if [ "$source_digest" != "${WORKSPACE_SOURCE_IMAGE##*@}" ]; then
+              echo "Workspace source digest readback mismatch." >&2
+              exit 1
+            fi
+            tag_commit="$(git ls-remote https://github.com/gaofeng21cn/one-person-lab-app.git "refs/tags/v${REQUESTED_WORKSPACE_IMAGE_TAG}" | awk 'NR == 1 { print $1 }')"
+            if [ "$tag_commit" != "$EXPECTED_WORKSPACE_TAG_COMMIT" ]; then
+              echo "Workspace App tag commit mismatch." >&2
+              exit 1
+            fi
+            registry_token="$(curl -fsSL --retry 3 --user "$GHCR_USERNAME:$GHCR_TOKEN" 'https://ghcr.io/token?service=ghcr.io&scope=repository:gaofeng21cn/one-person-lab-webui:pull' | jq -er '.token')"
+            source_manifest="$(curl -fsSL --retry 3 \
+              -H "Authorization: Bearer $registry_token" \
+              -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "https://ghcr.io/v2/gaofeng21cn/one-person-lab-webui/manifests/${WORKSPACE_SOURCE_IMAGE##*@}")"
+            source_config_digest="$(printf '%s' "$source_manifest" | jq -er '.config.digest')"
+            if [ "$source_config_digest" != "$EXPECTED_WORKSPACE_CONFIG_DIGEST" ]; then
+              echo "Workspace OCI config digest mismatch." >&2
+              exit 1
+            fi
+            source_config="$(curl -fsSL --retry 3 \
+              -H "Authorization: Bearer $registry_token" \
+              "https://ghcr.io/v2/gaofeng21cn/one-person-lab-webui/blobs/$source_config_digest")"
+            source_revision="$(printf '%s' "$source_config" | jq -er '.config.Labels["org.opencontainers.image.revision"]')"
+            if [ "$source_revision" != "$EXPECTED_WORKSPACE_OCI_REVISION" ]; then
+              echo "Workspace OCI revision mismatch." >&2
+              exit 1
+            fi
+            {
+              printf '### Workspace App provenance\n'
+              printf -- '- Tag commit: `%s`\n' "$tag_commit"
+              printf -- '- OCI config digest: `%s`\n' "$source_config_digest"
+              printf -- '- OCI revision: `%s`\n' "$source_revision"
+            } >> "$GITHUB_STEP_SUMMARY"
+            docker buildx imagetools create --prefer-index=false -t "$OPL_WORKSPACE_IMAGE_REF" "$WORKSPACE_SOURCE_IMAGE"
+            workspace_digest="$(docker buildx imagetools inspect "$OPL_WORKSPACE_IMAGE_REF" --format '{{.Manifest.Digest}}')"
+            if ! printf '%s' "$workspace_digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Workspace target image digest readback failed." >&2
+              exit 1
+            fi
+            if [ "$workspace_digest" != "${WORKSPACE_SOURCE_IMAGE##*@}" ]; then
+              echo "Workspace target digest does not match the approved source digest." >&2
+              exit 1
+            fi
+            echo "OPL_WORKSPACE_IMAGE=${OPL_WORKSPACE_IMAGE_REPOSITORY}@${workspace_digest}" >> "$GITHUB_ENV"
+            echo "workspace_image=${OPL_WORKSPACE_IMAGE_REPOSITORY}@${workspace_digest}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Print image refs
         shell: bash
+        env:
+          OPL_CLOUD_IMAGE: ${{ steps.images.outputs.cloud_image }}
+          OPL_WORKSPACE_IMAGE: ${{ steps.images.outputs.workspace_image }}
         run: |
-          printf 'OPL_CLOUD_IMAGE=%s\n' "$OPL_CLOUD_IMAGE_REF"
-          printf 'OPL_WORKSPACE_IMAGE=%s\n' "$OPL_WORKSPACE_IMAGE_REF"
+          printf 'OPL_CLOUD_IMAGE=%s\n' "${OPL_CLOUD_IMAGE:-}"
+          printf 'OPL_WORKSPACE_IMAGE=%s\n' "${OPL_WORKSPACE_IMAGE:-}"

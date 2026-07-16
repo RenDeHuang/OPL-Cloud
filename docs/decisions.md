@@ -30,7 +30,10 @@ Fabric owns resource/provider facts. Control Plane owns monthly entitlements and
 billing operations. Ledger owns append-only evidence. A Fabric response must not
 replace Control Plane commercial fields.
 
-## 2026-07-14: One Production Verifier
+## 2026-07-16: Reusable Verification Replaces Per-Run Paid Provisioning
 
-The paid verifier is the only release-gating commercial verifier and covers the
-complete public product chain and exact cleanup.
+The legacy paid verifier is blocked and is not a release gate. Ordinary CI and
+commercial E2E use fake monthly settlement and provider mutations. Runtime E2E
+reuses one prepaid `SA5.MEDIUM4` plus 10GB CBS Verification Slot for its paid
+period and deletes only temporary workloads and test data. A real provider
+purchase or renewal requires a separate explicit Provider Acceptance run.

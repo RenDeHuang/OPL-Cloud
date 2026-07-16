@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/domain"
 )
-
-const workspaceCompensationTimeout = 30 * time.Second
 
 type Service struct {
 	ledger  clients.LedgerClient
@@ -107,25 +104,33 @@ func (s *Service) Content(ctx context.Context, workspaceID, digest string) (clie
 }
 
 type CreateWorkspaceInput struct {
-	AccountID    string `json:"accountId"`
-	OwnerID      string `json:"ownerId"`
-	Name         string `json:"name"`
-	PackageID    string `json:"packageId"`
-	AttachmentID string `json:"attachmentId"`
-	ComputeID    string `json:"computeAllocationId"`
-	VolumeID     string `json:"storageId"`
+	WorkspaceID   string `json:"workspaceId"`
+	AccountID     string `json:"accountId"`
+	Sub2APIUserID int64  `json:"-"`
+	OwnerID       string `json:"ownerId"`
+	Name          string `json:"name"`
+	PackageID     string `json:"packageId"`
+	AttachmentID  string `json:"attachmentId"`
+	ComputeID     string `json:"computeAllocationId"`
+	VolumeID      string `json:"storageId"`
 }
 
 type ResumeWorkspaceInput struct {
-	WorkspaceID  string `json:"workspaceId"`
-	AccountID    string `json:"accountId"`
-	OwnerID      string `json:"ownerId"`
-	Name         string `json:"name"`
-	PackageID    string `json:"packageId"`
-	URL          string `json:"url"`
-	AttachmentID string `json:"attachmentId"`
-	ComputeID    string `json:"computeAllocationId"`
-	VolumeID     string `json:"storageId"`
+	WorkspaceID   string `json:"workspaceId"`
+	AccountID     string `json:"accountId"`
+	Sub2APIUserID int64  `json:"-"`
+	OwnerID       string `json:"ownerId"`
+	Name          string `json:"name"`
+	PackageID     string `json:"packageId"`
+	URL           string `json:"url"`
+	AttachmentID  string `json:"attachmentId"`
+	ComputeID     string `json:"computeAllocationId"`
+	VolumeID      string `json:"storageId"`
+}
+
+type GatewaySummary struct {
+	Balance clients.Sub2APIBalance
+	Key     clients.Sub2APIWorkspaceKey
 }
 
 type ReconciliationInput struct {
@@ -181,6 +186,23 @@ func NewService(ledger clients.LedgerClient, fabric clients.FabricClient, sub2AP
 		service.sub2API = sub2API[0]
 	}
 	return service
+}
+
+func (s *Service) Sub2APIWorkspaceKey(ctx context.Context, userID int64) (clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIWorkspaceKeyClient)
+	if !ok {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("sub2api_workspace_key_unavailable")
+	}
+	return client.WorkspaceKey(ctx, userID)
+}
+
+func (s *Service) GatewaySummary(ctx context.Context, userID int64) (GatewaySummary, error) {
+	balance, err := s.Sub2APIBalance(ctx, userID)
+	if err != nil {
+		return GatewaySummary{}, err
+	}
+	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
+	return GatewaySummary{Balance: balance, Key: key}, err
 }
 
 func (s *Service) BillingReceipt(ctx context.Context, receiptID string) (clients.Receipt, error) {
@@ -389,25 +411,21 @@ func (s *Service) DetachStorageAttachment(ctx context.Context, id string, idempo
 	return s.fabric.DetachStorageAttachment(ctx, id, idempotencyKey)
 }
 
-func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
-	if input.ComputeID == "" || input.VolumeID == "" || input.AttachmentID == "" {
+func (s *Service) PrepareWorkspace(ctx context.Context, input CreateWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	if input.WorkspaceID == "" || input.ComputeID == "" || input.VolumeID == "" || input.AttachmentID == "" {
 		return domain.WorkspaceProjection{}, fmt.Errorf("attached_compute_storage_required")
 	}
-	workspaceID := fmt.Sprintf("ws_%d", time.Now().UTC().UnixNano())
-	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ImageID: "one-person-lab-app"}, idempotencyKey+":runtime")
+	workspaceID := input.WorkspaceID
+	gatewaySecretRef, err := s.gatewaySecretRef(ctx, input.AccountID, input.Sub2APIUserID, idempotencyKey)
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
 	}
-	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", WorkspaceID: workspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID}, OutputRefs: map[string]any{"redactedUrl": runtime.URL}}, idempotencyKey+":receipt")
+	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{WorkspaceID: workspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretRef}, idempotencyKey+":runtime")
 	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workspaceCompensationTimeout)
-		defer cancel()
-		_, cleanupErr := s.fabric.DestroyWorkspaceRuntime(cleanupCtx, workspaceID, idempotencyKey+":runtime-compensation")
-		return domain.WorkspaceProjection{}, errors.Join(err, cleanupErr)
+		return domain.WorkspaceProjection{}, err
 	}
 	status := workspaceRuntimeState(runtime.Status, runtime.Ready)
-
-	return domain.WorkspaceProjection{
+	workspace := domain.WorkspaceProjection{
 		ID:                  workspaceID,
 		AccountID:           input.AccountID,
 		OwnerID:             input.OwnerID,
@@ -426,12 +444,16 @@ func (s *Service) CreateWorkspace(ctx context.Context, input CreateWorkspaceInpu
 		CredentialStatus:    runtime.Access.CredentialStatus,
 		CredentialVersion:   runtime.Access.CredentialVersion,
 		CredentialSecretRef: runtime.Access.SecretRef,
-		ReceiptID:           receipt.ReceiptID,
-	}, nil
+	}
+	return workspace, nil
 }
 
-func (s *Service) ResumeWorkspace(ctx context.Context, input ResumeWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
-	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ImageID: "one-person-lab-app"}, idempotencyKey+":runtime")
+func (s *Service) PrepareWorkspaceResume(ctx context.Context, input ResumeWorkspaceInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	gatewaySecretRef, err := s.gatewaySecretRef(ctx, input.AccountID, input.Sub2APIUserID, idempotencyKey)
+	if err != nil {
+		return domain.WorkspaceProjection{}, err
+	}
+	runtime, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID, ImageID: "one-person-lab-app", GatewaySecretRef: gatewaySecretRef}, idempotencyKey+":runtime")
 	if err != nil {
 		return domain.WorkspaceProjection{}, err
 	}
@@ -439,12 +461,54 @@ func (s *Service) ResumeWorkspace(ctx context.Context, input ResumeWorkspaceInpu
 	if url == "" {
 		url = runtime.URL
 	}
-	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{Type: "workspace.compute_restarted", Status: "completed", Surface: "workspace", WorkspaceID: input.WorkspaceID, JobID: runtime.ID, Execution: map[string]any{"providerRequestId": runtime.ID, "computeAllocationId": input.ComputeID, "storageAttachmentId": input.AttachmentID}, OutputRefs: map[string]any{"redactedUrl": url}}, idempotencyKey+":receipt")
-	if err != nil {
-		return domain.WorkspaceProjection{}, err
-	}
 	status := workspaceRuntimeState(runtime.Status, runtime.Ready)
-	return domain.WorkspaceProjection{ID: input.WorkspaceID, AccountID: input.AccountID, OwnerID: input.OwnerID, Name: input.Name, PackageID: input.PackageID, Provider: "tencent-tke", URL: url, Status: status, ComputeID: input.ComputeID, VolumeID: input.VolumeID, AttachmentID: input.AttachmentID, RuntimeID: runtime.ID, RuntimeServiceName: runtime.ServiceName, RuntimeReady: runtime.Ready, RuntimeUsername: runtime.Access.Username, CredentialStatus: runtime.Access.CredentialStatus, CredentialVersion: runtime.Access.CredentialVersion, CredentialSecretRef: runtime.Access.SecretRef, ReceiptID: receipt.ReceiptID}, nil
+	workspace := domain.WorkspaceProjection{ID: input.WorkspaceID, AccountID: input.AccountID, OwnerID: input.OwnerID, Name: input.Name, PackageID: input.PackageID, Provider: "tencent-tke", URL: url, Status: status, ComputeID: input.ComputeID, VolumeID: input.VolumeID, AttachmentID: input.AttachmentID, RuntimeID: runtime.ID, RuntimeServiceName: runtime.ServiceName, RuntimeReady: runtime.Ready, RuntimeUsername: runtime.Access.Username, CredentialStatus: runtime.Access.CredentialStatus, CredentialVersion: runtime.Access.CredentialVersion, CredentialSecretRef: runtime.Access.SecretRef}
+	return workspace, nil
+}
+
+func (s *Service) RecordWorkspaceCreatedReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	input := clients.ReceiptInput{Type: "workspace.created", Status: "completed", Surface: "workspace", AccountID: workspace.AccountID, WorkspaceID: workspace.ID, JobID: workspace.RuntimeID, Execution: map[string]any{"providerRequestId": workspace.RuntimeID}, OutputRefs: map[string]any{"redactedUrl": workspace.URL}}
+	return s.recordWorkspaceReceipt(ctx, workspace, input, idempotencyKey)
+}
+
+func (s *Service) RecordWorkspaceResumedReceipt(ctx context.Context, workspace domain.WorkspaceProjection, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	input := clients.ReceiptInput{Type: "workspace.compute_restarted", Status: "completed", Surface: "workspace", AccountID: workspace.AccountID, WorkspaceID: workspace.ID, JobID: workspace.RuntimeID, Execution: map[string]any{"providerRequestId": workspace.RuntimeID, "computeAllocationId": workspace.ComputeID, "storageAttachmentId": workspace.AttachmentID}, OutputRefs: map[string]any{"redactedUrl": workspace.URL}}
+	return s.recordWorkspaceReceipt(ctx, workspace, input, idempotencyKey)
+}
+
+func (s *Service) recordWorkspaceReceipt(ctx context.Context, workspace domain.WorkspaceProjection, input clients.ReceiptInput, idempotencyKey string) (domain.WorkspaceProjection, error) {
+	receipt, err := s.ledger.RecordReceipt(ctx, input, idempotencyKey+":receipt")
+	if err != nil {
+		return workspace, err
+	}
+	workspace.ReceiptID = receipt.ReceiptID
+	return workspace, nil
+}
+
+func (s *Service) gatewaySecretRef(ctx context.Context, accountID string, userID int64, idempotencyKey string) (string, error) {
+	secret, err := s.SyncWorkspaceGatewaySecret(ctx, accountID, userID, idempotencyKey)
+	return secret.SecretRef, err
+}
+
+func (s *Service) SyncWorkspaceGatewaySecret(ctx context.Context, accountID string, userID int64, idempotencyKey string) (clients.GatewaySecretWriteResult, error) {
+	if accountID == "" || userID <= 0 || idempotencyKey == "" {
+		return clients.GatewaySecretWriteResult{}, errors.New("gateway_secret_write_failed")
+	}
+	key, err := s.Sub2APIWorkspaceKey(ctx, userID)
+	if err != nil {
+		return clients.GatewaySecretWriteResult{}, err
+	}
+	if key.UserID != userID || key.Name != "opl-workspace" || key.Status != "active" || key.Key == "" {
+		return clients.GatewaySecretWriteResult{}, errors.New("invalid_sub2api_workspace_key")
+	}
+	secret, err := s.fabric.WriteGatewaySecret(ctx, clients.GatewaySecretWriteInput{AccountID: accountID, GatewayAPIKey: key.Key}, idempotencyKey+":gateway-secret")
+	if err != nil {
+		return clients.GatewaySecretWriteResult{}, fmt.Errorf("gateway_secret_write_failed: %w", err)
+	}
+	if secret.SecretRef == "" || secret.Fingerprint == "" {
+		return clients.GatewaySecretWriteResult{}, errors.New("gateway_secret_write_failed")
+	}
+	return secret, nil
 }
 
 func workspaceRuntimeState(status string, ready bool) string {

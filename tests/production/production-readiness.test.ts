@@ -6,10 +6,13 @@ import test from "node:test";
 
 import { productionReadiness } from "../../services/fabric/ops/production-readiness.ts";
 
+const cloudImage = `registry.example.com/opl/opl-cloud@sha256:${"a".repeat(64)}`;
+const workspaceImage = `registry.example.com/opl/one-person-lab-app@sha256:${"b".repeat(64)}`;
+
 const tkeProductionEnv = {
   OPL_RUNTIME_PROVIDER: "tencent-tke",
-  OPL_CLOUD_IMAGE: "registry.example.com/opl/opl-cloud:2026-07-01",
-  OPL_WORKSPACE_IMAGE: "registry.example.com/opl/one-person-lab-app:2026-07-01",
+  OPL_CLOUD_IMAGE: cloudImage,
+  OPL_WORKSPACE_IMAGE: workspaceImage,
   OPL_AIONUI_ADMIN_PASSWORD_SEED: "workspace-secret-2026-very-long",
   OPL_WORKSPACE_WEBUI_PORT: "3000",
   OPL_WORKSPACE_DATA_DIR: "/data",
@@ -22,6 +25,7 @@ const tkeProductionEnv = {
   OPL_IMAGE_PULL_SECRET_NAME: "tcr-pull-secret",
   OPL_WORKSPACE_STORAGE_CLASS: "cbs",
   OPL_TENCENT_PROVISIONER_BIN: "/usr/local/bin/opl-tencent-provisioner",
+  OPL_TENCENT_ZONE: "na-siliconvalley-1",
   DATABASE_URL: "postgresql://opl:secret@db.example.com:5432/opl_cloud",
   OPL_CONSOLE_USERS_JSON: JSON.stringify([
     {
@@ -43,7 +47,7 @@ const tkeProductionEnv = {
   ]),
   TENCENTCLOUD_SECRET_ID: "secret-id",
   TENCENTCLOUD_SECRET_KEY: "secret-key",
-  TENCENTCLOUD_REGION: "ap-guangzhou",
+  TENCENTCLOUD_REGION: "na-siliconvalley",
   TENCENT_DEPLOY_KUBECONFIG_REF: "/tmp/kubeconfig",
   TENCENT_DEPLOY_CLUSTER_ID: "cls-123",
   TENCENT_CVM_SUBNET_ID: "subnet-123",
@@ -123,11 +127,27 @@ test("productionReadiness rejects empty container image tags", async () => {
   assert.ok(report.failedChecks.includes("registry_images"));
 });
 
+test("productionReadiness rejects latest and every tag-only production image", async () => {
+  for (const image of [
+    "registry.example.com/opl/opl-cloud:latest",
+    "registry.example.com/opl/opl-cloud:26.7.13"
+  ]) {
+    const report = await productionReadiness({
+      env: { ...tkeProductionEnv, OPL_CLOUD_IMAGE: image },
+      commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+    });
+
+    assert.equal(report.ready, false);
+    assert.ok(report.failedChecks.includes("registry_images"));
+  }
+});
+
 test("productionReadiness requires Tencent Go SDK mutation inputs for live compute allocation", async () => {
   const {
     TENCENTCLOUD_SECRET_ID,
     TENCENTCLOUD_SECRET_KEY,
     TENCENTCLOUD_REGION,
+    OPL_TENCENT_ZONE,
     TENCENT_CVM_SUBNET_ID,
     TENCENT_CVM_SECURITY_GROUP_IDS,
     RUN_TENCENT_CREATE_RELEASE_EXECUTION,
@@ -142,9 +162,30 @@ test("productionReadiness requires Tencent Go SDK mutation inputs for live compu
   assert.ok(report.missingEnv.includes("TENCENTCLOUD_SECRET_ID"));
   assert.ok(report.missingEnv.includes("TENCENTCLOUD_SECRET_KEY"));
   assert.ok(report.missingEnv.includes("TENCENTCLOUD_REGION"));
+  assert.ok(report.missingEnv.includes("OPL_TENCENT_ZONE"));
   assert.ok(report.missingEnv.includes("TENCENT_CVM_SUBNET_ID"));
   assert.ok(report.missingEnv.includes("TENCENT_CVM_SECURITY_GROUP_IDS"));
   assert.ok(report.missingEnv.includes("RUN_TENCENT_CREATE_RELEASE_EXECUTION"));
+  assert.ok(report.failedChecks.includes("provider_env"));
+});
+
+test("productionReadiness rejects a blank service-side launch zone", async () => {
+  const report = await productionReadiness({
+    env: { ...tkeProductionEnv, OPL_TENCENT_ZONE: "   " },
+    commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+  });
+
+  assert.ok(report.missingEnv.includes("OPL_TENCENT_ZONE"));
+  assert.ok(report.failedChecks.includes("provider_env"));
+});
+
+test("productionReadiness rejects a launch zone outside the configured Tencent region", async () => {
+  const report = await productionReadiness({
+    env: { ...tkeProductionEnv, OPL_TENCENT_ZONE: "ap-guangzhou-3" },
+    commandExists: (command) => command === "kubectl" || command === "/usr/local/bin/opl-tencent-provisioner"
+  });
+
+  assert.equal(report.ready, false);
   assert.ok(report.failedChecks.includes("provider_env"));
 });
 
@@ -216,7 +257,7 @@ test("productionReadiness rejects non-TKE production providers", async () => {
   const report = await productionReadiness({
     env: {
       OPL_RUNTIME_PROVIDER: "unsupported-production-runtime",
-      OPL_WORKSPACE_IMAGE: "registry.example.com/opl/one-person-lab-app:2026-07-01",
+      OPL_WORKSPACE_IMAGE: workspaceImage,
       OPL_WORKSPACE_DOMAIN: "localhost",
       DATABASE_URL: "postgresql://opl:secret@db.example.com:5432/opl_cloud"
     },

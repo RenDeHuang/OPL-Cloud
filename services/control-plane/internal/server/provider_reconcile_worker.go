@@ -97,6 +97,9 @@ func (app *controlPlaneServer) reconcileMonthlyCompute(ctx context.Context, serv
 	if row, ok = app.getCompute(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
+	if stringValue(row["billingStatus"]) == "manual_review" {
+		return nil
+	}
 	if stringValue(row["billingStatus"]) == "preparing" {
 		_, err := app.resumeMonthlyPurchase(ctx, service, row)
 		return err
@@ -128,6 +131,9 @@ func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, serv
 	if row, ok = app.getStorage(id); !ok || !providerSyncDue(row, now) {
 		return nil
 	}
+	if stringValue(row["billingStatus"]) == "manual_review" {
+		return nil
+	}
 	if stringValue(row["billingStatus"]) == "preparing" {
 		_, err := app.resumeMonthlyPurchase(ctx, service, row)
 		return err
@@ -138,7 +144,7 @@ func (app *controlPlaneServer) reconcileMonthlyStorage(ctx context.Context, serv
 			return err
 		}
 		body := storageResponse(mergeMaps(row, structToMap(result)))
-		body["status"], body["billingStatus"] = "destroyed", "stopped"
+		body["billingStatus"] = "stopped"
 		return app.saveStorageFact(body)
 	}
 	result, err := service.SyncMonthlyStorage(ctx, id)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,13 @@ import (
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
+
+func TestMain(m *testing.M) {
+	_ = os.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
+	_ = os.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	_ = os.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
+	os.Exit(m.Run())
+}
 
 func mustStore(t *testing.T, err error) {
 	t.Helper()
@@ -253,15 +261,21 @@ func TestUncontractedAdminDiagnosticsAPIRouteDoesNotReturnFakeEvidence(t *testin
 
 func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	calls := []string{}
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
+	fabric := &fakeFabricClient{calls: &calls}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
 
 	compute := createResource(t, server, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResource(t, server, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
+	storage := createResource(t, server, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	createResource(t, server, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
 
 	body := bytes.NewBufferString(`{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", body)
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
+	var login map[string]any
+	if err := json.NewDecoder(session.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	ownerID := stringValue(nested(login, "user", "id"))
 	addSessionCookies(req, session)
 	req.Header.Set("x-opl-csrf", session.Header().Get("x-opl-csrf-token"))
 	req.Header.Set("Idempotency-Key", "workspace-once")
@@ -276,7 +290,7 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&workspace); err != nil {
 		t.Fatalf("decode workspace: %v", err)
 	}
-	if workspace["accountId"] != "acct-alpha" || workspace["ownerId"] != "usr-owner" || workspace["url"] != "https://workspace.medopl.cn/w/ws-from-fabric/" {
+	if workspace["accountId"] != "acct-alpha" || workspace["ownerId"] != ownerID || workspace["url"] != "https://workspace.medopl.cn/w/ws-from-fabric/" {
 		t.Fatalf("workspace did not come from service boundary: %#v", workspace)
 	}
 	if workspace["computeAllocationId"] != compute["id"] || workspace["storageId"] != storage["id"] || workspace["attachmentId"] != "attachment-from-fabric" || workspace["receiptId"] != "receipt-from-ledger" {
@@ -291,12 +305,73 @@ func TestCreateWorkspaceHTTPUsesControlPlaneService(t *testing.T) {
 	if workspace["runtimePassword"] != nil {
 		t.Fatalf("workspace response leaked internal runtimePassword field: %#v", workspace)
 	}
-	if slices.Contains(calls[3:], "fabric.compute") || slices.Contains(calls[3:], "fabric.storage") {
+	if slices.Contains(calls[5:], "fabric.compute") || slices.Contains(calls[5:], "fabric.storage") {
 		t.Fatalf("workspace create must not allocate replacement resources: %#v", calls)
 	}
+	if len(calls) < 7 || !slices.Equal(calls[5:7], []string{"fabric.gateway-secret", "fabric.runtime"}) {
+		t.Fatalf("workspace must write account Gateway Secret before runtime: %#v", calls)
+	}
+	if len(fabric.gatewaySecretInputs) != 1 || fabric.gatewaySecretInputs[0].AccountID != "acct-alpha" || fabric.gatewaySecretInputs[0].GatewayAPIKey != "workspace-key-secret" {
+		t.Fatalf("workspace Gateway Secret input = %#v", fabric.gatewaySecretInputs)
+	}
+	if len(fabric.runtimeInputs) != 1 || fabric.runtimeInputs[0].GatewaySecretRef != "opl-gateway-acct-alpha" {
+		t.Fatalf("workspace runtime input = %#v", fabric.runtimeInputs)
+	}
+	if strings.Contains(rec.Body.String(), "workspace-key-secret") {
+		t.Fatalf("workspace response leaked Gateway key: %s", rec.Body.String())
+	}
 	management := requestWithSession(t, server, session, http.MethodGet, "/api/management/state", "")
-	if strings.Contains(management.Body.String(), "runtime-password-alpha") {
-		t.Fatalf("Control Plane persisted Workspace password in state or audit: %s", management.Body.String())
+	if strings.Contains(management.Body.String(), "runtime-password-alpha") || strings.Contains(management.Body.String(), "workspace-key-secret") {
+		t.Fatalf("Control Plane persisted Workspace credential in state or audit: %s", management.Body.String())
+	}
+}
+
+func TestWorkspaceCreateKeepsDraftIdentityAndReplaysWithoutHeader(t *testing.T) {
+	calls, events := []string{}, &[]string{}
+	fabric := &fakeFabricClient{calls: &calls}
+	ledger := &monthlyLedger{events: events}
+	server := NewServer(newTestService(ledger, fabric))
+	session := tenantOwnerSessionForTest(t, server)
+
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"verification-slot-01"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"verification-slot-01","computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+	draftID := resourceIDForMutation("ws", "acct-alpha", "primary")
+	if compute["workspaceId"] != draftID || storage["workspaceId"] != draftID || attachment["workspaceId"] != draftID || attachment["packageId"] != "basic" {
+		t.Fatalf("draft identity compute=%#v storage=%#v attachment=%#v want=%s", compute, storage, attachment, draftID)
+	}
+
+	postWorkspace := func(name string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/workspaces", bytes.NewBufferString(`{"accountId":"acct-alpha","workspaceName":"`+name+`","attachmentId":"`+stringValue(attachment["id"])+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		addAuth(req, session)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+	first := postWorkspace("verification-slot-01")
+	second := postWorkspace("verification-slot-01")
+	if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
+		t.Fatalf("first=%d %s second=%d %s", first.Code, first.Body.String(), second.Code, second.Body.String())
+	}
+	var firstWorkspace, secondWorkspace map[string]any
+	if err := json.NewDecoder(first.Body).Decode(&firstWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(second.Body).Decode(&secondWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if firstWorkspace["id"] != draftID || secondWorkspace["id"] != draftID || firstWorkspace["packageId"] != "basic" || len(fabric.runtimeInputs) != 1 || fabric.runtimeInputs[0].WorkspaceID != draftID {
+		t.Fatalf("first=%#v second=%#v runtimeInputs=%#v", firstWorkspace, secondWorkspace, fabric.runtimeInputs)
+	}
+	if len(ledger.receipts) != 3 || ledger.receipts[2].Type != "workspace.created" || ledger.receipts[2].WorkspaceID != draftID {
+		t.Fatalf("receipts=%#v", ledger.receipts)
+	}
+	beforeCalls, beforeReceipts := len(calls), len(ledger.receipts)
+	conflict := postWorkspace("different-name")
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errPrimaryWorkspaceExists.Error()) || len(calls) != beforeCalls || len(ledger.receipts) != beforeReceipts {
+		t.Fatalf("conflict=%d %s calls=%#v receipts=%#v", conflict.Code, conflict.Body.String(), calls, ledger.receipts)
 	}
 }
 
@@ -306,9 +381,9 @@ func TestCreateWorkspaceWaitsForFabricRuntimeReadiness(t *testing.T) {
 		Access: clients.WorkspaceRuntimeAccess{Username: "opl", Password: "runtime-password-alpha", CredentialStatus: "configured", CredentialVersion: "v1", SecretRef: "opl-compute-from-fabric-env"},
 	}}
 	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
 
 	workspace := createResourceWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
@@ -318,6 +393,59 @@ func TestCreateWorkspaceWaitsForFabricRuntimeReadiness(t *testing.T) {
 	}
 	if access["password"] != nil || access["tokenStatus"] != nil || access["requiresLogin"] != nil {
 		t.Fatalf("workspace projection leaked password or fake URL auth fields: %#v", access)
+	}
+}
+
+func TestWorkspaceCreateRetriesSameClaimAfterGatewayFailure(t *testing.T) {
+	fabric := &fakeFabricClient{gatewaySecretErr: errors.New("gateway temporarily unavailable")}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	owner := tenantOwnerSessionForTest(t, server)
+	attachment := createWorkspaceAttachmentForTest(t, server, owner, "workspace-create-retry")
+	body := `{"workspaceName":"Retryable","attachmentId":"` + stringValue(attachment["id"]) + `"}`
+
+	first := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", body, "workspace-create-retry")
+	if first.Code != http.StatusBadGateway || len(fabric.gatewaySecretInputs) != 1 || len(fabric.runtimeInputs) != 0 {
+		t.Fatalf("first create status=%d gateway=%d runtime=%d body=%s", first.Code, len(fabric.gatewaySecretInputs), len(fabric.runtimeInputs), first.Body.String())
+	}
+
+	fabric.gatewaySecretErr = nil
+	retried := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", body, "workspace-create-retry")
+	if retried.Code != http.StatusCreated || len(fabric.gatewaySecretInputs) != 2 || len(fabric.runtimeInputs) != 1 {
+		t.Fatalf("retried create status=%d gateway=%d runtime=%d body=%s", retried.Code, len(fabric.gatewaySecretInputs), len(fabric.runtimeInputs), retried.Body.String())
+	}
+
+	changed := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"workspaceName":"Changed","attachmentId":"`+stringValue(attachment["id"])+`"}`, "workspace-create-retry")
+	if changed.Code != http.StatusConflict || !strings.Contains(changed.Body.String(), errPrimaryWorkspaceExists.Error()) || len(fabric.gatewaySecretInputs) != 2 || len(fabric.runtimeInputs) != 1 {
+		t.Fatalf("changed replay status=%d gateway=%d runtime=%d body=%s", changed.Code, len(fabric.gatewaySecretInputs), len(fabric.runtimeInputs), changed.Body.String())
+	}
+
+	secondAttachment := createWorkspaceAttachmentForTest(t, server, owner, "workspace-create-second")
+	second := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"workspaceName":"Second","attachmentId":"`+stringValue(secondAttachment["id"])+`"}`, "workspace-create-second")
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), errPrimaryWorkspaceExists.Error()) || len(fabric.gatewaySecretInputs) != 2 || len(fabric.runtimeInputs) != 1 {
+		t.Fatalf("second workspace status=%d gateway=%d runtime=%d body=%s", second.Code, len(fabric.gatewaySecretInputs), len(fabric.runtimeInputs), second.Body.String())
+	}
+}
+
+func TestResumeWorkspaceRequiresOwningUserBeforeFabric(t *testing.T) {
+	store := newMemoryTableStore()
+	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+		"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-owner",
+		"state": "suspended", "status": "suspended", "storageId": "storage-alpha",
+	}))
+	fabric := &fakeFabricClient{}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, role := range []string{"member", "admin"} {
+		t.Run(role, func(t *testing.T) {
+			session := tenantSessionForTest(t, server, role)
+			response := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`, "resume-non-owner-"+role)
+			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "workspace_owner_required") || len(fabric.gatewaySecretInputs) != 0 || len(fabric.runtimeInputs) != 0 {
+				t.Fatalf("non-owner resume status=%d gateway=%d runtime=%d body=%s", response.Code, len(fabric.gatewaySecretInputs), len(fabric.runtimeInputs), response.Body.String())
+			}
+		})
 	}
 }
 
@@ -336,14 +464,17 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-replacement", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-replacement", "storageId": "storage-alpha", "status": "attached"}))
 	mustStore(t, store.SaveProjectTaskSyncHead(context.Background(), map[string]any{"id": "project-alpha", "workspaceId": "workspace-alpha", "projectId": "project-alpha", "taskId": "task-alpha", "version": int64(7)}))
-	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}), store)
+	fabric := &fakeFabricClient{calls: &calls}
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, fabric), store)
 	if err != nil {
 		t.Fatalf("create resume server: %v", err)
 	}
 	admin := operatorSessionForTest(t, server)
-	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner-resume@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(ownerUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-resume@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	ownerUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"owner-resume@lab.example","accountId":"acct-alpha","role":"owner","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(ownerUser["id"])+`","accountId":"acct-alpha","role":"owner"}`)
+	workspace["ownerUserId"] = ownerUser["id"]
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-resume@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	owner := loginForTest(t, server, "owner-resume@lab.example", "CorrectHorseBatteryStaple!")
 	outsider := loginForTest(t, server, "outside-resume@lab.example", "CorrectHorseBatteryStaple!")
 	body := `{"computeAllocationId":"compute-replacement","attachmentId":"attachment-replacement"}`
@@ -401,11 +532,15 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 	if result["id"] != "workspace-alpha" || result["url"] != "https://workspace.medopl.cn/w/workspace-alpha/" || result["storageId"] != "storage-alpha" || result["currentComputeAllocationId"] != "compute-replacement" || result["currentAttachmentId"] != "attachment-replacement" {
 		t.Fatalf("resume changed stable identity or missed replacement resources: %#v", result)
 	}
-	if got := calls[before:]; !slices.Equal(got, []string{"fabric.runtime"}) {
+	if got := calls[before:]; !slices.Equal(got, []string{"fabric.gateway-secret", "fabric.runtime"}) {
 		t.Fatalf("resume Fabric calls = %#v", got)
 	}
+	if len(fabric.gatewaySecretInputs) != 1 || fabric.gatewaySecretInputs[0].AccountID != "acct-alpha" || fabric.gatewaySecretInputs[0].GatewayAPIKey != "workspace-key-secret" ||
+		len(fabric.runtimeInputs) != 1 || fabric.runtimeInputs[0].GatewaySecretRef != "opl-gateway-acct-alpha" {
+		t.Fatalf("resume Gateway Secret handoff = secret %#v runtime %#v", fabric.gatewaySecretInputs, fabric.runtimeInputs)
+	}
 	replayed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", body)
-	if replayed.Code != http.StatusOK || len(calls[before:]) != 1 {
+	if replayed.Code != http.StatusOK || len(calls[before:]) != 2 {
 		t.Fatalf("resume replay = %d calls=%#v body=%s", replayed.Code, calls[before:], replayed.Body.String())
 	}
 	var replayedResult map[string]any
@@ -413,7 +548,7 @@ func TestResumeWorkspaceValidatesRetainedResourcesBeforeFabric(t *testing.T) {
 		t.Fatalf("resume replay changed prior result: first=%#v replay=%#v err=%v", result, replayedResult, err)
 	}
 	changed := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-other","attachmentId":"attachment-replacement"}`)
-	if changed.Code != http.StatusConflict || !strings.Contains(changed.Body.String(), "idempotency_conflict") || len(calls[before:]) != 1 {
+	if changed.Code != http.StatusConflict || !strings.Contains(changed.Body.String(), "idempotency_conflict") || len(calls[before:]) != 2 {
 		t.Fatalf("changed resume replay = %d calls=%#v body=%s", changed.Code, calls[before:], changed.Body.String())
 	}
 	stored, _ := store.ListWorkspaces(context.Background(), "")
@@ -442,8 +577,9 @@ func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-alpha", "role": "admin", "status": "active", "passwordHash": hash}))
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}))
+	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-admin", "email": "admin@medopl.cn", "accountId": "acct-alpha", "role": "owner", "status": "active", "passwordHash": hash}))
+	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": "acct-alpha", "status": "active", "sub2apiUserId": int64(41)}))
+	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": "usr-admin", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
@@ -467,7 +603,8 @@ func TestResumeWorkspaceAuditFailureDoesNotPersistRunningProjection(t *testing.T
 
 func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing.T) {
 	store := newMemoryTableStore()
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "runtime": map[string]any{"serviceName": "old-nested"}, "runtimeServiceName": "old-root", "serviceName": "old-legacy", "access": map[string]any{"account": "opl", "username": "opl", "credentialStatus": "configured", "credentialVersion": "v1", "secretRef": "old-secret"}}))
+	workspace := map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/", "runtime": map[string]any{"serviceName": "old-nested"}, "runtimeServiceName": "old-root", "serviceName": "old-legacy", "access": map[string]any{"account": "opl", "username": "opl", "credentialStatus": "configured", "credentialVersion": "v1", "secretRef": "old-secret"}}
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
@@ -476,7 +613,10 @@ func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing
 	if err != nil {
 		t.Fatalf("create provisioning resume server: %v", err)
 	}
-	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
+	session := tenantOwnerSessionForTest(t, server)
+	workspace["ownerUserId"] = sessionUserIDForTest(t, server, session)
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces/workspace-alpha/resume", `{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`)
 	if response.Code != http.StatusOK {
 		t.Fatalf("provisioning resume status = %d: %s", response.Code, response.Body.String())
 	}
@@ -496,7 +636,8 @@ func TestResumeWorkspaceKeepsUnreadyRuntimeClosedAndCredentialsIntact(t *testing
 
 func TestConcurrentWorkspaceResumeWaitsForResourceMutation(t *testing.T) {
 	store := newMemoryTableStore()
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}))
+	workspace := map[string]any{"id": "workspace-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "state": "suspended", "status": "suspended", "storageId": "storage-alpha", "url": "https://workspace.medopl.cn/w/workspace-alpha/"}
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
 	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{"id": "attachment-new", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "computeAllocationId": "compute-new", "storageId": "storage-alpha", "status": "attached"}))
@@ -505,7 +646,9 @@ func TestConcurrentWorkspaceResumeWaitsForResourceMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create resume server: %v", err)
 	}
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
+	workspace["ownerUserId"] = sessionUserIDForTest(t, server, session)
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
 	resume := func(key string) <-chan *httptest.ResponseRecorder {
 		done := make(chan *httptest.ResponseRecorder, 1)
 		req := httptest.NewRequest(http.MethodPost, "/api/workspaces/workspace-alpha/resume", bytes.NewBufferString(`{"computeAllocationId":"compute-new","attachmentId":"attachment-new"}`))
@@ -596,12 +739,403 @@ func TestConsoleStateComputePoolsReadFabricCatalog(t *testing.T) {
 	}
 }
 
+func TestPricingPackageAvailabilityFollowsFabricComputePools(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "console state", path: "/api/state?accountId=acct-alpha"},
+		{name: "pricing catalog", path: "/api/pricing/catalog"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := NewServer(newTestService(fakeLedgerClient{}, &unavailableProCatalogFabricClient{}))
+			response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, tc.path, "")
+			if response.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var body map[string]any
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			packages, _ := body["packages"].([]any)
+			availability := map[string]bool{}
+			for _, raw := range packages {
+				pkg, _ := raw.(map[string]any)
+				availability[stringValue(pkg["id"])] = pkg["available"] == true
+			}
+			if !availability["basic"] || availability["pro"] {
+				t.Fatalf("package availability=%#v body=%#v", availability, body)
+			}
+		})
+	}
+}
+
+func TestWorkspaceReceiptFailureKeepsSucceededRuntimeForReplay(t *testing.T) {
+	ledger := &flakyWorkspaceReceiptLedger{}
+	fabric := &fakeFabricClient{}
+	sub2API := &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}}
+	server := NewServer(controlplane.NewService(ledger, fabric, sub2API))
+	session := tenantOwnerSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+	body := `{"attachmentId":"` + stringValue(attachment["id"]) + `","workspaceName":"Receipt Replay"}`
+
+	first := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", body)
+	if first.Code != http.StatusBadGateway {
+		t.Fatalf("first receipt outage status=%d body=%s", first.Code, first.Body.String())
+	}
+	state := requestWithSession(t, server, session, http.MethodGet, "/api/state?accountId=acct-alpha", "")
+	if state.Code != http.StatusOK || !strings.Contains(state.Body.String(), stringValue(attachment["workspaceId"])) || !strings.Contains(state.Body.String(), "runtime-from-fabric") {
+		t.Fatalf("receipt-pending workspace was not persisted: status=%d body=%s", state.Code, state.Body.String())
+	}
+	second := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", body)
+	if second.Code != http.StatusCreated || !strings.Contains(second.Body.String(), "receipt-from-ledger") {
+		t.Fatalf("receipt replay status=%d body=%s", second.Code, second.Body.String())
+	}
+	if ledger.receiptCalls != 2 || len(sub2API.workspaceKeyUserIDs) != 1 || len(fabric.gatewaySecretInputs) != 1 || len(fabric.runtimeInputs) != 1 {
+		t.Fatalf("receipt replay repeated side effects: receipts=%d keys=%#v secrets=%#v runtimes=%#v", ledger.receiptCalls, sub2API.workspaceKeyUserIDs, fabric.gatewaySecretInputs, fabric.runtimeInputs)
+	}
+}
+
+func TestWorkspaceCreatePreservesFabricConflictStatus(t *testing.T) {
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
+	fabric := &fakeFabricClient{}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	session := tenantOwnerSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+	fabric.runtimeErr = &clients.FabricHTTPError{StatusCode: http.StatusConflict, Body: `{"error":"runtime_conflict"}`}
+
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "upstream_conflict") {
+		t.Fatalf("workspace conflict status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceCreatePreservesGatewaySecretConflictStatus(t *testing.T) {
+	fabric := &fakeFabricClient{gatewaySecretErr: &clients.FabricHTTPError{StatusCode: http.StatusConflict, Body: `{"error":"secret_conflict"}`}}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	session := tenantOwnerSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
+
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "upstream_conflict") {
+		t.Fatalf("gateway Secret conflict status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceCreateBindsAuthenticatedOwnerForGatewaySecretRotation(t *testing.T) {
+	store := newMemoryTableStore()
+	passwordHash, err := hashPassword("CorrectHorseBatteryStaple!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": "acct-alpha", "status": "active", "sub2apiUserId": int64(41)}))
+	mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": "org-alpha", "billingAccountId": "acct-alpha", "status": "active"}))
+	for _, user := range []map[string]any{
+		{"id": "usr-alpha-owner", "email": "alpha-owner@example.com", "accountId": "acct-alpha", "role": "owner", "status": "active", "passwordHash": passwordHash},
+		{"id": "usr-alpha-member", "email": "alpha-member@example.com", "accountId": "acct-alpha", "role": "member", "status": "active", "passwordHash": passwordHash},
+	} {
+		mustStore(t, store.SaveUser(context.Background(), user))
+		mustStore(t, store.SaveMembership(context.Background(), map[string]any{
+			"id": "mem-" + stringValue(user["id"]), "organizationId": "org-alpha", "userId": user["id"],
+			"accountId": "acct-alpha", "role": user["role"], "status": "active",
+		}))
+	}
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "packageId": "basic",
+		"status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+	}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{
+		"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "packageId": "basic",
+		"status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+	}))
+	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{
+		"id": "attachment-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "packageId": "basic",
+		"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "status": "attached",
+	}))
+
+	sub2API := &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}}
+	fabric := &fakeFabricClient{}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, sub2API), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := loginForTest(t, server, "alpha-owner@example.com", "CorrectHorseBatteryStaple!")
+	member := loginForTest(t, server, "alpha-member@example.com", "CorrectHorseBatteryStaple!")
+	body := `{"workspaceName":"Alpha Workspace","attachmentId":"attachment-alpha"}`
+
+	created := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces", body)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("owner create status=%d body=%s", created.Code, created.Body.String())
+	}
+	rotated := requestWithSession(t, server, owner, http.MethodPost, "/api/workspaces/workspace-alpha/gateway-secret/rotate", `{"reason":"owner-request"}`)
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("owner create then rotate status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	workspaces, err := store.ListWorkspaces(context.Background(), "acct-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace := findRecord(workspaces, "workspace-alpha"); stringValue(workspace["ownerUserId"]) != "usr-alpha-owner" {
+		t.Fatalf("persisted workspace owner=%#v, want authenticated owner", workspace)
+	}
+	if response := requestWithSession(t, server, member, http.MethodPost, "/api/workspaces", body); response.Code != http.StatusForbidden {
+		t.Fatalf("member create status=%d body=%s", response.Code, response.Body.String())
+	}
+	forged := `{"workspaceName":"Alpha Workspace","attachmentId":"attachment-alpha","ownerId":"usr-alpha-owner"}`
+	if response := requestWithSession(t, server, member, http.MethodPost, "/api/workspaces", forged); response.Code != http.StatusForbidden {
+		t.Fatalf("forged owner create status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceCreateRejectsSecondPrimaryBeforeFabric(t *testing.T) {
+	calls := []string{}
+	fabric := &fakeFabricClient{calls: &calls}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	owner := tenantOwnerSessionForTest(t, server)
+
+	firstAttachment := createWorkspaceAttachmentForTest(t, server, owner, "primary-first")
+	first := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"workspaceName":"Primary","attachmentId":"`+stringValue(firstAttachment["id"])+`"}`, "primary-first-workspace")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first Workspace status=%d body=%s", first.Code, first.Body.String())
+	}
+	secondAttachment := createWorkspaceAttachmentForTest(t, server, owner, "primary-second")
+	beforeSecond := len(calls)
+	second := requestWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"workspaceName":"Second","attachmentId":"`+stringValue(secondAttachment["id"])+`"}`, "primary-second-workspace")
+	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "primary_workspace_already_exists") {
+		t.Fatalf("second Workspace status=%d body=%s", second.Code, second.Body.String())
+	}
+	if len(calls) != beforeSecond {
+		t.Fatalf("second Workspace reached Fabric: before=%d calls=%#v", beforeSecond, calls[beforeSecond:])
+	}
+}
+
+func TestWorkspaceCreateConcurrentClaimsReachFabricOnce(t *testing.T) {
+	fabric := &countingWorkspaceFabricClient{}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	owner := tenantOwnerSessionForTest(t, server)
+	attachments := []map[string]any{
+		createWorkspaceAttachmentForTest(t, server, owner, "concurrent-first"),
+		createWorkspaceAttachmentForTest(t, server, owner, "concurrent-second"),
+	}
+	requests := make([]*http.Request, 0, len(attachments))
+	for index, attachment := range attachments {
+		req := httptest.NewRequest(http.MethodPost, "/api/workspaces", bytes.NewBufferString(`{"workspaceName":"Concurrent","attachmentId":"`+stringValue(attachment["id"])+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("concurrent-workspace-%d", index))
+		addAuth(req, owner)
+		requests = append(requests, req)
+	}
+
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, len(requests))
+	var workers sync.WaitGroup
+	for _, req := range requests {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			responses <- rec
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(responses)
+
+	created, conflicted := 0, 0
+	for response := range responses {
+		switch response.Code {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			if !strings.Contains(response.Body.String(), "primary_workspace_already_exists") {
+				t.Fatalf("unexpected conflict body=%s", response.Body.String())
+			}
+			conflicted++
+		default:
+			t.Fatalf("concurrent Workspace status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	fabric.mu.Lock()
+	defer fabric.mu.Unlock()
+	if created != 1 || conflicted != 1 || fabric.gatewayWrites != 1 || fabric.runtimeCreates != 1 {
+		t.Fatalf("concurrent results created=%d conflicted=%d gateway=%d runtime=%d", created, conflicted, fabric.gatewayWrites, fabric.runtimeCreates)
+	}
+}
+
+func TestWorkspaceOwnerRotatesGatewaySecretIdempotentlyWithoutPersistingKey(t *testing.T) {
+	store := newMemoryTableStore()
+	passwordHash, err := hashPassword("CorrectHorseBatteryStaple!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range []struct {
+		accountID, organizationID, userID, email string
+		sub2APIUserID                            int64
+	}{
+		{accountID: "acct-alpha", organizationID: "org-alpha", userID: "usr-alpha", email: "alpha@example.com", sub2APIUserID: 41},
+		{accountID: "acct-beta", organizationID: "org-beta", userID: "usr-beta", email: "beta@example.com", sub2APIUserID: 42},
+	} {
+		mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": tenant.accountID, "status": "active", "sub2apiUserId": tenant.sub2APIUserID}))
+		mustStore(t, store.SaveOrganization(context.Background(), map[string]any{"id": tenant.organizationID, "billingAccountId": tenant.accountID, "status": "active"}))
+		mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": tenant.userID, "email": tenant.email, "accountId": tenant.accountID, "role": "owner", "status": "active", "passwordHash": passwordHash}))
+		mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-" + tenant.userID, "organizationId": tenant.organizationID, "userId": tenant.userID, "accountId": tenant.accountID, "role": "owner", "status": "active"}))
+	}
+	mustStore(t, store.SaveUser(context.Background(), map[string]any{"id": "usr-alpha-member", "email": "alpha-member@example.com", "accountId": "acct-alpha", "role": "member", "status": "active", "passwordHash": passwordHash}))
+	mustStore(t, store.SaveMembership(context.Background(), map[string]any{"id": "mem-usr-alpha-member", "organizationId": "org-alpha", "userId": "usr-alpha-member", "accountId": "acct-alpha", "role": "member", "status": "active"}))
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "workspace-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
+		"id": "workspace-alpha", "accountId": "acct-alpha", "ownerUserId": "usr-alpha", "state": "running", "currentComputeAllocationId": "compute-alpha", "storageId": "storage-alpha",
+		"runtime": map[string]any{"serviceName": "runtime-alpha", "status": "running", "ready": true},
+	}))
+
+	sub2API := &testSub2APIClient{workspaceKey: clients.Sub2APIWorkspaceKey{ID: 9, UserID: 41, Name: "opl-workspace", Key: "rotated-workspace-key", Status: "active"}}
+	fabric := &fakeFabricClient{gatewaySecret: clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v1", Fingerprint: "sha256:first"}}
+	server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, sub2API), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	requestRotate := func(session *httptest.ResponseRecorder, key, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/workspaces/workspace-alpha/gateway-secret/rotate", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", key)
+		addAuth(req, session)
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := requestRotate(owner, "rotate-once", `{"reason":"owner-request"}`)
+	replay := requestRotate(owner, "rotate-once", `{"reason":"owner-request"}`)
+	conflict := requestRotate(owner, "rotate-once", `{"reason":"different-request"}`)
+	if first.Code != http.StatusOK || replay.Code != http.StatusOK || conflict.Code != http.StatusConflict {
+		t.Fatalf("rotate statuses first=%d %s replay=%d %s conflict=%d %s", first.Code, first.Body.String(), replay.Code, replay.Body.String(), conflict.Code, conflict.Body.String())
+	}
+	if len(fabric.gatewaySecretInputs) != 1 || len(sub2API.workspaceKeyUserIDs) != 1 || sub2API.workspaceKeyUserIDs[0] != 41 {
+		t.Fatalf("idempotent rotate inputs=%#v key users=%#v", fabric.gatewaySecretInputs, sub2API.workspaceKeyUserIDs)
+	}
+	if strings.Contains(first.Body.String(), "rotated-workspace-key") || !strings.Contains(first.Body.String(), "opl-gateway-acct-alpha") || !strings.Contains(first.Body.String(), "sha256:first") {
+		t.Fatalf("rotate response leaked or omitted evidence: %s", first.Body.String())
+	}
+
+	sub2API.mu.Lock()
+	sub2API.workspaceKey = clients.Sub2APIWorkspaceKey{ID: 10, UserID: 41, Name: "opl-workspace", Key: "rotated-workspace-key-v2", Status: "active"}
+	sub2API.mu.Unlock()
+	fabric.gatewaySecret = clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v2", Fingerprint: "sha256:second"}
+	second := requestRotate(owner, "rotate-twice", `{"reason":"key-changed"}`)
+	if second.Code != http.StatusOK || len(fabric.gatewaySecretInputs) != 2 {
+		t.Fatalf("second rotate status=%d body=%s inputs=%#v", second.Code, second.Body.String(), fabric.gatewaySecretInputs)
+	}
+
+	operations, err := store.ListRuntimeOperations(context.Background())
+	if err != nil || len(operations) != 2 {
+		t.Fatalf("secret operations=%#v err=%v", operations, err)
+	}
+	persisted := string(mustJSON(operations))
+	for _, forbidden := range []string{"rotated-workspace-key", "rotated-workspace-key-v2", `"version"`, `"gatewayApiKey"`} {
+		if strings.Contains(persisted, forbidden) {
+			t.Fatalf("secret operation persisted %q: %s", forbidden, persisted)
+		}
+	}
+	if !strings.Contains(persisted, "opl-gateway-acct-alpha") || !strings.Contains(persisted, "sha256:first") || !strings.Contains(persisted, "sha256:second") {
+		t.Fatalf("secret operation omitted safe evidence: %s", persisted)
+	}
+
+	beta := loginForTest(t, server, "beta@example.com", "CorrectHorseBatteryStaple!")
+	member := loginForTest(t, server, "alpha-member@example.com", "CorrectHorseBatteryStaple!")
+	if response := requestRotate(beta, "rotate-foreign", `{}`); response.Code != http.StatusForbidden {
+		t.Fatalf("foreign owner rotate status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := requestRotate(member, "rotate-member", `{}`); response.Code != http.StatusForbidden {
+		t.Fatalf("member rotate status=%d body=%s", response.Code, response.Body.String())
+	}
+	workspaces, err := store.ListWorkspaces(context.Background(), "acct-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := findRecord(workspaces, "workspace-alpha")
+	workspace["state"] = "suspended"
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+	if response := requestRotate(owner, "rotate-suspended", `{}`); response.Code != http.StatusConflict {
+		t.Fatalf("suspended rotate status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(fabric.gatewaySecretInputs) != 2 {
+		t.Fatalf("rejected rotate reached Fabric: %#v", fabric.gatewaySecretInputs)
+	}
+}
+
+func TestStorageDestroyPreservesRetainedProviderStatus(t *testing.T) {
+	fabric := &fakeFabricClient{storageDestroyStatus: "retained"}
+	server := NewServer(newTestService(fakeLedgerClient{}, fabric))
+	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+
+	response := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes/destroy", `{"storageId":"`+stringValue(storage["id"])+`","confirmDataLoss":true}`)
+	var body map[string]any
+	if response.Code != http.StatusOK || json.NewDecoder(response.Body).Decode(&body) != nil || body["status"] != "retained" || body["desiredStatus"] != "destroyed" || body["billingStatus"] != "stopped" {
+		t.Fatalf("retained destroy status=%d body=%#v", response.Code, body)
+	}
+}
+
+func TestProviderReconcilePreservesReleasedStorageStatus(t *testing.T) {
+	app := newControlPlaneAppEmpty()
+	row := map[string]any{"id": "storage-reconcile-released", "accountId": "acct-alpha", "status": "available", "desiredStatus": "destroyed", "billingStatus": "active"}
+	mustStore(t, app.tables.SaveStorage(context.Background(), row))
+	fabric := &fakeFabricClient{storageDestroyStatus: "released"}
+
+	if err := app.reconcileMonthlyStorage(context.Background(), newTestService(fakeLedgerClient{}, fabric), row, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := app.getStorage("storage-reconcile-released")
+	if stored["status"] != "released" || stored["desiredStatus"] != "destroyed" || stored["billingStatus"] != "stopped" {
+		t.Fatalf("reconciled storage=%#v", stored)
+	}
+}
+
+func TestProviderReconcileDoesNotOverwriteManualReview(t *testing.T) {
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			app := newControlPlaneAppEmpty()
+			row := map[string]any{
+				"id": resourceType + "-manual-review", "accountId": "acct-alpha", "status": "running",
+				"desiredStatus": "destroyed", "billingStatus": "manual_review", "manualReviewReason": "provider_unknown",
+			}
+			var err error
+			service := newTestService(fakeLedgerClient{}, &fakeFabricClient{})
+			if resourceType == "storage" {
+				row["status"] = "available"
+				mustStore(t, app.tables.SaveStorage(context.Background(), row))
+				err = app.reconcileMonthlyStorage(context.Background(), service, row, time.Now().UTC())
+				row, _ = app.getStorage(stringValue(row["id"]))
+			} else {
+				mustStore(t, app.tables.SaveCompute(context.Background(), row))
+				err = app.reconcileMonthlyCompute(context.Background(), service, row, time.Now().UTC())
+				row, _ = app.getCompute(stringValue(row["id"]))
+			}
+			if err != nil || row["billingStatus"] != "manual_review" || row["manualReviewReason"] != "provider_unknown" {
+				t.Fatalf("reconciled manual review=%#v err=%v", row, err)
+			}
+		})
+	}
+}
+
 func TestWorkspaceRuntimeStatusPassesFabricChecks(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
 	workspace := createResourceWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/runtime-status", bytes.NewBufferString(`{"workspaceId":"`+stringValue(workspace["id"])+`"}`))
@@ -733,14 +1267,14 @@ func TestWorkspaceRuntimeStatusDoesNotReadSecretForUnknownProjection(t *testing.
 func TestWorkspaceRuntimeStatusForbidsCrossAccountSecretRead(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	admin := tenantAdminSessionForTest(t, server)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	owner := tenantOwnerSessionForTest(t, server)
+	createResourceWithSession(t, server, owner, http.MethodPost, "/api/users", `{"email":"outside@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	outsider := loginForTest(t, server, "outside@lab.example", "CorrectHorseBatteryStaple!")
 
-	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
-	workspace := createResourceWithSession(t, server, admin, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
+	compute := createResourceWithSession(t, server, owner, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
+	storage := createResourceWithSession(t, server, owner, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
+	createResourceWithSession(t, server, owner, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
+	workspace := createResourceWithSession(t, server, owner, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 
 	before := len(calls)
 	response := requestWithSession(t, server, outsider, http.MethodPost, "/api/workspaces/runtime-status", `{"workspaceId":"`+stringValue(workspace["id"])+`"}`)
@@ -806,10 +1340,10 @@ func TestWorkspaceRuntimeStatePersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create persistent server: %v", err)
 	}
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
 	ensureCustomerMembershipForTest(t, server, session, "acct-alpha", "usr-admin")
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"ws-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
 	workspace := createResourceWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","ownerId":"usr-owner","workspaceName":"Alpha Lab","attachmentId":"attachment-from-fabric"}`)
 	status := requestWithSession(t, server, session, http.MethodPost, "/api/workspaces/runtime-status", `{"workspaceId":"`+stringValue(workspace["id"])+`"}`)
@@ -865,7 +1399,7 @@ func TestNonAdminRequestsCannotSelectAnotherAccount(t *testing.T) {
 	admin := operatorSessionForTest(t, server)
 	alphaUser := createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"alpha@lab.example","accountId":"acct-alpha","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
 	createResourceWithSession(t, server, admin, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(alphaUser["id"])+`","accountId":"acct-alpha","role":"member"}`)
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"beta@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"beta@lab.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	alpha := loginForTest(t, server, "alpha@lab.example", "CorrectHorseBatteryStaple!")
 
 	readOther := httptest.NewRequest(http.MethodGet, "/api/state?accountId=acct-beta", nil)
@@ -937,17 +1471,33 @@ func TestCreateUserRejectsDuplicateEmail(t *testing.T) {
 type fakeLedgerClient struct{}
 
 type testSub2APIClient struct {
-	mu      sync.Mutex
-	balance int64
-	charges map[string]int64
+	mu                  sync.Mutex
+	balance             int64
+	charges             map[string]int64
+	workspaceKey        clients.Sub2APIWorkspaceKey
+	workspaceKeyErr     error
+	workspaceKeyUserIDs []int64
 }
 
-func (*testSub2APIClient) Version(context.Context) (string, error) { return "0.1.151", nil }
+func (*testSub2APIClient) Version(context.Context) (string, error) { return "0.1.155", nil }
 
 func (c *testSub2APIClient) Balance(_ context.Context, userID int64) (clients.Sub2APIBalance, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return clients.Sub2APIBalance{UserID: userID, USDMicros: c.balance}, nil
+	return clients.Sub2APIBalance{UserID: userID, USDMicros: c.balance, Status: "active"}, nil
+}
+
+func (c *testSub2APIClient) WorkspaceKey(_ context.Context, userID int64) (clients.Sub2APIWorkspaceKey, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.workspaceKeyUserIDs = append(c.workspaceKeyUserIDs, userID)
+	if c.workspaceKeyErr != nil {
+		return clients.Sub2APIWorkspaceKey{}, c.workspaceKeyErr
+	}
+	if c.workspaceKey.ID != 0 {
+		return c.workspaceKey, nil
+	}
+	return clients.Sub2APIWorkspaceKey{ID: 9, UserID: userID, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active"}, nil
 }
 
 func (c *testSub2APIClient) Charge(_ context.Context, input clients.Sub2APIChargeInput) (clients.Sub2APICharge, error) {
@@ -1013,6 +1563,22 @@ func (fakeBlockingReconciliationLedgerClient) RecordReconciliation(_ context.Con
 	return clients.ReconciliationResult{ID: stringField(input.Report, "id", "reconciliation-from-ledger"), Status: "mismatch", Report: input.Report, BlockNewWorkspaces: true, Reason: "tencent_bill_reconciliation_failed"}, nil
 }
 
+type flakyWorkspaceReceiptLedger struct {
+	fakeLedgerClient
+	receiptCalls int
+}
+
+func (l *flakyWorkspaceReceiptLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
+	if input.Type != "workspace.created" {
+		return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
+	}
+	l.receiptCalls++
+	if l.receiptCalls == 1 {
+		return clients.Receipt{}, errors.New("ledger unavailable")
+	}
+	return l.fakeLedgerClient.RecordReceipt(ctx, input, key)
+}
+
 type failingFabricClient struct {
 	fakeFabricClient
 }
@@ -1042,10 +1608,54 @@ func (catalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 	}}}, nil
 }
 
+type unavailableProCatalogFabricClient struct{ fakeFabricClient }
+
+func (unavailableProCatalogFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, error) {
+	return clients.FabricCatalog{WorkspacePackages: []clients.FabricWorkspacePackage{
+		{ID: "basic", ComputeProfileID: "pool-basic", Available: true},
+		{ID: "pro", ComputeProfileID: "pool-pro", Available: false},
+	}}, nil
+}
+
 type fakeFabricClient struct {
-	calls         *[]string
-	runtime       clients.WorkspaceRuntime
-	runtimeStatus clients.WorkspaceRuntime
+	calls                *[]string
+	runtime              clients.WorkspaceRuntime
+	runtimeErr           error
+	runtimeStatus        clients.WorkspaceRuntime
+	gatewaySecret        clients.GatewaySecretWriteResult
+	gatewaySecretErr     error
+	storageDestroyStatus string
+	gatewaySecretInputs  []clients.GatewaySecretWriteInput
+	runtimeInputs        []clients.WorkspaceRuntimeInput
+}
+
+type countingWorkspaceFabricClient struct {
+	fakeFabricClient
+	mu             sync.Mutex
+	gatewayWrites  int
+	runtimeCreates int
+}
+
+func (f *countingWorkspaceFabricClient) WriteGatewaySecret(ctx context.Context, input clients.GatewaySecretWriteInput, key string) (clients.GatewaySecretWriteResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gatewayWrites++
+	return f.fakeFabricClient.WriteGatewaySecret(ctx, input, key)
+}
+
+func (f *countingWorkspaceFabricClient) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runtimeCreates++
+	return f.fakeFabricClient.CreateWorkspaceRuntime(ctx, input, key)
+}
+
+func (f *countingWorkspaceFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
+	return clients.StorageAttachment{
+		ID: "attachment-" + stableID(input.ComputeID, input.VolumeID)[:12], WorkspaceID: input.WorkspaceID,
+		ComputeID: input.ComputeID, VolumeID: input.VolumeID, Status: "attached", Provider: "tencent-tke",
+		ProviderAttachmentID: "deployment/runtime:pvc/storage:/data", ProviderRequestID: "attachment-request-from-fabric", MountPath: "/data",
+	}, nil
 }
 
 type provisioningComputeFabricClient struct{ fakeFabricClient }
@@ -1084,9 +1694,26 @@ func (f *fakeFabricClient) Catalog(_ context.Context) (clients.FabricCatalog, er
 	}}, nil
 }
 
+func (f *fakeFabricClient) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
+	f.record("fabric.monthly.preflight")
+	requestIDs := map[string]string{"quota": "quota-request", "price": "price-request"}
+	if input.ResourceType == "compute" {
+		requestIDs = map[string]string{"nodePool": "node-pool-request", "subnets": "subnets-request", "availability": "availability-request"}
+	}
+	return clients.MonthlyPreflight{
+		ResourceType: input.ResourceType, PackageID: input.PackageID, SizeGB: input.SizeGB, Zone: input.Zone,
+		Available: true, ChargeType: "PREPAID", PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW",
+		ProviderPriceCNY: 12.34, ProviderRequestIDs: requestIDs,
+	}, nil
+}
+
 func (f *fakeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
 	f.record("fabric.compute")
-	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric"}, nil
+	instanceType := "S5.MEDIUM4"
+	if input.PackageID == "pro" {
+		instanceType = "SA5.2XLARGE16"
+	}
+	return clients.ComputeAllocation{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, PackageID: input.PackageID, Status: "running", Provider: "tencent-tke", ProviderResourceID: "node/node-from-fabric", ProviderRequestID: "compute-request-from-fabric", InstanceID: "ins-from-fabric", NodeName: "node-from-fabric", ServiceName: "opl-compute-from-fabric", InstanceType: instanceType, Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"zone": "ap-shanghai-2", "instanceType": instanceType}}, nil
 }
 
 func (f *provisioningComputeFabricClient) CreateComputeAllocation(_ context.Context, input clients.ComputeAllocationInput, _ string) (clients.ComputeAllocation, error) {
@@ -1121,7 +1748,7 @@ func (f *fakeFabricClient) DestroyComputeAllocation(_ context.Context, id string
 
 func (f *fakeFabricClient) CreateStorageVolume(_ context.Context, input clients.StorageVolumeInput, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage")
-	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "pvc/volume-from-fabric-data", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs"}, nil
+	return clients.StorageVolume{ID: input.ID, AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, Status: "available", Provider: "tencent-tke", ProviderResourceID: "disk-volume-from-fabric", ProviderRequestID: "storage-request-from-fabric", SizeGB: input.SizeGB, StorageClass: "cbs", CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", Zone: input.Zone, ProviderData: map[string]string{"chargeType": "PREPAID"}}, nil
 }
 
 func (f *fakeFabricClient) SyncStorageVolume(_ context.Context, id string) (clients.StorageVolume, error) {
@@ -1131,7 +1758,7 @@ func (f *fakeFabricClient) SyncStorageVolume(_ context.Context, id string) (clie
 
 func (f *fakeFabricClient) DestroyStorageVolume(_ context.Context, id string, _ string) (clients.StorageVolume, error) {
 	f.record("fabric.storage-destroy")
-	return clients.StorageVolume{ID: id, Status: "destroyed", Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric"}, nil
+	return clients.StorageVolume{ID: id, Status: firstNonEmpty(f.storageDestroyStatus, "destroyed"), Provider: "tencent-tke", ProviderRequestID: "storage-destroy-from-fabric"}, nil
 }
 
 func (f *fakeFabricClient) CreateStorageAttachment(_ context.Context, input clients.StorageAttachmentInput, _ string) (clients.StorageAttachment, error) {
@@ -1144,8 +1771,24 @@ func (f *fakeFabricClient) DetachStorageAttachment(_ context.Context, id string,
 	return clients.StorageAttachment{ID: id, Status: "detached", ProviderRequestID: "attachment-detach-from-fabric"}, nil
 }
 
+func (f *fakeFabricClient) WriteGatewaySecret(_ context.Context, input clients.GatewaySecretWriteInput, _ string) (clients.GatewaySecretWriteResult, error) {
+	f.record("fabric.gateway-secret")
+	f.gatewaySecretInputs = append(f.gatewaySecretInputs, input)
+	if f.gatewaySecretErr != nil {
+		return clients.GatewaySecretWriteResult{}, f.gatewaySecretErr
+	}
+	if f.gatewaySecret.SecretRef != "" {
+		return f.gatewaySecret, nil
+	}
+	return clients.GatewaySecretWriteResult{SecretRef: "opl-gateway-acct-alpha", Version: "v1", Fingerprint: "sha256:redacted"}, nil
+}
+
 func (f *fakeFabricClient) CreateWorkspaceRuntime(_ context.Context, input clients.WorkspaceRuntimeInput, _ string) (clients.WorkspaceRuntime, error) {
 	f.record("fabric.runtime")
+	f.runtimeInputs = append(f.runtimeInputs, input)
+	if f.runtimeErr != nil {
+		return clients.WorkspaceRuntime{}, f.runtimeErr
+	}
 	if f.runtime.ID != "" {
 		return f.runtime, nil
 	}
@@ -1433,7 +2076,7 @@ func TestOrganizationMemberSyncsExecutionAndReadsContinuation(t *testing.T) {
 		t.Fatalf("continuation status = %d: %s", continuationRec.Code, continuationRec.Body.String())
 	}
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outside-continuation@example.com","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	outsider := loginForTest(t, server, "outside-continuation@example.com", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, outsider, http.MethodGet, "/api/execution-requests/"+requestID+"/continuation", "")
 	if forbidden.Code != http.StatusUnauthorized {
@@ -1484,7 +2127,7 @@ func TestExecutionRoutesAuthorizeActiveOrganizationMembers(t *testing.T) {
 		t.Fatalf("member status = %d body=%s, want created", rec.Code, rec.Body.String())
 	}
 
-	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	createResourceWithSession(t, server, admin, http.MethodPost, "/api/users", `{"email":"outsider@execution.example","accountId":"acct-beta","role":"member","password":"CorrectHorseBatteryStaple!","sub2apiUserId":42}`)
 	outsider := loginForTest(t, server, "outsider@execution.example", "CorrectHorseBatteryStaple!")
 	forbidden := requestWithSession(t, server, outsider, http.MethodPost, "/api/projects", `{"organizationId":"org-alpha","workspaceId":"workspace-alpha"}`)
 	if forbidden.Code != http.StatusUnauthorized || !strings.Contains(forbidden.Body.String(), "not_authenticated") {
@@ -1628,6 +2271,37 @@ func createResourceWithSession(t *testing.T, server http.Handler, loginRec *http
 	return payload
 }
 
+func createWorkspaceAttachmentForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, key string) map[string]any {
+	t.Helper()
+	compute := createResourceWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`, key+"-compute")
+	storage := createResourceWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/storage-volumes", `{"packageId":"basic","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`, key+"-storage")
+	return createResourceWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/storage-attachments", `{"computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`, key+"-attachment")
+}
+
+func createResourceWithMutationKeyForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, body, key string) map[string]any {
+	t.Helper()
+	rec := requestWithMutationKeyForTest(t, server, session, method, path, body, key)
+	if rec.Code < 200 || rec.Code >= 300 {
+		t.Fatalf("%s %s status = %d: %s", method, path, rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode %s %s: %v", method, path, err)
+	}
+	return payload
+}
+
+func requestWithMutationKeyForTest(t *testing.T, server http.Handler, session *httptest.ResponseRecorder, method, path, body, key string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	addAuth(req, session)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	return rec
+}
+
 func requestWithSession(t *testing.T, server http.Handler, loginRec *httptest.ResponseRecorder, method string, path string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
@@ -1645,13 +2319,23 @@ func operatorSessionForTest(t *testing.T, server http.Handler) *httptest.Respons
 
 func tenantAdminSessionForTest(t *testing.T, server http.Handler) *httptest.ResponseRecorder {
 	t.Helper()
+	return tenantSessionForTest(t, server, "admin")
+}
+
+func tenantOwnerSessionForTest(t *testing.T, server http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	return tenantSessionForTest(t, server, "owner")
+}
+
+func tenantSessionForTest(t *testing.T, server http.Handler, role string) *httptest.ResponseRecorder {
+	t.Helper()
 	global := reservedOperatorSessionForTest(t, server)
-	email := "tenant-admin-" + newResourceID("test") + "@example.com"
-	user := createResourceWithSession(t, server, global, http.MethodPost, "/api/users", `{"email":"`+email+`","accountId":"acct-alpha","role":"admin","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
-	membership := requestWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"admin"}`)
+	email := "tenant-" + role + "-" + newResourceID("test") + "@example.com"
+	user := createResourceWithSession(t, server, global, http.MethodPost, "/api/users", `{"email":"`+email+`","accountId":"acct-alpha","role":"`+role+`","password":"CorrectHorseBatteryStaple!","sub2apiUserId":41}`)
+	membership := requestWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"org-alpha","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"`+role+`"}`)
 	if membership.Code < 200 || membership.Code >= 300 {
 		organization := createResourceWithSession(t, server, global, http.MethodPost, "/api/organizations", `{"name":"Test tenant","billingAccountId":"acct-alpha"}`)
-		createResourceWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"`+stringValue(organization["id"])+`","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"admin"}`)
+		createResourceWithSession(t, server, global, http.MethodPost, "/api/organizations/members", `{"organizationId":"`+stringValue(organization["id"])+`","userId":"`+stringValue(user["id"])+`","accountId":"acct-alpha","role":"`+role+`"}`)
 	}
 	return loginForTest(t, server, email, "CorrectHorseBatteryStaple!")
 }
@@ -1679,6 +2363,22 @@ func addSessionCookies(req *http.Request, loginRec *httptest.ResponseRecorder) {
 func addAuth(req *http.Request, loginRec *httptest.ResponseRecorder) {
 	addSessionCookies(req, loginRec)
 	req.Header.Set("x-opl-csrf", loginRec.Header().Get("x-opl-csrf-token"))
+}
+
+func sessionUserIDForTest(t *testing.T, server http.Handler, loginRec *httptest.ResponseRecorder) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	addSessionCookies(req, loginRec)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session lookup status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return stringValue(mapField(payload, "user")["id"])
 }
 
 func TestResourceLedgerEvidenceDerivesProviderCostTags(t *testing.T) {
@@ -1750,9 +2450,9 @@ func TestResourceDestroyAndDetachUpdateWorkspaceState(t *testing.T) {
 func TestDestroyComputeCleansLinkedWorkspaceRuntimeFirst(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
-	session := tenantAdminSessionForTest(t, server)
+	session := tenantOwnerSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"compute-alpha"}`)
-	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"storage-alpha"}`)
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"storage-alpha","computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	attachment := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`"}`)
 	workspace := createResourceWithSession(t, server, session, http.MethodPost, "/api/workspaces", `{"accountId":"acct-alpha","attachmentId":"`+stringValue(attachment["id"])+`","workspaceName":"Workspace Alpha"}`)
 
@@ -1779,7 +2479,7 @@ func TestDetachStorageAttachmentPreservesOwnershipFacts(t *testing.T) {
 	admin := tenantAdminSessionForTest(t, server)
 
 	compute := createResourceWithSession(t, server, admin, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic","name":"compute-alpha"}`)
-	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"storage-alpha"}`)
+	storage := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"name":"storage-alpha","computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	attachment := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments", `{"accountId":"acct-alpha","computeAllocationId":"`+stringValue(compute["id"])+`","storageId":"`+stringValue(storage["id"])+`","mountPath":"/data"}`)
 
 	detached := createResourceWithSession(t, server, admin, http.MethodPost, "/api/storage-attachments/detach", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`)
@@ -2052,9 +2752,14 @@ func TestWorkspaceGatewayRoutesRootRuntimeApiByReferer(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha",
-		"state":   "running",
-		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
+		"accountId":                  "acct-alpha",
+		"state":                      "running",
+		"currentComputeAllocationId": "compute-alpha",
+		"storageId":                  "storage-alpha",
+		"runtime":                    map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	}))
 	req := httptest.NewRequest(http.MethodPost, "https://workspace.medopl.cn/login", bytes.NewBufferString(`{"username":"admin"}`))
 	req.Header.Set("Referer", "https://workspace.medopl.cn/w/ws-alpha/")
@@ -2079,9 +2784,14 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 	}))
 	defer backend.Close()
 	app := newControlPlaneApp()
+	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z"}))
 	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{"id": "ws-alpha",
-		"state":   "running",
-		"runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
+		"accountId":                  "acct-alpha",
+		"state":                      "running",
+		"currentComputeAllocationId": "compute-alpha",
+		"storageId":                  "storage-alpha",
+		"runtime":                    map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://")},
 	}))
 	entryReq := httptest.NewRequest(http.MethodGet, "https://workspace.medopl.cn/w/ws-alpha/", nil)
 	entryRec := httptest.NewRecorder()
@@ -2115,6 +2825,106 @@ func TestWorkspaceGatewaySetsRoutingCookieForRootRuntimeApi(t *testing.T) {
 	}
 	if !slices.Equal(gotPaths, []string{"/", "/api/auth/user"}) {
 		t.Fatalf("proxied paths = %#v, want clean entry and root API paths", gotPaths)
+	}
+}
+
+func TestWorkspaceStateRequiresActiveUnexpiredStorageEntitlement(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		storageStatus string
+		billingStatus string
+		paidThrough   string
+		openable      bool
+	}{
+		{name: "active", storageStatus: "available", billingStatus: "active", paidThrough: "2099-01-01T00:00:00Z", openable: true},
+		{name: "past due", storageStatus: "available", billingStatus: "past_due", paidThrough: "2099-01-01T00:00:00Z"},
+		{name: "expired", storageStatus: "available", billingStatus: "active", paidThrough: "2000-01-01T00:00:00Z"},
+		{name: "invalid deadline", storageStatus: "available", billingStatus: "active", paidThrough: "not-a-time"},
+		{name: "retained", storageStatus: "retained", billingStatus: "active", paidThrough: "2099-01-01T00:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newControlPlaneApp()
+			mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
+				"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+			}))
+			mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
+				"id": "storage-alpha", "status": tc.storageStatus, "billingStatus": tc.billingStatus, "paidThrough": tc.paidThrough,
+			}))
+			mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
+				"id": "ws-alpha", "accountId": "acct-alpha", "state": "running", "currentComputeAllocationId": "compute-alpha",
+				"storageId": "storage-alpha", "runtime": map[string]any{"serviceName": "runtime-alpha", "ready": true},
+			}))
+			workspace := app.workspaceStateRowsLocked("")[0].(map[string]any)
+			if workspace["openable"] != tc.openable {
+				t.Fatalf("workspace openable=%#v, want %v: %#v", workspace["openable"], tc.openable, workspace)
+			}
+			if !tc.openable && workspace["accessState"] != "disabled" {
+				t.Fatalf("closed workspace accessState=%#v", workspace["accessState"])
+			}
+		})
+	}
+}
+
+func TestWorkspaceGatewayBlocksExpiredStorageEntitlementBeforeProxy(t *testing.T) {
+	proxied := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxied = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	app := newControlPlaneApp()
+	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{"id": "storage-alpha", "status": "available", "billingStatus": "active", "paidThrough": "2000-01-01T00:00:00Z"}))
+	mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
+		"id": "ws-alpha", "state": "running", "storageId": "storage-alpha", "runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://"), "ready": true},
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil)
+	rec := httptest.NewRecorder()
+
+	app.proxyWorkspace(rec, req)
+
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "workspace_storage_entitlement_inactive") || proxied {
+		t.Fatalf("expired storage proxy status=%d body=%s proxied=%v", rec.Code, rec.Body.String(), proxied)
+	}
+}
+
+func TestWorkspaceGatewayBlocksInactiveComputeEntitlementBeforeProxy(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		billingStatus string
+		paidThrough   string
+	}{
+		{name: "past due", billingStatus: "past_due", paidThrough: "2099-01-01T00:00:00Z"},
+		{name: "expired", billingStatus: "active", paidThrough: "2000-01-01T00:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proxied := false
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				proxied = true
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer backend.Close()
+			app := newControlPlaneApp()
+			mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
+				"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "running",
+				"billingStatus": tc.billingStatus, "paidThrough": tc.paidThrough,
+			}))
+			mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
+				"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha", "status": "available",
+				"billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+			}))
+			mustStore(t, app.tables.SaveWorkspace(context.Background(), map[string]any{
+				"id": "ws-alpha", "accountId": "acct-alpha", "state": "running", "currentComputeAllocationId": "compute-alpha",
+				"storageId": "storage-alpha", "runtime": map[string]any{"serviceName": strings.TrimPrefix(backend.URL, "http://"), "ready": true},
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/w/ws-alpha/", nil)
+			rec := httptest.NewRecorder()
+
+			app.proxyWorkspace(rec, req)
+
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "workspace_compute_entitlement_inactive") || proxied {
+				t.Fatalf("inactive compute proxy status=%d body=%s proxied=%v", rec.Code, rec.Body.String(), proxied)
+			}
+		})
 	}
 }
 
@@ -2363,9 +3173,10 @@ func TestResourceAutoRenewProductCommandUpdatesOnlyControlPlaneState(t *testing.
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantAdminSessionForTest(t, server)
+	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
 	resources := []map[string]any{
-		createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`),
-		createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10}`),
+		compute,
+		createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`),
 	}
 	before := len(calls)
 	for _, resource := range resources {

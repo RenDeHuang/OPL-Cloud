@@ -30,6 +30,23 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 	mux.HandleFunc("GET /fabric/catalog", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, service.Catalog(r.Context()))
 	})
+	mux.HandleFunc("POST /fabric/monthly-preflight", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.MonthlyPreflightInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		result, err := service.MonthlyPreflight(r.Context(), input)
+		if errors.Is(err, fabric.ErrInvalidMonthlyPreflight) {
+			writeError(w, http.StatusBadRequest, fabric.ErrInvalidMonthlyPreflight.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, fabric.ErrMonthlyPreflightUnavailable.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc("GET /fabric/operations", func(w http.ResponseWriter, r *http.Request) {
 		operations, err := service.ListOperations(r.Context())
 		if err != nil {
@@ -182,12 +199,30 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		allocation, err := service.DestroyComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")))
 		writeResult(w, allocation, err)
 	})
+	mux.HandleFunc("POST /fabric/compute-allocations/{id}/renew", func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		allocation, err := service.RenewComputeAllocation(r.Context(), strings.TrimSpace(r.PathValue("id")), key)
+		writeResult(w, allocation, err)
+	})
 	mux.HandleFunc("POST /fabric/storage-volumes", func(w http.ResponseWriter, r *http.Request) {
 		var input fabric.StorageVolumeInput
 		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
 			return
 		}
 		volume, err := service.CreateStorageVolume(r.Context(), input)
+		writeResult(w, volume, err)
+	})
+	mux.HandleFunc("POST /fabric/storage-volumes/{id}/renew", func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			writeError(w, http.StatusBadRequest, "missing Idempotency-Key")
+			return
+		}
+		volume, err := service.RenewStorageVolume(r.Context(), strings.TrimSpace(r.PathValue("id")), key)
 		writeResult(w, volume, err)
 	})
 	mux.HandleFunc("POST /fabric/storage-volumes/{id}/destroy", func(w http.ResponseWriter, r *http.Request) {
@@ -276,6 +311,14 @@ func NewServer(service *fabric.Service, token string) http.Handler {
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), strings.TrimSpace(r.PathValue("workspaceId")))
 		writeResult(w, runtime, err)
 	})
+	mux.HandleFunc("POST /fabric/gateway-secrets", func(w http.ResponseWriter, r *http.Request) {
+		var input fabric.GatewaySecretInput
+		if !decodeWrite(w, r, &input.IdempotencyKey, &input) {
+			return
+		}
+		secret, err := service.UpsertGatewaySecret(r.Context(), input)
+		writeResult(w, secret, err)
+	})
 	return authenticate(mux, token)
 }
 
@@ -313,7 +356,7 @@ func writeResult(w http.ResponseWriter, body any, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if errors.Is(err, fabric.ErrRuntimeIdempotencyConflict) || errors.Is(err, fabric.ErrRuntimeOperationInProgress) || errors.Is(err, fabric.ErrRuntimeOperationFailed) {
+	if errors.Is(err, fabric.ErrComputeIdempotencyConflict) || errors.Is(err, fabric.ErrRuntimeIdempotencyConflict) || errors.Is(err, fabric.ErrRuntimeOperationInProgress) || errors.Is(err, fabric.ErrRuntimeOperationFailed) || errors.Is(err, fabric.ErrGatewaySecretIdempotencyConflict) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

@@ -24,8 +24,10 @@ npm run validate:production-manifest -- \
 - Tencent mutation credentials, region, cluster, subnet, and security groups;
 - internal service token and AionUI password seed.
 
-Secrets must be GitHub/Kubernetes secrets. Never place credentials in the
-manifest, command arguments, logs, or verifier artifacts.
+Secrets must be GitHub/Kubernetes secrets. Customer Workspace Gateway Keys are
+account-scoped Kubernetes Secrets written by Fabric, not a global deployment
+environment variable. Never place credentials in the manifest, command
+arguments, logs, or verifier artifacts.
 
 ## Database Startup Migrations
 
@@ -354,39 +356,35 @@ kubectl -n opl-cloud rollout status deployment/opl-cloud-ledger --timeout=5m
 Then check health and readiness through the production endpoints. An old image
 digest or timeout is a failed rollout.
 
-## Paid E2E
+## Blocked Legacy Verifier
 
-Use a dedicated mapped account with enough Sub2API balance. The exact guard is
-mandatory:
+Do not run the legacy paid verifier. It charges a real monthly product and
+creates then deletes Tencent resources on every run, so it is not a launch or
+release gate.
 
-```bash
-OPL_CONSOLE_ORIGIN=https://cloud.medopl.cn \
-OPL_VERIFY_AUTH_USERS_JSON='<secret auth seed>' \
-OPL_VERIFY_PAID_CONFIRMATION=I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE \
-OPL_VERIFY_RUN_ID=<unique-run-id> \
-npm run verify:production -- --browser-e2e
-```
+The approved replacement must:
 
-The verifier must prove:
+1. use fake Sub2API debit/refund and fake provider mutation for the monthly commercial path;
+2. reuse `verification-slot-01`, a prepaid `SA5.MEDIUM4` plus 10GB CBS Slot;
+3. deploy and authenticate to the candidate Workspace image on that Slot;
+4. prove WebSocket behavior and one real model request with a dedicated test key;
+5. record Ledger verification evidence;
+6. delete only temporary Kubernetes workloads and test-only data;
+7. prove that the Tencent CVM, CBS, node-pool, and PV IDs are unchanged.
 
-1. one mapped account and live starting balance;
-2. Basic compute charge of `50000000` USD micros;
-3. 10 GB storage charge of `2571429` USD micros;
-4. exact total balance delta of `52571429` USD micros;
-5. stable redeem code per resource operation;
-6. active monthly entitlements and two Ledger receipts;
-7. compute, storage, attachment, and public Workspace URL readiness;
-8. exact cleanup of only the run's resources.
-
-Keep the run failed until cleanup is confirmed. Do not substitute broad cloud
-cleanup commands for resource IDs recorded by the verifier.
+Creating or renewing the Slot is a separate manual Provider Acceptance action,
+not part of deployment or release verification. Until this replacement exists,
+production verification remains blocked.
 
 ## Billing Recovery
 
-- `preparing`: inspect the Fabric operation; no charge is expected yet.
-- `charge_pending`: replay the same persisted redeem code; never create a new code.
-- `manual_review`: compare the exact Sub2API adjustment and balance snapshots
-  before changing entitlement state.
+- `preflight`: read-only checks only; no debit or provider write is allowed.
+- `debit_pending`: replay the same persisted Redeem Code and Idempotency-Key;
+  never create a new identity.
+- debit succeeded with confirmed no billable resource: replay the one deterministic
+  refund identity and verify its readback.
+- debit succeeded with partial or unknown provider result: enter `manual_review`
+  without refund, cleanup, or repurchase.
 - `active` with missing receipt: retry only the Ledger receipt write.
 - expired compute: confirm provider deletion.
 - expired storage: preserve data and block attachment until reactivation.

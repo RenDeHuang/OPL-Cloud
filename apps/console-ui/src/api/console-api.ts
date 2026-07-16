@@ -3,7 +3,7 @@ type ApiError = Error & { payload?: JsonRecord };
 
 export function customerSafeMessage(payload: JsonRecord = {}, fallback = "request_failed") {
   const raw = String(payload.safeMessage || payload.error || fallback);
-  if (/upstream_unavailable|bad gateway|workspace_url_failed|workspace_runtime_not_ready|workspace_url_not_ready|502|503/i.test(raw)) {
+  if (/workspace_url_failed|workspace_runtime_not_ready|workspace_url_not_ready/i.test(raw)) {
     return "正在分发 Docker，预计 3-5 分钟，请稍后再打开 URL。";
   }
   return raw;
@@ -18,7 +18,8 @@ export async function postJson(path: string, body: JsonRecord = {}, csrfToken = 
   const response = await fetch(path, {
     method: "POST",
     headers,
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000)
   });
   const payload = await response.json();
   if (!response.ok || payload.ok === false) {
@@ -53,8 +54,9 @@ export function operationEnvelope(payload: JsonRecord = {}, defaults: JsonRecord
   };
 }
 
-export async function getJson(path: string) {
-  const response = await fetch(path);
+export async function getJson(path: string, { signal }: { signal?: AbortSignal } = {}) {
+  const timeout = AbortSignal.timeout(10_000);
+  const response = await fetch(path, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   const payload = await response.json();
   if (!response.ok || payload.ok === false) {
     const error: ApiError = new Error(customerSafeMessage(payload));

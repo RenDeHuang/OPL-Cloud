@@ -47,11 +47,13 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	registerCoreRoutes(mux, app, service)
 	registerAuthRoutes(mux, app)
 	registerStateRoutes(mux, app, service)
+	registerGatewayRoutes(mux, app, service)
 	registerWorkspaceRoutes(mux, app, service)
 	registerBillingRoutes(mux, app, service)
 	registerResourceRoutes(mux, app, service)
 	registerSupportRoutes(mux, app)
 	registerAdminRoutes(mux, app, service)
+	registerProviderAcceptanceRoutes(mux, app, service)
 	registerExecutionRoutes(mux, app, service)
 	registerSyncRoutes(mux, app)
 	registerTransferRoutes(mux, app, service)
@@ -243,6 +245,11 @@ func writeUpstreamError(w http.ResponseWriter, causes ...error) {
 		if cause != nil {
 			log.Printf("upstream request failed: %v", cause)
 		}
+		var fabricErr *clients.FabricHTTPError
+		if errors.As(cause, &fabricErr) && fabricErr.StatusCode == http.StatusConflict {
+			writeError(w, http.StatusConflict, "upstream_conflict")
+			return
+		}
 	}
 	writeError(w, http.StatusBadGateway, "upstream_unavailable")
 }
@@ -398,6 +405,10 @@ func newResourceID(prefix string) string {
 
 func resourceIDForMutation(prefix, accountID, key string) string {
 	return prefix + "_" + stableID(prefix, accountID, key)[:18]
+}
+
+func primaryWorkspaceID(accountID string) string {
+	return resourceIDForMutation("ws", accountID, "primary")
 }
 
 func structToMap(value any) map[string]any {
