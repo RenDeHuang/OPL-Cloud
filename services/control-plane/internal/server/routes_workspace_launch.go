@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -127,6 +128,9 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
+		}
+		if providerReconcileWorkerEnabled() {
+			go func() { _ = app.runWorkspaceLaunch(context.Background(), service, operation.ID) }()
 		}
 		writeJSON(w, http.StatusAccepted, body)
 	}))

@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
+	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
@@ -245,4 +247,214 @@ func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 			t.Fatalf("beta launch detail %s status=%d, want 404: %s", id, response.Code, response.Body.String())
 		}
 	}
+}
+
+type recordingWorkspaceLaunchStore struct {
+	*memoryTableStore
+	launchSaves []workspaceLaunchOperation
+}
+
+func (s *recordingWorkspaceLaunchStore) SaveRuntimeOperation(ctx context.Context, row map[string]any) error {
+	if err := s.memoryTableStore.SaveRuntimeOperation(ctx, row); err != nil {
+		return err
+	}
+	if stringValue(row["action"]) == "workspace.launch" {
+		operation, err := decodeWorkspaceLaunchOperation(row)
+		if err == nil {
+			s.launchSaves = append(s.launchSaves, operation)
+		}
+	}
+	return nil
+}
+
+type workspaceLaunchLedger struct {
+	fakeLedgerClient
+	events                *[]string
+	receipts              map[string]clients.Receipt
+	workspaceReceiptCalls int
+}
+
+func (l *workspaceLaunchLedger) RecordReceipt(_ context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
+	if input.Type == "workspace.created" {
+		*l.events = append(*l.events, "ledger.workspace.receipt")
+		l.workspaceReceiptCalls++
+	}
+	if receipt, ok := l.receipts[key]; ok {
+		return receipt, nil
+	}
+	receipt := clients.Receipt{ReceiptInput: input, ReceiptID: "receipt-" + stableID(key)[:12]}
+	l.receipts[key] = receipt
+	return receipt, nil
+}
+
+type workspaceLaunchSub2API struct{ *monthlySub2API }
+
+func (s *workspaceLaunchSub2API) WorkspaceKey(_ context.Context, userID int64) (clients.Sub2APIWorkspaceKey, error) {
+	return clients.Sub2APIWorkspaceKey{ID: 9, UserID: userID, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active"}, nil
+}
+
+type workspaceLaunchWorkerFixture struct {
+	app         *controlPlaneServer
+	service     *controlplane.Service
+	store       *recordingWorkspaceLaunchStore
+	events      *[]string
+	sub2API     *workspaceLaunchSub2API
+	fabric      *monthlyFabric
+	ledger      *workspaceLaunchLedger
+	operationID string
+}
+
+func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error) workspaceLaunchWorkerFixture {
+	t.Helper()
+	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
+	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
+	t.Setenv("OPL_ARCHIVE_RETENTION_WORKER_ENABLED", "false")
+	store := &recordingWorkspaceLaunchStore{memoryTableStore: newMemoryTableStore()}
+	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
+	events := []string{}
+	sub2API := &workspaceLaunchSub2API{monthlySub2API: &monthlySub2API{events: &events, balances: balances, chargeErrors: chargeErrors}}
+	fabric := &monthlyFabric{fakeFabricClient: fakeFabricClient{calls: &events, runtimeErr: runtimeErr}, events: &events}
+	ledger := &workspaceLaunchLedger{events: &events, receipts: map[string]clients.Receipt{}}
+	service := controlplane.NewService(ledger, fabric, sub2API)
+	server, err := NewPersistentServer(service, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
+	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(created.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	app, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspaceLaunchWorkerFixture{
+		app: app, service: service, store: store, events: &events, sub2API: sub2API, fabric: fabric, ledger: ledger,
+		operationID: stringValue(response["operationId"]),
+	}
+}
+
+func (f workspaceLaunchWorkerFixture) operation(t *testing.T) workspaceLaunchOperation {
+	t.Helper()
+	rows, err := f.store.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if stringValue(row["id"]) == f.operationID {
+			operation, err := decodeWorkspaceLaunchOperation(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return operation
+		}
+	}
+	t.Fatalf("workspace launch %s not found", f.operationID)
+	return workspaceLaunchOperation{}
+}
+
+func TestWorkspaceLaunchOrderPersistsEveryPhase(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t,
+		[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_428_571}, nil, nil,
+	)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	wantEvents := []string{
+		"fabric.monthly.preflight", "fabric.monthly.preflight", "sub2api.balance",
+		"fabric.monthly.preflight", "sub2api.balance", "sub2api.charge", "sub2api.balance", "fabric.compute.prepare",
+		"fabric.monthly.preflight", "sub2api.balance", "sub2api.charge", "sub2api.balance", "fabric.storage.prepare",
+		"fabric.attachment", "fabric.gateway-secret", "fabric.runtime", "ledger.workspace.receipt",
+	}
+	if !reflect.DeepEqual(*fixture.events, wantEvents) {
+		t.Fatalf("workspace launch events = %#v, want %#v", *fixture.events, wantEvents)
+	}
+	wantSaves := []string{"preparing/compute", "preparing/storage", "preparing/attachment", "preparing/workspace", "preparing/receipt", "succeeded/complete"}
+	gotSaves := make([]string, 0, len(fixture.store.launchSaves))
+	for _, operation := range fixture.store.launchSaves {
+		gotSaves = append(gotSaves, operation.Status+"/"+operation.Phase)
+	}
+	if !reflect.DeepEqual(gotSaves, wantSaves) {
+		t.Fatalf("workspace launch saves = %#v, want %#v", gotSaves, wantSaves)
+	}
+	operation := fixture.operation(t)
+	if operation.Status != "succeeded" || operation.Phase != "complete" || operation.AttachmentID == "" || operation.URL == "" || operation.ReceiptID == "" {
+		t.Fatalf("completed workspace launch = %#v", operation)
+	}
+	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), "acct-alpha")
+	if len(workspaces) != 1 || stringValue(workspaces[0]["receiptId"]) == "" || strings.Contains(string(mustJSON(workspaces[0])), "runtime-password-alpha") {
+		t.Fatalf("workspace projection = %#v", workspaces)
+	}
+
+	before := append([]string(nil), (*fixture.events)...)
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(*fixture.events, before) {
+		t.Fatalf("completed launch replayed side effects: before=%#v after=%#v", before, *fixture.events)
+	}
+}
+
+func TestWorkspaceLaunchRestartResumesWithoutRepeatingCompletedPurchases(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t,
+		[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_428_571}, nil, errors.New("runtime unavailable"),
+	)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("runtime failure did not leave a retryable launch")
+	}
+	failed := fixture.operation(t)
+	if failed.Status != "retryable" || failed.Phase != "workspace" {
+		t.Fatalf("failed workspace launch = %#v", failed)
+	}
+	charges, computeCreates, storageCreates := len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.fabric.storageIDs)
+	attachments := countStrings(*fixture.events, "fabric.attachment")
+	fixture.fabric.runtimeErr = nil
+	restarted, err := newControlPlaneAppWithStore(fixture.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.sub2API.charges) != charges || len(fixture.fabric.computeIDs) != computeCreates || len(fixture.fabric.storageIDs) != storageCreates || countStrings(*fixture.events, "fabric.attachment") != attachments {
+		t.Fatalf("restart repeated completed work: events=%#v charges=%#v compute=%#v storage=%#v", *fixture.events, fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+	}
+	if operation := fixture.operation(t); operation.Status != "succeeded" || operation.Phase != "complete" || fixture.ledger.workspaceReceiptCalls != 1 {
+		t.Fatalf("resumed workspace launch = %#v receipt calls=%d", operation, fixture.ledger.workspaceReceiptCalls)
+	}
+}
+
+func TestWorkspaceLaunchManualReviewStopsBeforeProviderMutation(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t,
+		[]int64{1_000_000_000, 1_000_000_000}, []error{clients.ErrSub2APIChargeConflict}, nil,
+	)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("charge conflict did not report the manual-review launch")
+	}
+	operation := fixture.operation(t)
+	if operation.Status != "manual_review" || operation.Phase != "compute" {
+		t.Fatalf("manual-review workspace launch = %#v", operation)
+	}
+	if len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 || countStrings(*fixture.events, "fabric.attachment") != 0 {
+		t.Fatalf("manual-review launch continued: events=%#v", *fixture.events)
+	}
+}
+
+func countStrings(values []string, target string) int {
+	count := 0
+	for _, value := range values {
+		if value == target {
+			count++
+		}
+	}
+	return count
 }
