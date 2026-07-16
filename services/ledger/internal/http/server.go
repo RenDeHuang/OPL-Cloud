@@ -324,6 +324,10 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		}
 		input.IdempotencyKey = idempotencyKey
 		result, err := store.RecordReconciliation(r.Context(), input)
+		if errors.Is(err, ledger.ErrInvalidReconciliationInput) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if errors.Is(err, ledger.ErrIdempotencyConflict) {
 			writeError(w, http.StatusConflict, err.Error())
 			return

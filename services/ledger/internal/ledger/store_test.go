@@ -3,6 +3,7 @@ package ledger
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,13 +21,241 @@ func TestReceiptRejectsMissingIdentityAndSecretContent(t *testing.T) {
 	}
 }
 
+func validBillingReceiptInput() ReceiptInput {
+	return ReceiptInput{
+		Type: "billing.resource_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		Cost: map[string]any{
+			"pricingVersion": "pricing-v1", "monthlyPriceCnyCents": int64(35_000), "chargeUsdMicros": int64(50_000_000),
+			"sub2apiUserId": int64(41), "sub2apiRedeemCode": "opl:test:billing-alpha:charge:v1", "periodStart": "2026-07-01T00:00:00Z",
+			"paidThrough": "2026-08-01T00:00:00Z", "resourceType": "compute", "resourceId": "compute-alpha",
+		},
+		IdempotencyKey: "billing-schema",
+	}
+}
+
+func TestBillingReceiptSchemaMemory(t *testing.T) {
+	testBillingReceiptSchema(t, NewMemoryStore())
+}
+
+func testBillingReceiptSchema(t *testing.T, store Store) {
+	t.Helper()
+	ctx := context.Background()
+	required := []string{"pricingVersion", "monthlyPriceCnyCents", "chargeUsdMicros", "sub2apiUserId", "sub2apiRedeemCode", "periodStart", "paidThrough", "resourceType", "resourceId"}
+	for _, field := range required {
+		t.Run("missing "+field, func(t *testing.T) {
+			input := validBillingReceiptInput()
+			delete(input.Cost, field)
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error = %v, want ErrInvalidReceiptInput", err)
+			}
+		})
+		t.Run("wrong type "+field, func(t *testing.T) {
+			input := validBillingReceiptInput()
+			input.Cost[field] = true
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error = %v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	for _, field := range []string{"pricingVersion", "sub2apiRedeemCode", "periodStart", "paidThrough", "resourceType", "resourceId"} {
+		t.Run("empty "+field, func(t *testing.T) {
+			input := validBillingReceiptInput()
+			input.Cost[field] = ""
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error = %v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name  string
+		field string
+		value any
+	}{
+		{name: "fractional CNY", field: "monthlyPriceCnyCents", value: 1.5},
+		{name: "negative CNY", field: "monthlyPriceCnyCents", value: int64(-1)},
+		{name: "fractional USD", field: "chargeUsdMicros", value: 1.5},
+		{name: "negative USD", field: "chargeUsdMicros", value: int64(-1)},
+		{name: "fractional user id", field: "sub2apiUserId", value: 41.5},
+		{name: "non-positive user id", field: "sub2apiUserId", value: int64(0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := validBillingReceiptInput()
+			input.Cost[test.field] = test.value
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error = %v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	invalidFuture := validBillingReceiptInput()
+	invalidFuture.Type = "billing.future.v1"
+	delete(invalidFuture.Cost, "resourceId")
+	if _, err := store.RecordReceipt(ctx, invalidFuture); !errors.Is(err, ErrInvalidReceiptInput) {
+		t.Fatalf("future billing receipt error = %v, want ErrInvalidReceiptInput", err)
+	}
+	valid := validBillingReceiptInput()
+	if _, err := store.RecordReceipt(ctx, valid); err != nil {
+		t.Fatalf("valid billing receipt after rejected inputs: %v", err)
+	}
+	valid = validBillingReceiptInput()
+	valid.IdempotencyKey = "billing-schema-json-numbers"
+	valid.Cost["monthlyPriceCnyCents"], valid.Cost["chargeUsdMicros"], valid.Cost["sub2apiUserId"] = float64(35_000), float64(50_000_000), float64(41)
+	if _, err := store.RecordReceipt(ctx, valid); err != nil {
+		t.Fatalf("integral JSON numbers must be accepted: %v", err)
+	}
+}
+
+func TestReceiptRejectsSensitiveContentMemory(t *testing.T) {
+	testReceiptRejectsSensitiveContent(t, NewMemoryStore())
+}
+
+func testReceiptRejectsSensitiveContent(t *testing.T, store Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, key := range []string{"apiKey", "adminToken", "rawSub2apiResponse", "rawProviderResponse", "password", "token"} {
+		t.Run(key, func(t *testing.T) {
+			input := ReceiptInput{
+				Type: "execution.receipt.v1", Status: "completed", Surface: "workspace", WorkspaceID: "workspace-alpha",
+				OutputRefs: map[string]any{"nested": []map[string]string{{strings.ToUpper(key): "must-not-persist"}}}, IdempotencyKey: "typed-sensitive",
+			}
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error = %v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	input := ReceiptInput{
+		Type: "execution.receipt.v1", Status: "completed", Surface: "workspace", WorkspaceID: "workspace-alpha",
+		OutputRefs: map[string]any{"inputTokens": int64(42), "outputTokens": int64(12), "tokenCount": int64(54)}, IdempotencyKey: "typed-sensitive",
+	}
+	if _, err := store.RecordReceipt(ctx, input); err != nil {
+		t.Fatalf("token count fields must remain allowed after rejected inputs: %v", err)
+	}
+}
+
+func validReconciliationReport(status string) map[string]any {
+	exceptions := []any{}
+	checked, matched := 2, 2
+	if status == "mismatch" {
+		matched = 1
+		exceptions = append(exceptions, map[string]any{"resourceType": "compute", "resourceId": "compute-alpha", "code": "ledger_receipt_missing"})
+	}
+	return map[string]any{
+		"id": "recon-alpha", "status": status,
+		"counts":     map[string]any{"billingOperations": checked, "matched": matched, "exceptions": len(exceptions)},
+		"exceptions": exceptions,
+	}
+}
+
+func TestReconciliationSchemaMemory(t *testing.T) {
+	testReconciliationSchema(t, NewMemoryStore())
+}
+
+func testReconciliationSchema(t *testing.T, store Store) {
+	t.Helper()
+	ctx := context.Background()
+	assertInvalid := func(t *testing.T, report map[string]any, key string) {
+		t.Helper()
+		_, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: report, IdempotencyKey: key})
+		if !errors.Is(err, ErrInvalidReconciliationInput) {
+			t.Fatalf("error = %v, want ErrInvalidReconciliationInput", err)
+		}
+	}
+
+	for _, test := range []struct {
+		name   string
+		status string
+		mutate func(map[string]any)
+	}{
+		{name: "missing id", status: "ok", mutate: func(report map[string]any) { delete(report, "id") }},
+		{name: "empty id", status: "ok", mutate: func(report map[string]any) { report["id"] = "" }},
+		{name: "missing status", status: "ok", mutate: func(report map[string]any) { delete(report, "status") }},
+		{name: "unknown status", status: "ok", mutate: func(report map[string]any) { report["status"] = "unknown" }},
+		{name: "missing counts", status: "ok", mutate: func(report map[string]any) { delete(report, "counts") }},
+		{name: "exceptions not array", status: "ok", mutate: func(report map[string]any) { report["exceptions"] = map[string]any{} }},
+		{name: "exception item not object", status: "mismatch", mutate: func(report map[string]any) { report["exceptions"] = []any{"unsafe"} }},
+		{name: "unknown exception code", status: "mismatch", mutate: func(report map[string]any) { report["exceptions"].([]any)[0].(map[string]any)["code"] = "unknown" }},
+		{name: "non opaque resource id", status: "mismatch", mutate: func(report map[string]any) {
+			report["exceptions"].([]any)[0].(map[string]any)["resourceId"] = "https://provider.test/resource?token=secret"
+		}},
+		{name: "sensitive typed content", status: "ok", mutate: func(report map[string]any) {
+			report["details"] = []map[string]string{{"AdminToken": "must-not-persist"}}
+		}},
+		{name: "ok with exception", status: "mismatch", mutate: func(report map[string]any) { report["status"] = "ok" }},
+		{name: "mismatch without exception", status: "ok", mutate: func(report map[string]any) { report["status"] = "mismatch" }},
+		{name: "exception count mismatch", status: "mismatch", mutate: func(report map[string]any) { report["counts"].(map[string]any)["exceptions"] = 0 }},
+		{name: "matched resource mismatch", status: "mismatch", mutate: func(report map[string]any) { report["counts"].(map[string]any)["matched"] = 0 }},
+		{name: "extra negative count", status: "ok", mutate: func(report map[string]any) { report["counts"].(map[string]any)["other"] = -1 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report := validReconciliationReport(test.status)
+			test.mutate(report)
+			assertInvalid(t, report, "reconciliation-schema")
+		})
+	}
+	for _, field := range []string{"billingOperations", "matched", "exceptions"} {
+		t.Run("missing count "+field, func(t *testing.T) {
+			report := validReconciliationReport("ok")
+			delete(report["counts"].(map[string]any), field)
+			assertInvalid(t, report, "reconciliation-schema")
+		})
+		for name, value := range map[string]any{"negative": int64(-1), "fractional": 1.5, "wrong type": "1"} {
+			t.Run(name+" count "+field, func(t *testing.T) {
+				report := validReconciliationReport("ok")
+				report["counts"].(map[string]any)[field] = value
+				assertInvalid(t, report, "reconciliation-schema")
+			})
+		}
+	}
+	for _, field := range []string{"resourceType", "resourceId", "code"} {
+		t.Run("missing exception "+field, func(t *testing.T) {
+			report := validReconciliationReport("mismatch")
+			delete(report["exceptions"].([]any)[0].(map[string]any), field)
+			assertInvalid(t, report, "reconciliation-schema")
+		})
+	}
+	assertInvalid(t, validReconciliationReport("ok"), "")
+
+	valid := validReconciliationReport("ok")
+	if result, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: valid, IdempotencyKey: "reconciliation-schema"}); err != nil || result.Status != "ok" || result.BlockNewWorkspaces {
+		t.Fatalf("valid report after rejected inputs = %#v, %v", result, err)
+	}
+	for _, code := range []string{"billing_operation_invalid", "sub2api_balance_history_unavailable", "sub2api_charge_missing", "sub2api_charge_mismatch", "fabric_operations_unavailable", "fabric_operation_missing", "fabric_operation_mismatch", "ledger_receipts_unavailable", "ledger_receipt_missing", "ledger_receipt_mismatch"} {
+		report := validReconciliationReport("mismatch")
+		report["id"] = "recon-" + code
+		report["exceptions"].([]any)[0].(map[string]any)["code"] = code
+		if _, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: report, IdempotencyKey: "reconciliation-" + code}); err != nil {
+			t.Fatalf("allowlisted code %q: %v", code, err)
+		}
+	}
+	multiple := validReconciliationReport("mismatch")
+	multiple["id"] = "recon-multiple"
+	multiple["exceptions"] = append(multiple["exceptions"].([]any), map[string]any{"resourceType": "compute", "resourceId": "compute-alpha", "code": "fabric_operation_missing"})
+	multiple["counts"].(map[string]any)["exceptions"] = 2
+	if _, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: multiple, IdempotencyKey: "reconciliation-multiple"}); err != nil {
+		t.Fatalf("multiple exceptions for one resource: %v", err)
+	}
+}
+
+func TestReconciliationSchemaRejectsInvalidMemoryReplay(t *testing.T) {
+	store := NewMemoryStore()
+	input := ReconciliationInput{Report: validReconciliationReport("mismatch"), IdempotencyKey: "reconciliation-invalid-replay"}
+	if _, err := store.RecordReconciliation(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	record := store.idempotency[input.IdempotencyKey]
+	result := record.result.(ReconciliationResult)
+	result.BlockNewWorkspaces = false
+	record.result = result
+	store.idempotency[input.IdempotencyKey] = record
+	if _, err := store.RecordReconciliation(context.Background(), input); !errors.Is(err, ErrInvalidReconciliationInput) {
+		t.Fatalf("invalid replay error = %v, want ErrInvalidReconciliationInput", err)
+	}
+}
+
 func TestBillingReceiptIdempotencyCorrectionAndAccountWorkspaceQuery(t *testing.T) {
 	store := NewMemoryStore()
 	ctx := context.Background()
-	input := ReceiptInput{
-		Type: "billing.resource_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
-		RequestID: "billing-operation-alpha", Cost: map[string]any{"chargeUsdMicros": int64(50_000_000)}, IdempotencyKey: "billing-receipt-alpha",
-	}
+	input := validBillingReceiptInput()
+	input.RequestID, input.IdempotencyKey = "billing-operation-alpha", "billing-receipt-alpha"
 	first, err := store.RecordReceipt(ctx, input)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +267,8 @@ func TestBillingReceiptIdempotencyCorrectionAndAccountWorkspaceQuery(t *testing.
 	correctionInput := input
 	correctionInput.IdempotencyKey = "billing-receipt-alpha-correction"
 	correctionInput.SupersedesReceiptID = first.ReceiptID
-	correctionInput.Cost = map[string]any{"chargeUsdMicros": int64(49_999_999)}
+	correctionInput.Cost = validBillingReceiptInput().Cost
+	correctionInput.Cost["chargeUsdMicros"] = int64(49_999_999)
 	correction, err := store.RecordReceipt(ctx, correctionInput)
 	if err != nil || correction.SupersedesReceiptID != first.ReceiptID {
 		t.Fatalf("correction=%#v err=%v", correction, err)
@@ -54,7 +284,7 @@ func TestBillingReceiptIdempotencyCorrectionAndAccountWorkspaceQuery(t *testing.
 }
 
 func TestReconciliationMismatchBlocksNewWorkspaces(t *testing.T) {
-	result, err := NewMemoryStore().RecordReconciliation(context.Background(), ReconciliationInput{Report: map[string]any{"id": "recon-alpha", "status": "mismatch"}, IdempotencyKey: "reconciliation-alpha"})
+	result, err := NewMemoryStore().RecordReconciliation(context.Background(), ReconciliationInput{Report: validReconciliationReport("mismatch"), IdempotencyKey: "reconciliation-alpha"})
 	if err != nil || !result.BlockNewWorkspaces || result.Status != "mismatch" {
 		t.Fatalf("reconciliation=%#v err=%v", result, err)
 	}

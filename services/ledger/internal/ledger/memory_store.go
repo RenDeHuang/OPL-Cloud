@@ -416,6 +416,9 @@ func (s *MemoryStore) evaluateReviewGateLocked(input ReviewGateInput) (ReviewGat
 }
 
 func (s *MemoryStore) RecordReconciliation(_ context.Context, input ReconciliationInput) (ReconciliationResult, error) {
+	if err := validateReconciliationInput(input); err != nil {
+		return ReconciliationResult{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -427,22 +430,20 @@ func (s *MemoryStore) RecordReconciliation(_ context.Context, input Reconciliati
 		if existing.payloadHash != payloadHash {
 			return ReconciliationResult{}, ErrIdempotencyConflict
 		}
-		result := existing.result.(ReconciliationResult)
+		result, ok := existing.result.(ReconciliationResult)
+		if !ok || validateReconciliationResult(result) != nil {
+			return ReconciliationResult{}, ErrInvalidReconciliationInput
+		}
+		result = cloneMemoryValue(result)
 		result.Replayed = true
 		return result, nil
 	}
 
 	id := stringFromAny(input.Report["id"])
-	if id == "" {
-		id = s.newID("recon")
-	}
 	status := stringFromAny(input.Report["status"])
-	if status == "" {
-		status = "ok"
-	}
-	result := ReconciliationResult{ID: id, Status: status, Report: input.Report, BlockNewWorkspaces: status != "ok", Reason: "operator_reconciliation", CreatedAt: time.Now().UTC()}
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: result}
-	return result, nil
+	result := ReconciliationResult{ID: id, Status: status, Report: cloneMemoryValue(input.Report), BlockNewWorkspaces: status == "mismatch", Reason: "operator_reconciliation", CreatedAt: time.Now().UTC()}
+	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: cloneMemoryValue(result)}
+	return cloneMemoryValue(result), nil
 }
 
 func (s *MemoryStore) newID(prefix string) string {

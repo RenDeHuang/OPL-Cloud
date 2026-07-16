@@ -652,6 +652,9 @@ func reviewPolicyScopePredicates(identity ExecutionIdentity) []predicate.ReviewP
 }
 
 func (s *PostgresStore) RecordReconciliation(ctx context.Context, input ReconciliationInput) (ReconciliationResult, error) {
+	if err := validateReconciliationInput(input); err != nil {
+		return ReconciliationResult{}, err
+	}
 	requestHash, err := hashJSON(input.Report)
 	if err != nil {
 		return ReconciliationResult{}, err
@@ -666,19 +669,13 @@ func (s *PostgresStore) RecordReconciliation(ctx context.Context, input Reconcil
 		return ReconciliationResult{}, err
 	}
 	id := stringFromAny(input.Report["id"])
-	if id == "" {
-		id = postgresID("recon", s.now())
-	}
 	status := stringFromAny(input.Report["status"])
-	if status == "" {
-		status = "ok"
-	}
 	reportJSON, err := json.Marshal(input.Report)
 	if err != nil {
 		return ReconciliationResult{}, err
 	}
 	now := s.now()
-	result := ReconciliationResult{ID: id, Status: status, Report: input.Report, BlockNewWorkspaces: status != "ok", Reason: "operator_reconciliation", CreatedAt: now}
+	result := ReconciliationResult{ID: id, Status: status, Report: input.Report, BlockNewWorkspaces: status == "mismatch", Reason: "operator_reconciliation", CreatedAt: now}
 	if err := s.client.ReconciliationReport.Create().
 		SetID(result.ID).
 		SetStatus(result.Status).
@@ -730,7 +727,9 @@ func (s *PostgresStore) reconciliationByIdempotencyKey(ctx context.Context, key 
 		return ReconciliationResult{}, "", err
 	}
 	result := ReconciliationResult{ID: row.ID, Status: row.Status, BlockNewWorkspaces: row.BlockNewWorkspaces, Reason: row.Reason, CreatedAt: row.CreatedAt}
-	_ = json.Unmarshal([]byte(row.ReportJSON), &result.Report)
+	if err := json.Unmarshal([]byte(row.ReportJSON), &result.Report); err != nil || validateReconciliationResult(result) != nil {
+		return ReconciliationResult{}, "", ErrInvalidReconciliationInput
+	}
 	return result, row.RequestHash, nil
 }
 

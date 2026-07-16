@@ -174,9 +174,29 @@ func (c *ledgerHTTPClient) Continuation(ctx context.Context, receiptID string) (
 }
 
 func (c *ledgerHTTPClient) RecordReconciliation(ctx context.Context, input ReconciliationInput, idempotencyKey string) (ReconciliationResult, error) {
-	var result ReconciliationResult
-	err := c.post(ctx, "/ledger/reconciliation", input, idempotencyKey, &result)
-	return result, err
+	var response struct {
+		ID                 string         `json:"id"`
+		Status             string         `json:"status"`
+		Report             map[string]any `json:"report"`
+		BlockNewWorkspaces *bool          `json:"blockNewWorkspaces"`
+		Reason             string         `json:"reason"`
+		Replayed           bool           `json:"replayed"`
+	}
+	if err := c.post(ctx, "/ledger/reconciliation", input, idempotencyKey, &response); err != nil {
+		return ReconciliationResult{}, err
+	}
+	submitted, submittedErr := json.Marshal(input.Report)
+	returned, returnedErr := json.Marshal(response.Report)
+	reportID, idOK := response.Report["id"].(string)
+	reportStatus, statusOK := response.Report["status"].(string)
+	if submittedErr != nil || returnedErr != nil || !bytes.Equal(submitted, returned) || !idOK || reportID == "" || !statusOK || (reportStatus != "ok" && reportStatus != "mismatch") ||
+		response.ID != reportID || response.Status != reportStatus || response.BlockNewWorkspaces == nil || *response.BlockNewWorkspaces != (reportStatus == "mismatch") || response.Reason != "operator_reconciliation" {
+		return ReconciliationResult{}, fmt.Errorf("invalid ledger reconciliation response")
+	}
+	return ReconciliationResult{
+		ID: response.ID, Status: response.Status, Report: response.Report, BlockNewWorkspaces: *response.BlockNewWorkspaces,
+		Reason: response.Reason, Replayed: response.Replayed,
+	}, nil
 }
 
 func (c *ledgerHTTPClient) post(ctx context.Context, path string, input any, idempotencyKey string, output any) error {

@@ -1,11 +1,14 @@
 package ledger
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -27,6 +30,7 @@ var ErrInvalidReceiptRetentionInput = errors.New("invalid receipt retention inpu
 var ErrReceiptRetentionShortening = errors.New("receipt retention cannot be shortened")
 var ErrReceiptRetentionActive = errors.New("receipt retention is active")
 var ErrReceiptLegalHold = errors.New("receipt is under legal hold")
+var ErrInvalidReconciliationInput = errors.New("invalid reconciliation input")
 
 const artifactReceiptType = "artifact.manifest.v1"
 const reviewReceiptType = "review.result.v1"
@@ -540,31 +544,184 @@ func validateReceiptInput(input ReceiptInput) error {
 		return ErrInvalidReceiptInput
 	}
 	allowedStatus := map[string]bool{"planned": true, "approved": true, "running": true, "completed": true, "failed": true, "timed_out": true, "cancelled": true, "review_required": true, "review_blocked": true}
-	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) {
+	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || (strings.HasPrefix(input.Type, "billing.") && strings.HasSuffix(input.Type, ".v1") && !validBillingCost(input.Cost)) {
 		return ErrInvalidReceiptInput
 	}
 	return nil
 }
 
 func containsForbiddenReceiptKey(value any) bool {
-	forbidden := map[string]bool{"rawcredential": true, "credential": true, "password": true, "token": true, "secret": true, "signedurl": true, "presignedurl": true, "objectkey": true, "kubeconfig": true}
+	normalized, err := normalizedJSONValue(value)
+	return err != nil || containsForbiddenJSONKey(normalized)
+}
+
+func containsForbiddenJSONKey(value any) bool {
+	forbidden := map[string]bool{
+		"apikey": true, "admintoken": true, "rawsub2apiresponse": true, "rawproviderresponse": true,
+		"rawcredential": true, "credential": true, "password": true, "token": true, "secret": true,
+		"signedurl": true, "presignedurl": true, "objectkey": true, "kubeconfig": true,
+	}
 	switch typed := value.(type) {
-	case ReceiptInput:
-		return containsForbiddenReceiptKey(map[string]any{"actor": typed.Actor, "plan": typed.Plan, "execution": typed.Execution, "environment": typed.Environment, "inputRefs": typed.InputRefs, "outputRefs": typed.OutputRefs, "reviewerChecks": typed.ReviewerChecks, "cost": typed.Cost, "owner": typed.Owner, "continuation": typed.Continuation})
 	case map[string]any:
 		for key, child := range typed {
-			if forbidden[strings.ToLower(key)] || containsForbiddenReceiptKey(child) {
+			if forbidden[strings.ToLower(key)] || containsForbiddenJSONKey(child) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range typed {
-			if containsForbiddenReceiptKey(child) {
+			if containsForbiddenJSONKey(child) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func normalizedJSONValue(value any) (any, error) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var normalized any
+	err = decoder.Decode(&normalized)
+	return normalized, err
+}
+
+func validBillingCost(cost map[string]any) bool {
+	for _, key := range []string{"pricingVersion", "sub2apiRedeemCode", "resourceType", "resourceId"} {
+		value, ok := cost[key].(string)
+		if !ok || !isOpaqueReference(value) {
+			return false
+		}
+	}
+	for _, key := range []string{"periodStart", "paidThrough"} {
+		value, ok := cost[key].(string)
+		if !ok {
+			return false
+		}
+		if _, err := time.Parse(time.RFC3339, value); err != nil {
+			return false
+		}
+	}
+	for _, key := range []string{"monthlyPriceCnyCents", "chargeUsdMicros"} {
+		value, ok := integerValue(cost[key])
+		if !ok || value < 0 {
+			return false
+		}
+	}
+	userID, ok := integerValue(cost["sub2apiUserId"])
+	return ok && userID > 0
+}
+
+func integerValue(value any) (int64, bool) {
+	if number, ok := value.(json.Number); ok {
+		parsed, err := number.Int64()
+		return parsed, err == nil
+	}
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return 0, false
+	}
+	switch reflected.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return reflected.Int(), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if reflected.Uint() > uint64(1<<63-1) {
+			return 0, false
+		}
+		return int64(reflected.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		value := reflected.Float()
+		if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) || value < -math.Exp2(63) || value >= math.Exp2(63) {
+			return 0, false
+		}
+		return int64(value), true
+	default:
+		return 0, false
+	}
+}
+
+var reconciliationExceptionCodes = map[string]bool{
+	"billing_operation_invalid":           true,
+	"sub2api_balance_history_unavailable": true,
+	"sub2api_charge_missing":              true,
+	"sub2api_charge_mismatch":             true,
+	"fabric_operations_unavailable":       true,
+	"fabric_operation_missing":            true,
+	"fabric_operation_mismatch":           true,
+	"ledger_receipts_unavailable":         true,
+	"ledger_receipt_missing":              true,
+	"ledger_receipt_mismatch":             true,
+}
+
+func validateReconciliationInput(input ReconciliationInput) error {
+	if strings.TrimSpace(input.IdempotencyKey) == "" || validateReconciliationReport(input.Report) != nil {
+		return ErrInvalidReconciliationInput
+	}
+	return nil
+}
+
+func validateReconciliationReport(report map[string]any) error {
+	normalizedValue, err := normalizedJSONValue(report)
+	if err != nil {
+		return ErrInvalidReconciliationInput
+	}
+	normalized, ok := normalizedValue.(map[string]any)
+	if !ok || containsForbiddenJSONKey(normalized) {
+		return ErrInvalidReconciliationInput
+	}
+	id, idOK := normalized["id"].(string)
+	status, statusOK := normalized["status"].(string)
+	counts, countsOK := normalized["counts"].(map[string]any)
+	exceptions, exceptionsOK := normalized["exceptions"].([]any)
+	if !idOK || strings.TrimSpace(id) == "" || !statusOK || (status != "ok" && status != "mismatch") || !countsOK || !exceptionsOK {
+		return ErrInvalidReconciliationInput
+	}
+	checked, checkedOK := integerValue(counts["billingOperations"])
+	matched, matchedOK := integerValue(counts["matched"])
+	exceptionCount, exceptionCountOK := integerValue(counts["exceptions"])
+	if !checkedOK || !matchedOK || !exceptionCountOK || checked < 0 || matched < 0 || exceptionCount < 0 || matched > checked || exceptionCount != int64(len(exceptions)) {
+		return ErrInvalidReconciliationInput
+	}
+	for _, value := range counts {
+		count, ok := integerValue(value)
+		if !ok || count < 0 {
+			return ErrInvalidReconciliationInput
+		}
+	}
+	exceptionResources := map[string]bool{}
+	for _, value := range exceptions {
+		exception, ok := value.(map[string]any)
+		if !ok {
+			return ErrInvalidReconciliationInput
+		}
+		resourceType, resourceTypeOK := exception["resourceType"].(string)
+		resourceID, resourceIDOK := exception["resourceId"].(string)
+		code, codeOK := exception["code"].(string)
+		if !resourceTypeOK || (resourceType != "compute" && resourceType != "storage") || !resourceIDOK || !isOpaqueReference(resourceID) || !codeOK || !reconciliationExceptionCodes[code] {
+			return ErrInvalidReconciliationInput
+		}
+		exceptionResources[resourceType+"\x00"+resourceID] = true
+	}
+	if checked-matched != int64(len(exceptionResources)) || (status == "ok" && len(exceptions) != 0) || (status == "mismatch" && len(exceptions) == 0) {
+		return ErrInvalidReconciliationInput
+	}
+	return nil
+}
+
+func validateReconciliationResult(result ReconciliationResult) error {
+	if validateReconciliationReport(result.Report) != nil {
+		return ErrInvalidReconciliationInput
+	}
+	id, _ := result.Report["id"].(string)
+	status, _ := result.Report["status"].(string)
+	if result.ID != id || result.Status != status || result.BlockNewWorkspaces != (status == "mismatch") || result.Reason != "operator_reconciliation" {
+		return ErrInvalidReconciliationInput
+	}
+	return nil
 }
 
 type ReconciliationInput struct {

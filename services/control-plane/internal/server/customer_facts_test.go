@@ -23,6 +23,7 @@ type customerFactsLedger struct {
 	queries            []clients.ReceiptQuery
 	receipt            clients.Receipt
 	receiptErr         error
+	reconciliationErr  error
 	reconciliationKeys []string
 	reports            []map[string]any
 	receiptWrites      int
@@ -83,10 +84,10 @@ func (l *customerFactsLedger) RecordReconciliation(_ context.Context, input clie
 	report := cloneMap(input.Report)
 	l.reconciliationKeys = append(l.reconciliationKeys, key)
 	l.reports = append(l.reports, report)
-	status := stringValue(report["status"])
-	if status == "" {
-		status = "ok"
+	if l.reconciliationErr != nil {
+		return clients.ReconciliationResult{}, l.reconciliationErr
 	}
+	status := stringValue(report["status"])
 	return clients.ReconciliationResult{
 		ID: stringValue(report["id"]), Status: status, Report: report,
 		BlockNewWorkspaces: status != "ok", Reason: "operator_reconciliation",
@@ -385,9 +386,29 @@ func TestBillingReconciliationRejectsCallerReportAndRequiresHeader(t *testing.T)
 	}
 }
 
+func TestBillingReconciliationMalformedLedgerResponseKeepsLastGuard(t *testing.T) {
+	fixture := newBillingReconciliationFixture(t)
+	previous := reconciliationResponse(clients.ReconciliationResult{
+		ID: "recon-previous", Status: "mismatch", BlockNewWorkspaces: true, Reason: "operator_reconciliation",
+		Report: reconciliationReport("recon-previous", 1, 0, []billingReconciliationException{{resourceType: "compute", resourceID: "compute-alpha", code: "ledger_receipt_missing"}}),
+	})
+	mustStore(t, fixture.store.SaveBillingReconciliation(context.Background(), previous))
+	fixture.ledger.reconciliationErr = errors.New("invalid ledger reconciliation response")
+
+	response := requestWithMutationKeyForTest(t, fixture.server, operatorSessionForTest(t, fixture.server), http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`, "reconcile-malformed-response")
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("malformed Ledger response status = %d: %s", response.Code, response.Body.String())
+	}
+	stored, ok, err := fixture.store.BillingReconciliation(context.Background())
+	if err != nil || !ok || !reflect.DeepEqual(stored, previous) {
+		t.Fatalf("last valid guard replaced: stored=%#v previous=%#v err=%v", stored, previous, err)
+	}
+}
+
 type billingReconciliationFixture struct {
 	server  http.Handler
 	member  *httptest.ResponseRecorder
+	store   *memoryTableStore
 	ledger  *customerFactsLedger
 	sub2API *customerFactsSub2API
 	fabric  *customerFactsFabric
@@ -423,7 +444,7 @@ func newBillingReconciliationFixture(t *testing.T) *billingReconciliationFixture
 		t.Fatal(err)
 	}
 	member := loginForTest(t, server, "monthly@example.com", "CorrectHorseBatteryStaple!")
-	return &billingReconciliationFixture{server: server, member: member, ledger: ledger, sub2API: sub2API, fabric: fabric, calls: calls}
+	return &billingReconciliationFixture{server: server, member: member, store: store, ledger: ledger, sub2API: sub2API, fabric: fabric, calls: calls}
 }
 
 func reconciliationReceipt(row map[string]any) clients.Receipt {

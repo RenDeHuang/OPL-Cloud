@@ -108,6 +108,49 @@ func TestPostgresStoreImplementsLedgerStore(t *testing.T) {
 	var _ Store = NewPostgresStore(db)
 }
 
+func TestBillingReceiptSchemaPostgres(t *testing.T) {
+	store, _ := installedLedgerTestPostgres(t)
+	testBillingReceiptSchema(t, store)
+}
+
+func TestReceiptRejectsSensitiveContentPostgres(t *testing.T) {
+	store, _ := installedLedgerTestPostgres(t)
+	testReceiptRejectsSensitiveContent(t, store)
+}
+
+func TestReconciliationSchemaPostgres(t *testing.T) {
+	store, db := installedLedgerTestPostgres(t)
+	testReconciliationSchema(t, store)
+
+	input := ReconciliationInput{Report: validReconciliationReport("ok"), IdempotencyKey: "reconciliation-schema"}
+	result, err := store.RecordReconciliation(context.Background(), input)
+	if err != nil || !result.Replayed {
+		t.Fatalf("valid replay = %#v, %v", result, err)
+	}
+	if _, err := db.Exec(`UPDATE reconciliation_reports SET reason = 'invalid' WHERE id = $1`, result.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordReconciliation(context.Background(), input); !errors.Is(err, ErrInvalidReconciliationInput) {
+		t.Fatalf("invalid persisted guard error = %v, want ErrInvalidReconciliationInput", err)
+	}
+	if _, err := db.Exec(`UPDATE reconciliation_reports SET reason = 'operator_reconciliation', report_json = '{"id":"recon-alpha"}' WHERE id = $1`, result.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordReconciliation(context.Background(), input); !errors.Is(err, ErrInvalidReconciliationInput) {
+		t.Fatalf("invalid persisted report error = %v, want ErrInvalidReconciliationInput", err)
+	}
+}
+
+func installedLedgerTestPostgres(t *testing.T) (*PostgresStore, *sql.DB) {
+	t.Helper()
+	db := openLedgerTestPostgres(t)
+	store := NewPostgresStore(db)
+	if err := store.Install(context.Background()); err != nil {
+		t.Fatalf("install ledger schema: %v", err)
+	}
+	return store, db
+}
+
 func TestPostgresConcurrentReceiptIdempotency(t *testing.T) {
 	db := openLedgerTestPostgres(t)
 	store := NewPostgresStore(db)
@@ -197,7 +240,8 @@ func TestPostgresConcurrentReceiptIdempotency(t *testing.T) {
 		return results
 	}
 
-	same := ReceiptInput{Type: "billing.resource_purchased.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-concurrent-same-receipt", WorkspaceID: "workspace-concurrent-receipt", RequestID: "billing-operation-concurrent", Cost: map[string]any{"chargeUsdMicros": int64(50_000_000)}, IdempotencyKey: "receipt-concurrent-same"}
+	same := validBillingReceiptInput()
+	same.AccountID, same.WorkspaceID, same.RequestID, same.IdempotencyKey = "acct-concurrent-same-receipt", "workspace-concurrent-receipt", "billing-operation-concurrent", "receipt-concurrent-same"
 	results := run(1, []ReceiptInput{same, same, same, same})
 	created, replayed := 0, 0
 	receiptIDs := map[string]struct{}{}
@@ -220,7 +264,8 @@ func TestPostgresConcurrentReceiptIdempotency(t *testing.T) {
 	different.AccountID = "acct-concurrent-payload-receipt"
 	different.IdempotencyKey = "receipt-concurrent-payload"
 	changed := different
-	changed.Cost = map[string]any{"chargeUsdMicros": int64(49_999_999)}
+	changed.Cost = validBillingReceiptInput().Cost
+	changed.Cost["chargeUsdMicros"] = int64(49_999_999)
 	results = run(2, []ReceiptInput{different, changed, different, changed})
 	created, replayed, conflicts := 0, 0, 0
 	for _, result := range results {

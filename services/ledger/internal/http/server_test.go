@@ -68,12 +68,45 @@ func TestRetiredCommercialRoutesAreAbsent(t *testing.T) {
 
 func TestReconciliationHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
-	req := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(`{"report":{"id":"recon-alpha","status":"mismatch"}}`))
+	req := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(`{"report":{"id":"recon-alpha","status":"mismatch","counts":{"billingOperations":1,"matched":0,"exceptions":1},"exceptions":[{"resourceType":"compute","resourceId":"compute-alpha","code":"ledger_receipt_missing"}]}}`))
 	req.Header.Set("Idempotency-Key", "http-reconciliation-once")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"blockNewWorkspaces":true`) {
 		t.Fatalf("reconciliation status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBillingReceiptSchemaHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"billing.resource_purchased.v1","status":"completed","surface":"control_plane","workspaceId":"workspace-alpha","cost":{"monthlyPriceCnyCents":35000,"chargeUsdMicros":50000000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:test:billing-alpha:charge:v1","periodStart":"2026-07-01T00:00:00Z","paidThrough":"2026-08-01T00:00:00Z","resourceType":"compute","resourceId":"compute-alpha"}}`))
+	req.Header.Set("Idempotency-Key", "http-invalid-billing-schema")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid billing receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReceiptRejectsSensitiveHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"execution.receipt.v1","status":"completed","surface":"workspace","workspaceId":"workspace-alpha","outputRefs":{"nested":[{"RAWPROVIDERRESPONSE":{"credential":"must-not-persist"}}]}}`))
+	req.Header.Set("Idempotency-Key", "http-sensitive-receipt")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "must-not-persist") {
+		t.Fatalf("sensitive receipt status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReconciliationSchemaHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	req := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(`{"report":{"id":"recon-alpha","status":"ok"}}`))
+	req.Header.Set("Idempotency-Key", "http-invalid-reconciliation")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid reconciliation status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

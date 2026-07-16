@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "OPL Control Plane",
   "purpose": "Monthly resource charge, entitlement, receipt, and reconciliation ownership contract.",
   "state": "current",
@@ -64,17 +64,72 @@
       "resourceType",
       "resourceId"
     ],
+    "costFieldTypes": {
+      "pricingVersion": "non_empty_opaque_string",
+      "monthlyPriceCnyCents": "non_negative_integer",
+      "chargeUsdMicros": "non_negative_integer",
+      "sub2apiUserId": "positive_integer",
+      "sub2apiRedeemCode": "non_empty_opaque_string",
+      "periodStart": "RFC3339_string",
+      "paidThrough": "RFC3339_string",
+      "resourceType": "non_empty_opaque_string",
+      "resourceId": "non_empty_opaque_string"
+    },
+    "forbiddenContentRule": "reject recursively by case-insensitive exact field name in maps, slices, and typed JSON containers; token-count fields such as inputTokens remain allowed",
     "forbiddenContent": [
       "apiKey",
       "adminToken",
+      "rawSub2apiResponse",
+      "rawProviderResponse",
       "password",
-      "rawSub2apiResponse"
+      "token"
     ]
   },
   "reconciliationPolicy": {
     "owner": "opl-ledger",
+    "recordApi": "POST /ledger/reconciliation",
     "exceptionOnly": true,
     "mayBlockNewPurchases": true,
-    "requestUsageCopied": false
+    "requestUsageCopied": false,
+    "idempotencyKey": "required_non_blank",
+    "requiredReportFields": ["id", "status", "counts", "exceptions"],
+    "statuses": ["ok", "mismatch"],
+    "counts": {
+      "requiredFields": ["billingOperations", "matched", "exceptions"],
+      "allFields": "non_negative_integer"
+    },
+    "exceptions": {
+      "type": "array",
+      "requiredFields": ["resourceType", "resourceId", "code"],
+      "resourceTypes": ["compute", "storage"],
+      "resourceId": "non_empty_opaque_string",
+      "codes": [
+        "billing_operation_invalid",
+        "sub2api_balance_history_unavailable",
+        "sub2api_charge_missing",
+        "sub2api_charge_mismatch",
+        "fabric_operations_unavailable",
+        "fabric_operation_missing",
+        "fabric_operation_mismatch",
+        "ledger_receipts_unavailable",
+        "ledger_receipt_missing",
+        "ledger_receipt_mismatch"
+      ]
+    },
+    "consistencyRules": [
+      "counts.exceptions equals exceptions length",
+      "counts.billingOperations equals counts.matched plus unique exception resource count",
+      "ok has zero exceptions and does not block new Workspaces",
+      "mismatch has at least one exception and blocks new Workspaces"
+    ],
+    "result": {
+      "identity": "id and status equal the submitted report",
+      "report": "structurally_equal_to_submitted_report",
+      "blockNewWorkspaces": "status_equals_mismatch",
+      "reason": "operator_reconciliation"
+    },
+    "validationOrder": "validate before hash, idempotency lookup, or persistence",
+    "replayRule": "validate persisted report and result guard before return",
+    "forbiddenContentRule": "same recursive case-insensitive exact-field rule as billing receipts"
   }
 }

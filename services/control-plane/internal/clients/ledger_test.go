@@ -76,6 +76,45 @@ func TestLedgerHTTPClientReturnsBoundedErrorForFailedEvidenceWrite(t *testing.T)
 	}
 }
 
+func TestLedgerRecordReconciliationValidatesResponse(t *testing.T) {
+	report := map[string]any{
+		"id": "report-1", "status": "ok",
+		"counts":     map[string]any{"billingOperations": 1, "matched": 1, "exceptions": 0},
+		"exceptions": []any{},
+	}
+	validReport := `{"id":"report-1","status":"ok","counts":{"billingOperations":1,"matched":1,"exceptions":0},"exceptions":[]}`
+	for _, test := range []struct {
+		name      string
+		response  string
+		wantError bool
+	}{
+		{name: "valid", response: `{"id":"report-1","status":"ok","report":` + validReport + `,"blockNewWorkspaces":false,"reason":"operator_reconciliation"}`},
+		{name: "changed report", response: `{"id":"report-1","status":"ok","report":{"id":"report-1","status":"ok","counts":{"billingOperations":1,"matched":0,"exceptions":0},"exceptions":[]},"blockNewWorkspaces":false,"reason":"operator_reconciliation"}`, wantError: true},
+		{name: "id mismatch", response: `{"id":"report-other","status":"ok","report":` + validReport + `,"blockNewWorkspaces":false,"reason":"operator_reconciliation"}`, wantError: true},
+		{name: "status mismatch", response: `{"id":"report-1","status":"mismatch","report":` + validReport + `,"blockNewWorkspaces":false,"reason":"operator_reconciliation"}`, wantError: true},
+		{name: "wrong block guard", response: `{"id":"report-1","status":"ok","report":` + validReport + `,"blockNewWorkspaces":true,"reason":"operator_reconciliation"}`, wantError: true},
+		{name: "missing block guard", response: `{"id":"report-1","status":"ok","report":` + validReport + `,"reason":"operator_reconciliation"}`, wantError: true},
+		{name: "wrong reason", response: `{"id":"report-1","status":"ok","report":` + validReport + `,"blockNewWorkspaces":false,"reason":"automatic_repair"}`, wantError: true},
+		{name: "missing report", response: `{"id":"report-1","status":"ok","blockNewWorkspaces":false,"reason":"operator_reconciliation"}`, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/ledger/reconciliation" || r.Header.Get("Idempotency-Key") != "report-once" {
+					t.Fatalf("request = %s key=%q", r.URL.Path, r.Header.Get("Idempotency-Key"))
+				}
+				_, _ = w.Write([]byte(test.response))
+			}))
+			defer server.Close()
+
+			client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
+			result, err := client.RecordReconciliation(context.Background(), ReconciliationInput{Report: report}, "report-once")
+			if (err != nil) != test.wantError {
+				t.Fatalf("result = %#v, error = %v", result, err)
+			}
+		})
+	}
+}
+
 func TestLedgerHTTPClientReadsReceiptContinuationIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(Receipt{
