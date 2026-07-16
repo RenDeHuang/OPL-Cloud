@@ -855,7 +855,7 @@ func (p *TencentProvider) workspaceRuntimeResourcesStrict(ctx context.Context, w
 	if strings.TrimSpace(workspaceID) == "" {
 		return "", "", nil
 	}
-	resourceKinds := "deployment,service"
+	resourceKinds := "deployment,service,networkpolicy"
 	if includeSecret {
 		resourceKinds += ",secret"
 	}
@@ -866,7 +866,8 @@ func (p *TencentProvider) workspaceRuntimeResourcesStrict(ctx context.Context, w
 	items := kubectlItems(raw)
 	deployment := findK8sByLabel(items, "Deployment", "oplcloud.cn/workspace-id", workspaceID)
 	service := findK8sByLabel(items, "Service", "oplcloud.cn/workspace-id", workspaceID)
-	serviceName := firstNonEmpty(stringValue(nested(deployment, "metadata", "name")), stringValue(nested(service, "metadata", "name")))
+	networkPolicy := findK8sByLabel(items, "NetworkPolicy", "oplcloud.cn/workspace-id", workspaceID)
+	serviceName := firstNonEmpty(stringValue(nested(deployment, "metadata", "name")), stringValue(nested(service, "metadata", "name")), stringValue(nested(networkPolicy, "metadata", "name")))
 	secretName := stringValue(nested(findK8sByLabel(items, "Secret", "oplcloud.cn/workspace-id", workspaceID), "metadata", "name"))
 	if serviceName == "" && strings.HasSuffix(secretName, "-env") {
 		serviceName = strings.TrimSuffix(secretName, "-env")
@@ -1027,7 +1028,7 @@ func workspaceManifest(workspaceID string, workspaceName string, credentialSeed 
 	secretVolume := map[string]any{"name": "workspace-secrets", "projected": map[string]any{"sources": secretSources}}
 	deployment := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": selectorLabels}, "template": map[string]any{"metadata": map[string]any{"labels": labels, "annotations": tags}, "spec": map[string]any{"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"seccompProfile": map[string]any{"type": "RuntimeDefault"}}, "imagePullSecrets": []any{map[string]any{"name": os.Getenv("OPL_IMAGE_PULL_SECRET_NAME")}}, "nodeSelector": compute.NodeSelector, "tolerations": []any{map[string]any{"key": "tke.cloud.tencent.com/eni-ip-unavailable", "operator": "Exists", "effect": "NoSchedule"}}, "containers": []any{workspaceContainer}, "volumes": []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": pvcName}}, secretVolume}}}}}
 	service := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"type": "ClusterIP", "selector": selectorLabels, "ports": []any{map[string]any{"name": "http", "port": 3000, "targetPort": "http"}}}}
-	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress"}, "ingress": []any{map[string]any{"ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}}}}
+	networkPolicy := map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": map[string]any{"name": serviceName, "labels": labels, "annotations": tags}, "spec": map[string]any{"podSelector": map[string]any{"matchLabels": selectorLabels}, "policyTypes": []any{"Ingress"}, "ingress": []any{map[string]any{"from": []any{map[string]any{"podSelector": map[string]any{"matchLabels": map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}}}}, "ports": []any{map[string]any{"protocol": "TCP", "port": 3000}}}}}}
 	return mustJSON(map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{secret, deployment, service, networkPolicy}})
 }
 
@@ -1411,16 +1412,25 @@ func selectorMatches(service map[string]any, deployment map[string]any) bool {
 }
 
 func workspaceNetworkPolicyReady(policy map[string]any, deployment map[string]any) bool {
-	selector, _ := nested(policy, "spec", "podSelector", "matchLabels").(map[string]any)
+	podSelector, _ := nested(policy, "spec", "podSelector").(map[string]any)
+	selector, _ := podSelector["matchLabels"].(map[string]any)
 	deploymentSelector, _ := nested(deployment, "spec", "selector", "matchLabels").(map[string]any)
 	policyTypes, _ := nested(policy, "spec", "policyTypes").([]any)
 	ingress, _ := nested(policy, "spec", "ingress").([]any)
-	if len(selector) == 0 || !reflect.DeepEqual(selector, deploymentSelector) || len(policyTypes) != 1 || stringValue(policyTypes[0]) != "Ingress" || len(ingress) != 1 {
+	if len(podSelector) != 1 || len(selector) == 0 || !reflect.DeepEqual(selector, deploymentSelector) || len(policyTypes) != 1 || stringValue(policyTypes[0]) != "Ingress" || len(ingress) != 1 {
 		return false
 	}
 	rule, _ := ingress[0].(map[string]any)
+	from, _ := rule["from"].([]any)
 	ports, _ := rule["ports"].([]any)
-	if len(rule) != 1 || len(ports) != 1 {
+	if len(rule) != 2 || len(from) != 1 || len(ports) != 1 {
+		return false
+	}
+	peer, _ := from[0].(map[string]any)
+	sourceSelector, _ := peer["podSelector"].(map[string]any)
+	sourceLabels, _ := sourceSelector["matchLabels"].(map[string]any)
+	wantSourceLabels := map[string]any{"app.kubernetes.io/name": "opl-cloud", "app.kubernetes.io/component": "control-plane"}
+	if len(peer) != 1 || len(sourceSelector) != 1 || !reflect.DeepEqual(sourceLabels, wantSourceLabels) {
 		return false
 	}
 	port, _ := ports[0].(map[string]any)
