@@ -27,7 +27,7 @@ jobs:
     environment: production
     env:
       OPL_CONSOLE_ORIGIN: https://cloud.medopl.cn
-      OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON: ${{ secrets.OPL_CONSOLE_USERS_JSON }}
+      OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
       OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID: ${{ inputs.account_id }}
       OPL_PROVIDER_ACCEPTANCE_CONFIRMATION: ${{ inputs.confirmation }}
       OPL_PROVIDER_ACCEPTANCE_ATTEMPTS: "90"

@@ -2,7 +2,8 @@ import { pathToFileURL } from "node:url";
 
 import {
   assertPublicHttpsUrl,
-  login,
+  requestJson,
+  responseCookie,
   writeVerificationManifest
 } from "./production-verifier.ts";
 
@@ -14,18 +15,17 @@ function sleep(ms) {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-function operatorFromSeed(raw) {
-  let users;
-  try {
-    users = JSON.parse(raw || "null");
-  } catch {
-    throw new Error("provider_acceptance_operator_credentials_required");
+async function operatorLogin({ fetchImpl, origin, operatorToken, signal, timeoutMs }) {
+  if (!String(operatorToken || "").trim()) throw new Error("provider_acceptance_operator_token_required");
+  const { payload, response } = await requestJson({
+    fetchImpl, origin, path: "/api/auth/operator-login", method: "POST", body: {}, signal, timeoutMs,
+    headers: { "x-opl-operator-token": operatorToken }
+  });
+  const cookie = responseCookie(response.headers);
+  if (!cookie || payload?.isOperator !== true || payload?.user?.id !== "usr-operator" || payload.user.role !== "admin" || payload.user.accountId !== "acct-operator") {
+    throw new Error("provider_acceptance_operator_login_failed");
   }
-  const operators = Array.isArray(users)
-    ? users.filter((user) => ["admin", "operator"].includes(user?.role) && user.email && user.password)
-    : [];
-  if (operators.length !== 1) throw new Error("provider_acceptance_operator_credentials_required");
-  return operators[0];
+  return { cookie, csrfToken: response.headers.get("x-opl-csrf-token") || "" };
 }
 
 function safeResult(value) {
@@ -61,7 +61,7 @@ async function postAcceptance({ fetchImpl, origin, auth, accountId, confirmation
 
 export async function runProviderAcceptance({
   origin,
-  authUsersJson,
+  operatorToken,
   accountId,
   confirmation,
   attempts = 90,
@@ -76,9 +76,8 @@ export async function runProviderAcceptance({
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 120 || !Number.isFinite(retryDelayMs) || retryDelayMs < 0) throw new Error("provider_acceptance_retry_config_invalid");
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) throw new Error("provider_acceptance_request_timeout_invalid");
 
-  const operator = operatorFromSeed(authUsersJson);
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
-  const auth = await login({ fetchImpl, origin: normalizedOrigin, email: operator.email, password: operator.password, signal, timeoutMs: requestTimeoutMs });
+  const auth = await operatorLogin({ fetchImpl, origin: normalizedOrigin, operatorToken, signal, timeoutMs: requestTimeoutMs });
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const payload = await postAcceptance({ fetchImpl, origin: normalizedOrigin, auth, accountId, confirmation, signal, timeoutMs: requestTimeoutMs });
@@ -106,7 +105,7 @@ export async function runProviderAcceptanceCli({
   try {
     const result = await runProviderAcceptance({
       origin: env.OPL_CONSOLE_ORIGIN,
-      authUsersJson: env.OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON,
+      operatorToken: env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN,
       accountId: env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID,
       confirmation: env.OPL_PROVIDER_ACCEPTANCE_CONFIRMATION,
       attempts: Number(env.OPL_PROVIDER_ACCEPTANCE_ATTEMPTS || 90),

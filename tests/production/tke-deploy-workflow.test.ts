@@ -92,6 +92,9 @@ async function runImageReleaseStep(step, publishCloudImage, mirrorWorkspaceImage
 docker() {
   printf 'docker %s\\n' "$*" >> "$COMMAND_LOG"
   case "$*" in
+    *"--password-stdin"*) command cat >/dev/null ;;
+  esac
+  case "$*" in
     *"imagetools inspect $OPL_CLOUD_IMAGE_REF"*) printf '%s\\n' "$CLOUD_DIGEST" ;;
     *"imagetools inspect "*) printf '%s\\n' "$WORKSPACE_DIGEST" ;;
   esac

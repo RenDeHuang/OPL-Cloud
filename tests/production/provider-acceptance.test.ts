@@ -9,13 +9,7 @@ import {
   runProviderAcceptanceCli
 } from "../../tools/provider-acceptance.ts";
 
-const operatorSeed = JSON.stringify([{
-  id: "usr-operator",
-  email: "operator@example.com",
-  password: "operator-password",
-  role: "admin",
-  accountId: "acct-operator"
-}]);
+const operatorToken = "operator-summary-token";
 
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
@@ -31,8 +25,9 @@ test("Provider Acceptance replays one fixed operator operation until the slot is
     const url = new URL(input);
     const headers = new Headers(init.headers);
     calls.push({ path: url.pathname, method: init.method || "GET", headers, body: init.body && JSON.parse(init.body) });
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { id: "usr-operator", role: "admin", accountId: "acct-operator" } }, 200, {
+    if (url.pathname === "/api/auth/operator-login") {
+      assert.equal(headers.get("x-opl-operator-token"), operatorToken);
+      return json({ isOperator: true, user: { id: "usr-operator", role: "admin", accountId: "acct-operator" } }, 200, {
         "set-cookie": "opl_session=operator-session; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-operator"
       });
@@ -50,7 +45,7 @@ test("Provider Acceptance replays one fixed operator operation until the slot is
 
   const result = await runProviderAcceptance({
     origin: "https://cloud.medopl.cn",
-    authUsersJson: operatorSeed,
+    operatorToken,
     accountId: "acct-verification-slot-01",
     confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION,
     attempts: 2,
@@ -60,7 +55,7 @@ test("Provider Acceptance replays one fixed operator operation until the slot is
 
   assert.equal(result.status, "reused");
   assert.deepEqual(calls.map((call) => [call.method, call.path]), [
-    ["POST", "/api/auth/login"],
+    ["POST", "/api/auth/operator-login"],
     ["POST", "/api/operator/provider-acceptance"],
     ["POST", "/api/operator/provider-acceptance"]
   ]);
@@ -73,14 +68,14 @@ test("Provider Acceptance replays one fixed operator operation until the slot is
     assert.equal(call.headers.get("x-opl-csrf"), "csrf-operator");
     assert.equal(call.headers.get("idempotency-key"), "provider-acceptance:verification-slot-01");
   }
-  assert.doesNotMatch(JSON.stringify(result), /operator-password|operator-session|csrf-operator/);
+  assert.doesNotMatch(JSON.stringify(result), /operator-summary-token|operator-session|csrf-operator/);
 });
 
 test("Provider Acceptance rejects missing authority before network access and stops on manual review", async () => {
   let calls = 0;
   await assert.rejects(() => runProviderAcceptance({
     origin: "https://cloud.medopl.cn",
-    authUsersJson: operatorSeed,
+    operatorToken,
     accountId: "acct-verification-slot-01",
     confirmation: "yes",
     fetchImpl: async () => { calls += 1; return json({}); }
@@ -90,8 +85,9 @@ test("Provider Acceptance rejects missing authority before network access and st
   const fetchImpl = async (input, init = {}) => {
     calls += 1;
     const url = new URL(input);
-    if (url.pathname === "/api/auth/login") {
-      return json({ user: { id: "usr-operator", role: "admin", accountId: "acct-operator" } }, 200, {
+    if (url.pathname === "/api/auth/operator-login") {
+      assert.equal(new Headers(init.headers).get("x-opl-operator-token"), operatorToken);
+      return json({ isOperator: true, user: { id: "usr-operator", role: "admin", accountId: "acct-operator" } }, 200, {
         "set-cookie": "opl_session=operator-session; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-operator"
       });
@@ -101,7 +97,7 @@ test("Provider Acceptance rejects missing authority before network access and st
   };
   await assert.rejects(() => runProviderAcceptance({
     origin: "https://cloud.medopl.cn",
-    authUsersJson: operatorSeed,
+    operatorToken,
     accountId: "acct-verification-slot-01",
     confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION,
     attempts: 5,
@@ -114,6 +110,7 @@ test("Provider Acceptance rejects missing authority before network access and st
 test("Provider Acceptance workflow is manual, fixed, and cannot mutate resources directly", async () => {
   const workflow = parse(await readFile(".github/workflows/provider-acceptance.yml", "utf8"));
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8"));
+  const backend = await readFile("services/control-plane/internal/server/routes_provider_acceptance.go", "utf8");
   const spec = contract.providerAcceptanceWorkflow;
   const job = workflow.jobs.accept;
   const source = JSON.stringify(workflow);
@@ -121,6 +118,18 @@ test("Provider Acceptance workflow is manual, fixed, and cannot mutate resources
   assert.equal(spec.file, ".github/workflows/provider-acceptance.yml");
   assert.equal(spec.job, "accept");
   assert.equal(spec.mode, "operator_only_one_time_fixed_slot");
+  assert.equal(spec.endpoint, "/api/operator/provider-acceptance");
+  assert.equal(spec.fixedAccountId, "acct-verification-slot-01");
+  assert.equal(spec.fixedSlotId, "verification-slot-01");
+  assert.equal(spec.idempotencyKey, "provider-acceptance:verification-slot-01");
+  assert.equal(spec.confirmation, PROVIDER_ACCEPTANCE_CONFIRMATION);
+  assert.deepEqual(spec.resourceShape, {
+    instanceType: "SA5.MEDIUM4",
+    cbsGb: 10,
+    chargeType: "PREPAID",
+    periodMonths: 1,
+    renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+  });
   assert.equal(workflow.concurrency.group, "provider-acceptance-verification-slot-01");
   assert.equal(workflow.concurrency["cancel-in-progress"], false);
   assert.equal(workflow.on.workflow_dispatch.inputs.account_id.required, true);
@@ -128,9 +137,14 @@ test("Provider Acceptance workflow is manual, fixed, and cannot mutate resources
   assert.equal(job.environment, "production");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID, "${{ inputs.account_id }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_CONFIRMATION, "${{ inputs.confirmation }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON, "${{ secrets.OPL_CONSOLE_USERS_JSON }}");
+  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN, "${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}");
+  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON, undefined);
+  assert.ok(spec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN"));
+  assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN"]);
   assert.match(source, /node tools\/provider-acceptance\.ts/);
   assert.doesNotMatch(source, /TENCENTCLOUD_SECRET|compute-allocations|storage-volumes|destroy|delete|renew/i);
+  assert.match(backend, /POST \/api\/operator\/provider-acceptance/);
+  assert.match(backend, /provider-acceptance:" \+ providerAcceptanceSlotID/);
 });
 
 test("Provider Acceptance CLI requires the fixed confirmation before network access", async () => {

@@ -268,6 +268,18 @@
     "launchStatus": "active",
     "releaseGate": false,
     "mode": "operator_only_one_time_fixed_slot",
+    "endpoint": "/api/operator/provider-acceptance",
+    "fixedAccountId": "acct-verification-slot-01",
+    "fixedSlotId": "verification-slot-01",
+    "idempotencyKey": "provider-acceptance:verification-slot-01",
+    "confirmation": "I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS",
+    "resourceShape": {
+      "instanceType": "SA5.MEDIUM4",
+      "cbsGb": 10,
+      "chargeType": "PREPAID",
+      "periodMonths": 1,
+      "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
+    },
     "runner": [
       "ubuntu-latest"
     ],
@@ -282,13 +294,13 @@
     "timeoutMinutes": 30,
     "requiredEnv": [
       "OPL_CONSOLE_ORIGIN",
-      "OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON",
+      "OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN",
       "OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID",
       "OPL_PROVIDER_ACCEPTANCE_CONFIRMATION",
       "OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH"
     ],
     "secretEnv": [
-      "OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON"
+      "OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN"
     ],
     "steps": [
       "Checkout",

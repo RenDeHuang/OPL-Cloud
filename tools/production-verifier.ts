@@ -108,15 +108,16 @@ function addCheck(checks, name, ok, details = {}) {
   return check;
 }
 
-function responseCookie(headers) {
+export function responseCookie(headers) {
   const values = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : [headers.get("set-cookie")].filter(Boolean);
   return values.map((value) => value.split(";", 1)[0]).join("; ");
 }
 
-export async function requestJson({ fetchImpl, origin, path, method = "GET", auth, body, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS }) {
+export async function requestJson({ fetchImpl, origin, path, method = "GET", auth, headers = {}, body, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS }) {
   const response = await fetchImpl(`${origin}${path}`, {
     method,
     headers: {
+      ...headers,
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
       ...(auth?.cookie ? { cookie: auth.cookie } : {}),
       ...(auth?.csrfToken ? { "x-opl-csrf": auth.csrfToken } : {})
