@@ -800,7 +800,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	deployment := map[string]any{
 		"kind":     "Deployment",
 		"metadata": map[string]any{"name": "opl-compute-alpha", "generation": 2, "labels": map[string]any{"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha", "oplcloud.cn/workspace-id": "ws-alpha"}},
-		"spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": runtimeSelector}, "template": map[string]any{"metadata": map[string]any{"labels": runtimeSelector}, "spec": map[string]any{
+		"spec": map[string]any{"replicas": 1, "selector": map[string]any{"matchLabels": runtimeSelector}, "template": map[string]any{"metadata": map[string]any{"labels": runtimeSelector, "annotations": map[string]any{"opl.medopl.cn/credential-revision": "revision-alpha"}}, "spec": map[string]any{
 			"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"seccompProfile": map[string]any{"type": "RuntimeDefault"}},
 			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}, "volumeMounts": workspaceDataMounts()}},
 			"volumes":    []any{map[string]any{"name": "workspace-data", "persistentVolumeClaim": map[string]any{"claimName": "opl-storage-alpha-data"}}},
@@ -882,7 +882,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 			t.Fatalf("runtime must own final mount/readiness proof %q: %#v", name, status.Checks)
 		}
 	}
-	if status.Access.Password != "secret-password" || status.Access.Username != webuiUsername || status.Access.CredentialStatus != "configured" || status.Access.SecretRef != "opl-compute-alpha-env" {
+	if status.Access.Password != "secret-password" || status.Access.Username != webuiUsername || status.Access.CredentialStatus != "configured" || status.Access.CredentialVersion != "revision-alpha" || status.Access.SecretRef != "opl-compute-alpha-env" {
 		t.Fatalf("runtime access must come transiently from Workspace Secret: %#v", status.Access)
 	}
 	assertUnready := func(name string) {

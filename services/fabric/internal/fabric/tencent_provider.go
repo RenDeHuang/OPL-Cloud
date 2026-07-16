@@ -759,6 +759,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 	ingress := findK8s(items, "Ingress", "opl-cloud")
 	endpoints := findK8s(items, "Endpoints", serviceName)
 	access, credentialCheck := runtimeAccessFromSecret(findK8s(items, "Secret", secretRef), secretRef)
+	access.CredentialVersion = firstNonEmpty(stringValue(nested(deployment, "spec", "template", "metadata", "annotations", "opl.medopl.cn/credential-revision")), access.CredentialVersion)
 	pods := p.workspacePods(ctx, workspaceID)
 	podDetails := podRuntimeDetails(pods)
 	readyPodUsesPVC := false

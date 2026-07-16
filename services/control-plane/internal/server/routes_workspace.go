@@ -111,6 +111,62 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, http.StatusOK, workspaceRuntimeCredentialResponse(runtime))
 	}))
+	mux.HandleFunc("POST /api/workspaces/{workspaceId}/runtime-credentials/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceId")
+		workspace, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		key, ok := requiredMutationKey(w, r)
+		if !ok {
+			return
+		}
+		unlock := app.lockResource("runtime-credential", workspaceID)
+		defer unlock()
+		workspace, ok = app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if app.workspaceResponse(cloneMap(workspace))["openable"] != true {
+			writeError(w, http.StatusConflict, "workspace_not_running")
+			return
+		}
+		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
+		sub2APIUserID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		if !ok {
+			return
+		}
+		runtime, receipt, err := service.RotateWorkspaceCredential(r.Context(), controlplane.RotateWorkspaceCredentialInput{
+			WorkspaceID: workspaceID, AccountID: accountID, Sub2APIUserID: sub2APIUserID,
+			OwnerID:   firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])),
+			ComputeID: firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
+			VolumeID:  stringValue(workspace["storageId"]),
+		}, key)
+		if err != nil {
+			writeUpstreamError(w, err)
+			return
+		}
+		access := cloneMap(mapField(workspace, "access"))
+		delete(access, "password")
+		access["account"], access["username"] = runtime.Access.Username, runtime.Access.Username
+		access["credentialStatus"] = runtime.Access.CredentialStatus
+		access["credentialVersion"] = runtime.Access.CredentialVersion
+		access["secretRef"] = runtime.Access.SecretRef
+		workspace["access"] = access
+		workspace["runtimeId"] = firstNonEmpty(runtime.ID, stringValue(workspace["runtimeId"]))
+		runtimeProjection := cloneMap(mapField(workspace, "runtime"))
+		runtimeProjection["serviceName"] = firstNonEmpty(runtime.ServiceName, stringValue(runtimeProjection["serviceName"]))
+		runtimeProjection["status"], runtimeProjection["ready"] = runtime.Status, runtime.Ready
+		workspace["runtime"] = runtimeProjection
+		if err := app.tables.SaveWorkspace(r.Context(), workspace); err != nil {
+			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			return
+		}
+		body := workspaceRuntimeCredentialResponse(runtime)
+		body["receiptId"] = receipt.ReceiptID
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, body)
+	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/gateway-secret/rotate", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		key, ok := requiredMutationKey(w, r)

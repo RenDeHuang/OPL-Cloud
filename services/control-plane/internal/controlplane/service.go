@@ -128,6 +128,15 @@ type ResumeWorkspaceInput struct {
 	VolumeID      string `json:"storageId"`
 }
 
+type RotateWorkspaceCredentialInput struct {
+	WorkspaceID   string
+	AccountID     string
+	Sub2APIUserID int64
+	OwnerID       string
+	ComputeID     string
+	VolumeID      string
+}
+
 type GatewaySummary struct {
 	Balance clients.Sub2APIBalance
 	Key     clients.Sub2APIWorkspaceKey
@@ -552,6 +561,55 @@ func (s *Service) SyncWorkspaceGatewaySecret(ctx context.Context, accountID stri
 		return clients.GatewaySecretWriteResult{}, errors.New("gateway_secret_write_failed")
 	}
 	return secret, nil
+}
+
+func (s *Service) RotateWorkspaceCredential(ctx context.Context, input RotateWorkspaceCredentialInput, idempotencyKey string) (clients.WorkspaceRuntime, clients.Receipt, error) {
+	if input.WorkspaceID == "" || input.AccountID == "" || input.Sub2APIUserID <= 0 || input.OwnerID == "" || input.ComputeID == "" || input.VolumeID == "" || idempotencyKey == "" {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, errors.New("runtime_credential_rotation_input_required")
+	}
+	operationKey := "runtime-credential-rotate:" + input.WorkspaceID + ":" + idempotencyKey
+	secret, err := s.SyncWorkspaceGatewaySecret(ctx, input.AccountID, input.Sub2APIUserID, operationKey+":gateway")
+	if err != nil {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, err
+	}
+	applied, err := s.fabric.CreateWorkspaceRuntime(ctx, clients.WorkspaceRuntimeInput{
+		WorkspaceID: input.WorkspaceID, ComputeID: input.ComputeID, VolumeID: input.VolumeID,
+		ImageID: "one-person-lab-app", GatewaySecretRef: secret.SecretRef,
+	}, operationKey+":runtime")
+	if err != nil {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, err
+	}
+	runtime, err := s.fabric.WorkspaceRuntimeStatus(ctx, input.WorkspaceID)
+	if err != nil {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, err
+	}
+	if runtime.ID == "" {
+		runtime.ID = applied.ID
+	}
+	if runtime.WorkspaceID == "" {
+		runtime.WorkspaceID = input.WorkspaceID
+	}
+	if runtime.ServiceName == "" {
+		runtime.ServiceName = applied.ServiceName
+	}
+	if runtime.Access.Password == "" {
+		return clients.WorkspaceRuntime{}, clients.Receipt{}, errors.New("workspace_credentials_unavailable")
+	}
+	receipt, err := s.ledger.RecordReceipt(ctx, clients.ReceiptInput{
+		Type: "workspace.access_token_reset", Status: "completed", Surface: "workspace",
+		AccountID: input.AccountID, WorkspaceID: input.WorkspaceID, JobID: runtime.ID,
+		Execution: map[string]any{
+			"runtimeId": runtime.ID, "computeAllocationId": input.ComputeID, "storageId": input.VolumeID,
+		},
+		OutputRefs: map[string]any{
+			"runtimeId": runtime.ID, "credentialVersion": runtime.Access.CredentialVersion, "credentialSecretRef": runtime.Access.SecretRef,
+		},
+		Owner: map[string]any{"userId": input.OwnerID},
+	}, operationKey)
+	if err != nil {
+		return runtime, clients.Receipt{}, err
+	}
+	return runtime, receipt, nil
 }
 
 func workspaceRuntimeState(status string, ready bool) string {
