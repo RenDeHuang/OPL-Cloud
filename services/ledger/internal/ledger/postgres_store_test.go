@@ -374,6 +374,116 @@ func TestPostgresConcurrentReceiptIdempotency(t *testing.T) {
 	}
 }
 
+func TestPostgresConcurrentReconciliationIdempotency(t *testing.T) {
+	db := openLedgerTestPostgres(t)
+	store := NewPostgresStore(db)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := store.Install(ctx); err != nil {
+		t.Fatalf("install ledger schema: %v", err)
+	}
+	type outcome struct {
+		result ReconciliationResult
+		err    error
+	}
+	run := func(inputs []ReconciliationInput) []outcome {
+		t.Helper()
+		barrier, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := barrier.ExecContext(ctx, "LOCK TABLE reconciliation_reports IN SHARE MODE"); err != nil {
+			_ = barrier.Rollback()
+			t.Fatalf("lock reconciliation barrier: %v", err)
+		}
+		start := make(chan struct{})
+		outcomes := make(chan outcome, len(inputs))
+		var wg sync.WaitGroup
+		for _, input := range inputs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				result, err := store.RecordReconciliation(ctx, input)
+				outcomes <- outcome{result: result, err: err}
+			}()
+		}
+		close(start)
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			var arrivals int
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM pg_locks WHERE relation = 'reconciliation_reports'::regclass AND mode = 'RowExclusiveLock' AND NOT granted").Scan(&arrivals); err != nil {
+				_ = barrier.Rollback()
+				t.Fatalf("observe reconciliation barrier: %v", err)
+			}
+			if arrivals == len(inputs) {
+				break
+			}
+			if time.Now().After(deadline) {
+				_ = barrier.Rollback()
+				t.Fatalf("reconciliation operations did not overlap: arrivals=%d want=%d", arrivals, len(inputs))
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if err := barrier.Commit(); err != nil {
+			t.Fatalf("unlock reconciliation barrier: %v", err)
+		}
+		wg.Wait()
+		close(outcomes)
+		results := make([]outcome, 0, len(inputs))
+		for result := range outcomes {
+			results = append(results, result)
+		}
+		return results
+	}
+
+	sameReport := validReconciliationReport("ok")
+	sameReport["id"] = "recon-concurrent-same"
+	same := ReconciliationInput{Report: sameReport, IdempotencyKey: "reconciliation-concurrent-same"}
+	results := run([]ReconciliationInput{same, same})
+	created, replayed := 0, 0
+	for _, result := range results {
+		if result.err != nil {
+			t.Fatalf("same reconciliation concurrent create: %v", result.err)
+		}
+		if result.result.Replayed {
+			replayed++
+		} else {
+			created++
+		}
+	}
+	if created != 1 || replayed != 1 {
+		t.Fatalf("same reconciliation outcomes = %#v", results)
+	}
+	var persisted int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM reconciliation_reports WHERE id = 'recon-concurrent-same'").Scan(&persisted); err != nil || persisted != 1 {
+		t.Fatalf("same reconciliation persisted rows=%d err=%v", persisted, err)
+	}
+
+	firstReport := validReconciliationReport("ok")
+	firstReport["id"] = "recon-concurrent-payload"
+	first := ReconciliationInput{Report: firstReport, IdempotencyKey: "reconciliation-concurrent-payload"}
+	secondReport := validReconciliationReport("ok")
+	secondReport["id"] = "recon-concurrent-payload-changed"
+	secondReport["counts"].(map[string]any)["observed"] = 1
+	second := ReconciliationInput{Report: secondReport, IdempotencyKey: first.IdempotencyKey}
+	results = run([]ReconciliationInput{first, second})
+	created, conflicts := 0, 0
+	for _, result := range results {
+		switch {
+		case errors.Is(result.err, ErrIdempotencyConflict):
+			conflicts++
+		case result.err != nil:
+			t.Fatalf("different reconciliation payload raw error: %v", result.err)
+		default:
+			created++
+		}
+	}
+	if created != 1 || conflicts != 1 {
+		t.Fatalf("different reconciliation payload outcomes = %#v", results)
+	}
+}
+
 func TestPostgresConcurrentReviewPolicyIdempotency(t *testing.T) {
 	db := openLedgerTestPostgres(t)
 	store := NewPostgresStore(db)

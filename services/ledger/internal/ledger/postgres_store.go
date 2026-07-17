@@ -700,6 +700,15 @@ func (s *PostgresStore) RecordReconciliation(ctx context.Context, input Reconcil
 		SetRequestHash(requestHash).
 		SetCreatedAt(result.CreatedAt).
 		Exec(ctx); err != nil {
+		if ledgerent.IsConstraintError(err) {
+			if existing, existingHash, replayErr := s.reconciliationByIdempotencyKey(ctx, input.IdempotencyKey); replayErr == nil {
+				if existingHash != requestHash {
+					return ReconciliationResult{}, ErrIdempotencyConflict
+				}
+				existing.Replayed = true
+				return existing, nil
+			}
+		}
 		return ReconciliationResult{}, err
 	}
 	return result, nil

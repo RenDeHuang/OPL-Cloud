@@ -14,12 +14,13 @@ import (
 )
 
 type MemoryStore struct {
-	mu                      sync.Mutex
-	idempotency             map[string]idempotencyRecord
-	reviewPolicyIdempotency map[string]idempotencyRecord
-	receipts                map[string]Receipt
-	reviewPolicies          map[string]ReviewPolicy
-	nextID                  int64
+	mu                        sync.Mutex
+	idempotency               map[string]idempotencyRecord
+	reconciliationIdempotency map[string]idempotencyRecord
+	reviewPolicyIdempotency   map[string]idempotencyRecord
+	receipts                  map[string]Receipt
+	reviewPolicies            map[string]ReviewPolicy
+	nextID                    int64
 }
 
 type idempotencyRecord struct {
@@ -38,10 +39,11 @@ func cloneMemoryValue[T any](value T) T {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		idempotency:             map[string]idempotencyRecord{},
-		reviewPolicyIdempotency: map[string]idempotencyRecord{},
-		receipts:                map[string]Receipt{},
-		reviewPolicies:          map[string]ReviewPolicy{},
+		idempotency:               map[string]idempotencyRecord{},
+		reconciliationIdempotency: map[string]idempotencyRecord{},
+		reviewPolicyIdempotency:   map[string]idempotencyRecord{},
+		receipts:                  map[string]Receipt{},
+		reviewPolicies:            map[string]ReviewPolicy{},
 	}
 }
 
@@ -429,7 +431,7 @@ func (s *MemoryStore) RecordReconciliation(_ context.Context, input Reconciliati
 	if err != nil {
 		return ReconciliationResult{}, err
 	}
-	if existing, ok := s.idempotency[input.IdempotencyKey]; ok {
+	if existing, ok := s.reconciliationIdempotency[input.IdempotencyKey]; ok {
 		if existing.payloadHash != payloadHash {
 			return ReconciliationResult{}, ErrIdempotencyConflict
 		}
@@ -445,7 +447,7 @@ func (s *MemoryStore) RecordReconciliation(_ context.Context, input Reconciliati
 	id := stringFromAny(input.Report["id"])
 	status := stringFromAny(input.Report["status"])
 	result := ReconciliationResult{ID: id, Status: status, Report: cloneMemoryValue(input.Report), BlockNewWorkspaces: status == "mismatch", Reason: "operator_reconciliation", CreatedAt: time.Now().UTC()}
-	s.idempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: cloneMemoryValue(result)}
+	s.reconciliationIdempotency[input.IdempotencyKey] = idempotencyRecord{payloadHash: payloadHash, result: cloneMemoryValue(result)}
 	return cloneMemoryValue(result), nil
 }
 

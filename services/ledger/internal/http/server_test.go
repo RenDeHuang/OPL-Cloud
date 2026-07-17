@@ -77,6 +77,49 @@ func TestReconciliationHTTP(t *testing.T) {
 	}
 }
 
+func TestJSONBodiesRejectTrailingDataWithoutPersistence(t *testing.T) {
+	validReceipt := `{"type":"workspace.created","status":"completed","surface":"workspace","workspaceId":"workspace-trailing"}`
+	validReconciliation := `{"report":{"id":"recon-trailing","status":"ok","counts":{"billingOperations":0,"matched":0,"exceptions":0},"exceptions":[]}}`
+	for _, suffix := range []string{` {}`, ` trailing-garbage`} {
+		t.Run(strings.TrimSpace(suffix), func(t *testing.T) {
+			store := ledger.NewMemoryStore()
+			server := NewServer(store, "internal-secret")
+
+			receipt := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(validReceipt+suffix))
+			receipt.Header.Set("Idempotency-Key", "trailing-receipt")
+			receiptRec := httptest.NewRecorder()
+			server.ServeHTTP(receiptRec, receipt)
+			if receiptRec.Code != http.StatusBadRequest {
+				t.Fatalf("trailing receipt status=%d body=%s", receiptRec.Code, receiptRec.Body.String())
+			}
+
+			reconciliation := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(validReconciliation+suffix))
+			reconciliation.Header.Set("Idempotency-Key", "trailing-reconciliation")
+			reconciliationRec := httptest.NewRecorder()
+			server.ServeHTTP(reconciliationRec, reconciliation)
+			if reconciliationRec.Code != http.StatusBadRequest {
+				t.Fatalf("trailing reconciliation status=%d body=%s", reconciliationRec.Code, reconciliationRec.Body.String())
+			}
+
+			validReceiptRequest := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(validReceipt))
+			validReceiptRequest.Header.Set("Idempotency-Key", "trailing-receipt")
+			validReceiptRec := httptest.NewRecorder()
+			server.ServeHTTP(validReceiptRec, validReceiptRequest)
+			if validReceiptRec.Code != http.StatusCreated {
+				t.Fatalf("valid receipt after trailing rejection status=%d body=%s", validReceiptRec.Code, validReceiptRec.Body.String())
+			}
+
+			validReconciliationRequest := testRequest(http.MethodPost, "/ledger/reconciliation", bytes.NewBufferString(validReconciliation))
+			validReconciliationRequest.Header.Set("Idempotency-Key", "trailing-reconciliation")
+			validReconciliationRec := httptest.NewRecorder()
+			server.ServeHTTP(validReconciliationRec, validReconciliationRequest)
+			if validReconciliationRec.Code != http.StatusCreated {
+				t.Fatalf("valid reconciliation after trailing rejection status=%d body=%s", validReconciliationRec.Code, validReconciliationRec.Body.String())
+			}
+		})
+	}
+}
+
 func TestBillingReceiptSchemaHTTP(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"billing.resource_purchased.v1","status":"completed","surface":"control_plane","workspaceId":"workspace-alpha","cost":{"monthlyPriceCnyCents":35000,"chargeUsdMicros":50000000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:test:billing-alpha:charge:v1","periodStart":"2026-07-01T00:00:00Z","paidThrough":"2026-08-01T00:00:00Z","resourceType":"compute","resourceId":"compute-alpha"}}`))
@@ -132,6 +175,22 @@ func TestReconciliationHTTPPreservesInt64Boundary(t *testing.T) {
 	overflow := post("recon-overflow", `{"report":{"id":"recon-overflow","status":"ok","counts":{"billingOperations":9223372036854775808,"matched":9223372036854775808,"exceptions":0},"exceptions":[]}}`)
 	if overflow.Code != http.StatusBadRequest {
 		t.Fatalf("overflow reconciliation status=%d body=%s", overflow.Code, overflow.Body.String())
+	}
+	for name, body := range map[string]string{
+		"fraction":   `{"report":{"id":"recon-fraction","status":"ok","counts":{"billingOperations":1.0,"matched":1.0,"exceptions":0},"exceptions":[]}}`,
+		"scientific": `{"report":{"id":"recon-scientific","status":"ok","counts":{"billingOperations":1e3,"matched":1e3,"exceptions":0},"exceptions":[]}}`,
+	} {
+		if rec := post("recon-"+name, body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s reconciliation status=%d body=%s", name, rec.Code, rec.Body.String())
+		}
+	}
+	firstLarge := post("recon-distinct-large-integers", `{"report":{"id":"recon-distinct-large-integers","status":"ok","counts":{"billingOperations":9007199254740992,"matched":9007199254740992,"exceptions":0},"exceptions":[]}}`)
+	if firstLarge.Code != http.StatusCreated || !strings.Contains(firstLarge.Body.String(), `"billingOperations":9007199254740992`) {
+		t.Fatalf("first large reconciliation status=%d body=%s", firstLarge.Code, firstLarge.Body.String())
+	}
+	secondLarge := post("recon-distinct-large-integers", `{"report":{"id":"recon-distinct-large-integers","status":"ok","counts":{"billingOperations":9007199254740993,"matched":9007199254740993,"exceptions":0},"exceptions":[]}}`)
+	if secondLarge.Code != http.StatusConflict {
+		t.Fatalf("distinct large reconciliation status=%d body=%s", secondLarge.Code, secondLarge.Body.String())
 	}
 }
 

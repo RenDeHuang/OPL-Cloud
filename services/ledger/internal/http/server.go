@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -23,9 +24,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReceiptInput
-		decoder := json.NewDecoder(r.Body)
-		decoder.UseNumber()
-		if err := decoder.Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -96,7 +95,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReceiptRetentionInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -123,7 +122,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReceiptPrivacyDeleteInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -166,7 +165,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ArtifactInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -205,7 +204,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReviewInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -244,7 +243,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReviewPolicyInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -294,7 +293,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 	})
 	mux.HandleFunc("POST /ledger/review-gates/evaluate", func(w http.ResponseWriter, r *http.Request) {
 		var input ledger.ReviewGateInput
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -320,9 +319,7 @@ func NewServer(store ledger.Store, token string) http.Handler {
 			return
 		}
 		var input ledger.ReconciliationInput
-		decoder := json.NewDecoder(r.Body)
-		decoder.UseNumber()
-		if err := decoder.Decode(&input); err != nil {
+		if err := decodeJSONBody(r, &input); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
@@ -343,6 +340,22 @@ func NewServer(store ledger.Store, token string) http.Handler {
 		writeJSON(w, http.StatusCreated, result)
 	})
 	return authenticate(mux, token)
+}
+
+func decodeJSONBody(r *http.Request, target any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return errors.New("JSON body contains multiple values")
+	}
+	return nil
 }
 
 func authenticate(next http.Handler, token string) http.Handler {

@@ -638,7 +638,11 @@ func integerValue(value any) (int64, bool) {
 		return int64(reflected.Uint()), true
 	case reflect.Float32, reflect.Float64:
 		value := reflected.Float()
-		if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) || value < -math.Exp2(63) || value >= math.Exp2(63) {
+		maxExactInteger := float64((1 << 53) - 1)
+		if reflected.Kind() == reflect.Float32 {
+			maxExactInteger = (1 << 24) - 1
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) || math.Abs(value) > maxExactInteger {
 			return 0, false
 		}
 		return int64(value), true
@@ -678,7 +682,7 @@ func validateReconciliationReport(report map[string]any) error {
 	}
 	id, idOK := normalized["id"].(string)
 	status, statusOK := normalized["status"].(string)
-	counts, countsOK := normalized["counts"].(map[string]any)
+	counts, countsOK := report["counts"].(map[string]any)
 	exceptions, exceptionsOK := normalized["exceptions"].([]any)
 	if !idOK || strings.TrimSpace(id) == "" || !statusOK || (status != "ok" && status != "mismatch") || !countsOK || !exceptionsOK {
 		return ErrInvalidReconciliationInput

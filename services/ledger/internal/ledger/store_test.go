@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -125,6 +126,33 @@ func testBillingReceiptSchema(t *testing.T, store Store) {
 
 func TestReceiptRejectsSensitiveContentMemory(t *testing.T) {
 	testReceiptRejectsSensitiveContent(t, NewMemoryStore())
+}
+
+func TestEvidenceIntegerValidationRejectsUnsafeFloatPrecision(t *testing.T) {
+	for name, unsafeFloat := range map[string]any{
+		"float32": float32(16_777_217),
+		"float64": float64(9_007_199_254_740_993),
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := NewMemoryStore()
+			ctx := context.Background()
+
+			receipt := validBillingReceiptInput()
+			receipt.IdempotencyKey = "unsafe-" + name + "-receipt"
+			receipt.Cost["monthlyPriceCnyCents"] = unsafeFloat
+			if _, err := store.RecordReceipt(ctx, receipt); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("unsafe receipt %s error = %v, want ErrInvalidReceiptInput", name, err)
+			}
+
+			report := validReconciliationReport("ok")
+			report["id"] = "unsafe-" + name + "-reconciliation"
+			report["counts"].(map[string]any)["billingOperations"] = unsafeFloat
+			report["counts"].(map[string]any)["matched"] = unsafeFloat
+			if _, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: report, IdempotencyKey: "unsafe-" + name + "-reconciliation"}); !errors.Is(err, ErrInvalidReconciliationInput) {
+				t.Fatalf("unsafe reconciliation %s error = %v, want ErrInvalidReconciliationInput", name, err)
+			}
+		})
+	}
 }
 
 func testReceiptRejectsSensitiveContent(t *testing.T, store Store) {
@@ -260,11 +288,11 @@ func TestReconciliationSchemaRejectsInvalidMemoryReplay(t *testing.T) {
 	if _, err := store.RecordReconciliation(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
-	record := store.idempotency[input.IdempotencyKey]
+	record := store.reconciliationIdempotency[input.IdempotencyKey]
 	result := record.result.(ReconciliationResult)
 	result.BlockNewWorkspaces = false
 	record.result = result
-	store.idempotency[input.IdempotencyKey] = record
+	store.reconciliationIdempotency[input.IdempotencyKey] = record
 	if _, err := store.RecordReconciliation(context.Background(), input); !errors.Is(err, ErrInvalidReconciliationInput) {
 		t.Fatalf("invalid replay error = %v, want ErrInvalidReconciliationInput", err)
 	}
@@ -306,6 +334,123 @@ func TestReconciliationMismatchBlocksNewWorkspaces(t *testing.T) {
 	result, err := NewMemoryStore().RecordReconciliation(context.Background(), ReconciliationInput{Report: validReconciliationReport("mismatch"), IdempotencyKey: "reconciliation-alpha"})
 	if err != nil || !result.BlockNewWorkspaces || result.Status != "mismatch" {
 		t.Fatalf("reconciliation=%#v err=%v", result, err)
+	}
+}
+
+func TestMemoryReceiptAndReconciliationIdempotencyNamespaces(t *testing.T) {
+	for _, reconciliationFirst := range []bool{false, true} {
+		t.Run(map[bool]string{false: "receipt first", true: "reconciliation first"}[reconciliationFirst], func(t *testing.T) {
+			store := NewMemoryStore()
+			ctx := context.Background()
+			key := "shared-receipt-reconciliation-key"
+			receipt := validBillingReceiptInput()
+			receipt.IdempotencyKey = key
+			report := validReconciliationReport("ok")
+			report["id"] = "shared-namespace-reconciliation"
+			reconciliation := ReconciliationInput{Report: report, IdempotencyKey: key}
+
+			if reconciliationFirst {
+				if _, err := store.RecordReconciliation(ctx, reconciliation); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.RecordReceipt(ctx, receipt); err != nil {
+					t.Fatalf("receipt collided with reconciliation namespace: %v", err)
+				}
+			} else {
+				if _, err := store.RecordReceipt(ctx, receipt); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.RecordReconciliation(ctx, reconciliation); err != nil {
+					t.Fatalf("reconciliation collided with receipt namespace: %v", err)
+				}
+			}
+
+			changedReceipt := receipt
+			changedReceipt.Cost = validBillingReceiptInput().Cost
+			changedReceipt.Cost["chargeUsdMicros"] = int64(49_999_999)
+			if _, err := store.RecordReceipt(ctx, changedReceipt); !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("changed receipt replay error = %v, want ErrIdempotencyConflict", err)
+			}
+			changedReport := validReconciliationReport("ok")
+			changedReport["id"] = "shared-namespace-reconciliation"
+			changedReport["counts"].(map[string]any)["observed"] = 1
+			if _, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: changedReport, IdempotencyKey: key}); !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("changed reconciliation replay error = %v, want ErrIdempotencyConflict", err)
+			}
+		})
+	}
+}
+
+func TestMemoryConcurrentReconciliationIdempotency(t *testing.T) {
+	store := NewMemoryStore()
+	type outcome struct {
+		result ReconciliationResult
+		err    error
+	}
+	run := func(inputs []ReconciliationInput) []outcome {
+		t.Helper()
+		start := make(chan struct{})
+		outcomes := make(chan outcome, len(inputs))
+		var wg sync.WaitGroup
+		for _, input := range inputs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				result, err := store.RecordReconciliation(context.Background(), input)
+				outcomes <- outcome{result: result, err: err}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(outcomes)
+		results := make([]outcome, 0, len(inputs))
+		for result := range outcomes {
+			results = append(results, result)
+		}
+		return results
+	}
+
+	report := validReconciliationReport("ok")
+	report["id"] = "memory-concurrent-same"
+	input := ReconciliationInput{Report: report, IdempotencyKey: "memory-concurrent-same"}
+	results := run([]ReconciliationInput{input, input, input, input})
+	created, replayed := 0, 0
+	for _, result := range results {
+		if result.err != nil || result.result.ID != "memory-concurrent-same" {
+			t.Fatalf("same reconciliation outcome = %#v", result)
+		}
+		if result.result.Replayed {
+			replayed++
+		} else {
+			created++
+		}
+	}
+	if created != 1 || replayed != 3 {
+		t.Fatalf("same reconciliation outcomes = %#v", results)
+	}
+
+	firstReport := validReconciliationReport("ok")
+	firstReport["id"] = "memory-concurrent-payload"
+	first := ReconciliationInput{Report: firstReport, IdempotencyKey: "memory-concurrent-payload"}
+	secondReport := validReconciliationReport("ok")
+	secondReport["id"] = "memory-concurrent-payload"
+	secondReport["counts"].(map[string]any)["observed"] = 1
+	second := ReconciliationInput{Report: secondReport, IdempotencyKey: first.IdempotencyKey}
+	results = run([]ReconciliationInput{first, second})
+	created, conflicts := 0, 0
+	for _, result := range results {
+		switch {
+		case errors.Is(result.err, ErrIdempotencyConflict):
+			conflicts++
+		case result.err != nil:
+			t.Fatalf("different reconciliation payload raw error: %v", result.err)
+		default:
+			created++
+		}
+	}
+	if created != 1 || conflicts != 1 {
+		t.Fatalf("different reconciliation payload outcomes = %#v", results)
 	}
 }
 
