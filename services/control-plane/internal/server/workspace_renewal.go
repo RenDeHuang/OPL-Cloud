@@ -169,10 +169,15 @@ type workspaceRenewalOperation struct {
 	RefundCode                  string         `json:"sub2apiRefundCode"`
 	ComputePreflightConfirmed   bool           `json:"computePreflightConfirmed,omitempty"`
 	StoragePreflightConfirmed   bool           `json:"storagePreflightConfirmed,omitempty"`
+	ChargeAttempted             bool           `json:"chargeAttempted,omitempty"`
 	ChargeConfirmation          map[string]any `json:"chargeConfirmation,omitempty"`
 	PreChargeBalanceUSDMicros   int64          `json:"preChargeBalanceUsdMicros,omitempty"`
 	PostChargeBalanceUSDMicros  int64          `json:"postChargeBalanceUsdMicros,omitempty"`
 	PostChargeBalanceKnown      bool           `json:"postChargeBalanceKnown,omitempty"`
+	RefundAttempted             bool           `json:"refundAttempted,omitempty"`
+	RefundConfirmation          map[string]any `json:"refundConfirmation,omitempty"`
+	RefundReason                string         `json:"refundReason,omitempty"`
+	RefundReceiptID             string         `json:"refundReceiptId,omitempty"`
 	ComputeRenewal              map[string]any `json:"computeRenewal,omitempty"`
 	StorageRenewal              map[string]any `json:"storageRenewal,omitempty"`
 	ComputeReadback             map[string]any `json:"computeReadback,omitempty"`
@@ -180,6 +185,8 @@ type workspaceRenewalOperation struct {
 	EntitlementCommitted        bool           `json:"entitlementCommitted,omitempty"`
 	ReceiptID                   string         `json:"receiptId,omitempty"`
 	ErrorCode                   string         `json:"errorCode,omitempty"`
+	PriorStatus                 string         `json:"priorStatus,omitempty"`
+	PriorErrorCode              string         `json:"priorErrorCode,omitempty"`
 	LeaseToken                  string         `json:"leaseToken,omitempty"`
 	LeaseExpiresAt              string         `json:"leaseExpiresAt,omitempty"`
 	ReviewResolutionKey         string         `json:"reviewResolutionKey,omitempty"`
@@ -289,8 +296,10 @@ func terminalWorkspaceRenewal(operation workspaceRenewalOperation) bool {
 		return operation.Phase == "complete"
 	}
 	switch operation.Status {
-	case "active", "cancelled", "refunded", "manual_review":
+	case "active", "cancelled", "manual_review":
 		return true
+	case "refunded":
+		return operation.Phase == "complete"
 	default:
 		return false
 	}
@@ -334,7 +343,7 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 			}
 		}
 		expired := !now.UTC().Before(paidThrough.UTC())
-		if found && terminalWorkspaceRenewal(operation) {
+		if found && terminalWorkspaceRenewal(operation) && (!expired || operation.Status == "active" || operation.EntitlementCommitted) {
 			return nil
 		}
 		if !found {
@@ -348,11 +357,10 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 		} else if operation.RequestHash != expected.RequestHash && !operation.EntitlementCommitted {
 			return errIdempotencyConflict
 		}
-		if expired && !operation.EntitlementCommitted {
-			switch operation.Status {
-			case "claimed", "debit_pending", "insufficient":
-				operation.Status, operation.Phase, operation.ErrorCode = "expired_unpaid", "expire_commit", ""
-			}
+		if expired && !operation.EntitlementCommitted && operation.Status != "active" && operation.Status != "expired_unpaid" && operation.Status != "refund_pending" &&
+			(operation.Status != "refunded" || operation.Phase == "complete") {
+			operation.PriorStatus, operation.PriorErrorCode = operation.Status, operation.ErrorCode
+			operation.Status, operation.Phase, operation.ErrorCode = "expired_unpaid", "expire_commit", ""
 		}
 		if operation.LeaseExpiresAt != "" {
 			leaseExpiresAt, err := time.Parse(time.RFC3339, operation.LeaseExpiresAt)
@@ -604,6 +612,8 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 			if err := app.debitWorkspaceRenewal(ctx, service, &operation); err != nil {
 				return err
 			}
+		case "refund_pending":
+			return app.refundWorkspaceRenewal(ctx, service, &operation, operation.RefundReason)
 		case "debited":
 			operation.Status, operation.Phase = "provider_renewing", "provider_compute"
 			if err := app.persistWorkspaceRenewal(ctx, &operation, nil); err != nil {
@@ -620,7 +630,12 @@ func (app *controlPlaneServer) runWorkspaceRenewal(ctx context.Context, service 
 			if err := app.commitWorkspaceRenewalEntitlement(ctx, &operation); err != nil {
 				return err
 			}
-		case "active", "refunded", "manual_review", "cancelled":
+		case "refunded":
+			if operation.Phase == "refund_receipt" {
+				return app.recordWorkspaceRefundReceipt(ctx, service, &operation)
+			}
+			return nil
+		case "active", "manual_review", "cancelled":
 			return nil
 		default:
 			return app.manualReviewWorkspaceRenewal(ctx, &operation, "workspace_renewal_status_invalid")
@@ -639,21 +654,23 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 			return app.retryWorkspaceRenewal(ctx, operation, "gateway_key_unavailable", err)
 		}
 		var charge clients.Sub2APICharge
-		if operation.ErrorCode == "sub2api_charge_unconfirmed" {
+		if operation.ChargeAttempted || operation.ErrorCode == "sub2api_charge_unconfirmed" {
 			history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
 			row := map[string]any{"sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalUSDMicros}
 			switch code := sub2APIReconciliationCode(row, userID, history); {
 			case historyErr != nil || code == "sub2api_charge_missing":
-				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_charge_unconfirmed", clients.ErrSub2APIChargeUnknown)
+				charge, err = service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
+					UserID: userID, Code: operation.RedeemCode, ChargeUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace monthly " + operation.WorkspaceID,
+				})
 			case code != "":
 				return app.manualReviewWorkspaceRenewal(ctx, operation, code)
 			default:
 				charge = clients.Sub2APICharge{Code: operation.RedeemCode, UserID: userID, ChargeUSDMicros: operation.TotalUSDMicros, Status: "used"}
 			}
 		} else {
-			balance, err := service.Sub2APIBalance(ctx, userID)
-			if err != nil {
-				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_balance_unavailable", err)
+			balance, balanceErr := service.Sub2APIBalance(ctx, userID)
+			if balanceErr != nil {
+				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_balance_unavailable", balanceErr)
 			}
 			if balance.USDMicros < operation.TotalUSDMicros {
 				operation.Status, operation.ErrorCode = "insufficient", errMonthlyInsufficientBalance.Error()
@@ -664,15 +681,19 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 				return errMonthlyInsufficientBalance
 			}
 			operation.PreChargeBalanceUSDMicros = balance.USDMicros
+			operation.ChargeAttempted = true
+			if err := app.persistWorkspaceRenewal(ctx, operation, nil); err != nil {
+				return err
+			}
 			charge, err = service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
 				UserID: userID, Code: operation.RedeemCode, ChargeUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace monthly " + operation.WorkspaceID,
 			})
-			if err != nil {
-				if errors.Is(err, clients.ErrSub2APIChargeUnknown) {
-					return app.retryWorkspaceRenewal(ctx, operation, "sub2api_charge_unconfirmed", err)
-				}
-				return app.manualReviewWorkspaceRenewal(ctx, operation, "sub2api_charge_unconfirmed")
+		}
+		if err != nil {
+			if errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+				return app.retryWorkspaceRenewal(ctx, operation, "sub2api_charge_unconfirmed", err)
 			}
+			return app.manualReviewWorkspaceRenewal(ctx, operation, "sub2api_charge_unconfirmed")
 		}
 		confirmation := map[string]any{"code": charge.Code, "userId": charge.UserID, "chargeUsdMicros": charge.ChargeUSDMicros, "status": charge.Status}
 		if !monthlyChargeConfirmationMatches(confirmation, operation.RedeemCode, userID, operation.TotalUSDMicros) {
@@ -780,13 +801,75 @@ func (app *controlPlaneServer) refundWorkspaceRenewal(ctx context.Context, servi
 	if err != nil {
 		return app.manualReviewWorkspaceRenewal(ctx, operation, "workspace_renewal_refund_account_unmapped")
 	}
-	refund, err := service.RefundSub2API(ctx, clients.Sub2APIRefundInput{
-		UserID: userID, Code: operation.RefundCode, RefundUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace renewal refund " + operation.WorkspaceID,
-	})
-	if err != nil || refund.Code != operation.RefundCode || refund.UserID != userID || refund.RefundUSDMicros != operation.TotalUSDMicros || refund.Status != "used" {
-		return app.manualReviewWorkspaceRenewal(ctx, operation, "workspace_renewal_refund_unconfirmed")
+	recoverAttempt := operation.RefundAttempted
+	if !operation.RefundAttempted {
+		operation.Status, operation.Phase, operation.RefundAttempted, operation.RefundReason, operation.ErrorCode = "refund_pending", "refund", true, reason, ""
+		if err := app.persistWorkspaceRenewal(ctx, operation, nil); err != nil {
+			return err
+		}
 	}
-	operation.Status, operation.Phase, operation.ErrorCode = "refunded", "complete", reason
+	var refund clients.Sub2APIRefund
+	if recoverAttempt {
+		history, historyErr := service.Sub2APIBalanceHistory(ctx, userID)
+		matches := make([]clients.Sub2APIBalanceHistoryEntry, 0, 1)
+		for _, entry := range history {
+			if entry.Code == operation.RefundCode {
+				matches = append(matches, entry)
+			}
+		}
+		if historyErr != nil || len(matches) == 0 {
+			refund, err = service.RefundSub2API(ctx, clients.Sub2APIRefundInput{
+				UserID: userID, Code: operation.RefundCode, RefundUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace renewal refund " + operation.WorkspaceID,
+			})
+		} else {
+			entry := matches[0]
+			if len(matches) != 1 || entry.Type != "balance" || entry.Status != "used" || entry.UsedBy == nil || *entry.UsedBy != userID || entry.ValueUSDMicros != operation.TotalUSDMicros {
+				return app.manualReviewWorkspaceRenewal(ctx, operation, "sub2api_refund_mismatch")
+			}
+			refund = clients.Sub2APIRefund{Code: operation.RefundCode, UserID: userID, RefundUSDMicros: operation.TotalUSDMicros, Status: "used"}
+		}
+	} else {
+		refund, err = service.RefundSub2API(ctx, clients.Sub2APIRefundInput{
+			UserID: userID, Code: operation.RefundCode, RefundUSDMicros: operation.TotalUSDMicros, Notes: "OPL Workspace renewal refund " + operation.WorkspaceID,
+		})
+	}
+	if err != nil || refund.Code != operation.RefundCode || refund.UserID != userID || refund.RefundUSDMicros != operation.TotalUSDMicros || refund.Status != "used" {
+		return app.retryWorkspaceRenewal(ctx, operation, "sub2api_refund_unconfirmed", errors.Join(err, clients.ErrSub2APIChargeUnknown))
+	}
+	operation.RefundConfirmation = map[string]any{"code": refund.Code, "userId": refund.UserID, "refundUsdMicros": refund.RefundUSDMicros, "status": refund.Status}
+	operation.Status, operation.Phase, operation.ErrorCode = "refunded", "refund_receipt", ""
+	if err := app.persistWorkspaceRenewal(ctx, operation, nil); err != nil {
+		return err
+	}
+	return app.recordWorkspaceRefundReceipt(ctx, service, operation)
+}
+
+func (app *controlPlaneServer) recordWorkspaceRefundReceipt(ctx context.Context, service *controlplane.Service, operation *workspaceRenewalOperation) error {
+	userID, err := app.sub2APIUserID(ctx, operation.AccountID)
+	if err != nil {
+		return app.retryWorkspaceRenewal(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
+	}
+	cost := workspaceRenewalReceiptCost(*operation, false, 0)
+	cost["periodStart"], cost["paidThrough"] = operation.PaidThrough, operation.RenewedThrough
+	cost["sub2apiUserId"], cost["sub2apiRedeemCode"] = userID, operation.RedeemCode
+	cost["sub2apiRefundCode"], cost["refundUsdMicros"] = operation.RefundCode, operation.TotalUSDMicros
+	receipt, err := service.RecordMonthlyReceipt(ctx, clients.ReceiptInput{
+		Type: "billing.workspace_refunded.v1", Status: "completed", Surface: "control_plane", AccountID: operation.AccountID,
+		WorkspaceID: operation.WorkspaceID, RequestID: operation.ID,
+		Execution: map[string]any{
+			"resourceType": "workspace", "resourceId": operation.WorkspaceID, "reason": operation.RefundReason,
+			"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "refundConfirmation": operation.RefundConfirmation,
+		},
+		Cost:  cost,
+		Owner: map[string]any{"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "ownerUserId": operation.OwnerUserID},
+	}, operation.ID+":refund-receipt")
+	if err != nil {
+		return app.retryWorkspaceRenewal(ctx, operation, "ledger_refund_receipt_pending", err)
+	}
+	if receipt.ReceiptID == "" {
+		return app.retryWorkspaceRenewal(ctx, operation, "ledger_refund_receipt_invalid", errors.New("Ledger refund receipt ID missing"))
+	}
+	operation.RefundReceiptID, operation.Phase, operation.ErrorCode = receipt.ReceiptID, "complete", ""
 	releaseWorkspaceRenewalLease(operation)
 	return app.persistWorkspaceRenewal(ctx, operation, nil)
 }
@@ -834,7 +917,7 @@ func (app *controlPlaneServer) recordWorkspaceRenewalReceipt(ctx context.Context
 	if err != nil {
 		return app.retryWorkspaceRenewal(ctx, operation, errMonthlyAccountUnmapped.Error(), err)
 	}
-	receipt, err := service.RecordMonthlyReceipt(ctx, clients.ReceiptInput{
+	input := clients.ReceiptInput{
 		Type: "billing.workspace_renewed.v1", Status: "completed", Surface: "control_plane", AccountID: operation.AccountID,
 		WorkspaceID: operation.WorkspaceID, RequestID: operation.ID,
 		Execution: map[string]any{
@@ -843,7 +926,15 @@ func (app *controlPlaneServer) recordWorkspaceRenewalReceipt(ctx context.Context
 		},
 		Cost:  workspaceRenewalReceiptCost(*operation, true, userID),
 		Owner: map[string]any{"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "ownerUserId": operation.OwnerUserID},
-	}, operation.ID+":receipt")
+	}
+	if operation.ReviewResolutionKey != "" {
+		input.InputRefs = map[string]any{"evidenceRef": operation.ReviewResolutionEvidenceRef}
+		input.ReviewerChecks = map[string]any{
+			"decision": operation.ReviewResolutionDecision, "reviewer": operation.ReviewResolutionReviewer,
+			"evidenceRef": operation.ReviewResolutionEvidenceRef, "resolvedAt": operation.ReviewResolutionResolvedAt,
+		}
+	}
+	receipt, err := service.RecordMonthlyReceipt(ctx, input, operation.ID+":receipt")
 	if err != nil {
 		return app.retryWorkspaceRenewal(ctx, operation, "ledger_receipt_pending", err)
 	}

@@ -552,10 +552,8 @@ func validateReceiptInput(input ReceiptInput) error {
 		switch input.Type {
 		case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1", "billing.reconciliation.v1":
 			billingCostValid = validBillingCost(input.Cost)
-		case "billing.workspace_renewed.v1":
-			billingCostValid = validWorkspaceBillingCost(input.Cost, true) && input.Cost["resourceId"] == input.WorkspaceID
-		case "billing.workspace_expired.v1":
-			billingCostValid = validWorkspaceBillingCost(input.Cost, false) && input.Cost["resourceId"] == input.WorkspaceID
+		case "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
+			billingCostValid = validWorkspaceBillingCost(input.Cost, input.Type) && input.Cost["resourceId"] == input.WorkspaceID
 		default:
 			billingCostValid = false
 		}
@@ -632,11 +630,12 @@ func validBillingCost(cost map[string]any) bool {
 	return ok && userID > 0
 }
 
-func validWorkspaceBillingCost(cost map[string]any, charged bool) bool {
-	wantFields := 9
-	if charged {
-		wantFields = 12
-	}
+func validWorkspaceBillingCost(cost map[string]any, receiptType string) bool {
+	wantFields := map[string]int{
+		"billing.workspace_renewed.v1":  12,
+		"billing.workspace_expired.v1":  9,
+		"billing.workspace_refunded.v1": 13,
+	}[receiptType]
 	if len(cost) != wantFields || cost["currency"] != "USD" || cost["billingUnit"] != "calendar_month" || cost["resourceType"] != "workspace" {
 		return false
 	}
@@ -675,13 +674,21 @@ func validWorkspaceBillingCost(cost map[string]any, charged bool) bool {
 	if !computeCostOK || !storageCostOK || !storageGBOK || computeCost <= 0 || storageCost <= 0 || storageGB <= 0 || computeCost > math.MaxInt64-storageCost || computeCost+storageCost != total {
 		return false
 	}
-	if !charged {
+	if receiptType == "billing.workspace_expired.v1" {
 		return true
 	}
 	userID, userOK := integerValue(cost["sub2apiUserId"])
-	postCharge, postChargeOK := integerValue(cost["postChargeBalanceUsdMicros"])
 	redeemCode, redeemOK := cost["sub2apiRedeemCode"].(string)
-	return userOK && userID > 0 && postChargeOK && postCharge >= 0 && redeemOK && isOpaqueReference(redeemCode)
+	if !userOK || userID <= 0 || !redeemOK || !isOpaqueReference(redeemCode) {
+		return false
+	}
+	if receiptType == "billing.workspace_renewed.v1" {
+		postCharge, ok := integerValue(cost["postChargeBalanceUsdMicros"])
+		return ok && postCharge >= 0
+	}
+	refund, refundOK := integerValue(cost["refundUsdMicros"])
+	refundCode, refundCodeOK := cost["sub2apiRefundCode"].(string)
+	return refundOK && refund == total && refundCodeOK && isOpaqueReference(refundCode)
 }
 
 func integerValue(value any) (int64, bool) {

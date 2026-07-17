@@ -155,6 +155,14 @@ func TestWorkspaceBillingReceiptSchemaHTTP(t *testing.T) {
 	if crossWorkspaceRec.Code != http.StatusBadRequest {
 		t.Fatalf("cross-Workspace billing receipt status=%d body=%s", crossWorkspaceRec.Code, crossWorkspaceRec.Body.String())
 	}
+	refundedBody := `{"type":"billing.workspace_refunded.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-renewal:charge:v1","sub2apiRefundCode":"opl:workspace-renewal:refund:v1","refundUsdMicros":52580000,"periodStart":"2026-07-31T09:30:00Z","paidThrough":"2026-08-31T09:30:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
+	refunded := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(refundedBody))
+	refunded.Header.Set("Idempotency-Key", "http-workspace-refunded-schema")
+	refundedRec := httptest.NewRecorder()
+	server.ServeHTTP(refundedRec, refunded)
+	if refundedRec.Code != http.StatusCreated {
+		t.Fatalf("valid Workspace refund receipt status=%d body=%s", refundedRec.Code, refundedRec.Body.String())
+	}
 }
 
 func TestReceiptHTTPPreservesLargeIntegerCost(t *testing.T) {

@@ -55,6 +55,7 @@ func TestOperatorSummaryIncludesWorkspaceRenewalAlerts(t *testing.T) {
 		{name: "manual review", status: "manual_review", phase: "verify_compute", errorCode: "fabric_compute_renewal_unconfirmed", wantCode: "manual_review"},
 		{name: "insufficient", status: "insufficient", phase: "debit", errorCode: "monthly_balance_insufficient", wantCode: "insufficient"},
 		{name: "renewal receipt", status: "verifying", phase: "receipt", errorCode: "ledger_receipt_pending", wantCode: "renewal_receipt_pending"},
+		{name: "refund receipt", status: "refunded", phase: "refund_receipt", errorCode: "ledger_refund_receipt_pending", wantCode: "refund_receipt_pending"},
 		{name: "expiry receipt", status: "expired_unpaid", phase: "expiry_receipt", errorCode: "ledger_expiry_receipt_pending", wantCode: "expiry_receipt_pending"},
 		{name: "cleanup", status: "expired_unpaid", phase: "expire_compute", errorCode: "workspace_expiry_compute_cleanup_pending", wantCode: "cleanup_pending"},
 	}

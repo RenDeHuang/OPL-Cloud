@@ -54,6 +54,9 @@ func validWorkspaceBillingReceiptInput(receiptType string) ReceiptInput {
 	}
 	if receiptType == "billing.workspace_renewed.v1" {
 		input.Cost["sub2apiUserId"], input.Cost["sub2apiRedeemCode"], input.Cost["postChargeBalanceUsdMicros"] = int64(41), "opl:workspace-renewal:charge:v1", int64(47_420_000)
+	} else if receiptType == "billing.workspace_refunded.v1" {
+		input.Cost["sub2apiUserId"], input.Cost["sub2apiRedeemCode"] = int64(41), "opl:workspace-renewal:charge:v1"
+		input.Cost["sub2apiRefundCode"], input.Cost["refundUsdMicros"] = "opl:workspace-renewal:refund:v1", int64(52_580_000)
 	}
 	return input
 }
@@ -65,7 +68,7 @@ func TestWorkspaceBillingReceiptSchemaMemory(t *testing.T) {
 func testWorkspaceBillingReceiptSchema(t *testing.T, store Store) {
 	t.Helper()
 	ctx := context.Background()
-	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1"} {
+	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1"} {
 		t.Run(receiptType, func(t *testing.T) {
 			if _, err := store.RecordReceipt(ctx, validWorkspaceBillingReceiptInput(receiptType)); err != nil {
 				t.Fatalf("valid Workspace billing receipt: %v", err)
@@ -124,7 +127,25 @@ func testWorkspaceBillingReceiptSchema(t *testing.T, store Store) {
 			}
 		})
 	}
-	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1"} {
+	for _, field := range []string{"sub2apiUserId", "sub2apiRedeemCode", "sub2apiRefundCode", "refundUsdMicros"} {
+		t.Run("refunded missing "+field, func(t *testing.T) {
+			input := validWorkspaceBillingReceiptInput("billing.workspace_refunded.v1")
+			delete(input.Cost, field)
+			input.IdempotencyKey += "-missing-" + field
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	t.Run("refunded amount mismatch", func(t *testing.T) {
+		input := validWorkspaceBillingReceiptInput("billing.workspace_refunded.v1")
+		input.Cost["refundUsdMicros"] = int64(1)
+		input.IdempotencyKey += "-amount-mismatch"
+		if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+			t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+		}
+	})
+	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1"} {
 		t.Run(receiptType+" cross Workspace", func(t *testing.T) {
 			input := validWorkspaceBillingReceiptInput(receiptType)
 			input.WorkspaceID = "workspace-other"

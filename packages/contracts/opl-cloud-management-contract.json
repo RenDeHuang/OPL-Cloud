@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "owner": "OPL Console",
   "purpose": "Console identity, organization, membership, role, Sub2API account mapping, and management API contract.",
   "state": "current",
@@ -106,21 +106,31 @@
     "adminSessionAllowed": true
   },
   "operatorNotifications": {
-    "source": "Derived from current Control Plane compute and storage state; no alert table or second source of truth.",
+    "source": "Derived from current Workspace renewal operations plus current compute and storage compatibility state; no alert table or second source of truth.",
     "activeCodes": [
       "manual_review",
       "past_due",
       "ledger_receipt_pending",
-      "cleanup_failed"
+      "cleanup_failed",
+      "insufficient",
+      "renewal_receipt_pending",
+      "refund_receipt_pending",
+      "expiry_receipt_pending",
+      "cleanup_pending"
     ],
     "severity": {
       "error": [
         "manual_review",
-        "cleanup_failed"
+        "cleanup_failed",
+        "cleanup_pending"
       ],
       "warning": [
         "past_due",
-        "ledger_receipt_pending"
+        "ledger_receipt_pending",
+        "insufficient",
+        "renewal_receipt_pending",
+        "refund_receipt_pending",
+        "expiry_receipt_pending"
       ]
     },
     "logPolicy": "State transitions use stable codes and hashed resource references; account IDs, resource IDs, redeem codes, balances, credentials, and provider errors are excluded."

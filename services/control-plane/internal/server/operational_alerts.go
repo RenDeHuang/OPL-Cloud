@@ -9,7 +9,7 @@ import (
 
 var operationalAlertCodes = [...]string{
 	"manual_review", "past_due", "ledger_receipt_pending", "cleanup_failed",
-	"insufficient", "renewal_receipt_pending", "expiry_receipt_pending", "cleanup_pending",
+	"insufficient", "renewal_receipt_pending", "refund_receipt_pending", "expiry_receipt_pending", "cleanup_pending",
 }
 
 func monthlyOperationalAlertCodes(row map[string]any) []string {
@@ -33,6 +33,9 @@ func monthlyOperationalAlertCodes(row map[string]any) []string {
 	}
 	if strings.HasPrefix(renewalError, "ledger_receipt_") {
 		codes = append(codes, "renewal_receipt_pending")
+	}
+	if strings.HasPrefix(renewalError, "ledger_refund_receipt_") {
+		codes = append(codes, "refund_receipt_pending")
 	}
 	if strings.HasPrefix(renewalError, "ledger_expiry_receipt_") {
 		codes = append(codes, "expiry_receipt_pending")
@@ -72,7 +75,7 @@ func operationalNotificationSummary(workspaces, computes, storages controlPlaneR
 		for _, row := range rows {
 			for _, code := range monthlyOperationalAlertCodes(row) {
 				severity := "error"
-				if code == "past_due" || code == "ledger_receipt_pending" || code == "insufficient" || code == "renewal_receipt_pending" || code == "expiry_receipt_pending" {
+				if code == "past_due" || code == "ledger_receipt_pending" || code == "insufficient" || code == "renewal_receipt_pending" || code == "refund_receipt_pending" || code == "expiry_receipt_pending" {
 					severity = "warning"
 					warningCount++
 				} else {

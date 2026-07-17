@@ -28,6 +28,7 @@
     "billing.reconciliation.v1",
     "billing.workspace_renewed.v1",
     "billing.workspace_expired.v1",
+    "billing.workspace_refunded.v1",
     "artifact.manifest.v1",
     "review.result.v1",
     "execution.receipt.v1"
@@ -280,7 +281,8 @@
   "workspaceMonthlyBillingReceiptV1": {
     "types": [
       "billing.workspace_renewed.v1",
-      "billing.workspace_expired.v1"
+      "billing.workspace_expired.v1",
+      "billing.workspace_refunded.v1"
     ],
     "requiredCostFields": [
       "priceVersion",
@@ -298,6 +300,12 @@
       "sub2apiRedeemCode",
       "postChargeBalanceUsdMicros"
     ],
+    "refundedAdditionalCostFields": [
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "sub2apiRefundCode",
+      "refundUsdMicros"
+    ],
     "exactComponents": {
       "compute": ["resourceType", "resourceId", "chargeUsdMicros"],
       "storage": ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
@@ -309,7 +317,8 @@
       "all money and size fields are integers with positive component amounts",
       "totalUsdMicros equals compute plus storage with int64 overflow rejection",
       "paidThrough is strictly after periodStart",
-      "expired receipts contain no synthetic Sub2API charge identity"
+      "expired receipts contain no synthetic Sub2API charge identity",
+      "refunded receipts require the original debit identity, a stable refund identity, and refundUsdMicros equal to totalUsdMicros"
     ],
     "writeProtocol": "append_first_with_idempotency",
     "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts"

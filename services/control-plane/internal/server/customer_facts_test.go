@@ -376,12 +376,21 @@ func TestBillingReconciliationTreatsWorkspaceRenewalAsOneCombinedOperation(t *te
 	if len(sub2API.history[41]) != 1 || len(ledger.page.Receipts) != 1 || len(fabric.operations) != 2 {
 		t.Fatalf("combined facts history=%#v receipts=%#v operations=%#v", sub2API.history[41], ledger.page.Receipts, fabric.operations)
 	}
-	originalCost := cloneMap(ledger.page.Receipts[0].Cost)
+	originalCost := structToMap(ledger.page.Receipts[0].Cost)
 	for _, tc := range []struct {
 		name   string
 		mutate func(map[string]any)
 	}{
 		{name: "total", mutate: func(cost map[string]any) { cost["totalUsdMicros"] = int64(1) }},
+		{name: "Sub2API user", mutate: func(cost map[string]any) { cost["sub2apiUserId"] = int64(42) }},
+		{name: "redeem code", mutate: func(cost map[string]any) { cost["sub2apiRedeemCode"] = "opl:other" }},
+		{name: "post-charge balance", mutate: func(cost map[string]any) { cost["postChargeBalanceUsdMicros"] = int64(1) }},
+		{name: "compute resource type", mutate: func(cost map[string]any) {
+			cost["components"].(map[string]any)["compute"].(map[string]any)["resourceType"] = "storage"
+		}},
+		{name: "storage resource type", mutate: func(cost map[string]any) {
+			cost["components"].(map[string]any)["storage"].(map[string]any)["resourceType"] = "compute"
+		}},
 		{name: "billing unit", mutate: func(cost map[string]any) { cost["billingUnit"] = "rolling_month" }},
 		{name: "period start", mutate: func(cost map[string]any) {
 			cost["periodStart"] = renewal.paidThrough.Add(-time.Hour).Format(time.RFC3339)
@@ -391,7 +400,7 @@ func TestBillingReconciliationTreatsWorkspaceRenewalAsOneCombinedOperation(t *te
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ledger.page.Receipts[0].Cost = cloneMap(originalCost)
+			ledger.page.Receipts[0].Cost = structToMap(originalCost)
 			tc.mutate(ledger.page.Receipts[0].Cost)
 			key := "reconcile-workspace-renewal-" + strings.ReplaceAll(tc.name, " ", "-")
 			mismatch := requestWithMutationKeyForTest(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`, key)

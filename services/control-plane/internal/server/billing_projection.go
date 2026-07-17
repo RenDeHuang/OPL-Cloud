@@ -162,6 +162,7 @@ func workspaceRenewalBillingReconciliationRow(workspace map[string]any, operatio
 	return map[string]any{
 		"id": operation.WorkspaceID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
 		"billingOperationId": operation.ID, "sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalUSDMicros,
+		"sub2apiUserId": int64(numberField(operation.ChargeConfirmation, "userId", 0)), "postChargeBalanceUsdMicros": operation.PostChargeBalanceUSDMicros,
 		"lastReceiptId": operation.ReceiptID, "priceVersion": operation.PriceVersion, "periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
 		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "storageGb": operation.StorageGB,
 		"computeChargeUsdMicros": operation.ComputeUSDMicros, "storageChargeUsdMicros": operation.StorageUSDMicros,
@@ -198,9 +199,11 @@ func validLocalBillingReconciliationFact(resourceType string, row map[string]any
 	if resourceType == "workspace" {
 		computeCharge, validComputeCharge := requiredNonNegativeInteger(row, "computeChargeUsdMicros")
 		storageCharge, validStorageCharge := requiredNonNegativeInteger(row, "storageChargeUsdMicros")
+		sub2APIUserID, validSub2APIUserID := requiredNonNegativeInteger(row, "sub2apiUserId")
+		_, validPostChargeBalance := requiredNonNegativeInteger(row, "postChargeBalanceUsdMicros")
 		return stringValue(row["id"]) != "" && stringValue(row["accountId"]) != "" && stringValue(row["workspaceId"]) == stringValue(row["id"]) &&
 			stringValue(row["billingOperationId"]) != "" && stringValue(row["sub2apiRedeemCode"]) != "" && validCharge && validComputeCharge && validStorageCharge &&
-			charge > 0 && computeCharge > 0 && storageCharge > 0 && charge == computeCharge+storageCharge && stringValue(row["priceVersion"]) != "" &&
+			validSub2APIUserID && validPostChargeBalance && sub2APIUserID > 0 && charge > 0 && computeCharge > 0 && storageCharge > 0 && charge == computeCharge+storageCharge && stringValue(row["priceVersion"]) != "" &&
 			stringValue(row["computeAllocationId"]) != "" && stringValue(row["storageId"]) != "" && numberField(row, "storageGb", 0) > 0 &&
 			stringValue(row["computeProvider"]) != "" && stringValue(row["computeProviderRequestId"]) != "" && stringValue(row["computeProviderResourceId"]) != "" &&
 			stringValue(row["storageProvider"]) != "" && stringValue(row["storageProviderRequestId"]) != "" && stringValue(row["storageProviderResourceId"]) != ""
@@ -294,14 +297,21 @@ func ledgerReconciliationCode(resourceType string, row map[string]any, receipts 
 		storageCharge, validStorageCharge := requiredNonNegativeInteger(storage, "chargeUsdMicros")
 		expectedComputeCharge, validExpectedComputeCharge := requiredNonNegativeInteger(row, "computeChargeUsdMicros")
 		expectedStorageCharge, validExpectedStorageCharge := requiredNonNegativeInteger(row, "storageChargeUsdMicros")
+		sub2APIUserID, validSub2APIUserID := requiredNonNegativeInteger(receipt.Cost, "sub2apiUserId")
+		expectedSub2APIUserID, validExpectedSub2APIUserID := requiredNonNegativeInteger(row, "sub2apiUserId")
+		postChargeBalance, validPostChargeBalance := requiredNonNegativeInteger(receipt.Cost, "postChargeBalanceUsdMicros")
+		expectedPostChargeBalance, validExpectedPostChargeBalance := requiredNonNegativeInteger(row, "postChargeBalanceUsdMicros")
 		if len(matches) != 1 || receipt.Type != "billing.workspace_renewed.v1" || receipt.Status != "completed" ||
 			receipt.AccountID != stringValue(row["accountId"]) || receipt.WorkspaceID != stringValue(row["workspaceId"]) || receipt.RequestID != stringValue(row["billingOperationId"]) ||
 			stringValue(receipt.Cost["resourceType"]) != "workspace" || stringValue(receipt.Cost["resourceId"]) != stringValue(row["id"]) ||
 			stringValue(receipt.Cost["priceVersion"]) != stringValue(row["priceVersion"]) || stringValue(receipt.Cost["currency"]) != pricingCurrency || stringValue(receipt.Cost["billingUnit"]) != pricingBillingUnit ||
+			stringValue(receipt.Cost["sub2apiRedeemCode"]) != stringValue(row["sub2apiRedeemCode"]) || !validSub2APIUserID || !validExpectedSub2APIUserID || sub2APIUserID != expectedSub2APIUserID ||
+			!validPostChargeBalance || !validExpectedPostChargeBalance || postChargeBalance != expectedPostChargeBalance ||
 			stringValue(receipt.Cost["periodStart"]) != stringValue(row["periodStart"]) || stringValue(receipt.Cost["paidThrough"]) != stringValue(row["paidThrough"]) ||
 			!validTotal || !validExpectedTotal || total != expectedTotal || !validComputeCharge || !validExpectedComputeCharge || computeCharge != expectedComputeCharge ||
-			!validStorageCharge || !validExpectedStorageCharge || storageCharge != expectedStorageCharge || stringValue(compute["resourceId"]) != stringValue(row["computeAllocationId"]) ||
-			stringValue(storage["resourceId"]) != stringValue(row["storageId"]) || int64(numberField(storage, "sizeGb", -1)) != int64(numberField(row, "storageGb", -2)) {
+			!validStorageCharge || !validExpectedStorageCharge || storageCharge != expectedStorageCharge || stringValue(compute["resourceType"]) != "compute" || stringValue(storage["resourceType"]) != "storage" ||
+			stringValue(compute["resourceId"]) != stringValue(row["computeAllocationId"]) || stringValue(storage["resourceId"]) != stringValue(row["storageId"]) ||
+			int64(numberField(storage, "sizeGb", -1)) != int64(numberField(row, "storageGb", -2)) {
 			return "ledger_receipt_mismatch"
 		}
 		return ""

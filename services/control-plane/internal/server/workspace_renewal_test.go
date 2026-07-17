@@ -317,6 +317,12 @@ func TestWorkspaceRenewalReviewResolutionRequiresBothProviderFactsAndResumes(t *
 		strings.Count(strings.Join(*fixture.events, ","), "fabric.compute.sync") != computeSyncs || len(fixture.sub2API.refunds) != 0 || len(fixture.ledger.receipts) != 1 {
 		t.Fatalf("resolved operation=%#v workspace=%#v events=%#v refunds=%#v receipts=%#v", resolved, workspace, *fixture.events, fixture.sub2API.refunds, fixture.ledger.receipts)
 	}
+	receipt := fixture.ledger.receipts[0]
+	if receipt.InputRefs["evidenceRef"] != "case-20260717-workspace" || receipt.ReviewerChecks["decision"] != billingReviewActivateCharged ||
+		receipt.ReviewerChecks["reviewer"] != resolved.ReviewResolutionReviewer || receipt.ReviewerChecks["evidenceRef"] != resolved.ReviewResolutionEvidenceRef ||
+		receipt.ReviewerChecks["resolvedAt"] != resolved.ReviewResolutionResolvedAt {
+		t.Fatalf("review evidence inputRefs=%#v reviewerChecks=%#v operation=%#v", receipt.InputRefs, receipt.ReviewerChecks, resolved)
+	}
 	beforeEvents, beforeReceipts := len(*fixture.events), len(fixture.ledger.receipts)
 	replay := workspaceRenewalReviewRequest(t, restarted, reservedOperatorSessionForTest(t, restarted), operationID, key)
 	if replay.Code != http.StatusOK || replay.Body.String() != second.Body.String() || len(*fixture.events) != beforeEvents || len(fixture.ledger.receipts) != beforeReceipts {
@@ -512,6 +518,77 @@ func TestWorkspaceRenewalConfirmedProviderAbsenceRefundsCombinedDebit(t *testing
 	}
 }
 
+func TestWorkspaceRenewalRefundReceiptFailureRetriesOnlyReceipt(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	fixture.fabric.computeRenewErr = errors.New("provider response lost")
+	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}
+	fixture.ledger.receiptErrors = []error{errors.New("ledger unavailable"), nil}
+	now := fixture.paidThrough.Add(-monthlyRenewalLead)
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); err == nil {
+		t.Fatal("refund receipt failure did not surface")
+	}
+	pending, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Status != "refunded" || pending.Phase != "refund_receipt" || len(fixture.sub2API.refunds) != 1 || len(fixture.ledger.receipts) != 1 || fixture.ledger.receipts[0].Type != "billing.workspace_refunded.v1" {
+		t.Fatalf("refund receipt pending operation=%#v refunds=%#v receipts=%#v", pending, fixture.sub2API.refunds, fixture.ledger.receipts)
+	}
+	beforeEvents := append([]string(nil), (*fixture.events)...)
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "refunded" || completed.Phase != "complete" || !strings.Contains(completed.PersistedResult, `"refundReceiptId":"`) || len(fixture.sub2API.refunds) != 1 ||
+		len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.ledger.receipts) != 2 || strings.Join((*fixture.events)[len(beforeEvents):], ",") != "ledger.receipt" {
+		t.Fatalf("refund receipt retry operation=%#v events=%#v refunds=%#v receipts=%#v", completed, *fixture.events, fixture.sub2API.refunds, fixture.ledger.receipts)
+	}
+}
+
+func TestWorkspaceRenewalRecoversRefundAfterConfirmationPersistFailure(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	fixture.fabric.computeRenewErr = errors.New("provider response lost")
+	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}
+	persistErr := errors.New("persist refund confirmation failed")
+	store := &failingWorkspaceRenewalPersistStore{
+		memoryTableStore: fixture.app.tables.(*memoryTableStore), err: persistErr,
+		fail: func(operation workspaceRenewalOperation) bool { return operation.Status == "refunded" },
+	}
+	app, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app = app
+	gateway := &workspaceAdjustmentHistorySub2API{monthlySub2API: fixture.sub2API}
+	fixture.service = controlplane.NewService(fixture.ledger, fixture.fabric, gateway)
+	now := fixture.paidThrough.Add(-monthlyRenewalLead)
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); !errors.Is(err, persistErr) {
+		t.Fatalf("first run error=%v, want %v", err, persistErr)
+	}
+	if len(fixture.sub2API.refunds) != 1 || len(fixture.ledger.receipts) != 0 {
+		t.Fatalf("failed refund persistence refunds=%#v receipts=%#v", fixture.sub2API.refunds, fixture.ledger.receipts)
+	}
+	restarted, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app = restarted
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now.Add(workspaceRenewalLeaseDuration+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "refunded" || completed.Phase != "complete" || !strings.Contains(completed.PersistedResult, `"refundReceiptId":"`) || gateway.historyCalls != 1 ||
+		len(fixture.sub2API.refunds) != 1 || len(fixture.ledger.receipts) != 1 || fixture.ledger.receipts[0].Type != "billing.workspace_refunded.v1" {
+		t.Fatalf("refund recovery operation=%#v history=%d refunds=%#v receipts=%#v", completed, gateway.historyCalls, fixture.sub2API.refunds, fixture.ledger.receipts)
+	}
+}
+
 func TestWorkspaceRenewalStorageAbsentAfterComputeRenewedNeedsManualReviewWithoutRefund(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	fixture.fabric.storageRenewErr = errors.New("provider response lost")
@@ -595,6 +672,80 @@ type recordingWorkspaceRenewalStore struct {
 	snapshots []workspaceRenewalPersistedSnapshot
 }
 
+type failingWorkspaceRenewalPersistStore struct {
+	*memoryTableStore
+	err    error
+	fail   func(workspaceRenewalOperation) bool
+	failed bool
+}
+
+func (s *failingWorkspaceRenewalPersistStore) PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error {
+	operation, err := decodeWorkspaceRenewalOperation(update.DesiredOperation)
+	if err != nil {
+		return err
+	}
+	if !s.failed && s.fail(operation) {
+		s.failed = true
+		return s.err
+	}
+	return s.memoryTableStore.PersistWorkspaceRenewal(ctx, update)
+}
+
+type workspaceAdjustmentHistorySub2API struct {
+	*monthlySub2API
+	historyCalls      int
+	omitRefundHistory bool
+}
+
+func (s *workspaceAdjustmentHistorySub2API) Usage(context.Context, clients.Sub2APIUsageQuery) (clients.Sub2APIUsagePage, error) {
+	return clients.Sub2APIUsagePage{}, nil
+}
+
+func (s *workspaceAdjustmentHistorySub2API) UsageStats(context.Context, clients.Sub2APIUsageStatsQuery) (clients.Sub2APIUsageStats, error) {
+	return clients.Sub2APIUsageStats{}, nil
+}
+
+func (s *workspaceAdjustmentHistorySub2API) BalanceHistory(context.Context, int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {
+	s.historyCalls++
+	usedBy := int64(41)
+	usedAt := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	entries := make([]clients.Sub2APIBalanceHistoryEntry, 0, len(s.charges)+len(s.refunds))
+	for _, charge := range s.charges {
+		entries = append(entries, clients.Sub2APIBalanceHistoryEntry{
+			Code: charge.Code, Type: "balance", ValueUSDMicros: -charge.ChargeUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt,
+		})
+	}
+	for _, refund := range s.refunds {
+		if s.omitRefundHistory {
+			continue
+		}
+		entries = append(entries, clients.Sub2APIBalanceHistoryEntry{
+			Code: refund.Code, Type: "balance", ValueUSDMicros: refund.RefundUSDMicros, Status: "used", UsedBy: &usedBy, UsedAt: &usedAt, CreatedAt: usedAt,
+		})
+	}
+	return entries, nil
+}
+
+func TestWorkspaceRenewalRetriesStableRefundCodeWhenAttemptHistoryMissing(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	fixture.fabric.computeRenewErr = errors.New("provider response lost")
+	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}
+	fixture.sub2API.refundErrors = []error{clients.ErrSub2APIChargeUnknown, nil}
+	gateway := &workspaceAdjustmentHistorySub2API{monthlySub2API: fixture.sub2API, omitRefundHistory: true}
+	fixture.service = controlplane.NewService(fixture.ledger, fixture.fabric, gateway)
+	now := fixture.paidThrough.Add(-monthlyRenewalLead)
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+		t.Fatalf("first refund attempt err=%v", err)
+	}
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.sub2API.refunds) != 2 || fixture.sub2API.refunds[0].Code != fixture.sub2API.refunds[1].Code || gateway.historyCalls != 1 ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.ledger.receipts) != 1 {
+		t.Fatalf("refund replay history=%d refunds=%#v charges=%#v compute=%#v receipts=%#v", gateway.historyCalls, fixture.sub2API.refunds, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.ledger.receipts)
+	}
+}
+
 func (s *recordingWorkspaceRenewalStore) ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error {
 	if err := s.memoryTableStore.ClaimWorkspaceRenewal(ctx, claim); err != nil {
 		return err
@@ -655,9 +806,9 @@ func TestWorkspaceRenewalRestartsFromEveryPersistedPhase(t *testing.T) {
 		t.Run(fmt.Sprintf("%02d_%s_%s", index, operation.Status, operation.Phase), func(t *testing.T) {
 			balances := []int64(nil)
 			switch {
-			case operation.ChargeConfirmation == nil:
+			case operation.ChargeConfirmation == nil && !operation.ChargeAttempted:
 				balances = []int64{100_000_000, 47_420_000}
-			case !operation.PostChargeBalanceKnown:
+			case operation.ChargeConfirmation == nil || !operation.PostChargeBalanceKnown:
 				balances = []int64{47_420_000}
 			}
 			replay := newWorkspaceRenewalWorkerFixture(t, balances)
@@ -712,5 +863,86 @@ func TestWorkspaceRenewalRecoversLostDebitResponseFromBalanceHistoryBeforeBalanc
 	}
 	if len(gateway.codes) != 1 || gateway.historyCalls != 1 || fixture.operation(t)["status"] != "active" || len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.fabric.storageRenewKeys) != 1 || len(fixture.ledger.receipts) != 1 {
 		t.Fatalf("lost-response recovery codes=%#v history=%d operation=%#v compute=%#v storage=%#v receipts=%#v", gateway.codes, gateway.historyCalls, fixture.operation(t), fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys, fixture.ledger.receipts)
+	}
+}
+
+func TestWorkspaceRenewalRecoversSuccessfulDebitAfterConfirmationPersistFailure(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	persistErr := errors.New("persist charge confirmation failed")
+	store := &failingWorkspaceRenewalPersistStore{
+		memoryTableStore: fixture.app.tables.(*memoryTableStore), err: persistErr,
+		fail: func(operation workspaceRenewalOperation) bool { return operation.ChargeConfirmation != nil },
+	}
+	app, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app = app
+	gateway := &workspaceAdjustmentHistorySub2API{monthlySub2API: fixture.sub2API}
+	fixture.service = controlplane.NewService(fixture.ledger, fixture.fabric, gateway)
+	now := fixture.paidThrough.Add(-monthlyRenewalLead)
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); !errors.Is(err, persistErr) {
+		t.Fatalf("first run error=%v, want %v", err, persistErr)
+	}
+	if len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
+		t.Fatalf("failed persistence effects charges=%#v compute=%#v storage=%#v", fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	}
+	restarted, err := newControlPlaneAppWithStore(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.app = restarted
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now.Add(workspaceRenewalLeaseDuration+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if operation := fixture.operation(t); operation["status"] != "active" || gateway.historyCalls != 1 || len(fixture.sub2API.charges) != 1 ||
+		len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.fabric.storageRenewKeys) != 1 || len(fixture.ledger.receipts) != 1 {
+		t.Fatalf("crash recovery operation=%#v history=%d charges=%#v compute=%#v storage=%#v receipts=%#v", operation, gateway.historyCalls, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys, fixture.ledger.receipts)
+	}
+}
+
+func TestWorkspaceRenewalManualReviewExpiresAndStopsCompute(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	fixture.fabric.computeRenewErr = errors.New("provider response lost")
+	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "renewing"}
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
+	if operation := fixture.operation(t); operation["status"] != "manual_review" {
+		t.Fatalf("pre-expiry operation=%#v", operation)
+	}
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough); err != nil {
+		t.Fatal(err)
+	}
+	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	operation := fixture.operation(t)
+	events := strings.Join(*fixture.events, ",")
+	if workspace["renewalStatus"] != "expired_unpaid" || workspace["state"] != "suspended" || workspace["autoRenew"] != false ||
+		operation["status"] != "expired_unpaid" || !strings.Contains(stringValue(operation["result"]), `"priorStatus":"manual_review"`) ||
+		strings.Count(events, "fabric.compute.cleanup") != 1 || strings.Contains(events, "fabric.storage.cleanup") {
+		t.Fatalf("manual-review expiry workspace=%#v operation=%#v events=%#v", workspace, operation, *fixture.events)
+	}
+}
+
+func TestWorkspaceRenewalRefundedPeriodExpiresAndStopsCompute(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	fixture.fabric.computeRenewErr = errors.New("provider response lost")
+	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
+	if operation := fixture.operation(t); operation["status"] != "refunded" || len(fixture.sub2API.refunds) != 1 {
+		t.Fatalf("pre-expiry operation=%#v refunds=%#v", operation, fixture.sub2API.refunds)
+	}
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough); err != nil {
+		t.Fatal(err)
+	}
+	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	operation := fixture.operation(t)
+	events := strings.Join(*fixture.events, ",")
+	if workspace["renewalStatus"] != "expired_unpaid" || workspace["state"] != "suspended" || workspace["autoRenew"] != false ||
+		operation["status"] != "expired_unpaid" || !strings.Contains(stringValue(operation["result"]), `"priorStatus":"refunded"`) ||
+		strings.Count(events, "fabric.compute.cleanup") != 1 || strings.Contains(events, "fabric.storage.cleanup") || len(fixture.sub2API.refunds) != 1 {
+		t.Fatalf("refunded expiry workspace=%#v operation=%#v events=%#v refunds=%#v", workspace, operation, *fixture.events, fixture.sub2API.refunds)
 	}
 }

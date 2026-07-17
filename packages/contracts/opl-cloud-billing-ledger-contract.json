@@ -53,7 +53,8 @@
       "billing.charge_review_required.v1",
       "billing.reconciliation.v1",
       "billing.workspace_renewed.v1",
-      "billing.workspace_expired.v1"
+      "billing.workspace_expired.v1",
+      "billing.workspace_refunded.v1"
     ],
     "requiredCostFields": [
       "pricingVersion",
@@ -79,7 +80,8 @@
     },
     "workspaceReceiptTypes": {
       "renewed": "billing.workspace_renewed.v1",
-      "expired": "billing.workspace_expired.v1"
+      "expired": "billing.workspace_expired.v1",
+      "refunded": "billing.workspace_refunded.v1"
     },
     "workspaceRequiredCostFields": [
       "priceVersion",
@@ -97,6 +99,12 @@
       "sub2apiRedeemCode",
       "postChargeBalanceUsdMicros"
     ],
+    "workspaceRefundedAdditionalCostFields": [
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "sub2apiRefundCode",
+      "refundUsdMicros"
+    ],
     "workspaceCostRules": {
       "currency": "USD",
       "billingUnit": "calendar_month",
@@ -107,7 +115,8 @@
       "storageSizeGb": "positive_integer",
       "total": "compute.chargeUsdMicros + storage.chargeUsdMicros with int64 overflow rejection",
       "period": "paidThrough RFC3339 is strictly after periodStart RFC3339",
-      "expiredReceiptHasNoSyntheticCharge": true
+      "expiredReceiptHasNoSyntheticCharge": true,
+      "refundedAmount": "refundUsdMicros equals totalUsdMicros"
     },
     "forbiddenContentRule": "reject recursively by case-insensitive exact field name in maps, slices, and typed JSON containers; token-count fields such as inputTokens remain allowed",
     "forbiddenContent": [
