@@ -481,61 +481,73 @@ func workspaceResponse(row map[string]any) map[string]any {
 	if row == nil {
 		row = map[string]any{}
 	}
-	row["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
-	row["ownerUserId"] = firstNonEmpty(stringValue(row["ownerUserId"]), stringValue(row["ownerId"]))
-	row["state"] = firstNonEmpty(stringValue(row["state"]), stringValue(row["status"]))
-	if _, canonicalBilling := row["renewalStatus"]; !canonicalBilling {
-		row["currentComputeAllocationId"] = firstNonEmpty(stringValue(row["currentComputeAllocationId"]), stringValue(row["computeAllocationId"]))
+	response := map[string]any{}
+	for _, key := range []string{
+		"id", "accountId", "name", "url", "state", "status", "packageId", "storageGb", "storageId",
+		"computeAllocationId", "attachmentId", "runtimeId", "createdAt", "updatedAt",
+		"autoRenew", "authorizedBy", "authorizedAt", "priceVersion", "currency", "billingUnit",
+		"computeUsdMicros", "storageUsdMicros", "totalUsdMicros", "periodStart", "paidThrough",
+		"nextRenewalAt", "billingAnchorDay", "renewalStatus", "manualReviewReason",
+	} {
+		if value, ok := row[key]; ok {
+			response[key] = value
+		}
 	}
-	row["currentAttachmentId"] = firstNonEmpty(stringValue(row["currentAttachmentId"]), stringValue(row["attachmentId"]))
+	response["ownerAccountId"] = firstNonEmpty(stringValue(row["ownerAccountId"]), stringValue(row["accountId"]))
+	response["ownerUserId"] = firstNonEmpty(stringValue(row["ownerUserId"]), stringValue(row["ownerId"]))
+	response["ownerId"] = response["ownerUserId"]
+	response["state"] = firstNonEmpty(stringValue(row["state"]), stringValue(row["status"]))
+	response["status"] = firstNonEmpty(stringValue(row["status"]), stringValue(response["state"]))
+	response["currentComputeAllocationId"] = stringValue(row["currentComputeAllocationId"])
+	response["currentAttachmentId"] = stringValue(row["currentAttachmentId"])
 	runtime := cloneMap(mapField(row, "runtime"))
-	if serviceName := stringValue(row["runtimeServiceName"]); serviceName != "" {
-		runtime["serviceName"] = serviceName
+	serviceName := firstNonEmpty(stringValue(runtime["serviceName"]), stringValue(row["runtimeServiceName"]))
+	runtimeResponse := map[string]any{}
+	if serviceName != "" {
+		runtimeResponse["serviceName"] = serviceName
 	}
-	runtimeStatus := firstNonEmpty(stringValue(runtime["status"]), stringValue(row["runtimeStatus"]), stringValue(row["state"]))
-	runtime["status"] = runtimeStatus
+	runtimeStatus := firstNonEmpty(stringValue(runtime["status"]), stringValue(row["runtimeStatus"]), stringValue(response["state"]))
+	runtimeResponse["status"] = runtimeStatus
 	if ready, ok := row["runtimeReady"].(bool); ok {
-		runtime["ready"] = ready
+		runtimeResponse["ready"] = ready
+	} else if ready, ok := runtime["ready"].(bool); ok {
+		runtimeResponse["ready"] = ready
 	}
-	row["runtime"] = runtime
-	row["runtimeStatus"] = runtimeStatus
+	response["runtime"] = runtimeResponse
+	response["runtimeStatus"] = runtimeStatus
 	access, _ := row["access"].(map[string]any)
 	access = cloneMap(access)
-	delete(access, "password")
-	delete(access, "tokenStatus")
-	delete(access, "requiresLogin")
+	accessResponse := map[string]any{}
 	if username := stringValue(row["runtimeUsername"]); username != "" {
-		access["account"] = username
-		access["username"] = username
+		accessResponse["account"], accessResponse["username"] = username, username
+	} else if username := firstNonEmpty(stringValue(access["username"]), stringValue(access["account"])); username != "" {
+		accessResponse["account"], accessResponse["username"] = username, username
 	}
-	if status := stringValue(row["credentialStatus"]); status != "" {
-		access["credentialStatus"] = status
+	if status := firstNonEmpty(stringValue(row["credentialStatus"]), stringValue(access["credentialStatus"])); status != "" {
+		accessResponse["credentialStatus"] = status
 	}
-	if version := stringValue(row["credentialVersion"]); version != "" {
-		access["credentialVersion"] = version
+	if version := firstNonEmpty(stringValue(row["credentialVersion"]), stringValue(access["credentialVersion"])); version != "" {
+		accessResponse["credentialVersion"] = version
 	}
-	if secretRef := stringValue(row["credentialSecretRef"]); secretRef != "" {
-		access["secretRef"] = secretRef
-	}
-	state := stringValue(row["state"])
+	state := stringValue(response["state"])
 	openable := state == "running" || state == "ready" || state == "available" || state == "active"
-	if ready, ok := runtime["ready"].(bool); ok && !ready {
+	if ready, ok := runtimeResponse["ready"].(bool); ok && !ready {
 		openable = false
 	}
 	if state == "suspended" || state == "data_deleted" || state == "unrecoverable" || state == "storage_missing" || state == "destroyed" {
 		openable = false
 	}
-	row["openable"] = openable
+	response["openable"] = openable
 	switch {
 	case openable:
-		row["accessState"] = "available"
-	case stringValue(row["state"]) == "suspended" || stringValue(row["state"]) == "data_deleted" || stringValue(row["state"]) == "unrecoverable" || stringValue(row["state"]) == "destroyed":
-		row["accessState"] = "disabled"
+		response["accessState"] = "available"
+	case state == "suspended" || state == "data_deleted" || state == "unrecoverable" || state == "destroyed":
+		response["accessState"] = "disabled"
 	default:
-		row["accessState"] = "distributing"
+		response["accessState"] = "distributing"
 	}
-	row["access"] = access
-	return row
+	response["access"] = accessResponse
+	return response
 }
 
 func billingStatusFor(row map[string]any) string {

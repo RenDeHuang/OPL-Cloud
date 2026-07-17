@@ -114,7 +114,7 @@ func TestSinglePodCapacity(t *testing.T) {
 		_ = admin.Close()
 	})
 	applicationName := "opl_capacity_" + stableID(schema)[:12]
-	databaseURL := controlPlaneTestPostgresURL("postgres", schema) + " application_name=" + applicationName
+	databaseURL := controlPlaneTestPostgresURL(t, "postgres", schema) + " application_name=" + applicationName
 	stateStore, err := NewPostgresEntStateStore(databaseURL)
 	if err != nil {
 		t.Fatal(err)

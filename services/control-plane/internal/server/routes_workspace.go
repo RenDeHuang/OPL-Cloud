@@ -29,6 +29,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
 			return
 		}
+		if !app.workspaceAccessAllowed(w, workspace) {
+			return
+		}
 		unlock := app.lockEntitlementResources(
 			firstNonEmpty(stringValue(workspace["currentComputeAllocationId"]), stringValue(workspace["computeAllocationId"])),
 			stringValue(workspace["storageId"]),
@@ -42,6 +45,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		if !app.canAccessResource(r, workspace) {
 			writeError(w, http.StatusForbidden, "account_scope_forbidden")
+			return
+		}
+		if !app.workspaceAccessAllowed(w, workspace) {
 			return
 		}
 		switch stringValue(workspace["state"]) {
@@ -174,26 +180,15 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			return
 		}
 		workspaceID := r.PathValue("workspaceId")
-		workspace, ok := app.getWorkspace(workspaceID)
+		workspace, ok := app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
 		if !ok {
-			writeError(w, http.StatusNotFound, "workspace_not_found")
-			return
-		}
-		if !app.canAccessResource(r, workspace) {
-			writeError(w, http.StatusForbidden, "account_scope_forbidden")
-			return
-		}
-		user, ok := app.sessionUserContext(r)
-		if !ok || stringValue(user["role"]) != "owner" || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
-			writeError(w, http.StatusForbidden, "workspace_owner_required")
 			return
 		}
 		accountID := firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"]))
 		unlock := app.lockResource("gateway-secret", accountID)
 		defer unlock()
-		workspace, ok = app.getWorkspace(workspaceID)
-		if !ok || !app.canAccessResource(r, workspace) || firstNonEmpty(stringValue(workspace["ownerUserId"]), stringValue(workspace["ownerId"])) != stringValue(user["id"]) {
-			writeError(w, http.StatusForbidden, "workspace_owner_required")
+		workspace, ok = app.ownedWorkspaceForCredentialCommand(w, r, workspaceID)
+		if !ok {
 			return
 		}
 		if app.workspaceResponse(cloneMap(workspace))["openable"] != true {
@@ -506,11 +501,12 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			}
 			switch stringValue(operation["status"]) {
 			case "succeeded":
-				if err := app.saveWorkspaceProjection(result.Workspace, acceptedBillingState); err != nil {
-					writeError(w, http.StatusInternalServerError, "state_persist_failed")
+				existing, exists := app.getWorkspace(result.Workspace.ID)
+				if !exists || !workspaceCreateProjectionCompatible(existing, result.Workspace, acceptedBillingState, false) {
+					writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
 					return
 				}
-				writeJSON(w, http.StatusCreated, app.workspaceResponse(workspaceProjectionBillingResponseRow(result.Workspace, acceptedBillingState)))
+				writeJSON(w, http.StatusCreated, app.workspaceResponse(existing))
 				return
 			case "receipt_pending":
 				workspace, retryReceipt = result.Workspace, true
@@ -529,6 +525,10 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			break
 		}
 		if retryReceipt {
+			if existing, exists := app.getWorkspace(workspace.ID); exists && !workspaceCreateProjectionCompatible(existing, workspace, acceptedBillingState, true) {
+				writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+				return
+			}
 			if err := app.saveWorkspaceProjection(workspace, acceptedBillingState); err != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
@@ -628,6 +628,10 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			}
 		}
 		result := workspaceCreateOperationResult{RequestHash: requestHash, Workspace: workspace, AcceptedBillingState: acceptedBillingState}
+		if existing, exists := app.getWorkspace(workspace.ID); exists && !workspaceCreateProjectionCompatible(existing, workspace, acceptedBillingState, false) {
+			writeError(w, http.StatusConflict, errPrimaryWorkspaceExists.Error())
+			return
+		}
 		if err := app.tables.SaveRuntimeOperation(r.Context(), workspaceCreateOperationRow(operationID, "succeeded", result)); err != nil {
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
@@ -645,6 +649,24 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 	}))
 }
 
+func workspaceCreateProjectionCompatible(existing map[string]any, projection domain.WorkspaceProjection, acceptedBillingState map[string]any, allowClaim bool) bool {
+	expected := workspaceProjectionBillingRow(projection, acceptedBillingState)
+	if firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"])) != projection.AccountID ||
+		firstNonEmpty(stringValue(existing["ownerUserId"]), stringValue(existing["ownerId"])) != projection.OwnerID ||
+		stringValue(existing["name"]) != projection.Name || stringValue(existing["packageId"]) != projection.PackageID ||
+		stringValue(existing["computeAllocationId"]) != projection.ComputeID || stringValue(existing["storageId"]) != projection.VolumeID ||
+		firstNonEmpty(stringValue(existing["attachmentId"]), stringValue(existing["currentAttachmentId"])) != projection.AttachmentID || !workspaceBillingStateMatchesLaunch(existing, expected) {
+		return false
+	}
+	if allowClaim && firstNonEmpty(stringValue(existing["state"]), stringValue(existing["status"])) == "provisioning" && stringValue(existing["runtimeId"]) == "" {
+		return stringValue(existing["currentComputeAllocationId"]) == projection.ComputeID && stringValue(existing["currentAttachmentId"]) == projection.AttachmentID
+	}
+	return stringValue(existing["state"]) == projection.Status && stringValue(existing["status"]) == projection.Status &&
+		stringValue(existing["currentComputeAllocationId"]) == projection.ComputeID && stringValue(existing["currentAttachmentId"]) == projection.AttachmentID &&
+		stringValue(existing["runtimeId"]) == projection.RuntimeID && stringValue(existing["url"]) == projection.URL &&
+		firstNonEmpty(stringValue(existing["runtimeServiceName"]), stringValue(nested(existing, "runtime", "serviceName"))) == projection.RuntimeServiceName
+}
+
 func (app *controlPlaneServer) ownedWorkspaceForCredentialCommand(w http.ResponseWriter, r *http.Request, workspaceID string) (map[string]any, bool) {
 	workspace, workspaceOK := app.getWorkspace(workspaceID)
 	user, userOK := app.sessionUserContext(r)
@@ -653,7 +675,19 @@ func (app *controlPlaneServer) ownedWorkspaceForCredentialCommand(w http.Respons
 		writeError(w, http.StatusForbidden, "workspace_owner_required")
 		return nil, false
 	}
+	if !app.workspaceAccessAllowed(w, workspace) {
+		return nil, false
+	}
 	return workspace, true
+}
+
+func (app *controlPlaneServer) workspaceAccessAllowed(w http.ResponseWriter, workspace map[string]any) bool {
+	_, reason := app.workspaceAccessResponse(cloneMap(workspace), time.Now().UTC())
+	if reason != "" {
+		writeError(w, http.StatusConflict, reason)
+		return false
+	}
+	return true
 }
 
 func workspaceCreateOperationRow(operationID, status string, result workspaceCreateOperationResult) map[string]any {

@@ -362,6 +362,48 @@ func validateWorkspaceBillingState(row map[string]any) error {
 	return err
 }
 
+func mergeWorkspaceForSave(existing, incoming map[string]any) (map[string]any, error) {
+	row := cloneMap(incoming)
+	if existing == nil {
+		return row, nil
+	}
+	for _, key := range []string{"accountId", "ownerAccountId", "ownerUserId"} {
+		if current := stringValue(existing[key]); current != "" && stringValue(row[key]) != current {
+			return nil, errIdempotencyConflict
+		}
+	}
+	existingBilling := workspaceAcceptedBillingState(existing)
+	incomingBilling := workspaceAcceptedBillingState(row)
+	if existingBilling != nil && incomingBilling != nil {
+		for _, key := range []string{"computeAllocationId", "storageId", "packageId", "priceVersion"} {
+			if existingBilling[key] != incomingBilling[key] {
+				return nil, errIdempotencyConflict
+			}
+		}
+	}
+	if !workspaceLifecycleInactive(existing) || workspaceLifecycleInactive(row) {
+		return row, nil
+	}
+	for _, key := range []string{"state", "status", "currentComputeAllocationId", "currentAttachmentId"} {
+		row[key] = existing[key]
+	}
+	if existingBilling != nil {
+		for key, value := range existingBilling {
+			row[key] = value
+		}
+	}
+	return row, nil
+}
+
+func workspaceLifecycleInactive(row map[string]any) bool {
+	switch firstNonEmpty(stringValue(row["state"]), stringValue(row["status"])) {
+	case "suspended", "stopped", "data_deleted", "unrecoverable", "storage_missing", "destroyed":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeWorkspaceBillingStateForWorkspace(row, workspace map[string]any) (workspaceBillingState, bool, error) {
 	currentComputeID := stringValue(workspace["currentComputeAllocationId"])
 	state, present, err := normalizeWorkspaceBillingState(row, currentComputeID, stringValue(workspace["storageId"]), stringValue(workspace["ownerUserId"]))
@@ -503,7 +545,10 @@ func encodeWorkspaceBillingState(row map[string]any) (string, error) {
 }
 
 func decodeWorkspaceBillingState(encoded string, workspace map[string]any) (map[string]any, error) {
-	if strings.TrimSpace(encoded) == "" || strings.TrimSpace(encoded) == "{}" {
+	if strings.TrimSpace(encoded) == "" {
+		return nil, errInvalidWorkspaceBillingState
+	}
+	if strings.TrimSpace(encoded) == "{}" {
 		return nil, nil
 	}
 	var shape map[string]json.RawMessage
@@ -1663,7 +1708,103 @@ func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[strin
 	if _, ok := row["customerProduct"]; !ok {
 		row["customerProduct"] = true
 	}
-	return s.replaceRecord(ctx, row, func(id string) error { return s.client.Workspace.DeleteOneID(id).Exec(ctx) }, func() any { return s.client.Workspace.Create() }, workspaceEntFields)
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := saveWorkspaceRecord(ctx, tx.Client(), row); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error) {
+	if err := validateWorkspaceBillingState(row); err != nil {
+		return nil, err
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	load := func(entity any, err error, fields []entRecordField) (map[string]any, error) {
+		if controlplaneent.IsNotFound(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return recordFromEnt(entity, fields), nil
+	}
+	ownerEntity, ownerErr := client.User.Get(ctx, stringValue(row["ownerUserId"]))
+	owner, err := load(ownerEntity, ownerErr, userEntFields)
+	if err != nil {
+		return nil, err
+	}
+	computeEntity, computeErr := client.ComputeAllocation.Get(ctx, stringValue(row["currentComputeAllocationId"]))
+	compute, err := load(computeEntity, computeErr, computeEntFields)
+	if err != nil {
+		return nil, err
+	}
+	storageEntity, storageErr := client.StorageVolume.Get(ctx, stringValue(row["storageId"]))
+	storage, err := load(storageEntity, storageErr, storageEntFields)
+	if err != nil {
+		return nil, err
+	}
+	attachmentEntity, attachmentErr := client.StorageAttachment.Get(ctx, stringValue(row["currentAttachmentId"]))
+	attachment, err := load(attachmentEntity, attachmentErr, attachmentEntFields)
+	if err != nil {
+		return nil, err
+	}
+	existingEntity, existingErr := client.Workspace.Get(ctx, stringValue(row["id"]))
+	existing, err := load(existingEntity, existingErr, workspaceEntFields)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := prepareWorkspaceActivation(row, owner, compute, storage, attachment, existing)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := prepared["customerProduct"]; !ok {
+		prepared["customerProduct"] = true
+	}
+	if err := saveWorkspaceRecord(ctx, client, prepared); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func saveWorkspaceRecord(ctx context.Context, client *controlplaneent.Client, row map[string]any) error {
+	id := stringValue(row["id"])
+	if id == "" {
+		return errors.New("missing_record_id")
+	}
+	entity, err := client.Workspace.Get(ctx, id)
+	if err == nil {
+		row, err = mergeWorkspaceForSave(recordFromEnt(entity, workspaceEntFields), row)
+		if err != nil {
+			return err
+		}
+		if err := validateWorkspaceBillingState(row); err != nil {
+			return err
+		}
+		builder := client.Workspace.UpdateOneID(id)
+		setRecordFieldsWithEmptyText(builder, row, workspaceEntFields, true)
+		return execCreate(ctx, builder)
+	}
+	if !controlplaneent.IsNotFound(err) {
+		return err
+	}
+	if err := saveRecord(ctx, id, row, client.Workspace.Create(), workspaceEntFields); controlplaneent.IsConstraintError(err) {
+		return errIdempotencyConflict
+	} else {
+		return err
+	}
 }
 
 func (s *postgresEntStateStore) ClaimWorkspaceCreate(ctx context.Context, workspaceRow map[string]any, operation map[string]any) error {
@@ -1844,7 +1985,11 @@ func (s *postgresEntStateStore) CommitWorkspaceResume(ctx context.Context, works
 		_ = tx.Rollback()
 		return err
 	}
-	if err := store.SaveWorkspace(ctx, workspace); err != nil {
+	if err := validateWorkspaceBillingState(workspace); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := saveWorkspaceRecord(ctx, tx.Client(), workspace); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

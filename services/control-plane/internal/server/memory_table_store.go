@@ -472,12 +472,45 @@ func (s *memoryTableStore) SaveWorkspace(_ context.Context, row map[string]any) 
 	if _, ok := row["customerProduct"]; !ok {
 		row["customerProduct"] = true
 	}
+	var err error
+	row, err = mergeWorkspaceForSave(s.workspaces[stringValue(row["id"])], row)
+	if err != nil {
+		return err
+	}
+	if err := validateWorkspaceBillingState(row); err != nil {
+		return err
+	}
 	access, _ := row["access"].(map[string]any)
 	access = cloneMap(access)
 	delete(access, "password")
 	row["access"] = access
 	s.workspaces[stringValue(row["id"])] = row
 	return nil
+}
+
+func (s *memoryTableStore) ActivateWorkspace(_ context.Context, row map[string]any) (map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := stringValue(row["id"])
+	prepared, err := prepareWorkspaceActivation(
+		row,
+		s.users[stringValue(row["ownerUserId"])],
+		s.computes[stringValue(row["currentComputeAllocationId"])],
+		s.storages[stringValue(row["storageId"])],
+		s.attachments[stringValue(row["currentAttachmentId"])],
+		s.workspaces[id],
+	)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := prepared["customerProduct"]; !ok {
+		prepared["customerProduct"] = true
+	}
+	access := cloneMap(mapField(prepared, "access"))
+	delete(access, "password")
+	prepared["access"] = access
+	s.workspaces[id] = cloneMap(prepared)
+	return cloneMap(prepared), nil
 }
 
 func (s *memoryTableStore) ClaimWorkspaceCreate(_ context.Context, workspace map[string]any, operation map[string]any) error {

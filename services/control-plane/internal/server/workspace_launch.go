@@ -277,7 +277,11 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 			for key, value := range billingState {
 				workspaceRow[key] = value
 			}
-			if err := app.tables.SaveWorkspace(ctx, workspaceRow); err != nil {
+			workspaceRow, err = app.tables.ActivateWorkspace(ctx, workspaceRow)
+			if errors.Is(err, errWorkspaceActivationConflict) {
+				return app.manualReviewWorkspaceLaunch(ctx, operation, "workspace_launch_activation_conflict")
+			}
+			if err != nil {
 				return app.retryWorkspaceLaunch(ctx, operation, "workspace_launch_projection_persist_retryable")
 			}
 			operation.RuntimeServiceName, operation.URL = workspace.RuntimeServiceName, workspace.URL

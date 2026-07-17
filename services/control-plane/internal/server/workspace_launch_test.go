@@ -528,6 +528,51 @@ func TestWorkspaceLaunchOwnerRaceDisablesRenewalIntent(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchRevalidatesOwnerAndChildrenAfterRuntimeApply(t *testing.T) {
+	t.Run("owner disabled", func(t *testing.T) {
+		fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_420_000}, nil, nil, true)
+		fixture.fabric.afterRuntime = func() {
+			owner, err := fixture.app.findUserByID(context.Background(), "usr-alpha")
+			if err != nil || owner == nil {
+				t.Fatalf("find owner during Runtime apply: owner=%#v err=%v", owner, err)
+			}
+			owner["status"] = "disabled"
+			if err := fixture.store.ApplyUserLifecycle(context.Background(), owner); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+			t.Fatal(err)
+		}
+		workspaces, _ := fixture.store.ListWorkspaces(context.Background(), "acct-alpha")
+		if len(workspaces) != 1 || workspaces[0]["autoRenew"] != false {
+			t.Fatalf("owner race persisted stale renewal intent: %#v", workspaces)
+		}
+	})
+
+	t.Run("attachment detached", func(t *testing.T) {
+		fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_420_000}, nil, nil, true)
+		fixture.fabric.afterRuntime = func() {
+			attachments, err := fixture.store.ListAttachments(context.Background(), "acct-alpha")
+			if err != nil || len(attachments) != 1 {
+				t.Fatalf("load attachment during Runtime apply: rows=%#v err=%v", attachments, err)
+			}
+			attachments[0]["status"] = "detached"
+			if err := fixture.store.SaveAttachment(context.Background(), attachments[0]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+			t.Fatal("detached child was activated after Runtime apply")
+		}
+		operation := fixture.operation(t)
+		workspaces, _ := fixture.store.ListWorkspaces(context.Background(), "acct-alpha")
+		if operation.Status != "manual_review" || len(workspaces) != 0 {
+			t.Fatalf("detached child activation: operation=%#v Workspaces=%#v", operation, workspaces)
+		}
+	})
+}
+
 func TestWorkspaceLaunchProviderDeadlineFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name, phase string

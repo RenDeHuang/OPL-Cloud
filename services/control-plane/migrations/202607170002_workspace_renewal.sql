@@ -56,6 +56,10 @@ WITH legacy AS (
     w.account_id,
     w.owner_account_id,
     w.owner_user_id AS workspace_owner_user_id,
+    u.id AS owner_user_record_id,
+    u.account_id AS owner_user_account_id,
+    u.status AS owner_user_status,
+    u.role AS owner_user_role,
     w.current_compute_allocation_id,
     w.storage_id,
     c.id AS compute_id,
@@ -74,6 +78,7 @@ WITH legacy AS (
     s.size_gb AS storage_gb,
     pg_temp.opl_try_jsonb(s.billing_state_json) AS storage_billing
   FROM control_plane_workspaces w
+  LEFT JOIN control_plane_users u ON u.id = w.owner_user_id
   LEFT JOIN control_plane_compute_allocations c ON c.id = w.current_compute_allocation_id
   LEFT JOIN control_plane_storage_volumes s ON s.id = w.storage_id
   WHERE w.billing_state_json IS NULL
@@ -98,6 +103,10 @@ WITH legacy AS (
       workspace_account_id <> ''
       AND (account_id = '' OR owner_account_id = '' OR account_id = owner_account_id)
       AND workspace_owner_user_id <> ''
+      AND owner_user_record_id = workspace_owner_user_id
+      AND owner_user_account_id = workspace_account_id
+      AND owner_user_status = 'active'
+      AND owner_user_role = 'owner'
       AND compute_id = current_compute_allocation_id
       AND storage_record_id = storage_id
       AND compute_account_id = workspace_account_id

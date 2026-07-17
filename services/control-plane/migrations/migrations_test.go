@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -80,7 +81,11 @@ func TestApplyPrimaryWorkspaceAddsClassificationAndFailsClosedOnDuplicates(t *te
 }
 
 func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
-	admin, err := sql.Open("postgres", "host=/var/run/postgresql dbname=postgres sslmode=disable")
+	databaseURL := strings.TrimSpace(os.Getenv("CONTROL_PLANE_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Fatal("CONTROL_PLANE_TEST_DATABASE_URL is required for PostgreSQL tests")
+	}
+	admin, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +98,7 @@ func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
-	db, err := sql.Open("postgres", postgresURLWithSearchPath("host=/var/run/postgresql dbname=postgres sslmode=disable", schema))
+	db, err := sql.Open("postgres", postgresURLWithSearchPath(databaseURL, schema))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +108,9 @@ func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 			id text PRIMARY KEY, account_id text NOT NULL, owner_account_id text NOT NULL,
 			owner_user_id text NOT NULL, current_compute_allocation_id text NOT NULL, storage_id text NOT NULL
 		);
+		CREATE TABLE control_plane_users (
+			id text PRIMARY KEY, account_id text NOT NULL, status text NOT NULL, role text NOT NULL
+		);
 		CREATE TABLE control_plane_compute_allocations (
 			id text PRIMARY KEY, account_id text NOT NULL, owner_user_id text NOT NULL, workspace_id text NOT NULL,
 			package_id text NOT NULL, billing_status text NOT NULL, billing_state_json text NOT NULL
@@ -111,6 +119,10 @@ func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 			id text PRIMARY KEY, account_id text NOT NULL, owner_user_id text NOT NULL, workspace_id text NOT NULL,
 			package_id text NOT NULL, billing_status text NOT NULL, size_gb double precision NOT NULL, billing_state_json text NOT NULL
 		);
+		INSERT INTO control_plane_users VALUES
+			('usr-basic', 'acct-basic', 'active', 'owner'),
+			('usr-true', 'acct-true', 'active', 'owner'),
+			('usr-pro', 'acct-pro', 'active', 'owner');
 		INSERT INTO control_plane_workspaces VALUES ('ws-basic', 'acct-basic', 'acct-basic', 'usr-basic', 'compute-basic', 'storage-basic');
 		INSERT INTO control_plane_compute_allocations VALUES (
 			'compute-basic', 'acct-basic', 'usr-basic', 'ws-basic', 'basic', 'active',
@@ -183,6 +195,24 @@ func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 		t.Helper()
 		workspaceID, accountID, ownerID := "ws-"+name, "acct-"+name, "usr-"+name
 		computeID, storageID := "compute-"+name, "storage-"+name
+		if name != "owner-missing" {
+			status, role, userAccountID := "active", "owner", accountID
+			switch name {
+			case "owner-disabled":
+				status = "disabled"
+			case "owner-deleted":
+				status = "deleted"
+			case "owner-member":
+				role = "member"
+			case "owner-admin":
+				role = "admin"
+			case "owner-account-mismatch":
+				userAccountID = "acct-other"
+			}
+			if _, err := db.Exec(`INSERT INTO control_plane_users (id, account_id, status, role) VALUES ($1, $2, $3, $4)`, ownerID, userAccountID, status, role); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err := db.Exec(`INSERT INTO control_plane_workspaces
 			(id, account_id, owner_account_id, owner_user_id, current_compute_allocation_id, storage_id, billing_state_json)
 			VALUES ($1, $2, $2, $3, $4, $5, '{}')`, workspaceID, accountID, ownerID, computeID, storageID); err != nil {
@@ -200,7 +230,10 @@ func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"switch", "period", "price", "pointer", "owner", "child-corrupt", "anchor", "time", "deadline-missing", "deadline-invalid", "deadline-early"} {
+	for _, name := range []string{
+		"switch", "period", "price", "pointer", "owner", "child-corrupt", "anchor", "time", "deadline-missing", "deadline-invalid", "deadline-early",
+		"owner-missing", "owner-disabled", "owner-deleted", "owner-member", "owner-admin", "owner-account-mismatch",
+	} {
 		seedMismatch(name)
 	}
 	if _, err := db.Exec(`
@@ -241,7 +274,10 @@ func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 			t.Fatalf("preserved Workspace %s billing bytes=%q want=%q err=%v", id, raw, want, err)
 		}
 	}
-	for _, id := range []string{"ws-blank", "ws-switch", "ws-period", "ws-price", "ws-pointer", "ws-owner", "ws-child-corrupt", "ws-anchor", "ws-time", "ws-deadline-missing", "ws-deadline-invalid", "ws-deadline-early"} {
+	for _, id := range []string{
+		"ws-blank", "ws-switch", "ws-period", "ws-price", "ws-pointer", "ws-owner", "ws-child-corrupt", "ws-anchor", "ws-time", "ws-deadline-missing", "ws-deadline-invalid", "ws-deadline-early",
+		"ws-owner-missing", "ws-owner-disabled", "ws-owner-deleted", "ws-owner-member", "ws-owner-admin", "ws-owner-account-mismatch",
+	} {
 		if err := db.QueryRow(`SELECT billing_state_json FROM control_plane_workspaces WHERE id = $1`, id).Scan(&raw); err != nil {
 			t.Fatal(err)
 		}

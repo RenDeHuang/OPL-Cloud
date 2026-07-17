@@ -121,7 +121,12 @@ func registerRecoveryRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 				writeError(w, http.StatusNotFound, "workspace_not_found")
 				return
 			}
-			workspace["storageId"], workspace["currentComputeAllocationId"], workspace["currentAttachmentId"], workspace["state"] = volume.ID, "", "", "suspended"
+			if workspaceAcceptedBillingState(workspace) == nil {
+				workspace["storageId"] = volume.ID
+			} else {
+				workspace["autoRenew"] = false
+			}
+			workspace["currentComputeAllocationId"], workspace["currentAttachmentId"], workspace["state"], workspace["status"] = "", "", "suspended", "suspended"
 			if err := app.tables.SaveWorkspace(r.Context(), workspace); err != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return

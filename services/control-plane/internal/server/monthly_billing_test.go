@@ -182,6 +182,17 @@ type monthlyFabric struct {
 	storageRenewErr  error
 	computeRenewKeys []string
 	storageRenewKeys []string
+	afterRuntime     func()
+}
+
+func (f *monthlyFabric) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
+	runtime, err := f.fakeFabricClient.CreateWorkspaceRuntime(ctx, input, key)
+	if f.afterRuntime != nil {
+		after := f.afterRuntime
+		f.afterRuntime = nil
+		after()
+	}
+	return runtime, err
 }
 
 type provisioningMonthlyFabric struct {

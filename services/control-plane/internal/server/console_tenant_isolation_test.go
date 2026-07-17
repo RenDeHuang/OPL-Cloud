@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -801,7 +802,7 @@ func TestPostgresLegacyMembershipMigrationIsLosslessAndFailClosed(t *testing.T) 
 	}
 	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
 
-	db, err := sql.Open("postgres", controlPlaneTestPostgresURL("postgres", schema))
+	db, err := sql.Open("postgres", controlPlaneTestPostgresURL(t, "postgres", schema))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -856,7 +857,7 @@ func TestPostgresStoreStartsFromFreshDatabase(t *testing.T) {
 		_, _ = admin.Exec(`DROP DATABASE ` + database)
 		_ = admin.Close()
 	})
-	databaseURL := controlPlaneTestPostgresURL(database, "")
+	databaseURL := controlPlaneTestPostgresURL(t, database, "")
 	legacy, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -931,7 +932,7 @@ func TestPostgresRuntimeOperationConcurrentUpsert(t *testing.T) {
 		_, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
 		_ = admin.Close()
 	})
-	stateStore, err := NewPostgresEntStateStore(controlPlaneTestPostgresURL("postgres", schema))
+	stateStore, err := NewPostgresEntStateStore(controlPlaneTestPostgresURL(t, "postgres", schema))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,27 +973,51 @@ func TestPostgresRuntimeOperationConcurrentUpsert(t *testing.T) {
 
 func openControlPlaneTestPostgres(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("postgres", controlPlaneTestPostgresURL("postgres", ""))
+	db, err := sql.Open("postgres", controlPlaneTestPostgresURL(t, "postgres", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		if os.Getenv("OPL_POSTGRES_TESTS") != "1" && os.Getenv("OPL_CAPACITY_TESTS") != "1" {
-			t.Skipf("local PostgreSQL unavailable: %v", err)
-		}
 		t.Fatal(err)
 	}
 	return db
 }
 
-func controlPlaneTestPostgresURL(database, searchPath string) string {
-	var databaseURL string
-	if os.Getenv("OPL_POSTGRES_TESTS") == "1" {
-		databaseURL = "connect_timeout=10 dbname=" + database
-	} else {
-		databaseURL = "host=/var/run/postgresql dbname=" + database + " sslmode=disable"
+func TestControlPlanePostgresTestURLUsesExplicitEnvironment(t *testing.T) {
+	t.Run("keyword DSN", func(t *testing.T) {
+		t.Setenv("CONTROL_PLANE_TEST_DATABASE_URL", "host=/explicit-test-socket user=explicit dbname=template1 sslmode=disable")
+		got := controlPlaneTestPostgresURL(t, "postgres", "schema_explicit")
+		if !strings.Contains(got, "host=/explicit-test-socket") || !strings.Contains(got, "user=explicit") || !strings.Contains(got, "dbname=postgres") || !strings.Contains(got, "search_path=schema_explicit") {
+			t.Fatalf("explicit PostgreSQL test DSN ignored: %q", got)
+		}
+	})
+	t.Run("URL", func(t *testing.T) {
+		t.Setenv("CONTROL_PLANE_TEST_DATABASE_URL", "postgresql://explicit:secret@db.example/template1?sslmode=disable")
+		got := controlPlaneTestPostgresURL(t, "postgres", "schema_explicit")
+		want := "postgresql://explicit:secret@db.example/postgres?search_path=schema_explicit&sslmode=disable"
+		if got != want {
+			t.Fatalf("explicit PostgreSQL test URL = %q, want %q", got, want)
+		}
+	})
+}
+
+func controlPlaneTestPostgresURL(t *testing.T, database, searchPath string) string {
+	t.Helper()
+	databaseURL := strings.TrimSpace(os.Getenv("CONTROL_PLANE_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Fatal("CONTROL_PLANE_TEST_DATABASE_URL is required for PostgreSQL tests")
 	}
+	if parsed, err := url.Parse(databaseURL); err == nil && parsed.Scheme != "" {
+		parsed.Path = "/" + database
+		query := parsed.Query()
+		if searchPath != "" {
+			query.Set("search_path", searchPath)
+		}
+		parsed.RawQuery = query.Encode()
+		return parsed.String()
+	}
+	databaseURL += " dbname=" + database
 	if searchPath != "" {
 		databaseURL += " search_path=" + searchPath
 	}

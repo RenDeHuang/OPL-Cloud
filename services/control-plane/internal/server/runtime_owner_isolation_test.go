@@ -13,6 +13,32 @@ import (
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
+func seedRuntimeAccessWorkspaceForTest(t *testing.T, store controlPlaneTableStore, ownerID string, overrides map[string]any) {
+	t.Helper()
+	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
+		"id": "compute-alpha", "accountId": "acct-alpha", "ownerUserId": ownerID, "workspaceId": "ws-alpha",
+		"status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+	}))
+	mustStore(t, store.SaveStorage(context.Background(), map[string]any{
+		"id": "storage-alpha", "accountId": "acct-alpha", "ownerUserId": ownerID, "workspaceId": "ws-alpha",
+		"status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+	}))
+	mustStore(t, store.SaveAttachment(context.Background(), map[string]any{
+		"id": "attachment-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+		"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "status": "attached",
+	}))
+	row := workspaceGatewayTestRow(map[string]any{
+		"id": "ws-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": ownerID,
+		"state": "running", "status": "running", "computeAllocationId": "compute-alpha", "currentComputeAllocationId": "compute-alpha",
+		"storageId": "storage-alpha", "attachmentId": "attachment-alpha", "currentAttachmentId": "attachment-alpha",
+		"runtimeId": "runtime-alpha", "runtime": map[string]any{"serviceName": "opl-compute-alpha", "status": "running", "ready": true},
+	})
+	for key, value := range overrides {
+		row[key] = value
+	}
+	mustStore(t, store.SaveWorkspace(context.Background(), row))
+}
+
 func TestRuntimeStatusNeverReturnsCredential(t *testing.T) {
 	store := newMemoryTableStore()
 	fabric := &fakeFabricClient{runtimeStatus: clients.WorkspaceRuntime{
@@ -28,10 +54,7 @@ func TestRuntimeStatusNeverReturnsCredential(t *testing.T) {
 	}
 	owner := tenantOwnerSessionForTest(t, server)
 	member := tenantSessionForTest(t, server, "member")
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
-		"id": "ws-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha",
-		"ownerUserId": sessionUserIDForTest(t, server, owner), "state": "running", "status": "running",
-	}))
+	seedRuntimeAccessWorkspaceForTest(t, store, sessionUserIDForTest(t, server, owner), nil)
 
 	response := requestWithSession(t, server, member, http.MethodPost, "/api/workspaces/runtime-status", `{"workspaceId":"ws-alpha"}`)
 	if response.Code != http.StatusOK {
@@ -68,10 +91,7 @@ func TestRuntimeCredentialRevealOwnerOnly(t *testing.T) {
 	owner := tenantOwnerSessionForTest(t, server)
 	member := tenantSessionForTest(t, server, "member")
 	ownerID := sessionUserIDForTest(t, server, owner)
-	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
-		"id": "ws-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha",
-		"ownerUserId": ownerID, "state": "running", "status": "running",
-	}))
+	seedRuntimeAccessWorkspaceForTest(t, store, ownerID, nil)
 	mustStore(t, store.SaveWorkspace(context.Background(), map[string]any{
 		"id": "ws-beta", "accountId": "acct-beta", "ownerAccountId": "acct-beta",
 		"ownerUserId": "usr-beta", "state": "running", "status": "running",
@@ -138,6 +158,104 @@ func TestRuntimeCredentialRevealOwnerOnly(t *testing.T) {
 	audits, auditErr := store.ListAuditEvents(context.Background(), "acct-alpha")
 	if operationErr != nil || auditErr != nil || strings.Contains(string(mustJSON(operations)), "runtime-password-alpha") || strings.Contains(string(mustJSON(audits)), "runtime-password-alpha") {
 		t.Fatalf("reveal leaked into operations/audit: operations=%#v audits=%#v errors=%v/%v", operations, audits, operationErr, auditErr)
+	}
+}
+
+func TestWorkspaceRuntimeAndSecretCommandsRequireCanonicalAccess(t *testing.T) {
+	states := []struct {
+		name   string
+		mutate func(map[string]any, map[string]any, map[string]any, map[string]any)
+	}{
+		{name: "missing billing", mutate: func(workspace, _, _, _ map[string]any) {
+			for _, key := range workspaceBillingStateRequiredKeys {
+				delete(workspace, key)
+			}
+		}},
+		{name: "manual review", mutate: func(workspace, _, _, _ map[string]any) {
+			for _, key := range workspaceBillingStateExclusiveKeys {
+				delete(workspace, key)
+			}
+			workspace["autoRenew"], workspace["renewalStatus"], workspace["manualReviewReason"] = false, "manual_review", workspaceBillingLegacyMismatch
+		}},
+		{name: "expired", mutate: func(workspace, _, _, _ map[string]any) {
+			workspace["periodStart"], workspace["paidThrough"], workspace["nextRenewalAt"] = "2000-01-01T00:00:00Z", "2000-02-01T00:00:00Z", "2000-01-31T00:00:00Z"
+		}},
+		{name: "attachment not ready", mutate: func(_, _, _, attachment map[string]any) {
+			attachment["status"] = "detached"
+		}},
+	}
+	commands := []struct {
+		name, path string
+		mutation   bool
+	}{
+		{name: "runtime status", path: "/api/workspaces/runtime-status"},
+		{name: "credential reveal", path: "/api/workspaces/ws-alpha/runtime-credentials/reveal"},
+		{name: "credential rotate", path: "/api/workspaces/ws-alpha/runtime-credentials/rotate", mutation: true},
+		{name: "gateway secret rotate", path: "/api/workspaces/ws-alpha/gateway-secret/rotate", mutation: true},
+	}
+
+	for _, state := range states {
+		for _, command := range commands {
+			t.Run(state.name+"/"+command.name, func(t *testing.T) {
+				store := newMemoryTableStore()
+				calls := []string{}
+				fabric := &fakeFabricClient{calls: &calls, runtimeStatus: clients.WorkspaceRuntime{
+					ID: "runtime-alpha", WorkspaceID: "ws-alpha", Status: "running", Ready: true,
+					Access: clients.WorkspaceRuntimeAccess{Username: "opl", Password: "must-not-reveal"},
+				}}
+				sub2API := &testSub2APIClient{balance: 1_000_000_000_000, charges: map[string]int64{}}
+				server, err := NewPersistentServer(controlplane.NewService(fakeLedgerClient{}, fabric, sub2API), store)
+				if err != nil {
+					t.Fatal(err)
+				}
+				owner := tenantOwnerSessionForTest(t, server)
+				ownerID := sessionUserIDForTest(t, server, owner)
+				compute := map[string]any{
+					"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+					"status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+				}
+				storage := map[string]any{
+					"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+					"status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+				}
+				attachment := map[string]any{
+					"id": "attachment-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
+					"computeAllocationId": "compute-alpha", "storageId": "storage-alpha", "status": "attached",
+				}
+				workspace := workspaceGatewayTestRow(map[string]any{
+					"id": "ws-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": ownerID,
+					"state": "running", "status": "running", "computeAllocationId": "compute-alpha", "currentComputeAllocationId": "compute-alpha",
+					"storageId": "storage-alpha", "attachmentId": "attachment-alpha", "currentAttachmentId": "attachment-alpha",
+					"runtimeId": "runtime-alpha", "runtime": map[string]any{"serviceName": "opl-compute-alpha", "status": "running", "ready": true},
+				})
+				state.mutate(workspace, compute, storage, attachment)
+				mustStore(t, store.SaveCompute(context.Background(), compute))
+				mustStore(t, store.SaveStorage(context.Background(), storage))
+				mustStore(t, store.SaveAttachment(context.Background(), attachment))
+				mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+				beforeWorkspaces, _ := store.ListWorkspaces(context.Background(), "acct-alpha")
+				beforeOperations, _ := store.ListRuntimeOperations(context.Background())
+
+				body := `{}`
+				if command.name == "runtime status" {
+					body = `{"workspaceId":"ws-alpha"}`
+				}
+				var response *httptest.ResponseRecorder
+				if command.mutation {
+					response = requestWithMutationKeyForTest(t, server, owner, http.MethodPost, command.path, body, "blocked-command")
+				} else {
+					response = requestWithSession(t, server, owner, http.MethodPost, command.path, body)
+				}
+				if response.Code >= 200 && response.Code < 300 {
+					t.Fatalf("blocked command status=%d body=%s", response.Code, response.Body.String())
+				}
+				afterWorkspaces, _ := store.ListWorkspaces(context.Background(), "acct-alpha")
+				afterOperations, _ := store.ListRuntimeOperations(context.Background())
+				if len(calls) != 0 || len(sub2API.workspaceKeyUserIDs) != 0 || string(mustJSON(afterWorkspaces)) != string(mustJSON(beforeWorkspaces)) || string(mustJSON(afterOperations)) != string(mustJSON(beforeOperations)) {
+					t.Fatalf("blocked command crossed boundary: status=%d calls=%#v sub2api=%#v before=%#v after=%#v operations=%#v", response.Code, calls, sub2API.workspaceKeyUserIDs, beforeWorkspaces, afterWorkspaces, afterOperations)
+				}
+			})
+		}
 	}
 }
 
@@ -231,22 +349,13 @@ func TestRuntimeCredentialRotateOwnerIdempotentAndNoLeak(t *testing.T) {
 	owner := tenantOwnerSessionForTest(t, server)
 	member := tenantSessionForTest(t, server, "member")
 	ownerID := sessionUserIDForTest(t, server, owner)
-	mustStore(t, store.SaveCompute(context.Background(), map[string]any{
-		"id": "compute-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
-		"status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
-	}))
-	mustStore(t, store.SaveStorage(context.Background(), map[string]any{
-		"id": "storage-alpha", "accountId": "acct-alpha", "workspaceId": "ws-alpha",
-		"status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
-	}))
-	mustStore(t, store.SaveWorkspace(context.Background(), workspaceGatewayTestRow(map[string]any{
-		"id": "ws-alpha", "accountId": "acct-alpha", "ownerAccountId": "acct-alpha", "ownerUserId": ownerID,
+	seedRuntimeAccessWorkspaceForTest(t, store, ownerID, map[string]any{
 		"state": "running", "status": "running", "url": "https://workspace.medopl.cn/w/ws-alpha/",
 		"computeAllocationId": "compute-alpha", "currentComputeAllocationId": "compute-alpha",
 		"storageId": "storage-alpha", "attachmentId": "attachment-alpha", "currentAttachmentId": "attachment-alpha",
 		"runtimeId": "runtime-alpha", "runtime": map[string]any{"serviceName": "opl-compute-alpha", "status": "running", "ready": true},
 		"access": map[string]any{"username": "opl", "credentialStatus": "configured", "credentialVersion": "v-before", "secretRef": "opl-compute-alpha-env"},
-	})))
+	})
 
 	unauthorized := requestWithMutationKeyForTest(t, server, member, http.MethodPost, "/api/workspaces/ws-alpha/runtime-credentials/rotate", `{}`, "rotate-member")
 	if unauthorized.Code != http.StatusForbidden || len(sub2API.workspaceKeyUserIDs) != 0 || len(calls) != 0 || len(ledger.inputs) != 0 {
