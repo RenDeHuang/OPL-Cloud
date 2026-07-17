@@ -447,6 +447,194 @@ type disableAutoRenewBeforeEntitlementStore struct {
 	err      error
 }
 
+type mutateWorkspaceBeforeRecoveryPersistStore struct {
+	StateStore
+	once   sync.Once
+	mutate func(context.Context) error
+	err    error
+}
+
+func (s *mutateWorkspaceBeforeRecoveryPersistStore) PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error {
+	if update.WorkspacePatch != nil && stringValue(update.WorkspacePatch["state"]) == "running" {
+		s.once.Do(func() { s.err = s.mutate(ctx) })
+		if s.err != nil {
+			return s.err
+		}
+	}
+	return s.StateStore.PersistWorkspaceRenewal(ctx, update)
+}
+
+func TestWorkspaceRenewalRecoveryRejectsConcurrentSafetyStateChanges(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) StateStore
+	}{
+		{name: "memory", new: func(*testing.T) StateStore { return newMemoryTableStore() }},
+		{name: "postgres", new: func(t *testing.T) StateStore {
+			store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+			return store
+		}},
+	} {
+		for _, mutationCase := range []struct {
+			name   string
+			mutate func(map[string]any)
+			assert func(*testing.T, map[string]any)
+		}{
+			{
+				name: "storage destroyed",
+				mutate: func(workspace map[string]any) {
+					workspace["state"], workspace["status"] = "data_deleted", "unrecoverable"
+					workspace["currentComputeAllocationId"], workspace["currentAttachmentId"], workspace["attachmentId"] = "", "", ""
+					workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
+				},
+				assert: func(t *testing.T, workspace map[string]any) {
+					t.Helper()
+					if workspace["state"] != "data_deleted" || workspace["status"] != "unrecoverable" || stringValue(workspace["currentComputeAllocationId"]) != "" || stringValue(workspace["currentAttachmentId"]) != "" {
+						t.Fatalf("storage-destroyed Workspace was overwritten: %#v", workspace)
+					}
+				},
+			},
+			{
+				name: "compute cleared",
+				mutate: func(workspace map[string]any) {
+					workspace["state"], workspace["status"], workspace["currentComputeAllocationId"] = "suspended", "suspended", ""
+					workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
+				},
+				assert: func(t *testing.T, workspace map[string]any) {
+					t.Helper()
+					if workspace["state"] != "suspended" || workspace["status"] != "suspended" || stringValue(workspace["currentComputeAllocationId"]) != "" {
+						t.Fatalf("compute-suspended Workspace was overwritten: %#v", workspace)
+					}
+				},
+			},
+		} {
+			t.Run(storeCase.name+"/"+mutationCase.name, func(t *testing.T) {
+				ctx := context.Background()
+				store := storeCase.new(t)
+				workspace := canonicalWorkspaceRenewalRow(true)
+				workspace["state"], workspace["status"] = "suspended", "suspended"
+				workspace["attachmentId"], workspace["currentAttachmentId"] = "attachment-renewal", "attachment-renewal"
+				mustStore(t, store.SaveWorkspace(ctx, workspace))
+
+				operation, err := newWorkspaceRenewalOperation(workspace, time.Date(2026, 8, 17, 1, 3, 0, 0, time.UTC))
+				if err != nil {
+					t.Fatal(err)
+				}
+				operation.Status, operation.Phase = "debit_pending", "debit"
+				operation.ExpiryStatus, operation.ExpiryPhase, operation.ExpiryPaidThrough = "past_due", "financial", operation.PaidThrough
+				operations, err := store.ListRuntimeOperations(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				claim := workspaceRenewalClaimCAS{
+					WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, ExpectedPaidThrough: operation.PaidThrough, ExpectedAutoRenew: true,
+					ExpectedOperationsVersion: runtimeOperationsVersion(operations, operation.WorkspaceID), DesiredOperation: workspaceRenewalOperationRow(operation),
+				}
+				mustStore(t, store.ClaimWorkspaceRenewal(ctx, claim))
+				operation.PersistedResult = stringValue(claim.DesiredOperation["result"])
+
+				interleaved := &mutateWorkspaceBeforeRecoveryPersistStore{StateStore: store}
+				interleaved.mutate = func(ctx context.Context) error {
+					rows, err := store.ListWorkspaces(ctx, operation.AccountID)
+					if err != nil {
+						return err
+					}
+					concurrent := cloneMap(recordByID(rows, operation.WorkspaceID))
+					mutationCase.mutate(concurrent)
+					return store.SaveWorkspace(ctx, concurrent)
+				}
+				app, err := newControlPlaneAppWithStore(interleaved)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := app.commitWorkspaceRenewalEntitlement(ctx, &operation); !errors.Is(err, errWorkspaceRenewalCASConflict) {
+					t.Fatalf("commit error=%v, want %v", err, errWorkspaceRenewalCASConflict)
+				}
+
+				rows, err := store.ListWorkspaces(ctx, operation.AccountID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := recordByID(rows, operation.WorkspaceID)
+				mutationCase.assert(t, got)
+				if stringValue(got["paidThrough"]) != operation.PaidThrough {
+					t.Fatalf("rejected recovery advanced paidThrough: %#v", got)
+				}
+				operations, err = store.ListRuntimeOperations(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				persisted, err := decodeWorkspaceRenewalOperation(recordByID(operations, operation.ID))
+				if err != nil || persisted.EntitlementCommitted || persisted.ExpiryStatus != "past_due" {
+					t.Fatalf("rejected recovery changed operation=%#v err=%v", persisted, err)
+				}
+			})
+		}
+	}
+}
+
+func TestWorkspaceRenewalRecoveryRejectsPreexistingMissingAttachment(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) StateStore
+	}{
+		{name: "memory", new: func(*testing.T) StateStore { return newMemoryTableStore() }},
+		{name: "postgres", new: func(t *testing.T) StateStore {
+			store, _ := newPostgresWorkspaceRenewalStoreWithDB(t)
+			return store
+		}},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := storeCase.new(t)
+			workspace := canonicalWorkspaceRenewalRow(true)
+			workspace["state"], workspace["status"], workspace["currentAttachmentId"] = "suspended", "suspended", ""
+			mustStore(t, store.SaveWorkspace(ctx, workspace))
+
+			operation, err := newWorkspaceRenewalOperation(workspace, time.Date(2026, 8, 17, 1, 3, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.Status, operation.Phase = "debit_pending", "debit"
+			operation.ExpiryStatus, operation.ExpiryPhase, operation.ExpiryPaidThrough = "past_due", "financial", operation.PaidThrough
+			operations, err := store.ListRuntimeOperations(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			claim := workspaceRenewalClaimCAS{
+				WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, ExpectedPaidThrough: operation.PaidThrough, ExpectedAutoRenew: true,
+				ExpectedOperationsVersion: runtimeOperationsVersion(operations, operation.WorkspaceID), DesiredOperation: workspaceRenewalOperationRow(operation),
+			}
+			mustStore(t, store.ClaimWorkspaceRenewal(ctx, claim))
+			operation.PersistedResult = stringValue(claim.DesiredOperation["result"])
+
+			app, err := newControlPlaneAppWithStore(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := app.commitWorkspaceRenewalEntitlement(ctx, &operation); err != nil {
+				t.Fatal(err)
+			}
+			operations, err = store.ListRuntimeOperations(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			persisted, err := decodeWorkspaceRenewalOperation(recordByID(operations, operation.ID))
+			if err != nil || persisted.Status != "manual_review" || persisted.ErrorCode != "workspace_renewal_recovery_state_mismatch" || persisted.EntitlementCommitted || persisted.ExpiryStatus != "past_due" {
+				t.Fatalf("missing attachment recovery operation=%#v err=%v", persisted, err)
+			}
+			rows, err := store.ListWorkspaces(ctx, operation.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := recordByID(rows, operation.WorkspaceID)
+			if got["state"] != "suspended" || got["status"] != "suspended" || stringValue(got["currentAttachmentId"]) != "" || stringValue(got["paidThrough"]) != operation.PaidThrough {
+				t.Fatalf("missing attachment Workspace was recovered: %#v", got)
+			}
+		})
+	}
+}
+
 func (s *disableAutoRenewBeforeEntitlementStore) PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error {
 	operation, err := decodeWorkspaceRenewalOperation(update.DesiredOperation)
 	if err != nil {

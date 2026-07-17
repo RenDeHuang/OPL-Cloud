@@ -563,7 +563,8 @@ func (s *memoryTableStore) PersistWorkspaceRenewal(_ context.Context, update wor
 	if update.WorkspacePatch != nil {
 		current := s.workspaces[update.WorkspaceID]
 		if update.WorkspaceID == "" || update.ExpectedWorkspacePaidThrough == "" || update.WorkspaceID != stringValue(s.runtimeOps[index]["workspaceId"]) ||
-			current == nil || stringValue(current["paidThrough"]) != update.ExpectedWorkspacePaidThrough {
+			current == nil || stringValue(current["paidThrough"]) != update.ExpectedWorkspacePaidThrough ||
+			!workspaceRenewalExpectedFieldsMatch(current, update.ExpectedWorkspaceFields) {
 			return errWorkspaceRenewalCASConflict
 		}
 		workspace, err := mergeWorkspaceRenewalPatch(current, update.WorkspacePatch)
@@ -571,7 +572,7 @@ func (s *memoryTableStore) PersistWorkspaceRenewal(_ context.Context, update wor
 			return err
 		}
 		s.workspaces[update.WorkspaceID] = workspace
-	} else if update.WorkspaceID != "" || update.ExpectedWorkspacePaidThrough != "" {
+	} else if update.WorkspaceID != "" || update.ExpectedWorkspacePaidThrough != "" || len(update.ExpectedWorkspaceFields) != 0 {
 		return errInvalidWorkspaceRenewalPatch
 	}
 	s.runtimeOps[index] = cloneMap(update.DesiredOperation)

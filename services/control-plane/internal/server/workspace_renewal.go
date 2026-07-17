@@ -222,6 +222,7 @@ type workspaceRenewalPersistCAS struct {
 	DesiredOperation             map[string]any
 	WorkspaceID                  string
 	ExpectedWorkspacePaidThrough string
+	ExpectedWorkspaceFields      map[string]string
 	WorkspacePatch               map[string]any
 }
 
@@ -249,7 +250,17 @@ func mergeWorkspaceRenewalPatch(current, patch map[string]any) (map[string]any, 
 
 type workspaceRenewalWorkspacePatch struct {
 	ExpectedPaidThrough string
+	ExpectedFields      map[string]string
 	Fields              map[string]any
+}
+
+func workspaceRenewalExpectedFieldsMatch(current map[string]any, expected map[string]string) bool {
+	for field, value := range expected {
+		if stringValue(current[field]) != value {
+			return false
+		}
+	}
+	return true
 }
 
 func workspaceRenewalOperationID(workspaceID string, paidThrough time.Time) string {
@@ -460,7 +471,8 @@ func (app *controlPlaneServer) persistWorkspaceRenewal(ctx context.Context, oper
 	desired := workspaceRenewalOperationRow(*operation)
 	update := workspaceRenewalPersistCAS{OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: desired}
 	if workspace != nil {
-		update.WorkspaceID, update.ExpectedWorkspacePaidThrough, update.WorkspacePatch = operation.WorkspaceID, workspace.ExpectedPaidThrough, workspace.Fields
+		update.WorkspaceID, update.ExpectedWorkspacePaidThrough = operation.WorkspaceID, workspace.ExpectedPaidThrough
+		update.ExpectedWorkspaceFields, update.WorkspacePatch = workspace.ExpectedFields, workspace.Fields
 	}
 	if err := app.tables.PersistWorkspaceRenewal(ctx, update); err != nil {
 		return err
@@ -959,7 +971,18 @@ func (app *controlPlaneServer) commitWorkspaceRenewalEntitlement(ctx context.Con
 		"periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
 		"nextRenewalAt": renewedThrough.Add(-monthlyRenewalLead).Format(time.RFC3339Nano), "renewalStatus": "active",
 	}
+	var expectedFields map[string]string
 	if operation.ExpiryStatus == "past_due" && operation.ExpiryPaidThrough == operation.PaidThrough {
+		attachmentID := stringValue(workspace["currentAttachmentId"])
+		if stringValue(workspace["state"]) != "suspended" || stringValue(workspace["status"]) != "suspended" ||
+			stringValue(workspace["currentComputeAllocationId"]) != operation.ComputeID || attachmentID == "" {
+			return app.manualReviewWorkspaceRenewal(ctx, operation, "workspace_renewal_recovery_state_mismatch")
+		}
+		expectedFields = map[string]string{
+			"state": "suspended", "status": "suspended",
+			"computeAllocationId": operation.ComputeID, "currentComputeAllocationId": operation.ComputeID,
+			"storageId": operation.StorageID, "currentAttachmentId": attachmentID,
+		}
 		operation.PriorStatus, operation.PriorErrorCode = "", ""
 		operation.ExpiryStatus, operation.ExpiryPhase, operation.ExpiryErrorCode = "", "", ""
 		operation.ExpiryReceiptID, operation.ExpiryPeriodStart, operation.ExpiryPaidThrough = "", "", ""
@@ -968,6 +991,7 @@ func (app *controlPlaneServer) commitWorkspaceRenewalEntitlement(ctx context.Con
 	operation.Status, operation.Phase, operation.EntitlementCommitted = "verifying", "receipt", true
 	return app.persistWorkspaceRenewal(ctx, operation, &workspaceRenewalWorkspacePatch{
 		ExpectedPaidThrough: operation.PaidThrough,
+		ExpectedFields:      expectedFields,
 		Fields:              fields,
 	})
 }

@@ -1874,14 +1874,15 @@ func (s *postgresEntStateStore) PersistWorkspaceRenewal(ctx context.Context, upd
 			return err
 		}
 		currentWorkspace := recordFromEnt(entity, workspaceEntFields)
-		if stringValue(currentWorkspace["paidThrough"]) != update.ExpectedWorkspacePaidThrough {
+		if stringValue(currentWorkspace["paidThrough"]) != update.ExpectedWorkspacePaidThrough ||
+			!workspaceRenewalExpectedFieldsMatch(currentWorkspace, update.ExpectedWorkspaceFields) {
 			return errWorkspaceRenewalCASConflict
 		}
 		mergedWorkspace, err = mergeWorkspaceRenewalPatch(currentWorkspace, update.WorkspacePatch)
 		if err != nil {
 			return err
 		}
-	} else if update.WorkspaceID != "" || update.ExpectedWorkspacePaidThrough != "" {
+	} else if update.WorkspaceID != "" || update.ExpectedWorkspacePaidThrough != "" || len(update.ExpectedWorkspaceFields) != 0 {
 		return errInvalidWorkspaceRenewalPatch
 	}
 	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
