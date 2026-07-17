@@ -70,6 +70,7 @@
       "TENCENT_DEPLOY_KUBECONFIG_REF",
       "DATABASE_URL",
       "OPL_INTERNAL_SERVICE_TOKEN",
+      "OPL_PROVIDER_ACCEPTANCE_TOKEN",
       "OPL_CONSOLE_USERS_JSON",
       "TCR_USERNAME",
       "TCR_PASSWORD"
@@ -77,6 +78,7 @@
     "secretEnv": [
       "DATABASE_URL",
       "OPL_INTERNAL_SERVICE_TOKEN",
+      "OPL_PROVIDER_ACCEPTANCE_TOKEN",
       "OPL_CONSOLE_USERS_JSON",
       "OPL_OPERATOR_SUMMARY_TOKEN",
       "OPL_SUB2API_ADMIN_EMAIL",
@@ -143,6 +145,7 @@
       "Install Kubernetes secrets": [
         "--from-file=DATABASE_URL=\"$secret_dir/database-url\"",
         "--from-file=OPL_INTERNAL_SERVICE_TOKEN=\"$secret_dir/internal-service-token\"",
+        "--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN=\"$secret_dir/provider-acceptance-token\"",
         "--from-file=OPL_CONSOLE_USERS_JSON=\"$secret_dir/auth-users-json\"",
         "--from-file=OPL_SUB2API_ADMIN_EMAIL=\"$secret_dir/sub2api-admin-email\"",
         "--from-file=OPL_SUB2API_ADMIN_PASSWORD=\"$secret_dir/sub2api-admin-password\"",
@@ -212,13 +215,11 @@
     ],
     "inputs": [
       "run_id",
-      "basic_account_id",
-      "pro_account_id",
       "url_attempts",
       "retry_delay_ms",
       "request_timeout_ms"
     ],
-    "requiredInputs": ["basic_account_id", "pro_account_id"],
+    "requiredInputs": [],
     "requestTimeoutMsDefault": 30000,
     "timeoutMinutes": 15,
     "requiredEnv": [
@@ -273,6 +274,13 @@
     "launchStatus": "active",
     "releaseGate": false,
     "mode": "operator_only_one_time_dual_fixed_slot",
+    "environment": "production-provider-acceptance",
+    "credential": {
+      "serverEnv": "OPL_PROVIDER_ACCEPTANCE_TOKEN",
+      "requestHeader": "x-opl-provider-acceptance-token",
+      "operatorSessionAccepted": false,
+      "genericOperatorTokenAccepted": false
+    },
     "endpoint": "/api/operator/provider-acceptance",
     "lifetimePurchaseBudget": 2,
     "fixedSlots": [
@@ -328,7 +336,7 @@
     "timeoutMinutes": 30,
     "requiredEnv": [
       "OPL_CONSOLE_ORIGIN",
-      "OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN",
+      "OPL_PROVIDER_ACCEPTANCE_TOKEN",
       "OPL_PROVIDER_ACCEPTANCE_SLOT_ID",
       "OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID",
       "OPL_PROVIDER_ACCEPTANCE_CONFIRMATION",
@@ -338,7 +346,7 @@
       "OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH"
     ],
     "secretEnv": [
-      "OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN"
+      "OPL_PROVIDER_ACCEPTANCE_TOKEN"
     ],
     "steps": [
       "Checkout",

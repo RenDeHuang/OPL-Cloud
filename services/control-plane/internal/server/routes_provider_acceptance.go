@@ -20,6 +20,8 @@ const (
 	providerAcceptanceLifetimePurchaseBudget = 2
 )
 
+var errProviderAcceptanceStateRead = errors.New("provider_acceptance_state_read_failed")
+
 type providerAcceptanceSlot struct {
 	ID           string
 	AccountID    string
@@ -77,7 +79,7 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			writeError(w, http.StatusConflict, code)
 			return
 		}
-		workspaces, err := app.tables.ListWorkspaces(r.Context(), slot.AccountID)
+		workspaces, err := app.providerAcceptanceWorkspaceCandidates(r.Context(), slot)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
@@ -92,33 +94,44 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		computes, err := app.tables.ListComputes(r.Context(), slot.AccountID)
+		computes, err := app.providerAcceptanceComputeCandidates(r.Context(), slot)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		storages, err := app.tables.ListStorages(r.Context(), slot.AccountID)
+		storages, err := app.providerAcceptanceStorageCandidates(r.Context(), slot)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
-		identitiesValid := providerAcceptanceResourceInventoryValid(computes, slot, providerAcceptanceComputeID(slot)) &&
-			providerAcceptanceResourceInventoryValid(storages, slot, providerAcceptanceStorageID(slot))
+		identitiesValid := providerAcceptanceResourceInventoryValid(computes, slot, providerAcceptanceComputeID(slot), ownerID) &&
+			providerAcceptanceResourceInventoryValid(storages, slot, providerAcceptanceStorageID(slot), ownerID)
+		workspaceIdentityValid := workspace == nil || providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID)
 		emptyInventory := workspace == nil && len(computes) == 0 && len(storages) == 0
 		now := time.Now().UTC()
-		completeInventory := providerAcceptanceWorkspaceCandidateValid(workspace, slot) && len(computes) == 1 && len(storages) == 1 &&
-			providerAcceptanceComputeValid(computes[0], slot, now) && providerAcceptanceStorageValid(storages[0], slot, now)
+		completeInventory := providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) && len(computes) == 1 && len(storages) == 1 &&
+			providerAcceptanceComputeValid(computes[0], slot, ownerID, now) && providerAcceptanceStorageValid(storages[0], slot, ownerID, now)
 		invalidOperation := operationExists && !providerAcceptanceOperationValid(operation, slot)
 		unclaimedAmbiguousInventory := !operationExists && !emptyInventory && !completeInventory
-		if !identitiesValid || invalidOperation || unclaimedAmbiguousInventory {
+		if !workspaceIdentityValid || !identitiesValid || invalidOperation || unclaimedAmbiguousInventory {
 			writeError(w, http.StatusConflict, "provider_acceptance_inventory_ambiguous")
 			return
 		}
 		if operationExists && stringValue(operation["status"]) == "manual_review" {
-			writeJSON(w, http.StatusOK, providerAcceptanceResponse("manual_review", stringValue(operation["errorCode"]), app.providerAcceptanceSlotSummary(slot)))
+			summary, err := app.providerAcceptanceSlotSummary(r.Context(), slot)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			writeJSON(w, http.StatusOK, providerAcceptanceResponse("manual_review", stringValue(operation["errorCode"]), summary))
 			return
 		}
-		if summary, ready := app.providerAcceptanceReadySlot(slot, time.Now().UTC()); ready {
+		summary, ready, err := app.providerAcceptanceReadySlot(r.Context(), slot, ownerID, time.Now().UTC())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
+		if ready {
 			if !operationExists {
 				operation = providerAcceptanceOperationRow("succeeded", slot)
 			}
@@ -188,14 +201,22 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 
 		status, reason, err := app.advanceProviderAcceptance(r.Context(), service, slot, ownerID, sub2APIUserID, computePreflight, storagePreflight)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			if errors.Is(err, errProviderAcceptanceStateRead) {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+			} else {
+				writeError(w, http.StatusInternalServerError, "state_persist_failed")
+			}
 			return
 		}
 		if reason != "" {
 			app.writeProviderAcceptanceManualReview(w, r, operation, slot, reason)
 			return
 		}
-		summary := app.providerAcceptanceSlotSummary(slot)
+		summary, err = app.providerAcceptanceSlotSummary(r.Context(), slot)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
 		if status == "ready" {
 			operation["status"] = "succeeded"
 			operation["result"] = string(mustJSON(providerAcceptanceResponse("ready", "", summary)))
@@ -213,20 +234,12 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 }
 
 func (app *controlPlaneServer) providerAcceptanceProtected(next http.HandlerFunc) http.HandlerFunc {
-	admin := app.protected(true, next)
 	return func(w http.ResponseWriter, r *http.Request) {
-		if payload, ok := app.session(r); ok {
-			user, _ := payload["user"].(map[string]any)
-			if isOperatorUser(user) {
-				admin(w, r)
-				return
-			}
-		}
-		expected := strings.TrimSpace(os.Getenv("OPL_OPERATOR_SUMMARY_TOKEN"))
+		expected := strings.TrimSpace(os.Getenv("OPL_PROVIDER_ACCEPTANCE_TOKEN"))
 		want := sha256.Sum256([]byte(expected))
-		got := sha256.Sum256([]byte(r.Header.Get("x-opl-operator-token")))
+		got := sha256.Sum256([]byte(r.Header.Get("x-opl-provider-acceptance-token")))
 		if expected == "" || subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
-			writeError(w, http.StatusUnauthorized, "operator_token_invalid")
+			writeError(w, http.StatusUnauthorized, "provider_acceptance_token_invalid")
 			return
 		}
 		if !limitJSONBody(w, r) {
@@ -280,15 +293,15 @@ func providerAcceptanceWorkspace(rows []map[string]any, slot providerAcceptanceS
 	return row, false
 }
 
-func providerAcceptanceWorkspaceCandidateValid(row map[string]any, slot providerAcceptanceSlot) bool {
+func providerAcceptanceWorkspaceCandidateValid(row map[string]any, slot providerAcceptanceSlot, ownerID string) bool {
 	return row != nil && stringValue(row["id"]) == primaryWorkspaceID(slot.AccountID) && stringValue(row["accountId"]) == slot.AccountID &&
-		stringValue(row["ownerAccountId"]) == slot.AccountID && stringValue(row["ownerUserId"]) != "" && stringValue(row["name"]) == slot.ID &&
+		stringValue(row["ownerAccountId"]) == slot.AccountID && stringValue(row["ownerUserId"]) == ownerID && stringValue(row["name"]) == slot.ID &&
 		stringValue(row["packageId"]) == slot.PackageID && stringValue(row["verificationSlotId"]) == slot.ID && row["customerProduct"] == false &&
 		stringValue(row["computeAllocationId"]) == providerAcceptanceComputeID(slot) && stringValue(row["currentComputeAllocationId"]) == providerAcceptanceComputeID(slot) &&
 		stringValue(row["storageId"]) == providerAcceptanceStorageID(slot)
 }
 
-func providerAcceptanceResourceInventoryValid(rows []map[string]any, slot providerAcceptanceSlot, resourceID string) bool {
+func providerAcceptanceResourceInventoryValid(rows []map[string]any, slot providerAcceptanceSlot, resourceID, ownerID string) bool {
 	if len(rows) == 0 {
 		return true
 	}
@@ -296,7 +309,7 @@ func providerAcceptanceResourceInventoryValid(rows []map[string]any, slot provid
 		return false
 	}
 	row := rows[0]
-	return stringValue(row["id"]) == resourceID && stringValue(row["accountId"]) == slot.AccountID &&
+	return stringValue(row["id"]) == resourceID && stringValue(row["accountId"]) == slot.AccountID && stringValue(row["ownerUserId"]) == ownerID &&
 		stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && stringValue(row["verificationSlotId"]) == slot.ID && row["customerProduct"] == false
 }
 
@@ -371,10 +384,99 @@ func providerAcceptanceStorageID(slot providerAcceptanceSlot) string {
 	return resourceIDForMutation("vol", slot.AccountID, slot.Key+":storage")
 }
 
+func providerAcceptanceCandidates(rows []map[string]any, identities map[string]string) []map[string]any {
+	// ponytail: Acceptance inventory is tiny; add indexed multi-key store queries before this operator-only scan needs to scale.
+	candidates := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		for field, expected := range identities {
+			if expected != "" && stringValue(row[field]) == expected {
+				candidates = append(candidates, cloneMap(row))
+				break
+			}
+		}
+	}
+	return candidates
+}
+
+func (app *controlPlaneServer) providerAcceptanceWorkspaceCandidates(ctx context.Context, slot providerAcceptanceSlot) ([]map[string]any, error) {
+	rows, err := app.tables.ListWorkspaces(ctx, "")
+	if err != nil {
+		return nil, errProviderAcceptanceStateRead
+	}
+	return providerAcceptanceCandidates(rows, map[string]string{
+		"id": primaryWorkspaceID(slot.AccountID), "accountId": slot.AccountID, "ownerAccountId": slot.AccountID, "verificationSlotId": slot.ID,
+	}), nil
+}
+
+func (app *controlPlaneServer) providerAcceptanceComputeCandidates(ctx context.Context, slot providerAcceptanceSlot) ([]map[string]any, error) {
+	rows, err := app.tables.ListComputes(ctx, "")
+	if err != nil {
+		return nil, errProviderAcceptanceStateRead
+	}
+	return providerAcceptanceCandidates(rows, map[string]string{
+		"id": providerAcceptanceComputeID(slot), "accountId": slot.AccountID, "ownerAccountId": slot.AccountID,
+		"workspaceId": primaryWorkspaceID(slot.AccountID), "verificationSlotId": slot.ID,
+	}), nil
+}
+
+func (app *controlPlaneServer) providerAcceptanceStorageCandidates(ctx context.Context, slot providerAcceptanceSlot) ([]map[string]any, error) {
+	rows, err := app.tables.ListStorages(ctx, "")
+	if err != nil {
+		return nil, errProviderAcceptanceStateRead
+	}
+	return providerAcceptanceCandidates(rows, map[string]string{
+		"id": providerAcceptanceStorageID(slot), "accountId": slot.AccountID, "ownerAccountId": slot.AccountID,
+		"workspaceId": primaryWorkspaceID(slot.AccountID), "verificationSlotId": slot.ID,
+	}), nil
+}
+
+func (app *controlPlaneServer) providerAcceptanceWorkspaceExact(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, bool, error) {
+	rows, err := app.providerAcceptanceWorkspaceCandidates(ctx, slot)
+	if err != nil {
+		return nil, false, errProviderAcceptanceStateRead
+	}
+	workspace, conflict := providerAcceptanceWorkspace(rows, slot)
+	return workspace, conflict, nil
+}
+
+func (app *controlPlaneServer) providerAcceptanceComputeExact(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, bool, bool, error) {
+	rows, err := app.providerAcceptanceComputeCandidates(ctx, slot)
+	if err != nil {
+		return nil, false, false, errProviderAcceptanceStateRead
+	}
+	if len(rows) == 0 {
+		return nil, false, false, nil
+	}
+	if len(rows) != 1 || stringValue(rows[0]["id"]) != providerAcceptanceComputeID(slot) {
+		return nil, false, true, nil
+	}
+	return cloneMap(rows[0]), true, false, nil
+}
+
+func (app *controlPlaneServer) providerAcceptanceStorageExact(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, bool, bool, error) {
+	rows, err := app.providerAcceptanceStorageCandidates(ctx, slot)
+	if err != nil {
+		return nil, false, false, errProviderAcceptanceStateRead
+	}
+	if len(rows) == 0 {
+		return nil, false, false, nil
+	}
+	if len(rows) != 1 || stringValue(rows[0]["id"]) != providerAcceptanceStorageID(slot) {
+		return nil, false, true, nil
+	}
+	return cloneMap(rows[0]), true, false, nil
+}
+
 func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, service *controlplane.Service, slot providerAcceptanceSlot, ownerID string, sub2APIUserID int64, computePreflight, storagePreflight clients.MonthlyPreflight) (string, string, error) {
 	workspaceID := primaryWorkspaceID(slot.AccountID)
 	computeID := providerAcceptanceComputeID(slot)
-	compute, exists := app.getCompute(computeID)
+	compute, exists, conflict, err := app.providerAcceptanceComputeExact(ctx, slot)
+	if err != nil {
+		return "", "", err
+	}
+	if conflict {
+		return "", "provider_acceptance_compute_state_ambiguous", nil
+	}
 	if !exists {
 		created, createErr := service.PrepareMonthlyCompute(ctx, clients.ComputeAllocationInput{ID: computeID, AccountID: slot.AccountID, WorkspaceID: workspaceID, PackageID: slot.PackageID}, slot.Key+":compute")
 		compute = providerAcceptanceComputeRow(structToMap(created), slot, ownerID, computePreflight)
@@ -397,12 +499,18 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	if monthlyResourceInProgress(compute) {
 		return "in_progress", "", nil
 	}
-	if !providerAcceptanceComputeValid(compute, slot, time.Now().UTC()) {
+	if !providerAcceptanceComputeValid(compute, slot, ownerID, time.Now().UTC()) {
 		return "", "provider_acceptance_compute_state_ambiguous", nil
 	}
 
 	storageID := providerAcceptanceStorageID(slot)
-	storage, exists := app.getStorage(storageID)
+	storage, exists, conflict, err := app.providerAcceptanceStorageExact(ctx, slot)
+	if err != nil {
+		return "", "", err
+	}
+	if conflict {
+		return "", "provider_acceptance_storage_state_ambiguous", nil
+	}
 	if !exists {
 		created, createErr := service.PrepareMonthlyStorage(ctx, clients.StorageVolumeInput{ID: storageID, AccountID: slot.AccountID, WorkspaceID: workspaceID, ComputeID: computeID, Zone: storagePreflight.Zone, SizeGB: slot.StorageGB}, slot.Key+":storage")
 		storage = providerAcceptanceStorageRow(structToMap(created), slot, ownerID, storagePreflight)
@@ -425,11 +533,14 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	if monthlyResourceInProgress(storage) {
 		return "in_progress", "", nil
 	}
-	if !providerAcceptanceStorageValid(storage, slot, time.Now().UTC()) {
+	if !providerAcceptanceStorageValid(storage, slot, ownerID, time.Now().UTC()) {
 		return "", "provider_acceptance_storage_state_ambiguous", nil
 	}
 
-	attachment, attachmentCount := app.providerAcceptanceAttachment(slot)
+	attachment, attachmentCount, err := app.providerAcceptanceAttachment(ctx, slot)
+	if err != nil {
+		return "", "", err
+	}
 	if attachmentCount > 1 {
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
@@ -448,7 +559,13 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
 
-	workspace, _ := app.getWorkspace(workspaceID)
+	workspace, workspaceConflict, err := app.providerAcceptanceWorkspaceExact(ctx, slot)
+	if err != nil {
+		return "", "", err
+	}
+	if workspaceConflict || workspace == nil {
+		return "", "provider_acceptance_workspace_state_ambiguous", nil
+	}
 	var projection domain.WorkspaceProjection
 	if stringValue(workspace["runtimeId"]) == "" {
 		prepared, prepareErr := service.PrepareWorkspace(ctx, controlplane.CreateWorkspaceInput{
@@ -483,7 +600,9 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 			return "", "", err
 		}
 	}
-	if _, ready := app.providerAcceptanceReadySlot(slot, time.Now().UTC()); !ready {
+	if _, ready, err := app.providerAcceptanceReadySlot(ctx, slot, ownerID, time.Now().UTC()); err != nil {
+		return "", "", err
+	} else if !ready {
 		return "", "provider_acceptance_state_ambiguous", nil
 	}
 	return "ready", "", nil
@@ -535,33 +654,37 @@ func providerAcceptanceCostTagsValid(row map[string]any, slot providerAcceptance
 		stringValue(tags["opl_resource_id"]) == stringValue(row["id"]) && strings.TrimSpace(stringValue(tags["opl_operation_id"])) != ""
 }
 
-func providerAcceptanceComputeValid(row map[string]any, slot providerAcceptanceSlot, now time.Time) bool {
+func providerAcceptanceComputeValid(row map[string]any, slot providerAcceptanceSlot, ownerID string, now time.Time) bool {
 	deadline, err := monthlyProviderDeadline(row)
 	return err == nil && deadline.After(now) && monthlyResourcePrepared("compute", row) && stringValue(row["accountId"]) == slot.AccountID &&
-		stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && stringValue(row["packageId"]) == slot.PackageID &&
+		stringValue(row["ownerUserId"]) == ownerID && stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && stringValue(row["packageId"]) == slot.PackageID &&
 		stringValue(row["instanceType"]) == slot.InstanceType && stringValue(row["zone"]) == monthlyComputeLaunchZone() &&
 		stringValue(row["chargeType"]) == "PREPAID" && numberField(row, "periodMonths", 0) == 1 && stringValue(row["renewFlag"]) == "NOTIFY_AND_MANUAL_RENEW" &&
 		strings.HasPrefix(firstNonEmpty(stringValue(row["cvmInstanceId"]), stringValue(row["instanceId"])), "ins-") && strings.HasPrefix(stringValue(row["nodePoolId"]), "np-") && providerAcceptanceCostTagsValid(row, slot)
 }
 
-func providerAcceptanceStorageValid(row map[string]any, slot providerAcceptanceSlot, now time.Time) bool {
+func providerAcceptanceStorageValid(row map[string]any, slot providerAcceptanceSlot, ownerID string, now time.Time) bool {
 	deadline, err := monthlyProviderDeadline(row)
 	return err == nil && deadline.After(now) && monthlyResourcePrepared("storage", row) && stringValue(row["accountId"]) == slot.AccountID &&
-		stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && numberField(row, "sizeGb", 0) == float64(slot.StorageGB) &&
+		stringValue(row["ownerUserId"]) == ownerID && stringValue(row["workspaceId"]) == primaryWorkspaceID(slot.AccountID) && numberField(row, "sizeGb", 0) == float64(slot.StorageGB) &&
 		stringValue(row["zone"]) == monthlyComputeLaunchZone() && stringValue(row["chargeType"]) == "PREPAID" && numberField(row, "periodMonths", 0) == 1 &&
 		stringValue(row["renewFlag"]) == "NOTIFY_AND_MANUAL_RENEW" && strings.HasPrefix(stringValue(row["providerResourceId"]), "disk-") &&
 		firstNonEmpty(stringValue(row["pvName"]), stringValue(row["persistentVolumeName"]), providerDataValue(row, "pvName")) != "" && providerAcceptanceCostTagsValid(row, slot)
 }
 
-func (app *controlPlaneServer) providerAcceptanceAttachment(slot providerAcceptanceSlot) (map[string]any, int) {
+func (app *controlPlaneServer) providerAcceptanceAttachment(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, int, error) {
+	attachments, err := app.tables.ListAttachments(ctx, "")
+	if err != nil {
+		return nil, 0, errProviderAcceptanceStateRead
+	}
 	var found map[string]any
 	count := 0
-	for _, attachment := range app.listAttachments(slot.AccountID) {
+	for _, attachment := range attachments {
 		if stringValue(attachment["workspaceId"]) == primaryWorkspaceID(slot.AccountID) {
 			found, count = attachment, count+1
 		}
 	}
-	return found, count
+	return found, count, nil
 }
 
 func providerAcceptanceWorkspaceProjection(workspace map[string]any, runtime clients.WorkspaceRuntime, slot providerAcceptanceSlot) domain.WorkspaceProjection {
@@ -587,28 +710,55 @@ func providerAcceptanceWorkspaceRow(projection domain.WorkspaceProjection, slot 
 	return row
 }
 
-func (app *controlPlaneServer) providerAcceptanceReadySlot(slot providerAcceptanceSlot, now time.Time) (map[string]any, bool) {
-	workspaces, err := app.tables.ListWorkspaces(context.Background(), slot.AccountID)
-	workspace, conflict := providerAcceptanceWorkspace(workspaces, slot)
-	if err != nil || conflict || !providerAcceptanceWorkspaceCandidateValid(workspace, slot) || stringValue(workspace["url"]) == "" {
-		return nil, false
+func (app *controlPlaneServer) providerAcceptanceReadySlot(ctx context.Context, slot providerAcceptanceSlot, ownerID string, now time.Time) (map[string]any, bool, error) {
+	workspace, workspaceConflict, err := app.providerAcceptanceWorkspaceExact(ctx, slot)
+	if err != nil {
+		return nil, false, err
 	}
-	compute, computeOK := app.getCompute(providerAcceptanceComputeID(slot))
-	storage, storageOK := app.getStorage(providerAcceptanceStorageID(slot))
-	attachment, attachmentCount := app.providerAcceptanceAttachment(slot)
-	if !computeOK || !storageOK || attachmentCount != 1 || !providerAcceptanceComputeValid(compute, slot, now) || !providerAcceptanceStorageValid(storage, slot, now) ||
+	compute, computeOK, computeConflict, err := app.providerAcceptanceComputeExact(ctx, slot)
+	if err != nil {
+		return nil, false, err
+	}
+	storage, storageOK, storageConflict, err := app.providerAcceptanceStorageExact(ctx, slot)
+	if err != nil {
+		return nil, false, err
+	}
+	attachment, attachmentCount, err := app.providerAcceptanceAttachment(ctx, slot)
+	if err != nil {
+		return nil, false, err
+	}
+	if workspaceConflict || computeConflict || storageConflict {
+		return nil, false, errProviderAcceptanceStateRead
+	}
+	if !providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) || stringValue(workspace["url"]) == "" ||
+		!computeOK || !storageOK || attachmentCount != 1 || !providerAcceptanceComputeValid(compute, slot, ownerID, now) || !providerAcceptanceStorageValid(storage, slot, ownerID, now) ||
 		stringValue(attachment["status"]) != "attached" || app.workspaceResponse(cloneMap(workspace))["openable"] != true {
-		return nil, false
+		return nil, false, nil
 	}
-	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), true
+	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), true, nil
 }
 
-func (app *controlPlaneServer) providerAcceptanceSlotSummary(slot providerAcceptanceSlot) map[string]any {
-	workspace, _ := app.getWorkspace(primaryWorkspaceID(slot.AccountID))
-	compute, _ := app.getCompute(providerAcceptanceComputeID(slot))
-	storage, _ := app.getStorage(providerAcceptanceStorageID(slot))
-	attachment, _ := app.providerAcceptanceAttachment(slot)
-	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment)
+func (app *controlPlaneServer) providerAcceptanceSlotSummary(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, error) {
+	workspace, workspaceConflict, err := app.providerAcceptanceWorkspaceExact(ctx, slot)
+	if err != nil {
+		return nil, err
+	}
+	compute, _, computeConflict, err := app.providerAcceptanceComputeExact(ctx, slot)
+	if err != nil {
+		return nil, err
+	}
+	storage, _, storageConflict, err := app.providerAcceptanceStorageExact(ctx, slot)
+	if err != nil {
+		return nil, err
+	}
+	attachment, _, err := app.providerAcceptanceAttachment(ctx, slot)
+	if err != nil {
+		return nil, err
+	}
+	if workspaceConflict || computeConflict || storageConflict {
+		return nil, errProviderAcceptanceStateRead
+	}
+	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), nil
 }
 
 func providerAcceptanceSlotResponse(slot providerAcceptanceSlot, workspace, compute, storage, attachment map[string]any) map[string]any {
@@ -629,10 +779,18 @@ func providerAcceptanceResponse(status, reason string, slot map[string]any) map[
 }
 
 func (app *controlPlaneServer) writeProviderAcceptanceManualReview(w http.ResponseWriter, r *http.Request, operation map[string]any, slot providerAcceptanceSlot, reason string) {
-	response := providerAcceptanceResponse("manual_review", reason, app.providerAcceptanceSlotSummary(slot))
+	summary, readErr := app.providerAcceptanceSlotSummary(r.Context(), slot)
+	if readErr != nil {
+		summary = providerAcceptanceSlotResponse(slot, nil, nil, nil, nil)
+	}
+	response := providerAcceptanceResponse("manual_review", reason, summary)
 	operation = mergeMaps(operation, map[string]any{"status": "manual_review", "errorCode": reason, "result": string(mustJSON(response))})
 	if err := app.tables.SaveRuntimeOperation(r.Context(), operation); err != nil {
 		writeError(w, http.StatusInternalServerError, "state_persist_failed")
+		return
+	}
+	if readErr != nil {
+		writeError(w, http.StatusInternalServerError, "state_read_failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

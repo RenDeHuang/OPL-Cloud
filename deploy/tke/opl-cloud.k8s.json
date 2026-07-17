@@ -170,6 +170,15 @@
                     }
                   },
                   {
+                    "name": "OPL_PROVIDER_ACCEPTANCE_TOKEN",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "opl-cloud-provider-acceptance",
+                        "key": "OPL_PROVIDER_ACCEPTANCE_TOKEN"
+                      }
+                    }
+                  },
+                  {
                     "name": "OPL_CONSOLE_USERS_JSON",
                     "valueFrom": {
                       "secretKeyRef": {

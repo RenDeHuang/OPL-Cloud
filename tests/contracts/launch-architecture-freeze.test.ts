@@ -135,6 +135,11 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal("purchaseBudgetRemaining" in freeze.verification, false);
   assert.deepEqual(freeze.verification.providerAcceptance, {
     operatorOnly: true,
+    approvalEnvironment: "production-provider-acceptance",
+    credentialEnv: "OPL_PROVIDER_ACCEPTANCE_TOKEN",
+    credentialHeader: "x-opl-provider-acceptance-token",
+    operatorSessionAccepted: false,
+    genericOperatorTokenAccepted: false,
     operationCardinality: 2,
     operationCardinalityPerSlot: 1,
     fixedSlotOperationReplayable: true,

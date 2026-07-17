@@ -7,14 +7,6 @@ on:
         description: Optional verifier run id.
         required: false
         type: string
-      basic_account_id:
-        description: Account id that owns the reusable Basic verification slot.
-        required: true
-        type: string
-      pro_account_id:
-        description: Account id that owns the reusable Pro verification slot.
-        required: true
-        type: string
       url_attempts:
         description: Workspace URL readiness attempts.
         required: false
@@ -49,10 +41,10 @@ jobs:
       matrix:
         include:
           - slot_id: verification-slot-basic-01
-            account_id: ${{ inputs.basic_account_id }}
+            account_id: acct-verification-slot-basic-01
             descriptor: '{"id":"verification-slot-basic-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
           - slot_id: verification-slot-pro-01
-            account_id: ${{ inputs.pro_account_id }}
+            account_id: acct-verification-slot-pro-01
             descriptor: '{"id":"verification-slot-pro-01","customerProduct":false,"instanceType":"SA5.2XLARGE16","server":"8c16g","cpu":8,"memoryGb":16,"cbsGb":100,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
     outputs:
       workspace_id: ${{ steps.verify.outputs.workspace_id }}

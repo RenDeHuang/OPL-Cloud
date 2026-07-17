@@ -9,6 +9,9 @@
     "OPL_INTERNAL_SERVICE_TOKEN": {
       "secretRef": "opl-cloud/internal-service-token"
     },
+    "OPL_PROVIDER_ACCEPTANCE_TOKEN": {
+      "secretRef": "opl-cloud/provider-acceptance-token"
+    },
     "OPL_SUB2API_BASE_URL": {
       "value": "https://gflabtoken.cn"
     },

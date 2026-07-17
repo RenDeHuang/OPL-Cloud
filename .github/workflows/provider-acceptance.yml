@@ -39,7 +39,7 @@ jobs:
     name: Accept selected fixed PREPAID verification slot
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production
+    environment: production-provider-acceptance
     env:
       OPL_CONSOLE_ORIGIN: https://cloud.medopl.cn
       OPL_PROVIDER_ACCEPTANCE_SLOT_ID: ${{ inputs.slot_id }}
@@ -64,7 +64,7 @@ jobs:
 
       - name: Run one-time Provider Acceptance
         env:
-          OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN: ${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}
+          OPL_PROVIDER_ACCEPTANCE_TOKEN: ${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}
         run: node tools/provider-acceptance.ts
 
       - name: Upload Provider Acceptance manifest

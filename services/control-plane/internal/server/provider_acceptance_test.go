@@ -18,6 +18,7 @@ import (
 const (
 	testProviderAcceptanceAccount = "acct-verification-slot-basic-01"
 	testProviderAcceptanceKey     = "provider-acceptance:verification-slot-basic-01"
+	testProviderAcceptanceToken   = "provider-acceptance-secret"
 	testProviderConfirmation      = "I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS"
 )
 
@@ -181,6 +182,7 @@ func newProviderAcceptanceTestServer(t *testing.T, fabric *providerAcceptanceFab
 	t.Helper()
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
 	store := newMemoryTableStore()
 	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": testProviderAcceptanceAccount, "status": "active", "sub2apiUserId": int64(41)}))
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{
@@ -196,26 +198,38 @@ func newProviderAcceptanceTestServer(t *testing.T, fabric *providerAcceptanceFab
 
 func newProviderAcceptanceTestServerForSlot(t *testing.T, fabric *providerAcceptanceFabric, slot providerAcceptanceSlot) (http.Handler, *memoryTableStore) {
 	t.Helper()
-	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
-	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
-	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	store := newMemoryTableStore()
+	seedProviderAcceptanceIdentity(t, store, slot)
+	return newProviderAcceptanceServer(t, fabric, store), store
+}
+
+func seedProviderAcceptanceIdentity(t *testing.T, store StateStore, slot providerAcceptanceSlot) {
+	t.Helper()
 	mustStore(t, store.SaveAccount(context.Background(), map[string]any{"id": slot.AccountID, "status": "active", "sub2apiUserId": int64(41)}))
 	mustStore(t, store.SaveUser(context.Background(), map[string]any{
 		"id": "usr-" + slot.ID, "email": slot.OwnerEmail, "accountId": slot.AccountID, "role": "owner", "status": "active",
 	}))
+}
+
+func newProviderAcceptanceServer(t *testing.T, fabric *providerAcceptanceFabric, store StateStore) http.Handler {
+	t.Helper()
+	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
+	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
+	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
+	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
 	service := controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{balance: 1_000_000, charges: map[string]int64{}})
 	server, err := NewPersistentServer(service, store)
 	if err != nil {
 		t.Fatalf("create Provider Acceptance server: %v", err)
 	}
-	return server, store
+	return server
 }
 
 func providerAcceptanceRequest(server http.Handler, session *httptest.ResponseRecorder, body, key string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/api/operator/provider-acceptance", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", key)
+	req.Header.Set("x-opl-provider-acceptance-token", testProviderAcceptanceToken)
 	addAuth(req, session)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -247,29 +261,233 @@ func providerAcceptancePayload(t *testing.T, rec *httptest.ResponseRecorder) map
 	return payload
 }
 
-func TestProviderAcceptanceServiceTokenDoesNotCreateAUserSession(t *testing.T) {
-	t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret")
-	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}))
-	body := `{"accountId":"acct-verification-slot-basic-01","confirmation":"I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS","slotId":"verification-slot-basic-01","environmentApproved":true,"purchaseBudget":1,"maxApprovedProviderCost":20}`
+type providerAcceptanceReadFailureStore struct {
+	StateStore
+	mu              sync.Mutex
+	failKind        string
+	computeReads    int
+	storageReads    int
+	attachmentReads int
+}
 
-	valid := httptest.NewRequest(http.MethodPost, "/api/operator/provider-acceptance", bytes.NewBufferString(body))
-	valid.Header.Set("Content-Type", "application/json")
-	valid.Header.Set("Idempotency-Key", testProviderAcceptanceKey)
-	valid.Header.Set("x-opl-operator-token", "operator-secret")
-	validRec := httptest.NewRecorder()
-	server.ServeHTTP(validRec, valid)
-	if validRec.Code == http.StatusUnauthorized || validRec.Header().Get("Set-Cookie") != "" {
-		t.Fatalf("service token status=%d cookie=%q body=%s", validRec.Code, validRec.Header().Get("Set-Cookie"), validRec.Body.String())
+func (s *providerAcceptanceReadFailureStore) ListComputes(ctx context.Context, accountID string) ([]map[string]any, error) {
+	s.mu.Lock()
+	s.computeReads++
+	fail := s.failKind == "compute" && s.computeReads == 2
+	s.mu.Unlock()
+	if fail {
+		return nil, errors.New("forced second compute read failure")
 	}
+	return s.StateStore.ListComputes(ctx, accountID)
+}
 
-	invalid := httptest.NewRequest(http.MethodPost, "/api/operator/provider-acceptance", bytes.NewBufferString(body))
-	invalid.Header.Set("Content-Type", "application/json")
-	invalid.Header.Set("Idempotency-Key", testProviderAcceptanceKey)
-	invalid.Header.Set("x-opl-operator-token", "wrong")
-	invalidRec := httptest.NewRecorder()
-	server.ServeHTTP(invalidRec, invalid)
-	if invalidRec.Code != http.StatusUnauthorized {
-		t.Fatalf("invalid service token status=%d body=%s", invalidRec.Code, invalidRec.Body.String())
+func (s *providerAcceptanceReadFailureStore) ListStorages(ctx context.Context, accountID string) ([]map[string]any, error) {
+	s.mu.Lock()
+	s.storageReads++
+	fail := s.failKind == "storage" && s.storageReads == 2
+	s.mu.Unlock()
+	if fail {
+		return nil, errors.New("forced second storage read failure")
+	}
+	return s.StateStore.ListStorages(ctx, accountID)
+}
+
+func (s *providerAcceptanceReadFailureStore) ListAttachments(ctx context.Context, accountID string) ([]map[string]any, error) {
+	s.mu.Lock()
+	s.attachmentReads++
+	fail := s.failKind == "attachment" && s.attachmentReads == 2
+	s.mu.Unlock()
+	if fail {
+		return nil, errors.New("forced second attachment read failure")
+	}
+	return s.StateStore.ListAttachments(ctx, accountID)
+}
+
+func providerAcceptancePreflightFixture(slot providerAcceptanceSlot) clients.MonthlyPreflight {
+	return clients.MonthlyPreflight{
+		PackageID: slot.PackageID, Zone: "ap-shanghai-2", Available: true, ChargeType: "PREPAID",
+		PeriodMonths: 1, RenewFlag: "NOTIFY_AND_MANUAL_RENEW", ProviderPriceCNY: 8.8,
+	}
+}
+
+func seedCompleteProviderAcceptanceResources(t *testing.T, store StateStore, slot providerAcceptanceSlot, ownerID string) {
+	t.Helper()
+	workspaceID := primaryWorkspaceID(slot.AccountID)
+	deadline := "2099-01-01T00:00:00Z"
+	compute := providerAcceptanceComputeRow(map[string]any{
+		"id": providerAcceptanceComputeID(slot), "accountId": slot.AccountID, "workspaceId": workspaceID, "packageId": slot.PackageID,
+		"status": "running", "provider": "tencent-tke", "providerResourceId": "node/" + slot.ID,
+		"nodePoolId": "np-" + slot.ID, "instanceId": "ins-" + slot.ID, "cvmInstanceId": "ins-" + slot.ID,
+		"instanceType": slot.InstanceType, "zone": "ap-shanghai-2", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": deadline,
+		"costTags": map[string]any{
+			"opl_account_id": slot.AccountID, "opl_workspace_id": workspaceID,
+			"opl_resource_id": providerAcceptanceComputeID(slot), "opl_operation_id": "op-compute-" + slot.ID,
+		},
+	}, slot, ownerID, mergeMonthlyPreflight(providerAcceptancePreflightFixture(slot), "compute", 0))
+	storage := providerAcceptanceStorageRow(map[string]any{
+		"id": providerAcceptanceStorageID(slot), "accountId": slot.AccountID, "workspaceId": workspaceID, "packageId": slot.PackageID,
+		"status": "ready", "provider": "tencent-tke", "providerResourceId": "disk-" + slot.ID, "sizeGb": slot.StorageGB,
+		"zone": "ap-shanghai-2", "chargeType": "PREPAID", "renewFlag": "NOTIFY_AND_MANUAL_RENEW", "deadline": deadline,
+		"pvName": "pv-" + slot.ID, "persistentVolumeName": "pv-" + slot.ID,
+		"costTags": map[string]any{
+			"opl_account_id": slot.AccountID, "opl_workspace_id": workspaceID,
+			"opl_resource_id": providerAcceptanceStorageID(slot), "opl_operation_id": "op-storage-" + slot.ID,
+		},
+	}, slot, ownerID, mergeMonthlyPreflight(providerAcceptancePreflightFixture(slot), "storage", slot.StorageGB))
+	workspace := providerAcceptanceWorkspaceClaim(ownerID, slot)
+	workspace["url"], workspace["status"], workspace["state"] = "https://workspace.medopl.cn/w/"+workspaceID+"/", "running", "running"
+	mustStore(t, store.SaveWorkspace(context.Background(), workspace))
+	mustStore(t, store.SaveCompute(context.Background(), compute))
+	mustStore(t, store.SaveStorage(context.Background(), storage))
+}
+
+func mergeMonthlyPreflight(preflight clients.MonthlyPreflight, resourceType string, sizeGB int) clients.MonthlyPreflight {
+	preflight.ResourceType, preflight.SizeGB = resourceType, sizeGB
+	return preflight
+}
+
+func TestProviderAcceptanceRequiresDedicatedCredentialBeforeFabricAccess(t *testing.T) {
+	slot := providerAcceptanceSlots["verification-slot-basic-01"]
+	body := providerAcceptanceBodyForSlot(slot, true, 1, 20)
+	for _, test := range []struct {
+		name             string
+		configureRequest func(*http.Request, *httptest.ResponseRecorder)
+		configureEnv     func()
+		wantStatus       int
+	}{
+		{
+			name: "operator session",
+			configureRequest: func(req *http.Request, session *httptest.ResponseRecorder) {
+				addAuth(req, session)
+			},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name: "generic operator token",
+			configureRequest: func(req *http.Request, _ *httptest.ResponseRecorder) {
+				req.Header.Set("x-opl-operator-token", "operator-secret")
+			},
+			configureEnv: func() { t.Setenv("OPL_OPERATOR_SUMMARY_TOKEN", "operator-secret") },
+			wantStatus:   http.StatusUnauthorized,
+		},
+		{
+			name: "missing dedicated server credential",
+			configureRequest: func(req *http.Request, _ *httptest.ResponseRecorder) {
+				req.Header.Set("x-opl-provider-acceptance-token", testProviderAcceptanceToken)
+			},
+			configureEnv: func() { t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", "") },
+			wantStatus:   http.StatusUnauthorized,
+		},
+		{
+			name: "dedicated Acceptance credential",
+			configureRequest: func(req *http.Request, _ *httptest.ResponseRecorder) {
+				req.Header.Set("x-opl-provider-acceptance-token", testProviderAcceptanceToken)
+			},
+			wantStatus: http.StatusOK,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fabric := &providerAcceptanceFabric{}
+			server, _ := newProviderAcceptanceTestServerForSlot(t, fabric, slot)
+			if test.configureEnv != nil {
+				test.configureEnv()
+			}
+			session := operatorSessionForTest(t, server)
+			req := httptest.NewRequest(http.MethodPost, "/api/operator/provider-acceptance", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", slot.Key)
+			test.configureRequest(req, session)
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+			if rec.Code != test.wantStatus || rec.Header().Get("Set-Cookie") != "" {
+				t.Fatalf("credential guard status=%d cookie=%q body=%s", rec.Code, rec.Header().Get("Set-Cookie"), rec.Body.String())
+			}
+			fabric.mu.Lock()
+			defer fabric.mu.Unlock()
+			if test.wantStatus == http.StatusUnauthorized && (fabric.preflightCalls != 0 || fabric.computeCreates != 0 || fabric.storageCreates != 0 || fabric.attachmentCreates != 0) {
+				t.Fatalf("unauthorized request reached Fabric: preflight=%d compute=%d storage=%d attachment=%d", fabric.preflightCalls, fabric.computeCreates, fabric.storageCreates, fabric.attachmentCreates)
+			}
+		})
+	}
+}
+
+func TestProviderAcceptanceFailsClosedOnSecondInventoryReadError(t *testing.T) {
+	slot := providerAcceptanceSlots["verification-slot-basic-01"]
+	for _, kind := range []string{"compute", "storage", "attachment"} {
+		t.Run(kind, func(t *testing.T) {
+			base := newMemoryTableStore()
+			seedProviderAcceptanceIdentity(t, base, slot)
+			if kind == "attachment" {
+				seedCompleteProviderAcceptanceResources(t, base, slot, "usr-"+slot.ID)
+			}
+			store := &providerAcceptanceReadFailureStore{StateStore: base, failKind: kind}
+			fabric := &providerAcceptanceFabric{}
+			server := newProviderAcceptanceServer(t, fabric, store)
+			session := operatorSessionForTest(t, server)
+			rec := providerAcceptanceRequest(server, session, providerAcceptanceBodyForSlot(slot, true, 1, 20), slot.Key)
+			if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "state_read_failed") {
+				t.Fatalf("second %s read failure = %d: %s", kind, rec.Code, rec.Body.String())
+			}
+			fabric.mu.Lock()
+			defer fabric.mu.Unlock()
+			if fabric.computeCreates != 0 || fabric.storageCreates != 0 || fabric.attachmentCreates != 0 || fabric.secretWrites != 0 || fabric.runtimeCreates != 0 {
+				t.Fatalf("second %s read failure reached provider writes: compute=%d storage=%d attachment=%d secret=%d runtime=%d", kind, fabric.computeCreates, fabric.storageCreates, fabric.attachmentCreates, fabric.secretWrites, fabric.runtimeCreates)
+			}
+		})
+	}
+}
+
+func TestProviderAcceptanceRejectsCrossUserCandidatesForBothSlots(t *testing.T) {
+	for _, slotID := range []string{"verification-slot-basic-01", "verification-slot-pro-01"} {
+		slot := providerAcceptanceSlots[slotID]
+		for _, resource := range []string{"workspace", "compute", "storage"} {
+			for _, binding := range []string{"owner", "account"} {
+				t.Run(slot.PackageID+"/"+resource+"/"+binding, func(t *testing.T) {
+					fabric := &providerAcceptanceFabric{}
+					server, store := newProviderAcceptanceTestServerForSlot(t, fabric, slot)
+					seedCompleteProviderAcceptanceResources(t, store, slot, "usr-"+slot.ID)
+					var rows []map[string]any
+					switch resource {
+					case "workspace":
+						rows, _ = store.ListWorkspaces(context.Background(), slot.AccountID)
+					case "compute":
+						rows, _ = store.ListComputes(context.Background(), slot.AccountID)
+					case "storage":
+						rows, _ = store.ListStorages(context.Background(), slot.AccountID)
+					}
+					if binding == "owner" {
+						rows[0]["ownerUserId"] = "usr-cross-user"
+					} else {
+						rows[0]["accountId"] = "acct-cross-user"
+						if resource == "workspace" {
+							rows[0]["ownerAccountId"] = "acct-cross-user"
+						}
+					}
+					store.mu.Lock()
+					switch resource {
+					case "workspace":
+						store.workspaces[stringValue(rows[0]["id"])] = cloneMap(rows[0])
+					case "compute":
+						store.computes[stringValue(rows[0]["id"])] = cloneMap(rows[0])
+					case "storage":
+						store.storages[stringValue(rows[0]["id"])] = cloneMap(rows[0])
+					}
+					store.mu.Unlock()
+					mustStore(t, store.SaveRuntimeOperation(context.Background(), providerAcceptanceOperationRow("started", slot)))
+
+					session := operatorSessionForTest(t, server)
+					rec := providerAcceptanceRequest(server, session, providerAcceptanceBodyForSlot(slot, true, 1, 20), slot.Key)
+					if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "provider_acceptance_inventory_ambiguous") {
+						t.Fatalf("cross-user %s %s %s candidate = %d: %s", slot.PackageID, resource, binding, rec.Code, rec.Body.String())
+					}
+					fabric.mu.Lock()
+					defer fabric.mu.Unlock()
+					if fabric.preflightCalls != 0 || fabric.computeCreates != 0 || fabric.storageCreates != 0 || fabric.attachmentCreates != 0 {
+						t.Fatalf("cross-user %s %s %s candidate reached Fabric: preflight=%d compute=%d storage=%d attachment=%d", slot.PackageID, resource, binding, fabric.preflightCalls, fabric.computeCreates, fabric.storageCreates, fabric.attachmentCreates)
+					}
+				})
+			}
+		}
 	}
 }
 

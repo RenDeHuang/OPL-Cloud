@@ -19,12 +19,13 @@ const fixedSlotDescriptor = {
   periodMonths: 1,
   renewFlag: "NOTIFY_AND_MANUAL_RENEW"
 };
+const BASIC_ACCOUNT_ID = "acct-verification-slot-basic-01";
 const ownerSeed = JSON.stringify([{
   id: "usr-verifier",
   email: "owner@example.com",
   password: "console-password",
   role: "owner",
-  accountId: "acct-alpha",
+  accountId: BASIC_ACCOUNT_ID,
   sub2apiUserId: 41
 }]);
 
@@ -123,28 +124,28 @@ function liveFixture({ changedResourceIds = false, frames = true, responseSuffix
       balance: { source: "sub2api", currency: "USD", userId: 41, usdMicros: 500_000_000 },
       computeAllocations: [{
         id: "compute-slot-1",
-        accountId: "acct-alpha",
+        accountId: BASIC_ACCOUNT_ID,
         workspaceId: "workspace-slot-1",
         providerResourceId: "ins-slot-1",
         nodePoolId: `np-slot-${suffix}`,
         status: "running",
-        costTags: { opl_account_id: "acct-alpha", opl_workspace_id: "workspace-slot-1", opl_resource_id: "compute-slot-1" },
+        costTags: { opl_account_id: BASIC_ACCOUNT_ID, opl_workspace_id: "workspace-slot-1", opl_resource_id: "compute-slot-1" },
         providerData: { instanceType: "SA5.MEDIUM4", zone: "ap-guangzhou-3", chargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline }
       }],
       storageVolumes: [{
         id: "storage-slot-1",
-        accountId: "acct-alpha",
+        accountId: BASIC_ACCOUNT_ID,
         workspaceId: "workspace-slot-1",
         providerResourceId: "disk-slot-1",
         sizeGb: 10,
         status: "available",
-        costTags: { opl_account_id: "acct-alpha", opl_workspace_id: "workspace-slot-1", opl_resource_id: "storage-slot-1" },
+        costTags: { opl_account_id: BASIC_ACCOUNT_ID, opl_workspace_id: "workspace-slot-1", opl_resource_id: "storage-slot-1" },
         providerData: { diskChargeType: "PREPAID", periodMonths: "1", renewFlag: "NOTIFY_AND_MANUAL_RENEW", deadline, zone: "ap-guangzhou-3", pvName: "pv-slot-1" }
       }],
       workspaces: [{
         id: "workspace-slot-1",
-        accountId: "acct-alpha",
-        ownerAccountId: "acct-alpha",
+        accountId: BASIC_ACCOUNT_ID,
+        ownerAccountId: BASIC_ACCOUNT_ID,
         verificationSlotId: "verification-slot-basic-01",
         customerProduct: false,
         currentComputeAllocationId: "compute-slot-1",
@@ -170,7 +171,7 @@ function liveFixture({ changedResourceIds = false, frames = true, responseSuffix
     if (url.hostname === "workspace.medopl.cn") return new Response("<main>workspace</main>", { status: 200 });
     if (url.pathname === "/api/production/readiness") return json({ ready: true });
     if (url.pathname === "/api/auth/login") {
-      return json({ user: { accountId: "acct-alpha", role: "owner" } }, 200, {
+      return json({ user: { accountId: BASIC_ACCOUNT_ID, role: "owner" } }, 200, {
         "set-cookie": "opl_session=session-alpha; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-alpha"
       });
@@ -178,10 +179,11 @@ function liveFixture({ changedResourceIds = false, frames = true, responseSuffix
     assert.match(headers.get("cookie") || "", /opl_session=session-alpha/);
     if (url.pathname === "/api/pricing/catalog") {
       return json({
-        storagePer10GbMonthly: { cnyCents: 1800, usdMicros: 2_571_429 },
+        priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", walletCurrency: "USD",
+        storagePer10GbMonthly: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", usdMicros: 2_580_000 },
         packages: [
-          { id: "basic", price: { monthlyPriceCnyCents: 35_000, chargeUsdMicros: 50_000_000 } },
-          { id: "pro", price: { monthlyPriceCnyCents: 150_000, chargeUsdMicros: 214_285_715 } }
+          { id: "basic", price: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", chargeUsdMicros: 50_000_000 } },
+          { id: "pro", price: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", chargeUsdMicros: 214_280_000 } }
         ]
       });
     }
@@ -213,7 +215,7 @@ function options(fixture) {
   return {
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     runId: "rollout-qa-1",
     confirmation: LIVE_QA_CONFIRMATION,
     slotDescriptor: fixedSlotDescriptor,
@@ -299,7 +301,7 @@ test("rollout QA CLI rejects an invalid slot descriptor before network access", 
     env: {
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn",
       OPL_VERIFY_AUTH_USERS_JSON: ownerSeed,
-      OPL_VERIFY_ACCOUNT_ID: "acct-alpha",
+      OPL_VERIFY_ACCOUNT_ID: BASIC_ACCOUNT_ID,
       OPL_VERIFY_LIVE_QA_CONFIRMATION: LIVE_QA_CONFIRMATION,
       OPL_VERIFY_SLOT_DESCRIPTOR_JSON: "{"
     },

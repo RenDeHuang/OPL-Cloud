@@ -4,6 +4,11 @@ import { pathToFileURL } from "node:url";
 
 export const FIXED_VERIFICATION_SLOT_ID = "verification-slot-basic-01";
 
+export const FIXED_VERIFICATION_SLOT_ACCOUNTS = Object.freeze({
+  "verification-slot-basic-01": "acct-verification-slot-basic-01",
+  "verification-slot-pro-01": "acct-verification-slot-pro-01"
+});
+
 export const FIXED_VERIFICATION_SLOT_DESCRIPTORS = Object.freeze({
   "verification-slot-basic-01": Object.freeze({
     id: "verification-slot-basic-01", customerProduct: false, instanceType: "SA5.MEDIUM4", server: "2c4g",
@@ -142,11 +147,20 @@ export async function login({ fetchImpl, origin, email, password, signal, timeou
 }
 
 function verifyCatalog(checks, catalog) {
-  const basic = catalog?.packages?.find((row) => row.id === "basic");
-  const pro = catalog?.packages?.find((row) => row.id === "pro");
-  addCheck(checks, "basic_catalog_price", basic?.price?.monthlyPriceCnyCents === 35_000 && basic?.price?.chargeUsdMicros === 50_000_000);
-  addCheck(checks, "pro_catalog_price", pro?.price?.monthlyPriceCnyCents === 150_000 && pro?.price?.chargeUsdMicros === 214_285_715);
-  addCheck(checks, "storage_catalog_price", catalog?.storagePer10GbMonthly?.cnyCents === 1_800 && catalog?.storagePer10GbMonthly?.usdMicros === 2_571_429);
+  const packages = Array.isArray(catalog?.packages) ? catalog.packages : [];
+  const basics = packages.filter((row) => row?.id === "basic");
+  const pros = packages.filter((row) => row?.id === "pro");
+  const basic = basics[0];
+  const pro = pros[0];
+  const storage = catalog?.storagePer10GbMonthly;
+  const usdPrice = (price) => price?.priceVersion === "pilot-usd-2026-07-v1" && price?.currency === "USD" &&
+    price?.displayCurrency === "USD" && !Object.hasOwn(price, "monthlyPriceCnyCents") && !Object.hasOwn(price, "cnyCents");
+  addCheck(checks, "catalog_usd_contract", catalog?.priceVersion === "pilot-usd-2026-07-v1" && catalog?.currency === "USD" &&
+    catalog?.displayCurrency === "USD" && catalog?.walletCurrency === "USD" && basics.length === 1 && pros.length === 1 &&
+    usdPrice(basic?.price) && usdPrice(pro?.price) && usdPrice(storage));
+  addCheck(checks, "basic_catalog_price", basic?.price?.chargeUsdMicros === 50_000_000);
+  addCheck(checks, "pro_catalog_price", pro?.price?.chargeUsdMicros === 214_280_000);
+  addCheck(checks, "storage_catalog_price", storage?.usdMicros === 2_580_000);
 }
 
 function providerFact(row, keys, optional = false) {
@@ -186,17 +200,24 @@ function verificationSlotDescriptor(raw) {
 }
 
 function fixedSlotFromState(state, { slotId, slotDescriptor, accountId, nowMs }) {
-  const workspaces = (state?.workspaces || []).filter((row) => row?.verificationSlotId === slotId);
-  if (workspaces.length === 0) return null;
+  const allWorkspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
+  const allComputes = Array.isArray(state?.computeAllocations) ? state.computeAllocations : [];
+  const allStorages = Array.isArray(state?.storageVolumes) ? state.storageVolumes : [];
+  const workspaces = allWorkspaces.filter((row) => row?.verificationSlotId === slotId);
+  if (workspaces.length === 0) {
+    if (allWorkspaces.length === 0 && allComputes.length === 0 && allStorages.length === 0) return null;
+    throw new Error("verification_slot_ambiguous");
+  }
   if (workspaces.length > 1) throw new Error("verification_slot_multiple");
+  if (allWorkspaces.length !== 1 || allComputes.length !== 1 || allStorages.length !== 1) throw new Error("verification_slot_ambiguous");
 
   const workspace = workspaces[0];
   const workspaceCompute = providerFact(workspace, ["currentComputeAllocationId", "computeAllocationId"]);
   const workspaceStorage = providerFact(workspace, ["storageId"]);
   const computeId = workspaceCompute.value;
   const storageId = workspaceStorage.value;
-  const computes = (state.computeAllocations || []).filter((row) => row?.id === computeId);
-  const storages = (state.storageVolumes || []).filter((row) => row?.id === storageId);
+  const computes = allComputes.filter((row) => row?.id === computeId);
+  const storages = allStorages.filter((row) => row?.id === storageId);
   if (!workspaceCompute.ok || !workspaceStorage.ok || computes.length !== 1 || storages.length !== 1) {
     throw new Error("verification_slot_ambiguous");
   }
@@ -333,6 +354,7 @@ export async function verifyProductionChain(options = {}) {
   assertIdentity(runId, /^[A-Za-z0-9._-]{1,80}$/, "production_verification_run_id_invalid");
   if (!String(accountId).trim()) throw new Error("verification_account_id_required");
   assertIdentity(accountId, /^[A-Za-z0-9._:-]{1,128}$/, "verification_account_id_invalid");
+  if (accountId !== FIXED_VERIFICATION_SLOT_ACCOUNTS[slotId]) throw new Error("verification_account_id_fixed");
 
   const owner = verificationOwnerFromSeed(authUsersJson, accountId);
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;

@@ -220,6 +220,11 @@
     "purchaseBudget": 2,
     "providerAcceptance": {
       "operatorOnly": true,
+      "approvalEnvironment": "production-provider-acceptance",
+      "credentialEnv": "OPL_PROVIDER_ACCEPTANCE_TOKEN",
+      "credentialHeader": "x-opl-provider-acceptance-token",
+      "operatorSessionAccepted": false,
+      "genericOperatorTokenAccepted": false,
       "operationCardinality": 2,
       "operationCardinalityPerSlot": 1,
       "fixedSlotOperationReplayable": true,

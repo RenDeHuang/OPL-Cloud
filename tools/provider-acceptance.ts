@@ -29,12 +29,12 @@ function safeResult(value) {
     .map(([key, nested]) => [key, safeResult(nested)]));
 }
 
-async function postAcceptance({ fetchImpl, origin, operatorToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs }) {
+async function postAcceptance({ fetchImpl, origin, acceptanceToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs }) {
   const response = await fetchImpl(`${origin}/api/operator/provider-acceptance`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-opl-operator-token": operatorToken,
+      "x-opl-provider-acceptance-token": acceptanceToken,
       "idempotency-key": slot.idempotencyKey
     },
     body: JSON.stringify({ accountId, confirmation, slotId, environmentApproved, purchaseBudget, maxApprovedProviderCost }),
@@ -51,9 +51,19 @@ async function postAcceptance({ fetchImpl, origin, operatorToken, slotId, slot, 
   return payload;
 }
 
+function validSuccessfulResponse(payload, slotId, accountId) {
+  const requiredIds = [
+    "workspaceId", "computeAllocationId", "computeProviderId", "nodePoolId", "storageId",
+    "storageProviderId", "persistentVolumeId", "attachmentId"
+  ];
+  return payload?.ok === true && ["ready", "reused"].includes(payload.status) &&
+    payload.slot?.id === slotId && payload.slot?.accountId === accountId &&
+    requiredIds.every((field) => typeof payload.slot[field] === "string" && payload.slot[field].trim() !== "");
+}
+
 export async function runProviderAcceptance({
   origin,
-  operatorToken,
+  acceptanceToken,
   slotId,
   accountId,
   confirmation,
@@ -68,7 +78,7 @@ export async function runProviderAcceptance({
   fetchImpl = globalThis.fetch
 } = {}) {
   if (confirmation !== PROVIDER_ACCEPTANCE_CONFIRMATION) throw new Error("provider_acceptance_confirmation_required");
-  if (!String(operatorToken || "").trim()) throw new Error("provider_acceptance_operator_token_required");
+  if (!String(acceptanceToken || "").trim()) throw new Error("provider_acceptance_token_required");
   const slot = PROVIDER_ACCEPTANCE_SLOTS[slotId];
   if (!slot) throw new Error("provider_acceptance_slot_fixed");
   if (accountId !== slot.accountId) throw new Error("provider_acceptance_account_fixed");
@@ -80,9 +90,10 @@ export async function runProviderAcceptance({
 
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const payload = await postAcceptance({ fetchImpl, origin: normalizedOrigin, operatorToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs: requestTimeoutMs });
+    const payload = await postAcceptance({ fetchImpl, origin: normalizedOrigin, acceptanceToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs: requestTimeoutMs });
     const result = safeResult({ ...payload, attempt, slotId });
-    if (["ready", "reused"].includes(payload.status) && payload.slot?.id === slotId) {
+    if (["ready", "reused"].includes(payload.status)) {
+      if (!validSuccessfulResponse(payload, slotId, accountId)) throw new Error("provider_acceptance_invalid_response");
       await writeVerificationManifest(manifestPath, result);
       return result;
     }
@@ -105,7 +116,7 @@ export async function runProviderAcceptanceCli({
   try {
     const result = await runProviderAcceptance({
       origin: env.OPL_CONSOLE_ORIGIN,
-      operatorToken: env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN,
+      acceptanceToken: env.OPL_PROVIDER_ACCEPTANCE_TOKEN,
       slotId: env.OPL_PROVIDER_ACCEPTANCE_SLOT_ID,
       accountId: env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID,
       confirmation: env.OPL_PROVIDER_ACCEPTANCE_CONFIRMATION,

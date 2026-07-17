@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { parse } from "yaml";
 
@@ -10,13 +12,33 @@ import {
   runProviderAcceptanceCli
 } from "../../tools/provider-acceptance.ts";
 
-const operatorToken = "operator-summary-token";
+const acceptanceToken = "provider-acceptance-token";
 
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { "content-type": "application/json", ...headers }
   });
+}
+
+function acceptedSlotPayload(slotId, accountId, overrides = {}) {
+  return {
+    ok: true,
+    status: "reused",
+    slot: {
+      id: slotId,
+      accountId,
+      workspaceId: `ws-${slotId}`,
+      computeAllocationId: `ca-${slotId}`,
+      computeProviderId: `ins-${slotId}`,
+      nodePoolId: `np-${slotId}`,
+      storageId: `vol-${slotId}`,
+      storageProviderId: `disk-${slotId}`,
+      persistentVolumeId: `pv-${slotId}`,
+      attachmentId: `att-${slotId}`,
+      ...overrides
+    }
+  };
 }
 
 test("Provider Acceptance replays each fixed Basic and Pro operation with separate authority", async () => {
@@ -32,11 +54,13 @@ test("Provider Acceptance replays each fixed Basic and Pro operation with separa
       const headers = new Headers(init.headers);
       calls.push({ path: url.pathname, method: init.method || "GET", headers, body: init.body && JSON.parse(init.body) });
       attempts += 1;
-      return json({ ok: true, status: attempts === 1 ? "in_progress" : "reused", slot: { id: slotId, accountId: slot.accountId } });
+      return json(attempts === 1
+        ? { ok: false, status: "in_progress", slot: { id: slotId, accountId: slot.accountId } }
+        : acceptedSlotPayload(slotId, slot.accountId));
     };
 
     const result = await runProviderAcceptance({
-      origin: "https://cloud.medopl.cn", operatorToken, slotId, accountId: slot.accountId,
+      origin: "https://cloud.medopl.cn", acceptanceToken, slotId, accountId: slot.accountId,
       confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION, environmentApproved: true, purchaseBudget: 1,
       maxApprovedProviderCost: 100, attempts: 2, retryDelayMs: 0, fetchImpl
     });
@@ -48,10 +72,11 @@ test("Provider Acceptance replays each fixed Basic and Pro operation with separa
         accountId: slot.accountId, confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION, slotId,
         environmentApproved: true, purchaseBudget: 1, maxApprovedProviderCost: 100
       });
-      assert.equal(call.headers.get("x-opl-operator-token"), operatorToken);
+      assert.equal(call.headers.get("x-opl-provider-acceptance-token"), acceptanceToken);
+      assert.equal(call.headers.get("x-opl-operator-token"), null);
       assert.equal(call.headers.get("idempotency-key"), slot.idempotencyKey);
     }
-    assert.doesNotMatch(JSON.stringify(result), /operator-summary-token/);
+    assert.doesNotMatch(JSON.stringify(result), /provider-acceptance-token/);
   }
 });
 
@@ -59,7 +84,7 @@ test("Provider Acceptance rejects missing authority before network access and st
   let calls = 0;
   await assert.rejects(() => runProviderAcceptance({
     origin: "https://cloud.medopl.cn",
-    operatorToken,
+    acceptanceToken,
     slotId: "verification-slot-basic-01",
     accountId: "acct-verification-slot-basic-01",
     confirmation: "yes",
@@ -70,12 +95,12 @@ test("Provider Acceptance rejects missing authority before network access and st
   const fetchImpl = async (input, init = {}) => {
     calls += 1;
     assert.equal(init.method, "POST");
-	assert.equal(new Headers(init.headers).get("x-opl-operator-token"), operatorToken);
+	assert.equal(new Headers(init.headers).get("x-opl-provider-acceptance-token"), acceptanceToken);
     return json({ ok: false, status: "manual_review", reason: "provider_result_unknown" });
   };
   await assert.rejects(() => runProviderAcceptance({
     origin: "https://cloud.medopl.cn",
-    operatorToken,
+    acceptanceToken,
     slotId: "verification-slot-basic-01",
     accountId: "acct-verification-slot-basic-01",
     confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION,
@@ -89,11 +114,41 @@ test("Provider Acceptance rejects missing authority before network access and st
   assert.equal(calls, 1);
 });
 
+test("Provider Acceptance validates every successful response fact before writing evidence", async () => {
+  const slotId = "verification-slot-basic-01";
+  const accountId = PROVIDER_ACCEPTANCE_SLOTS[slotId].accountId;
+  const requiredIds = [
+    "workspaceId", "computeAllocationId", "computeProviderId", "nodePoolId", "storageId",
+    "storageProviderId", "persistentVolumeId", "attachmentId"
+  ];
+  const invalidPayloads = [
+    { ...acceptedSlotPayload(slotId, accountId), ok: false },
+    acceptedSlotPayload("verification-slot-pro-01", accountId),
+    acceptedSlotPayload(slotId, "acct-wrong"),
+    ...requiredIds.map((field) => acceptedSlotPayload(slotId, accountId, { [field]: "" }))
+  ];
+  const directory = await mkdtemp(join(tmpdir(), "opl-provider-acceptance-"));
+  const manifestPath = join(directory, "manifest.json");
+
+  for (const payload of invalidPayloads) {
+    await assert.rejects(() => runProviderAcceptance({
+      origin: "https://cloud.medopl.cn", acceptanceToken, slotId, accountId,
+      confirmation: PROVIDER_ACCEPTANCE_CONFIRMATION, environmentApproved: true, purchaseBudget: 1,
+      maxApprovedProviderCost: 100, attempts: 1, retryDelayMs: 0, manifestPath,
+      fetchImpl: async () => json(payload)
+    }), /provider_acceptance_invalid_response/);
+    await assert.rejects(access(manifestPath), { code: "ENOENT" });
+  }
+  await rm(directory, { recursive: true, force: true });
+});
+
 test("Provider Acceptance workflow is independently approved, dual-slot fixed, and cannot mutate resources directly", async () => {
   const workflow = parse(await readFile(".github/workflows/provider-acceptance.yml", "utf8"));
   const contract = JSON.parse(await readFile("packages/contracts/opl-cloud-deployment-contract.json", "utf8"));
+  const launch = JSON.parse(await readFile("packages/contracts/opl-cloud-launch-freeze-contract.json", "utf8"));
   const backend = await readFile("services/control-plane/internal/server/routes_provider_acceptance.go", "utf8");
   const spec = contract.providerAcceptanceWorkflow;
+  const deploySpec = contract.deployWorkflow;
   const job = workflow.jobs.accept;
   const runStep = job.steps.find((step) => step.name === "Run one-time Provider Acceptance");
   const source = JSON.stringify(workflow);
@@ -115,18 +170,28 @@ test("Provider Acceptance workflow is independently approved, dual-slot fixed, a
   assert.equal(workflow.on.workflow_dispatch.inputs.confirmation.required, true);
   assert.equal(workflow.on.workflow_dispatch.inputs.purchase_budget.required, true);
   assert.equal(workflow.on.workflow_dispatch.inputs.max_approved_provider_cost.required, true);
-  assert.equal(job.environment, "production");
+  assert.equal(job.environment, "production-provider-acceptance");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_SLOT_ID, "${{ inputs.slot_id }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID, "${{ inputs.account_id }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_CONFIRMATION, "${{ inputs.confirmation }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_ENVIRONMENT_APPROVED, "true");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_PURCHASE_BUDGET, "${{ inputs.purchase_budget }}");
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST, "${{ inputs.max_approved_provider_cost }}");
-  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN, undefined);
-  assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN, "${{ secrets.OPL_OPERATOR_SUMMARY_TOKEN }}");
+  assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, undefined);
+  assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, "${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}");
+  assert.equal(runStep.env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN, undefined);
   assert.equal(job.env.OPL_PROVIDER_ACCEPTANCE_AUTH_USERS_JSON, undefined);
-  assert.ok(spec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN"));
-  assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN"]);
+  assert.equal(spec.environment, "production-provider-acceptance");
+  assert.ok(spec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
+  assert.deepEqual(spec.secretEnv, ["OPL_PROVIDER_ACCEPTANCE_TOKEN"]);
+  assert.ok(deploySpec.requiredEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
+  assert.ok(deploySpec.secretEnv.includes("OPL_PROVIDER_ACCEPTANCE_TOKEN"));
+  assert.ok(deploySpec.requiredCommandsByStep["Install Kubernetes secrets"].includes('--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN="$secret_dir/provider-acceptance-token"'));
+  assert.equal(launch.verification.providerAcceptance.approvalEnvironment, "production-provider-acceptance");
+  assert.equal(launch.verification.providerAcceptance.credentialEnv, "OPL_PROVIDER_ACCEPTANCE_TOKEN");
+  assert.equal(launch.verification.providerAcceptance.credentialHeader, "x-opl-provider-acceptance-token");
+  assert.equal(launch.verification.providerAcceptance.operatorSessionAccepted, false);
+  assert.equal(launch.verification.providerAcceptance.genericOperatorTokenAccepted, false);
   assert.match(source, /node tools\/provider-acceptance\.ts/);
   assert.doesNotMatch(source, /TENCENTCLOUD_SECRET|compute-allocations|storage-volumes|destroy|delete|renew/i);
   assert.match(backend, /POST \/api\/operator\/provider-acceptance/);
@@ -137,11 +202,11 @@ test("ordinary production verification requires both fixed slots and has no Acce
   const workflow = parse(await readFile(".github/workflows/verify-production-chain.yml", "utf8"));
   const source = await readFile(".github/workflows/verify-production-chain.yml", "utf8");
   const inputs = workflow.on.workflow_dispatch.inputs;
-  assert.equal(inputs.basic_account_id.required, true);
-  assert.equal(inputs.pro_account_id.required, true);
+  assert.equal(inputs.basic_account_id, undefined);
+  assert.equal(inputs.pro_account_id, undefined);
   assert.deepEqual(workflow.jobs.verify.strategy.matrix.include.map(({ slot_id, account_id }) => ({ slot_id, account_id })), [
-    { slot_id: "verification-slot-basic-01", account_id: "${{ inputs.basic_account_id }}" },
-    { slot_id: "verification-slot-pro-01", account_id: "${{ inputs.pro_account_id }}" }
+    { slot_id: "verification-slot-basic-01", account_id: "acct-verification-slot-basic-01" },
+    { slot_id: "verification-slot-pro-01", account_id: "acct-verification-slot-pro-01" }
   ]);
   assert.doesNotMatch(source, /provider-acceptance\.ts|\/api\/operator\/provider-acceptance|compute-allocations|storage-volumes|destroy|delete/i);
 });

@@ -11,6 +11,8 @@ import {
 } from "../../tools/production-verifier.ts";
 
 const FIXED_VERIFICATION_SLOT_ID = "verification-slot-basic-01";
+const BASIC_ACCOUNT_ID = "acct-verification-slot-basic-01";
+const PRO_ACCOUNT_ID = "acct-verification-slot-pro-01";
 const fixedSlotDescriptor = {
   id: FIXED_VERIFICATION_SLOT_ID,
   customerProduct: false,
@@ -35,14 +37,38 @@ const proSlotDescriptor = {
   periodMonths: 1,
   renewFlag: "NOTIFY_AND_MANUAL_RENEW"
 };
-const ownerSeed = JSON.stringify([{
-  id: "usr-verifier",
-  email: "owner@example.com",
-  password: "correct horse battery staple",
-  role: "owner",
-  accountId: "acct-alpha",
-  sub2apiUserId: 41
-}]);
+const ownerSeed = JSON.stringify([
+  {
+    id: "usr-verifier-basic", email: "basic-owner@example.com", password: "correct horse battery staple",
+    role: "owner", accountId: BASIC_ACCOUNT_ID, sub2apiUserId: 41
+  },
+  {
+    id: "usr-verifier-pro", email: "pro-owner@example.com", password: "correct horse battery staple pro",
+    role: "owner", accountId: PRO_ACCOUNT_ID, sub2apiUserId: 42
+  }
+]);
+
+const pricingCatalogResponse = {
+  priceVersion: "pilot-usd-2026-07-v1",
+  billingUnit: "calendar_month",
+  currency: "USD",
+  displayCurrency: "USD",
+  walletCurrency: "USD",
+  storageSize: { minimumGb: 10, stepGb: 10 },
+  storagePer10GbMonthly: {
+    priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", usdMicros: 2_580_000
+  },
+  packages: [
+    {
+      id: "basic", name: "Basic", available: true, cpu: 2, memoryGb: 4, diskGb: 10, server: "2c4g",
+      price: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", chargeUsdMicros: 50_000_000 }
+    },
+    {
+      id: "pro", name: "Pro", available: true, cpu: 8, memoryGb: 16, diskGb: 100, server: "8c16g",
+      price: { priceVersion: "pilot-usd-2026-07-v1", currency: "USD", displayCurrency: "USD", chargeUsdMicros: 214_280_000 }
+    }
+  ]
+};
 
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), {
@@ -51,7 +77,17 @@ function json(payload, status = 200, headers = {}) {
   });
 }
 
-function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, nameOnly = false, customerProduct = false, mutate } = {}) {
+function fixedSlotFixture({
+  slotCount = 1,
+  ambiguous = false,
+  inactive = false,
+  nameOnly = false,
+  customerProduct = false,
+  descriptor = fixedSlotDescriptor,
+  accountId = descriptor.id === proSlotDescriptor.id ? PRO_ACCOUNT_ID : BASIC_ACCOUNT_ID,
+  catalog = pricingCatalogResponse,
+  mutate
+} = {}) {
   const calls = [];
   const computeAllocations = [];
   const storageVolumes = [];
@@ -63,14 +99,14 @@ function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, 
     const workspaceId = `workspace-slot-${suffix}`;
     computeAllocations.push({
       id: `compute-slot-${suffix}`,
-      accountId: "acct-alpha",
+      accountId,
       workspaceId,
       providerResourceId: `ins-slot-${suffix}`,
       nodePoolId: `np-slot-${suffix}`,
       status: inactive ? "destroyed" : "running",
-      costTags: { opl_account_id: "acct-alpha", opl_workspace_id: workspaceId, opl_resource_id: `compute-slot-${suffix}` },
+      costTags: { opl_account_id: accountId, opl_workspace_id: workspaceId, opl_resource_id: `compute-slot-${suffix}` },
       providerData: {
-        instanceType: "SA5.MEDIUM4",
+        instanceType: descriptor.instanceType,
         zone: "ap-guangzhou-3",
         chargeType: "PREPAID",
         periodMonths: "1",
@@ -81,12 +117,12 @@ function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, 
     if (!ambiguous) {
       storageVolumes.push({
         id: `storage-slot-${suffix}`,
-        accountId: "acct-alpha",
+        accountId,
         workspaceId,
         providerResourceId: `disk-slot-${suffix}`,
-        sizeGb: 10,
+        sizeGb: descriptor.cbsGb,
         status: "available",
-        costTags: { opl_account_id: "acct-alpha", opl_workspace_id: workspaceId, opl_resource_id: `storage-slot-${suffix}` },
+        costTags: { opl_account_id: accountId, opl_workspace_id: workspaceId, opl_resource_id: `storage-slot-${suffix}` },
         providerData: {
           diskChargeType: "PREPAID",
           periodMonths: "1",
@@ -94,16 +130,16 @@ function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, 
           deadline,
           zone: "ap-guangzhou-3",
           pvName: `pv-slot-${suffix}`,
-          sizeGb: "10"
+          sizeGb: String(descriptor.cbsGb)
         }
       });
     }
     workspaces.push({
       id: workspaceId,
-      accountId: "acct-alpha",
-      ownerAccountId: "acct-alpha",
-      name: FIXED_VERIFICATION_SLOT_ID,
-      ...(nameOnly ? {} : { verificationSlotId: FIXED_VERIFICATION_SLOT_ID }),
+      accountId,
+      ownerAccountId: accountId,
+      name: descriptor.id,
+      ...(nameOnly ? {} : { verificationSlotId: descriptor.id }),
       customerProduct,
       currentComputeAllocationId: `compute-slot-${suffix}`,
       storageId: `storage-slot-${suffix}`,
@@ -124,7 +160,7 @@ function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, 
     }
     if (url.pathname === "/api/production/readiness") return json({ ready: true });
     if (url.pathname === "/api/auth/login") {
-      return json({ user: { id: "usr-verifier", accountId: "acct-alpha", role: "owner" } }, 200, {
+      return json({ user: { id: `usr-verifier-${descriptor.id}`, accountId, role: "owner" } }, 200, {
         "set-cookie": "opl_session=session-alpha; Path=/; HttpOnly",
         "x-opl-csrf-token": "csrf-alpha"
       });
@@ -134,17 +170,11 @@ function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, 
     assert.equal(method, "GET", `ordinary production verification must be read only: ${method} ${url.pathname}`);
 
     if (url.pathname === "/api/pricing/catalog") {
-      return json({
-        storagePer10GbMonthly: { cnyCents: 1800, usdMicros: 2_571_429 },
-        packages: [
-          { id: "basic", available: true, price: { monthlyPriceCnyCents: 35_000, chargeUsdMicros: 50_000_000 } },
-          { id: "pro", available: true, price: { monthlyPriceCnyCents: 150_000, chargeUsdMicros: 214_285_715 } }
-        ]
-      });
+      return json(catalog);
     }
     if (url.pathname === "/api/state") {
       return json({
-        balance: { source: "sub2api", currency: "USD", userId: 41, usdMicros: 500_000_000 },
+        balance: { source: "sub2api", currency: "USD", userId: accountId === PRO_ACCOUNT_ID ? 42 : 41, usdMicros: 500_000_000 },
         computeAllocations,
         storageVolumes,
         workspaces
@@ -164,16 +194,16 @@ function fixedSlotFixture({ slotCount = 1, ambiguous = false, inactive = false, 
 }
 
 test("production verifier requires one mapped owner", () => {
-  assert.deepEqual(verificationOwnerFromSeed(ownerSeed, "acct-alpha"), {
-    accountId: "acct-alpha",
-    email: "owner@example.com",
+  assert.deepEqual(verificationOwnerFromSeed(ownerSeed, BASIC_ACCOUNT_ID), {
+    accountId: BASIC_ACCOUNT_ID,
+    email: "basic-owner@example.com",
     password: "correct horse battery staple",
     sub2apiUserId: 41
   });
-  assert.throws(() => verificationOwnerFromSeed(JSON.stringify([{ role: "owner", accountId: "acct-alpha", email: "a", password: "b" }])), /verification_owner_mapping_required/);
+  assert.throws(() => verificationOwnerFromSeed(JSON.stringify([{ role: "owner", accountId: BASIC_ACCOUNT_ID, email: "a", password: "b" }])), /verification_owner_mapping_required/);
   assert.throws(() => verificationOwnerFromSeed(JSON.stringify([
-    { role: "owner", accountId: "acct-alpha", email: "a", password: "b", sub2apiUserId: 1 },
-    { role: "owner", accountId: "acct-alpha", email: "c", password: "d", sub2apiUserId: 2 }
+    { role: "owner", accountId: BASIC_ACCOUNT_ID, email: "a", password: "b", sub2apiUserId: 1 },
+    { role: "owner", accountId: BASIC_ACCOUNT_ID, email: "c", password: "d", sub2apiUserId: 2 }
   ])), /verification_owner_credentials_required/);
 });
 
@@ -218,12 +248,27 @@ test("production verifier requires the dedicated account id before network acces
   assert.equal(calls, 0);
 });
 
+test("production verifier freezes each slot to its reserved account before network access", async () => {
+  for (const [slotId, slotDescriptor, accountId] of [
+    [fixedSlotDescriptor.id, fixedSlotDescriptor, PRO_ACCOUNT_ID],
+    [proSlotDescriptor.id, proSlotDescriptor, BASIC_ACCOUNT_ID],
+    [fixedSlotDescriptor.id, fixedSlotDescriptor, "acct-arbitrary"]
+  ]) {
+    let calls = 0;
+    await assert.rejects(() => verifyProductionChain({
+      origin: "https://cloud.medopl.cn", authUsersJson: ownerSeed, accountId, slotId, slotDescriptor,
+      runId: "fixed-account-guard", fetchImpl: async () => { calls += 1; return json({}); }
+    }), /verification_account_id_fixed/);
+    assert.equal(calls, 0);
+  }
+});
+
 test("production verifier rejects a non-production Console host before network access", async () => {
   let calls = 0;
   await assert.rejects(() => verifyProductionChain({
     origin: "https://attacker.example",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     slotDescriptor: fixedSlotDescriptor,
     runId: "wrong-console-host",
     fetchImpl: async () => { calls += 1; return json({}); }
@@ -256,7 +301,7 @@ test("production verifier requires an exact controlled slot descriptor before ne
     await assert.rejects(() => verifyProductionChain({
       origin: "https://cloud.medopl.cn",
       authUsersJson: ownerSeed,
-      accountId: "acct-alpha",
+      accountId: BASIC_ACCOUNT_ID,
       slotDescriptor,
       runId: "slot-descriptor-guard",
       fetchImpl: async () => { calls += 1; return json({}); }
@@ -265,12 +310,32 @@ test("production verifier requires an exact controlled slot descriptor before ne
   }
 });
 
+test("production verifier rejects legacy converted prices and CNY customer catalog fields", async () => {
+  const legacyConverted = structuredClone(pricingCatalogResponse);
+  legacyConverted.storagePer10GbMonthly.usdMicros = 2_571_429;
+  legacyConverted.packages.find((row) => row.id === "pro").price.chargeUsdMicros = 214_285_715;
+  const cnyPublicShape = structuredClone(pricingCatalogResponse);
+  cnyPublicShape.storagePer10GbMonthly.usdMicros = 2_571_429;
+  cnyPublicShape.storagePer10GbMonthly.cnyCents = 1_800;
+  cnyPublicShape.packages[0].price.monthlyPriceCnyCents = 35_000;
+  cnyPublicShape.packages[1].price.chargeUsdMicros = 214_285_715;
+  cnyPublicShape.packages[1].price.monthlyPriceCnyCents = 150_000;
+
+  for (const catalog of [legacyConverted, cnyPublicShape]) {
+    const fixture = fixedSlotFixture({ catalog });
+    await assert.rejects(() => verifyProductionChain({
+      origin: "https://cloud.medopl.cn", authUsersJson: ownerSeed, accountId: BASIC_ACCOUNT_ID,
+      slotDescriptor: fixedSlotDescriptor, runId: "catalog-contract-guard", fetchImpl: fixture.fetchImpl
+    }), /catalog_(?:price|usd)_contract|(?:basic|pro|storage)_catalog_price/);
+  }
+});
+
 test("ordinary production verifier reuses exactly one fixed slot without resource mutations", async () => {
   const fixture = fixedSlotFixture();
   const result = await verifyProductionChain({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     slotDescriptor: fixedSlotDescriptor,
     runId: "read-only-smoke",
     fetchImpl: fixture.fetchImpl
@@ -295,17 +360,9 @@ test("ordinary production verifier reuses exactly one fixed slot without resourc
 });
 
 test("ordinary production verifier accepts the fixed Pro slot without resource mutations", async () => {
-  const fixture = fixedSlotFixture({
-    mutate: ({ computeAllocations, storageVolumes, workspaces }) => {
-      computeAllocations[0].providerData.instanceType = proSlotDescriptor.instanceType;
-      storageVolumes[0].sizeGb = proSlotDescriptor.cbsGb;
-      storageVolumes[0].providerData.sizeGb = String(proSlotDescriptor.cbsGb);
-      workspaces[0].name = proSlotDescriptor.id;
-      workspaces[0].verificationSlotId = proSlotDescriptor.id;
-    }
-  });
+  const fixture = fixedSlotFixture({ descriptor: proSlotDescriptor });
   const result = await verifyProductionChain({
-    origin: "https://cloud.medopl.cn", authUsersJson: ownerSeed, accountId: "acct-alpha",
+    origin: "https://cloud.medopl.cn", authUsersJson: ownerSeed, accountId: PRO_ACCOUNT_ID,
     slotId: proSlotDescriptor.id, slotDescriptor: proSlotDescriptor, runId: "read-only-pro-smoke",
     fetchImpl: fixture.fetchImpl
   });
@@ -320,7 +377,7 @@ test("zero slots only reports that independent Provider Acceptance is required",
   const result = await verifyProductionChain({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     slotDescriptor: fixedSlotDescriptor,
     runId: "slot-missing",
     fetchImpl: fixture.fetchImpl
@@ -334,21 +391,20 @@ test("zero slots only reports that independent Provider Acceptance is required",
 });
 
 test("same-name customer Workspaces cannot stand in for the server-marked fixed slot", async () => {
-  const nameOnly = await verifyProductionChain({
+  await assert.rejects(() => verifyProductionChain({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     slotDescriptor: fixedSlotDescriptor,
     runId: "same-name-not-slot",
     fetchImpl: fixedSlotFixture({ nameOnly: true }).fetchImpl
-  });
-  assert.equal(nameOnly.status, "provider_acceptance_required");
+  }), /verification_slot_ambiguous/);
 
   const customerProduct = fixedSlotFixture({ customerProduct: true });
   await assert.rejects(() => verifyProductionChain({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     slotDescriptor: fixedSlotDescriptor,
     runId: "customer-workspace-rejected",
     fetchImpl: customerProduct.fetchImpl
@@ -359,7 +415,7 @@ test("fixed-slot selection fails closed on duplicates or ambiguity", async () =>
   const options = (fixture) => ({
     origin: "https://cloud.medopl.cn",
     authUsersJson: ownerSeed,
-    accountId: "acct-alpha",
+    accountId: BASIC_ACCOUNT_ID,
     slotDescriptor: fixedSlotDescriptor,
     runId: "slot-guard",
     fetchImpl: fixture.fetchImpl
@@ -368,6 +424,25 @@ test("fixed-slot selection fails closed on duplicates or ambiguity", async () =>
   await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ slotCount: 2 }))), /verification_slot_multiple/);
   await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ ambiguous: true }))), /verification_slot_ambiguous/);
   await assert.rejects(() => verifyProductionChain(options(fixedSlotFixture({ inactive: true }))), /verification_slot_ambiguous/);
+});
+
+test("fixed-slot selection requires the complete reserved account inventory to have cardinality one", async () => {
+  const mutations = [
+    ({ workspaces }) => workspaces.splice(0),
+    ({ workspaces }) => workspaces.push({ ...structuredClone(workspaces[0]), id: "workspace-extra", verificationSlotId: "unrelated-slot" }),
+    ({ computeAllocations }) => computeAllocations.push({ ...structuredClone(computeAllocations[0]), id: "compute-extra", providerResourceId: "ins-extra" }),
+    ({ storageVolumes }) => storageVolumes.push({ ...structuredClone(storageVolumes[0]), id: "storage-extra", providerResourceId: "disk-extra" }),
+    ({ computeAllocations }) => computeAllocations.push({ ...structuredClone(computeAllocations[0]), id: "compute-duplicate-provider" }),
+    ({ storageVolumes }) => storageVolumes.push({ ...structuredClone(storageVolumes[0]), id: "storage-duplicate-provider" })
+  ];
+
+  for (const mutate of mutations) {
+    const fixture = fixedSlotFixture({ mutate });
+    await assert.rejects(() => verifyProductionChain({
+      origin: "https://cloud.medopl.cn", authUsersJson: ownerSeed, accountId: BASIC_ACCOUNT_ID,
+      slotDescriptor: fixedSlotDescriptor, runId: "complete-slot-cardinality", fetchImpl: fixture.fetchImpl
+    }), /verification_slot_(?:multiple|ambiguous)/);
+  }
 });
 
 test("fixed-slot reuse requires prepaid shape, live deadlines, one zone, and account ownership", async () => {
@@ -396,7 +471,7 @@ test("fixed-slot reuse requires prepaid shape, live deadlines, one zone, and acc
     await assert.rejects(() => verifyProductionChain({
       origin: "https://cloud.medopl.cn",
       authUsersJson: ownerSeed,
-      accountId: "acct-alpha",
+      accountId: BASIC_ACCOUNT_ID,
       slotDescriptor: fixedSlotDescriptor,
       runId: "slot-compliance",
       fetchImpl: fixture.fetchImpl
@@ -415,7 +490,7 @@ test("fixed-slot reuse requires exact one-month provider periods from resource s
     await assert.rejects(() => verifyProductionChain({
       origin: "https://cloud.medopl.cn",
       authUsersJson: ownerSeed,
-      accountId: "acct-alpha",
+      accountId: BASIC_ACCOUNT_ID,
       slotDescriptor: fixedSlotDescriptor,
       runId: "slot-internal-one-month",
       fetchImpl: fixture.fetchImpl

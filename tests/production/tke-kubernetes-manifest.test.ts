@@ -37,6 +37,7 @@ test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2A
   assert.deepEqual(controlContainer.env.filter((item) => item.valueFrom).map((item) => item.name), [
     "DATABASE_URL",
     "OPL_INTERNAL_SERVICE_TOKEN",
+    "OPL_PROVIDER_ACCEPTANCE_TOKEN",
     "OPL_CONSOLE_USERS_JSON",
     "OPL_OPERATOR_SUMMARY_TOKEN",
     "OPL_AIONUI_ADMIN_PASSWORD_SEED",

@@ -227,7 +227,7 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TENCENT_ZONE"));
   assert.equal(contract.productionVerificationWorkflow.launchStatus, "active");
   assert.equal(contract.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
-  assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, ["basic_account_id", "pro_account_id"]);
+  assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, []);
   assert.equal(contract.productionVerificationWorkflow.requestTimeoutMsDefault, 30_000);
   assert.equal(contract.productionVerificationWorkflow.timeoutMinutes, 15);
   assert.deepEqual(contract.productionVerificationWorkflow.slotDescriptors, [basicSlotDescriptor, proSlotDescriptor]);
@@ -260,10 +260,8 @@ test("production verification is read only and requires both reusable prepaid sl
   assert.equal(workflow.concurrency.group, "production-resource-verification");
   assert.equal(workflow.concurrency["cancel-in-progress"], false);
   assert.equal(currentJob["timeout-minutes"], 15);
-  assert.equal(workflow.on.workflow_dispatch.inputs.basic_account_id.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.pro_account_id.required, true);
-  assert.equal(Object.hasOwn(workflow.on.workflow_dispatch.inputs.basic_account_id, "default"), false);
-  assert.equal(Object.hasOwn(workflow.on.workflow_dispatch.inputs.pro_account_id, "default"), false);
+  assert.equal(workflow.on.workflow_dispatch.inputs.basic_account_id, undefined);
+  assert.equal(workflow.on.workflow_dispatch.inputs.pro_account_id, undefined);
   assert.equal(workflow.on.workflow_dispatch.inputs.request_timeout_ms.default, "30000");
   assert.equal(currentJob.env.OPL_VERIFY_REQUEST_TIMEOUT_MS, "${{ inputs.request_timeout_ms }}");
   assert.equal(inputs.includes("paid_confirmation"), false);
@@ -275,8 +273,8 @@ test("production verification is read only and requires both reusable prepaid sl
   assert.deepEqual(currentJob.strategy.matrix.include.map((entry) => ({
     slotId: entry.slot_id, accountId: entry.account_id, descriptor: JSON.parse(entry.descriptor)
   })), [
-    { slotId: basicSlotDescriptor.id, accountId: "${{ inputs.basic_account_id }}", descriptor: basicSlotDescriptor },
-    { slotId: proSlotDescriptor.id, accountId: "${{ inputs.pro_account_id }}", descriptor: proSlotDescriptor }
+    { slotId: basicSlotDescriptor.id, accountId: "acct-verification-slot-basic-01", descriptor: basicSlotDescriptor },
+    { slotId: proSlotDescriptor.id, accountId: "acct-verification-slot-pro-01", descriptor: proSlotDescriptor }
   ]);
   assert.equal(Object.hasOwn(currentJob.env, "OPL_VERIFY_PURCHASE_BUDGET_REMAINING"), false);
   assert.match(runs, /node tools\/production-verifier\.ts --browser-e2e/);
@@ -436,6 +434,9 @@ test("TKE deploy installs Sub2API credentials and validates account mappings", a
   assert.match(install, /create secret generic opl-cloud-sub2api/);
   assert.match(install, /--from-file=OPL_SUB2API_ADMIN_EMAIL/);
   assert.match(install, /--from-file=OPL_SUB2API_ADMIN_PASSWORD/);
+  assert.equal(currentJob.env.OPL_PROVIDER_ACCEPTANCE_TOKEN, "${{ secrets.OPL_PROVIDER_ACCEPTANCE_TOKEN }}");
+  assert.match(install, /create secret generic opl-cloud-provider-acceptance/);
+  assert.match(install, /--from-file=OPL_PROVIDER_ACCEPTANCE_TOKEN/);
   assert.match(install, /Number\.isSafeInteger\(user\.sub2apiUserId\)/);
   assert.match(install, /user\.sub2apiUserId > 0/);
   assert.equal(currentJob.env.OPL_TENCENT_ZONE, "${{ vars.OPL_TENCENT_ZONE || 'na-siliconvalley-1' }}");
