@@ -240,7 +240,12 @@ func validAccountID(value string) bool {
 }
 
 func billingOperationIdentityMatches(existing, requested map[string]any) bool {
-	for _, field := range []string{"accountId", "billingOperationId", "pricingVersion", "packageId", "periodStart", "paidThrough"} {
+	existingPriceVersion, existingChargeUSDMicros, existingPriceOK := monthlyPriceIdentity(existing)
+	requestedPriceVersion, requestedChargeUSDMicros, requestedPriceOK := monthlyPriceIdentity(requested)
+	if !existingPriceOK || !requestedPriceOK || existingPriceVersion != requestedPriceVersion || existingChargeUSDMicros != requestedChargeUSDMicros {
+		return false
+	}
+	for _, field := range []string{"accountId", "billingOperationId", "packageId", "periodStart", "paidThrough"} {
 		if stringValue(existing[field]) != stringValue(requested[field]) {
 			return false
 		}
@@ -252,7 +257,7 @@ func billingOperationIdentityMatches(existing, requested map[string]any) bool {
 			}
 		}
 	}
-	for _, field := range []string{"monthlyPriceCnyCents", "chargeUsdMicros", "sizeGb"} {
+	for _, field := range []string{"sizeGb"} {
 		if numberField(existing, field, 0) != numberField(requested, field, 0) {
 			return false
 		}

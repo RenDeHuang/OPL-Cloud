@@ -319,6 +319,9 @@ var monthlyBillingStateKeys = []string{
 	"billingOperationStartedAt",
 	"sub2apiRedeemCode",
 	"sub2apiRefundCode",
+	"priceVersion",
+	"currency",
+	"priceSnapshot",
 	"monthlyPriceCnyCents",
 	"chargeUsdMicros",
 	"billingAnchorDay",
@@ -1243,6 +1246,9 @@ func (s *postgresEntStateStore) ClaimResourceBillingOperation(ctx context.Contex
 	}
 	if resourceType != "compute" && resourceType != "storage" {
 		return nil, false, errors.New("invalid_billing_resource_type")
+	}
+	if !monthlyPriceSnapshotAvailable(row) {
+		return nil, false, errMonthlyPriceSnapshotUnavailable
 	}
 	for range 4 {
 		tx, err := s.client.Tx(ctx)

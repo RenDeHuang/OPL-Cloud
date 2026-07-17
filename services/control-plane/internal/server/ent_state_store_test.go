@@ -186,6 +186,11 @@ func TestEntStateStoreBillingOperationReplayConflictsOnAmountOrPeriod(t *testing
 			} {
 				conflict := cloneMap(operation)
 				conflict[field] = value
+				if field == "chargeUsdMicros" {
+					snapshot := mapField(conflict, "priceSnapshot")
+					snapshot[field] = value
+					conflict["priceSnapshot"] = snapshot
+				}
 				if _, _, err := store.ClaimResourceBillingOperation(ctx, "compute", conflict); !errors.Is(err, errIdempotencyConflict) {
 					t.Fatalf("%s conflict error = %v", field, err)
 				}

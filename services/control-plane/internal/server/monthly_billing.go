@@ -107,8 +107,8 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	var quote map[string]any
 	if replayingExisting {
 		quote = map[string]any{
-			"priceVersion":         firstNonEmpty(stringValue(existing["priceVersion"]), stringValue(existing["pricingVersion"])),
-			"monthlyPriceCnyCents": existing["monthlyPriceCnyCents"], "chargeUsdMicros": existing["chargeUsdMicros"],
+			"priceVersion": existing["priceVersion"], "currency": existing["currency"], "priceSnapshot": mapField(existing, "priceSnapshot"),
+			"pricingVersion": existing["pricingVersion"], "monthlyPriceCnyCents": existing["monthlyPriceCnyCents"], "chargeUsdMicros": existing["chargeUsdMicros"],
 		}
 	} else {
 		var err error
@@ -137,10 +137,17 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 		"name": input.Name, "packageId": input.PackageID, "resourceType": input.ResourceType, "billingStatus": "charge_pending", "billingOperationId": input.BillingOperationID,
 		"billingOperationStartedAt": input.Now.Format(time.RFC3339), "sub2apiRedeemCode": monthlyRedeemCode(input.Environment, input.BillingOperationID),
 		"sub2apiRefundCode": monthlyRefundCode(input.Environment, input.BillingOperationID),
-		"pricingVersion":    stringValue(quote["priceVersion"]), "monthlyPriceCnyCents": int64(numberField(quote, "monthlyPriceCnyCents", 0)),
-		"chargeUsdMicros": chargeUSDMicros, "billingAnchorDay": int64(anchorDay), "periodStart": periodStart.Format(time.RFC3339),
+		"priceVersion":      stringValue(quote["priceVersion"]), "currency": stringValue(quote["currency"]),
+		"priceSnapshot": customerPricingSnapshotDTO(mapField(quote, "priceSnapshot")), "chargeUsdMicros": chargeUSDMicros,
+		"billingAnchorDay": int64(anchorDay), "periodStart": periodStart.Format(time.RFC3339),
 		"paidThrough": paidThrough.Format(time.RFC3339), "autoRenew": autoRenew, "lastReceiptId": "", "postChargeBalanceKnown": false,
 		"status": "provisioning", "desiredStatus": monthlyDesiredStatus(input.ResourceType), "providerStatus": "pending", "zone": input.Zone,
+	}
+	if pricingVersion := stringValue(quote["pricingVersion"]); pricingVersion != "" {
+		row["pricingVersion"] = pricingVersion
+	}
+	if monthlyPriceCNYCents, ok := requiredNonNegativeInteger(quote, "monthlyPriceCnyCents"); ok {
+		row["monthlyPriceCnyCents"] = monthlyPriceCNYCents
 	}
 	if input.ResourceType == "storage" {
 		row["sizeGb"], row["computeAllocationId"] = input.SizeGB, input.ComputeID
@@ -919,21 +926,72 @@ func monthlyResourceType(row map[string]any) string {
 }
 
 func projectCanonicalMonthlyPrice(row map[string]any) {
-	priceVersion := firstNonEmpty(stringValue(row["priceVersion"]), stringValue(row["pricingVersion"]))
-	row["priceVersion"], row["currency"] = priceVersion, pricingCurrency
-	snapshot := map[string]any{
-		"resourceType": monthlyResourceType(row), "priceVersion": priceVersion, "packageId": row["packageId"],
-		"currency": pricingCurrency, "displayCurrency": pricingCurrency, "billingUnit": pricingBillingUnit, "chargeUsdMicros": row["chargeUsdMicros"],
-	}
-	if sizeGB, ok := row["sizeGb"]; ok {
-		snapshot["sizeGb"] = sizeGB
-	}
-	row["priceSnapshot"] = snapshot
+	_ = monthlyPriceSnapshotAvailable(row)
 }
 
 func monthlyPriceSnapshotAvailable(row map[string]any) bool {
-	return firstNonEmpty(stringValue(row["priceVersion"]), stringValue(row["pricingVersion"])) != "" &&
-		numberField(row, "monthlyPriceCnyCents", 0) > 0 && numberField(row, "chargeUsdMicros", 0) > 0
+	_, hasPriceVersion := row["priceVersion"]
+	_, hasCurrency := row["currency"]
+	_, hasSnapshot := row["priceSnapshot"]
+	if hasPriceVersion || hasCurrency || hasSnapshot {
+		return canonicalMonthlyPriceSnapshotValid(row)
+	}
+	priceVersion := strings.TrimSpace(stringValue(row["pricingVersion"]))
+	monthlyPriceCNYCents, validCNY := requiredNonNegativeInteger(row, "monthlyPriceCnyCents")
+	chargeUSDMicros, validCharge := requiredNonNegativeInteger(row, "chargeUsdMicros")
+	resourceType, packageID := monthlyResourceType(row), strings.TrimSpace(stringValue(row["packageId"]))
+	if priceVersion == "" || packageID == "" || !validCNY || monthlyPriceCNYCents <= 0 || !validCharge || chargeUSDMicros <= 0 {
+		return false
+	}
+	snapshot := map[string]any{
+		"resourceType": resourceType, "priceVersion": priceVersion, "packageId": packageID,
+		"currency": pricingCurrency, "billingUnit": pricingBillingUnit, "chargeUsdMicros": chargeUSDMicros,
+	}
+	if resourceType == "storage" {
+		sizeGB, ok := requiredPositiveInteger(row, "sizeGb")
+		if !ok {
+			return false
+		}
+		snapshot["sizeGb"] = sizeGB
+	}
+	row["resourceType"], row["priceVersion"], row["currency"] = resourceType, priceVersion, pricingCurrency
+	row["priceSnapshot"] = snapshot
+	return true
+}
+
+func canonicalMonthlyPriceSnapshotValid(row map[string]any) bool {
+	priceVersion, validVersion := row["priceVersion"].(string)
+	snapshot, validSnapshot := row["priceSnapshot"].(map[string]any)
+	chargeUSDMicros, validCharge := requiredPositiveInteger(row, "chargeUsdMicros")
+	snapshotCharge, validSnapshotCharge := requiredPositiveInteger(snapshot, "chargeUsdMicros")
+	resourceType, packageID := stringValue(row["resourceType"]), strings.TrimSpace(stringValue(row["packageId"]))
+	if !validVersion || strings.TrimSpace(priceVersion) == "" || row["currency"] != pricingCurrency || !validSnapshot ||
+		(resourceType != "compute" && resourceType != "storage") || packageID == "" || !validCharge || !validSnapshotCharge || chargeUSDMicros != snapshotCharge ||
+		snapshot["priceVersion"] != priceVersion || snapshot["currency"] != pricingCurrency || snapshot["billingUnit"] != pricingBillingUnit ||
+		snapshot["resourceType"] != resourceType || snapshot["packageId"] != packageID {
+		return false
+	}
+	if resourceType == "storage" {
+		sizeGB, validSize := requiredPositiveInteger(row, "sizeGb")
+		snapshotSizeGB, validSnapshotSize := requiredPositiveInteger(snapshot, "sizeGb")
+		return validSize && validSnapshotSize && sizeGB == snapshotSizeGB
+	}
+	_, hasSize := snapshot["sizeGb"]
+	return !hasSize
+}
+
+func requiredPositiveInteger(input map[string]any, key string) (int64, bool) {
+	value, ok := requiredNonNegativeInteger(input, key)
+	return value, ok && value > 0
+}
+
+func monthlyPriceIdentity(row map[string]any) (string, int64, bool) {
+	normalized := cloneMap(row)
+	if !monthlyPriceSnapshotAvailable(normalized) {
+		return "", 0, false
+	}
+	chargeUSDMicros, ok := requiredPositiveInteger(normalized, "chargeUsdMicros")
+	return stringValue(normalized["priceVersion"]), chargeUSDMicros, ok
 }
 
 func monthlyEntitlementActive(row map[string]any, now time.Time) bool {

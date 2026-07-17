@@ -54,7 +54,6 @@ func TestMonthlyRenewalRejectsInvalidExistingProviderTruthBeforeDebit(t *testing
 		{name: "compute package", resourceType: "compute", mutate: func(row map[string]any) { row["packageId"] = "unknown" }},
 		{name: "compute sku", resourceType: "compute", mutate: func(row map[string]any) { row["instanceType"] = "SA5.2XLARGE16" }},
 		{name: "compute instance identity", resourceType: "compute", mutate: func(row map[string]any) { row["instanceId"] = "ins-other" }},
-		{name: "storage size", resourceType: "storage", mutate: func(row map[string]any) { row["sizeGb"] = 0 }},
 		{name: "charge type", resourceType: "compute", mutate: func(row map[string]any) { row["chargeType"] = "POSTPAID_BY_HOUR" }},
 		{name: "renew flag", resourceType: "storage", mutate: func(row map[string]any) { row["renewFlag"] = "NOTIFY_AND_AUTO_RENEW" }},
 		{name: "invalid deadline", resourceType: "compute", mutate: func(row map[string]any) { row["deadline"] = "not-a-time" }},
@@ -81,6 +80,22 @@ func TestMonthlyRenewalRejectsInvalidExistingProviderTruthBeforeDebit(t *testing
 				t.Fatalf("invalid provider truth caused side effects: events=%#v charges=%#v computeRenew=%#v storageRenew=%#v", *events, sub2API.charges, fabric.computeRenewKeys, fabric.storageRenewKeys)
 			}
 		})
+	}
+}
+
+func TestMonthlyRenewalMalformedPriceSnapshotStopsBeforeSideEffects(t *testing.T) {
+	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
+	app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000})
+	row := monthlyActiveResource("storage", "storage-invalid-price-snapshot", now.Add(24*time.Hour))
+	row["sizeGb"] = 0
+	mustStore(t, app.tables.SaveStorage(context.Background(), row))
+
+	result, err := app.renewMonthlyResource(context.Background(), service, "storage", row, now)
+	if !errors.Is(err, errMonthlyPriceSnapshotUnavailable) || result != nil {
+		t.Fatalf("malformed price snapshot result=%#v err=%v", result, err)
+	}
+	if len(*events) != 0 || len(sub2API.charges) != 0 || len(fabric.computeRenewKeys) != 0 || len(fabric.storageRenewKeys) != 0 {
+		t.Fatalf("malformed price snapshot side effects: events=%#v charges=%#v computeRenew=%#v storageRenew=%#v", *events, sub2API.charges, fabric.computeRenewKeys, fabric.storageRenewKeys)
 	}
 }
 

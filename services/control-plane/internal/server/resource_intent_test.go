@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -16,31 +17,158 @@ func TestResourceAutoRenewIntentInterleavings(t *testing.T) {
 		testResourceAutoRenewIntentInterleavings(t, newMemoryTableStore())
 	})
 	t.Run("postgres", func(t *testing.T) {
-		databaseURL := os.Getenv("CONTROL_PLANE_TEST_DATABASE_URL")
-		if databaseURL == "" {
-			t.Skip("CONTROL_PLANE_TEST_DATABASE_URL is not set")
-		}
-		admin, err := sql.Open("postgres", databaseURL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := admin.Ping(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = admin.Close() })
-		schema := fmt.Sprintf("control_plane_resource_intent_%d", time.Now().UnixNano())
-		if _, err := admin.Exec(`CREATE SCHEMA ` + pq.QuoteIdentifier(schema)); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + pq.QuoteIdentifier(schema) + ` CASCADE`) })
-		stateStore, err := NewPostgresEntStateStore(postgresInvitedAccountTestURL(databaseURL, schema))
-		if err != nil {
-			t.Fatal(err)
-		}
-		store := stateStore.(*postgresEntStateStore)
-		t.Cleanup(func() { _ = store.client.Close() })
-		testResourceAutoRenewIntentInterleavings(t, store)
+		testResourceAutoRenewIntentInterleavings(t, newPostgresResourceIntentStore(t, "control_plane_resource_intent"))
 	})
+}
+
+func TestCanonicalMonthlyPriceSnapshotRoundTrips(t *testing.T) {
+	t.Run("memory", func(t *testing.T) { testCanonicalMonthlyPriceSnapshotRoundTrip(t, "memory", newMemoryTableStore()) })
+	t.Run("postgres", func(t *testing.T) {
+		testCanonicalMonthlyPriceSnapshotRoundTrip(t, "postgres", newPostgresResourceIntentStore(t, "control_plane_price_snapshot"))
+	})
+}
+
+func testCanonicalMonthlyPriceSnapshotRoundTrip(t *testing.T, name string, store controlPlaneTableStore) {
+	t.Helper()
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			ctx := context.Background()
+			row := canonicalBillingOperation(resourceType, resourceType+"-canonical-"+name, "acct-canonical-"+name)
+			claimed, fresh, err := store.ClaimResourceBillingOperation(ctx, resourceType, row)
+			if err != nil || !fresh {
+				t.Fatalf("canonical claim fresh=%v row=%#v err=%v", fresh, claimed, err)
+			}
+			claimed["billingStatus"] = "active"
+			saveIntentResource(t, ctx, store, resourceType, claimed)
+			persisted := loadIntentResource(t, ctx, store, resourceType, stringValue(row["id"]), stringValue(row["accountId"]))
+			if !monthlyPriceSnapshotAvailable(persisted) || persisted["priceVersion"] != pilotPriceVersion || persisted["currency"] != "USD" {
+				t.Fatalf("canonical persisted %s = %#v", resourceType, persisted)
+			}
+			if _, ok := persisted["pricingVersion"]; ok {
+				t.Fatalf("canonical-only %s gained legacy alias: %#v", resourceType, persisted)
+			}
+			if replayed, fresh, err := store.ClaimResourceBillingOperation(ctx, resourceType, row); err != nil || fresh || !monthlyPriceSnapshotAvailable(replayed) {
+				t.Fatalf("canonical replay fresh=%v row=%#v err=%v", fresh, replayed, err)
+			}
+
+			malformed := canonicalBillingOperation(resourceType, resourceType+"-malformed-"+name, stringValue(row["accountId"]))
+			malformed["pricingVersion"] = pilotPriceVersion
+			if resourceType == "storage" {
+				malformed["monthlyPriceCnyCents"] = int64(1_800)
+			} else {
+				malformed["monthlyPriceCnyCents"] = int64(35_000)
+			}
+			malformedSnapshot := mapField(malformed, "priceSnapshot")
+			malformedSnapshot["currency"] = "CNY"
+			malformed["priceSnapshot"] = malformedSnapshot
+			if _, fresh, err := store.ClaimResourceBillingOperation(ctx, resourceType, malformed); !errors.Is(err, errMonthlyPriceSnapshotUnavailable) || fresh {
+				t.Fatalf("malformed canonical claim fresh=%v err=%v", fresh, err)
+			}
+			var rows []map[string]any
+			if resourceType == "storage" {
+				rows, err = store.ListStorages(ctx, stringValue(row["accountId"]))
+			} else {
+				rows, err = store.ListComputes(ctx, stringValue(row["accountId"]))
+			}
+			if err != nil || findRecord(rows, stringValue(malformed["id"])) != nil {
+				t.Fatalf("malformed canonical claim persisted rows=%#v err=%v", rows, err)
+			}
+		})
+	}
+}
+
+func TestMonthlyPriceSnapshotCanonicalAuthorityAndLegacyNormalization(t *testing.T) {
+	canonical := canonicalBillingOperation("compute", "compute-price-authority", "acct-price-authority")
+	if !monthlyPriceSnapshotAvailable(canonical) {
+		t.Fatalf("canonical-only snapshot rejected: %#v", canonical)
+	}
+	requested := cloneMap(canonical)
+	requested["pricingVersion"], requested["monthlyPriceCnyCents"] = "ignored-alias", int64(1)
+	if !billingOperationIdentityMatches(canonical, requested) {
+		t.Fatal("canonical identity depended on legacy aliases")
+	}
+
+	malformed := cloneMap(canonical)
+	malformed["pricingVersion"], malformed["monthlyPriceCnyCents"] = pilotPriceVersion, int64(35_000)
+	malformedSnapshot := mapField(malformed, "priceSnapshot")
+	malformedSnapshot["currency"] = "CNY"
+	malformed["priceSnapshot"] = malformedSnapshot
+	if monthlyPriceSnapshotAvailable(malformed) || billingOperationIdentityMatches(malformed, canonical) {
+		t.Fatalf("malformed canonical snapshot fell back to aliases: %#v", malformed)
+	}
+
+	legacy := cloneMap(canonical)
+	delete(legacy, "priceVersion")
+	delete(legacy, "currency")
+	delete(legacy, "priceSnapshot")
+	legacy["pricingVersion"], legacy["monthlyPriceCnyCents"] = pilotPriceVersion, int64(35_000)
+	if !monthlyPriceSnapshotAvailable(legacy) || legacy["priceVersion"] != pilotPriceVersion || legacy["currency"] != "USD" || len(mapField(legacy, "priceSnapshot")) == 0 {
+		t.Fatalf("legacy snapshot was not normalized: %#v", legacy)
+	}
+	if !billingOperationIdentityMatches(legacy, canonical) {
+		t.Fatal("normalized legacy snapshot did not match canonical identity")
+	}
+
+	incompleteLegacy := canonicalBillingOperation("storage", "storage-incomplete-legacy", "acct-price-authority")
+	for _, key := range []string{"priceVersion", "currency", "priceSnapshot", "sizeGb"} {
+		delete(incompleteLegacy, key)
+	}
+	incompleteLegacy["pricingVersion"], incompleteLegacy["monthlyPriceCnyCents"] = pilotPriceVersion, int64(1_800)
+	if monthlyPriceSnapshotAvailable(incompleteLegacy) {
+		t.Fatalf("incomplete legacy storage snapshot accepted: %#v", incompleteLegacy)
+	}
+	for _, key := range []string{"priceVersion", "currency", "priceSnapshot"} {
+		if _, exists := incompleteLegacy[key]; exists {
+			t.Fatalf("failed legacy normalization wrote %s: %#v", key, incompleteLegacy)
+		}
+	}
+}
+
+func newPostgresResourceIntentStore(t *testing.T, prefix string) controlPlaneTableStore {
+	t.Helper()
+	databaseURL := os.Getenv("CONTROL_PLANE_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("CONTROL_PLANE_TEST_DATABASE_URL is not set")
+	}
+	admin, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + pq.QuoteIdentifier(schema)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + pq.QuoteIdentifier(schema) + ` CASCADE`) })
+	stateStore, err := NewPostgresEntStateStore(postgresInvitedAccountTestURL(databaseURL, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := stateStore.(*postgresEntStateStore)
+	t.Cleanup(func() { _ = store.client.Close() })
+	return store
+}
+
+func canonicalBillingOperation(resourceType, id, accountID string) map[string]any {
+	charge := int64(50_000_000)
+	snapshot := map[string]any{
+		"resourceType": resourceType, "priceVersion": pilotPriceVersion, "packageId": "basic",
+		"currency": "USD", "billingUnit": "calendar_month", "chargeUsdMicros": charge,
+	}
+	row := map[string]any{
+		"id": id, "resourceType": resourceType, "accountId": accountID, "packageId": "basic", "billingStatus": "preparing",
+		"billingOperationId": "billing-" + id, "priceVersion": pilotPriceVersion, "currency": "USD", "chargeUsdMicros": charge,
+		"priceSnapshot": snapshot, "periodStart": "2026-07-01T00:00:00Z", "paidThrough": "2026-08-01T00:00:00Z",
+	}
+	if resourceType == "storage" {
+		charge = 2_580_000
+		row["chargeUsdMicros"], row["sizeGb"], row["computeAllocationId"], row["zone"] = charge, 10, "compute-placement", "ap-shanghai-2"
+		snapshot["chargeUsdMicros"], snapshot["sizeGb"] = charge, 10
+	}
+	return row
 }
 
 func TestMemoryResourceAutoRenewRequiresExplicitSetter(t *testing.T) {
@@ -132,12 +260,17 @@ func seedIntentOwner(t *testing.T, ctx context.Context, store controlPlaneTableS
 }
 
 func intentResource(resourceType, id, accountID string) map[string]any {
-	return map[string]any{
+	row := map[string]any{
 		"id": id, "resourceType": resourceType, "accountId": accountID, "autoRenew": true,
 		"billingStatus": "active", "billingOperationId": "purchase-" + id,
 		"pricingVersion": "2026-07-14", "packageId": "basic", "periodStart": "2026-07-01T00:00:00Z", "paidThrough": "2026-08-01T00:00:00Z",
 		"monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000),
 	}
+	if resourceType == "storage" {
+		row["sizeGb"], row["computeAllocationId"], row["zone"] = 10, "compute-intent", "ap-shanghai-2"
+		row["monthlyPriceCnyCents"], row["chargeUsdMicros"] = int64(1_800), int64(2_580_000)
+	}
+	return row
 }
 
 func saveIntentResource(t *testing.T, ctx context.Context, store controlPlaneTableStore, resourceType string, row map[string]any) {

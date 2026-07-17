@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -129,10 +131,50 @@ func TestWorkspacePricingPreviewAllowsOnlyFrozenPackageStoragePairs(t *testing.T
 	}
 }
 
-func TestMonthlyInternalPricingSnapshotKeepsLegacyPersistenceFields(t *testing.T) {
+func TestWorkspacePricingPreviewHTTPRequiresCanonicalFields(t *testing.T) {
+	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), newMemoryTableStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := tenantOwnerSessionForTest(t, server)
+	for name, body := range map[string]string{
+		"missing package":     `{"resourceType":"workspace","sizeGb":10}`,
+		"null package":        `{"resourceType":"workspace","packageId":null,"sizeGb":10}`,
+		"wrong package type":  `{"resourceType":"workspace","packageId":42,"sizeGb":10}`,
+		"empty package":       `{"resourceType":"workspace","packageId":" ","sizeGb":10}`,
+		"missing size":        `{"resourceType":"workspace","packageId":"basic"}`,
+		"null size":           `{"resourceType":"workspace","packageId":"basic","sizeGb":null}`,
+		"string size":         `{"resourceType":"workspace","packageId":"basic","sizeGb":"10"}`,
+		"fractional size":     `{"resourceType":"workspace","packageId":"basic","sizeGb":10.5}`,
+		"legacy sizeGB alias": `{"resourceType":"workspace","packageId":"basic","sizeGB":10}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := requestWithSession(t, server, session, http.MethodPost, "/api/pricing/preview", body)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_pricing_input") {
+				t.Fatalf("workspace preview status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	for _, body := range []string{
+		`{"resourceType":"workspace","packageId":"basic","sizeGb":10}`,
+		`{"resourceType":"workspace","packageId":"pro","sizeGb":100}`,
+	} {
+		response := requestWithSession(t, server, session, http.MethodPost, "/api/pricing/preview", body)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) {
+			t.Fatalf("canonical workspace preview status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestMonthlyInternalPricingSnapshotUsesCanonicalAuthority(t *testing.T) {
 	preview, err := pricingPreviewResponse(map[string]any{"resourceType": "compute", "packageId": "basic"})
-	if err != nil || preview["priceVersion"] != pilotPriceVersion || preview["pricingVersion"] != pilotPriceVersion || preview["monthlyPriceCnyCents"] != int64(35_000) {
+	snapshot := mapField(preview, "priceSnapshot")
+	if err != nil || preview["priceVersion"] != pilotPriceVersion || preview["currency"] != "USD" || preview["chargeUsdMicros"] != int64(50_000_000) ||
+		snapshot["priceVersion"] != pilotPriceVersion || snapshot["currency"] != "USD" || snapshot["billingUnit"] != "calendar_month" || snapshot["chargeUsdMicros"] != int64(50_000_000) {
 		t.Fatalf("internal pricing snapshot = %#v err=%v", preview, err)
+	}
+	if preview["pricingVersion"] != pilotPriceVersion || preview["monthlyPriceCnyCents"] != int64(35_000) {
+		t.Fatalf("ledger compatibility projection = %#v", preview)
 	}
 }
 

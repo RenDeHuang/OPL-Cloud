@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 )
 
 const (
@@ -122,15 +123,16 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 }
 
 func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {
-	packageID := firstNonEmpty(stringField(input, "packageId", ""), "basic")
-	sizeGB := numberField(input, "sizeGb", numberField(input, "sizeGB", 10))
-	if packageID == "basic" && sizeGB != 10 || packageID == "pro" && sizeGB != 100 {
-		return nil, fmt.Errorf("%w: package %q does not support %.0fGB storage", errInvalidPricingInput, packageID, sizeGB)
+	packageID, validPackage := input["packageId"].(string)
+	packageID = strings.TrimSpace(packageID)
+	sizeGB, validSize := positiveIntegerField(input, "sizeGb")
+	if !validPackage || packageID == "" || !validSize || packageID == "basic" && sizeGB != 10 || packageID == "pro" && sizeGB != 100 {
+		return nil, fmt.Errorf("%w: invalid workspace package or storage size", errInvalidPricingInput)
 	}
 	computeInput := cloneMap(input)
-	computeInput["resourceType"] = "compute"
+	computeInput["resourceType"], computeInput["packageId"] = "compute", packageID
 	storageInput := cloneMap(input)
-	storageInput["resourceType"] = "storage"
+	storageInput["resourceType"], storageInput["packageId"], storageInput["sizeGb"] = "storage", packageID, sizeGB
 	compute, err := pricingPreviewFromCatalog(catalog, computeInput)
 	if err != nil {
 		return nil, err

@@ -389,6 +389,9 @@ func (s *memoryTableStore) ClaimResourceBillingOperation(_ context.Context, reso
 	if id == "" || operationID == "" {
 		return nil, false, errors.New("billing_operation_identity_required")
 	}
+	if !monthlyPriceSnapshotAvailable(row) {
+		return nil, false, errMonthlyPriceSnapshotUnavailable
+	}
 	existing := records[id]
 	if existing == nil {
 		records[id] = cloneMap(row)
