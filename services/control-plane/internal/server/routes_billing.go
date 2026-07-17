@@ -118,10 +118,30 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 }
 
 func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, bool) {
-	priceVersion := firstNonEmpty(stringValue(receipt.Cost["priceVersion"]), stringValue(receipt.Cost["pricingVersion"]))
-	currency := firstNonEmpty(stringValue(receipt.Cost["currency"]), pricingCurrency)
-	if priceVersion == "" || currency != pricingCurrency {
-		return nil, false
+	canonicalVersion, canonical := receipt.Cost["priceVersion"]
+	currencyValue, currencyPresent := receipt.Cost["currency"]
+	currency, validCurrency := currencyValue.(string)
+	var priceVersion string
+	if canonical {
+		var validVersion bool
+		priceVersion, validVersion = canonicalVersion.(string)
+		if !validVersion || strings.TrimSpace(priceVersion) == "" || !validCurrency || currency != pricingCurrency {
+			return nil, false
+		}
+		if legacyVersion, present := receipt.Cost["pricingVersion"]; present && legacyVersion != priceVersion {
+			return nil, false
+		}
+	} else {
+		var validVersion bool
+		priceVersion, validVersion = receipt.Cost["pricingVersion"].(string)
+		legacyCNYCents, validLegacyCNY := requiredNonNegativeInteger(receipt.Cost, "monthlyPriceCnyCents")
+		if !validVersion || strings.TrimSpace(priceVersion) == "" || !validLegacyCNY || legacyCNYCents <= 0 {
+			return nil, false
+		}
+		if currencyPresent && (!validCurrency || currency != pricingCurrency) {
+			return nil, false
+		}
+		currency = pricingCurrency
 	}
 	chargeUSDMicros, ok := requiredNonNegativeInteger(receipt.Cost, "chargeUsdMicros")
 	if !ok {

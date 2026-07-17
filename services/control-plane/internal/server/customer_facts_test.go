@@ -141,18 +141,20 @@ func TestBillingReceiptListRejectsTenantMismatch(t *testing.T) {
 }
 
 func TestBillingReceiptDetailProjection(t *testing.T) {
-	ledger := &customerFactsLedger{receipt: customerBillingReceipt()}
+	receipt := customerBillingReceipt()
+	receipt.Cost["priceVersion"], receipt.Cost["currency"] = "pricing-v1", "USD"
+	ledger := &customerFactsLedger{receipt: receipt}
 	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
 
 	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts/receipt-1", "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("detail status = %d: %s", response.Code, response.Body.String())
 	}
-	var receipt map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&receipt); err != nil {
+	var projected map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&projected); err != nil {
 		t.Fatalf("decode detail: %v", err)
 	}
-	assertCustomerBillingReceipt(t, receipt)
+	assertCustomerBillingReceipt(t, projected)
 }
 
 func TestBillingReceiptProjectionRejectsMalformedMoney(t *testing.T) {
@@ -163,6 +165,36 @@ func TestBillingReceiptProjectionRejectsMalformedMoney(t *testing.T) {
 
 	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts", "")
 	assertErrorResponse(t, response.Code, response.Body.String(), http.StatusBadGateway, "billing_receipt_source_unavailable")
+}
+
+func TestBillingReceiptProjectionRejectsMalformedPricingIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "canonical missing currency", mutate: func(cost map[string]any) { cost["priceVersion"] = "pricing-v1" }},
+		{name: "canonical non USD currency", mutate: func(cost map[string]any) { cost["priceVersion"], cost["currency"] = "pricing-v1", "CNY" }},
+		{name: "canonical wrong currency type", mutate: func(cost map[string]any) { cost["priceVersion"], cost["currency"] = "pricing-v1", 42 }},
+		{name: "canonical legacy version mismatch", mutate: func(cost map[string]any) { cost["priceVersion"], cost["currency"] = "pricing-v2", "USD" }},
+		{name: "legacy missing CNY", mutate: func(cost map[string]any) { delete(cost, "monthlyPriceCnyCents") }},
+		{name: "legacy fractional CNY", mutate: func(cost map[string]any) { cost["monthlyPriceCnyCents"] = 1.5 }},
+		{name: "legacy zero CNY", mutate: func(cost map[string]any) { cost["monthlyPriceCnyCents"] = int64(0) }},
+		{name: "legacy negative CNY", mutate: func(cost map[string]any) { cost["monthlyPriceCnyCents"] = int64(-1) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			receipt := customerBillingReceipt()
+			tc.mutate(receipt.Cost)
+			ledger := &customerFactsLedger{page: clients.ReceiptPage{Receipts: []clients.Receipt{receipt}}, receipt: receipt}
+			server := NewServer(newTestService(ledger, &fakeFabricClient{}))
+			session := tenantAdminSessionForTest(t, server)
+			for name, path := range map[string]string{"list": "/api/billing/receipts", "detail": "/api/billing/receipts/receipt-1"} {
+				t.Run(name, func(t *testing.T) {
+					response := requestWithSession(t, server, session, http.MethodGet, path, "")
+					assertErrorResponse(t, response.Code, response.Body.String(), http.StatusBadGateway, "billing_receipt_source_unavailable")
+				})
+			}
+		})
+	}
 }
 
 func TestBillingReceiptListUnavailableDoesNotAffectSummary(t *testing.T) {

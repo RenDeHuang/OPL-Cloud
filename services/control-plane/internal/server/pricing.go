@@ -77,6 +77,20 @@ func pricingPreviewResponse(input map[string]any) (map[string]any, error) {
 }
 
 func (app *controlPlaneServer) pricingPreviewResponse(_ context.Context, input map[string]any) (map[string]any, error) {
+	resourceType, validResourceType := input["resourceType"].(string)
+	packageID, validPackage := input["packageId"].(string)
+	if !validResourceType || !validPackage || strings.TrimSpace(packageID) == "" {
+		return nil, errInvalidPricingInput
+	}
+	switch resourceType {
+	case "compute":
+	case "storage", "workspace":
+		if _, validSize := positiveIntegerField(input, "sizeGb"); !validSize {
+			return nil, errInvalidPricingInput
+		}
+	default:
+		return nil, errInvalidPricingInput
+	}
 	preview, err := pricingPreviewResponse(input)
 	if err != nil {
 		return nil, err

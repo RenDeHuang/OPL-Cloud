@@ -131,31 +131,42 @@ func TestWorkspacePricingPreviewAllowsOnlyFrozenPackageStoragePairs(t *testing.T
 	}
 }
 
-func TestWorkspacePricingPreviewHTTPRequiresCanonicalFields(t *testing.T) {
+func TestPricingPreviewHTTPRequiresCanonicalFields(t *testing.T) {
 	server, err := NewPersistentServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{}), newMemoryTableStore())
 	if err != nil {
 		t.Fatal(err)
 	}
 	session := tenantOwnerSessionForTest(t, server)
 	for name, body := range map[string]string{
-		"missing package":     `{"resourceType":"workspace","sizeGb":10}`,
-		"null package":        `{"resourceType":"workspace","packageId":null,"sizeGb":10}`,
-		"wrong package type":  `{"resourceType":"workspace","packageId":42,"sizeGb":10}`,
-		"empty package":       `{"resourceType":"workspace","packageId":" ","sizeGb":10}`,
-		"missing size":        `{"resourceType":"workspace","packageId":"basic"}`,
-		"null size":           `{"resourceType":"workspace","packageId":"basic","sizeGb":null}`,
-		"string size":         `{"resourceType":"workspace","packageId":"basic","sizeGb":"10"}`,
-		"fractional size":     `{"resourceType":"workspace","packageId":"basic","sizeGb":10.5}`,
-		"legacy sizeGB alias": `{"resourceType":"workspace","packageId":"basic","sizeGB":10}`,
+		"missing resource type":         `{"packageId":"basic"}`,
+		"null resource type":            `{"resourceType":null,"packageId":"basic"}`,
+		"wrong resource type":           `{"resourceType":42,"packageId":"basic"}`,
+		"unknown resource type":         `{"resourceType":"database","packageId":"basic"}`,
+		"missing package":               `{"resourceType":"compute"}`,
+		"null package":                  `{"resourceType":"compute","packageId":null}`,
+		"wrong package type":            `{"resourceType":"compute","packageId":42}`,
+		"empty package":                 `{"resourceType":"compute","packageId":" "}`,
+		"storage missing size":          `{"resourceType":"storage","packageId":"basic"}`,
+		"storage null size":             `{"resourceType":"storage","packageId":"basic","sizeGb":null}`,
+		"storage string size":           `{"resourceType":"storage","packageId":"basic","sizeGb":"10"}`,
+		"storage fractional size":       `{"resourceType":"storage","packageId":"basic","sizeGb":10.5}`,
+		"storage legacy sizeGB alias":   `{"resourceType":"storage","packageId":"basic","sizeGB":10}`,
+		"workspace missing size":        `{"resourceType":"workspace","packageId":"basic"}`,
+		"workspace null size":           `{"resourceType":"workspace","packageId":"basic","sizeGb":null}`,
+		"workspace string size":         `{"resourceType":"workspace","packageId":"basic","sizeGb":"10"}`,
+		"workspace fractional size":     `{"resourceType":"workspace","packageId":"basic","sizeGb":10.5}`,
+		"workspace legacy sizeGB alias": `{"resourceType":"workspace","packageId":"basic","sizeGB":10}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := requestWithSession(t, server, session, http.MethodPost, "/api/pricing/preview", body)
 			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_pricing_input") {
-				t.Fatalf("workspace preview status=%d body=%s", response.Code, response.Body.String())
+				t.Fatalf("pricing preview status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}
 	for _, body := range []string{
+		`{"resourceType":"compute","packageId":"basic"}`,
+		`{"resourceType":"storage","packageId":"basic","sizeGb":10}`,
 		`{"resourceType":"workspace","packageId":"basic","sizeGb":10}`,
 		`{"resourceType":"workspace","packageId":"pro","sizeGb":100}`,
 	} {
