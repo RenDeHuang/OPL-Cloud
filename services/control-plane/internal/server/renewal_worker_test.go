@@ -482,7 +482,9 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 			}
 			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
 			id := resourceType + "-renew-absent"
+			ledger.receiptErrors = []error{errors.New("ledger unavailable"), nil}
 			row := monthlyActiveResource(resourceType, id, paidThrough)
+			row["autoRenew"] = true
 			row["chargeUsdMicros"] = charge
 			row["sub2apiRefundCode"] = "stale-purchase-refund-code"
 			if resourceType == "storage" {
@@ -506,7 +508,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 			}
 			refunded, _ := app.monthlyResource(resourceType, id)
 			operationID := "renewal-" + stableID(resourceType, id, paidThrough.Format(time.RFC3339))[:18]
-			if refunded["billingStatus"] != "refunded" || refunded["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_refunded.v1" {
+			if refunded["billingStatus"] != "refunded" || refunded["autoRenew"] != false || refunded["lastBillingError"] != "ledger_receipt_pending" || stringValue(refunded["lastReceiptId"]) != "" || refunded["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_refunded.v1" {
 				t.Fatalf("refunded=%#v charges=%#v refunds=%#v receipts=%#v events=%#v", refunded, sub2API.charges, sub2API.refunds, ledger.receipts, *events)
 			}
 			if sub2API.refunds[0].Code != monthlyRefundCode(monthlyEnvironment(), operationID) || sub2API.refunds[0].RefundUSDMicros != charge {
@@ -516,7 +518,16 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
 				t.Fatal(err)
 			}
-			if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 {
+			refunded, _ = app.monthlyResource(resourceType, id)
+			if len(*events) != before+1 || (*events)[before] != "ledger.receipt" || refunded["autoRenew"] != false || refunded["lastReceiptId"] != "receipt-monthly" || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || len(ledger.receipts) != 2 {
+				t.Fatalf("refund receipt retry: row=%#v events=%#v charges=%#v refunds=%#v receipts=%#v", refunded, *events, sub2API.charges, sub2API.refunds, ledger.receipts)
+			}
+			before = len(*events)
+			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+				t.Fatal(err)
+			}
+			refunded, _ = app.monthlyResource(resourceType, id)
+			if len(*events) != before || len(sub2API.charges) != 1 || len(sub2API.refunds) != 1 || refunded["autoRenew"] != false {
 				t.Fatalf("refund replay duplicated work: events=%#v charges=%#v refunds=%#v", *events, sub2API.charges, sub2API.refunds)
 			}
 		})

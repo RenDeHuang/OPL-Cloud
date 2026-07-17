@@ -332,9 +332,14 @@ func (app *controlPlaneServer) refundMonthlyOperation(ctx context.Context, servi
 		_ = app.saveMonthlyResource(ctx, monthlyResourceType(row), row)
 		return row, err
 	}
+	resourceType := monthlyResourceType(row)
+	if err := app.tables.SetResourceAutoRenew(ctx, resourceType, stringValue(row["id"]), stringValue(row["accountId"]), false); err != nil {
+		return row, err
+	}
+	row["autoRenew"] = false
 	row["billingStatus"], row["lastBillingError"], row["providerStatus"] = "refunded", "provider_absent_refunded", "missing"
 	row["status"], row["desiredStatus"] = "external_deleted", "destroyed"
-	if err := app.saveMonthlyResource(ctx, monthlyResourceType(row), row); err != nil {
+	if err := app.saveMonthlyResource(ctx, resourceType, row); err != nil {
 		return row, err
 	}
 	row, err = app.ensureMonthlyReceipt(ctx, service, row, sub2APIUserID, "billing.resource_refunded.v1")
