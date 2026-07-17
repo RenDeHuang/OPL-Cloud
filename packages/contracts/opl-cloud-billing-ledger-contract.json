@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "owner": "OPL Control Plane",
   "purpose": "Monthly resource charge, entitlement, receipt, and reconciliation ownership contract.",
   "state": "current",
@@ -51,7 +51,9 @@
       "billing.resource_expired.v1",
       "billing.resource_refunded.v1",
       "billing.charge_review_required.v1",
-      "billing.reconciliation.v1"
+      "billing.reconciliation.v1",
+      "billing.workspace_renewed.v1",
+      "billing.workspace_expired.v1"
     ],
     "requiredCostFields": [
       "pricingVersion",
@@ -74,6 +76,38 @@
       "paidThrough": "RFC3339_string",
       "resourceType": "non_empty_opaque_string",
       "resourceId": "non_empty_opaque_string"
+    },
+    "workspaceReceiptTypes": {
+      "renewed": "billing.workspace_renewed.v1",
+      "expired": "billing.workspace_expired.v1"
+    },
+    "workspaceRequiredCostFields": [
+      "priceVersion",
+      "currency",
+      "billingUnit",
+      "totalUsdMicros",
+      "periodStart",
+      "paidThrough",
+      "resourceType",
+      "resourceId",
+      "components"
+    ],
+    "workspaceRenewedAdditionalCostFields": [
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "postChargeBalanceUsdMicros"
+    ],
+    "workspaceCostRules": {
+      "currency": "USD",
+      "billingUnit": "calendar_month",
+      "resourceType": "workspace",
+      "outerWorkspaceIdentity": "cost.resourceId_equals_receipt.workspaceId",
+      "components": ["compute", "storage"],
+      "componentAmounts": "positive_integer_usd_micros",
+      "storageSizeGb": "positive_integer",
+      "total": "compute.chargeUsdMicros + storage.chargeUsdMicros with int64 overflow rejection",
+      "period": "paidThrough RFC3339 is strictly after periodStart RFC3339",
+      "expiredReceiptHasNoSyntheticCharge": true
     },
     "forbiddenContentRule": "reject recursively by case-insensitive exact field name in maps, slices, and typed JSON containers; token-count fields such as inputTokens remain allowed",
     "forbiddenContent": [
@@ -101,7 +135,7 @@
     "exceptions": {
       "type": "array",
       "requiredFields": ["resourceType", "resourceId", "code"],
-      "resourceTypes": ["compute", "storage"],
+      "resourceTypes": ["compute", "storage", "workspace"],
       "resourceId": "non_empty_opaque_string",
       "codes": [
         "billing_operation_invalid",
@@ -115,6 +149,12 @@
         "ledger_receipt_missing",
         "ledger_receipt_mismatch"
       ]
+    },
+    "workspaceRenewalAuthority": {
+      "customerOperationCardinality": 1,
+      "balanceFact": "one_combined_sub2api_charge",
+      "providerFacts": ["compute_renewal", "storage_renewal"],
+      "receiptType": "billing.workspace_renewed.v1"
     },
     "consistencyRules": [
       "counts.exceptions equals exceptions length",

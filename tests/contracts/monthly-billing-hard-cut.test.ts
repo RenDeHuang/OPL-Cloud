@@ -76,7 +76,10 @@ test("pricing contract fixes exact integer monthly charges", async () => {
 });
 
 test("receipt contract exposes monthly product behavior only", async () => {
-  const evidence = await readJson("opl-cloud-evidence-ledger-contract.json");
+	const [billing, evidence] = await Promise.all([
+		readJson("opl-cloud-billing-ledger-contract.json"),
+		readJson("opl-cloud-evidence-ledger-contract.json")
+	]);
 
   for (const type of [
     "billing.resource_purchased.v1",
@@ -84,8 +87,25 @@ test("receipt contract exposes monthly product behavior only", async () => {
     "billing.resource_expired.v1",
     "billing.resource_refunded.v1",
     "billing.charge_review_required.v1",
-    "billing.reconciliation.v1"
+    "billing.reconciliation.v1",
+    "billing.workspace_renewed.v1",
+    "billing.workspace_expired.v1"
   ]) {
     assert.ok(evidence.receiptTypes.includes(type), `missing receipt type ${type}`);
   }
+	assert.deepEqual(evidence.workspaceMonthlyBillingReceiptV1.exactComponents, {
+		compute: ["resourceType", "resourceId", "chargeUsdMicros"],
+		storage: ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
+	});
+	assert.equal(billing.ledgerEvidencePolicy.workspaceCostRules.outerWorkspaceIdentity, "cost.resourceId_equals_receipt.workspaceId");
+	assert.ok(evidence.workspaceMonthlyBillingReceiptV1.rules.includes("cost.resourceId equals receipt workspaceId"));
+	assert.deepEqual(billing.reconciliationPolicy.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
+	assert.deepEqual(billing.reconciliationPolicy.workspaceRenewalAuthority, {
+		customerOperationCardinality: 1,
+		balanceFact: "one_combined_sub2api_charge",
+		providerFacts: ["compute_renewal", "storage_renewal"],
+		receiptType: "billing.workspace_renewed.v1"
+	});
+	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
+	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 });

@@ -52,25 +52,22 @@ func (app *controlPlaneServer) startMonthlyBillingWorker(ctx context.Context, se
 }
 
 func (app *controlPlaneServer) runMonthlyBillingOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
-	computes, err := app.tables.ListComputes(ctx, "")
-	if err != nil {
-		return err
-	}
-	storages, err := app.tables.ListStorages(ctx, "")
+	workspaces, err := app.tables.ListWorkspaces(ctx, "")
 	if err != nil {
 		return err
 	}
 	var errs []error
-	for _, row := range computes {
-		app.observeMonthlyOperationalAlerts("compute", row)
-		if err := app.processMonthlyResource(ctx, service, "compute", row, now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
-			errs = append(errs, fmt.Errorf("compute %s: %w", stringValue(row["id"]), err))
+	for _, workspace := range workspaces {
+		_, present, stateErr := normalizeWorkspaceBillingStateForWorkspace(workspace, workspace)
+		if stateErr != nil {
+			errs = append(errs, fmt.Errorf("workspace %s: %w", stringValue(workspace["id"]), stateErr))
+			continue
 		}
-	}
-	for _, row := range storages {
-		app.observeMonthlyOperationalAlerts("storage", row)
-		if err := app.processMonthlyResource(ctx, service, "storage", row, now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
-			errs = append(errs, fmt.Errorf("storage %s: %w", stringValue(row["id"]), err))
+		if !present {
+			continue
+		}
+		if err := app.processWorkspaceRenewal(ctx, service, stringValue(workspace["id"]), now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
+			errs = append(errs, fmt.Errorf("workspace %s: %w", stringValue(workspace["id"]), err))
 		}
 	}
 	return errors.Join(errs...)

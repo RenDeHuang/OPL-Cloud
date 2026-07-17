@@ -205,6 +205,65 @@ func TestLedgerHTTPClientRejectsTrailingResponseData(t *testing.T) {
 	}
 }
 
+func TestLedgerHTTPClientValidatesWorkspaceBillingReceiptResponse(t *testing.T) {
+	input := ReceiptInput{
+		Type: "billing.workspace_renewed.v1", Status: "completed", Surface: "control_plane", AccountID: "acct-alpha",
+		WorkspaceID: "workspace-alpha", RequestID: "workspace-renewal-alpha",
+		Cost: map[string]any{
+			"priceVersion": "pilot-usd-2026-07-v1", "currency": "USD", "billingUnit": "calendar_month", "totalUsdMicros": int64(52_580_000),
+			"periodStart": "2026-08-31T09:30:00Z", "paidThrough": "2026-09-30T09:30:00Z", "resourceType": "workspace", "resourceId": "workspace-alpha",
+		},
+	}
+	for _, tc := range []struct {
+		name     string
+		mutate   func(*Receipt)
+		trailing string
+		wantErr  bool
+	}{
+		{name: "valid"},
+		{name: "missing receipt ID", mutate: func(receipt *Receipt) { receipt.ReceiptID = "" }, wantErr: true},
+		{name: "type mismatch", mutate: func(receipt *Receipt) { receipt.Type = "billing.workspace_expired.v1" }, wantErr: true},
+		{name: "account mismatch", mutate: func(receipt *Receipt) { receipt.AccountID = "acct-other" }, wantErr: true},
+		{name: "Workspace mismatch", mutate: func(receipt *Receipt) { receipt.WorkspaceID = "workspace-other" }, wantErr: true},
+		{name: "request mismatch", mutate: func(receipt *Receipt) { receipt.RequestID = "workspace-renewal-other" }, wantErr: true},
+		{name: "cost mismatch", mutate: func(receipt *Receipt) { receipt.Cost["paidThrough"] = "2026-10-31T09:30:00Z" }, wantErr: true},
+		{name: "trailing JSON", trailing: ` {"receiptId":"receipt-other"}`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := Receipt{ReceiptInput: input, ReceiptID: "receipt-workspace-renewal", CreatedAt: "2026-09-01T00:00:00Z"}
+			response.Cost = cloneLedgerMap(input.Cost)
+			if tc.mutate != nil {
+				tc.mutate(&response)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/ledger/receipts" || r.Header.Get("Idempotency-Key") != "workspace-receipt-once" {
+					t.Fatalf("request=%s %s key=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"))
+				}
+				payload, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, _ = w.Write(append(payload, tc.trailing...))
+			}))
+			defer server.Close()
+
+			client := NewLedgerHTTPClient(server.URL, "internal-secret", server.Client())
+			result, err := client.RecordReceipt(context.Background(), input, "workspace-receipt-once")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func cloneLedgerMap(input map[string]any) map[string]any {
+	result := make(map[string]any, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
 func assertExactLedgerNumber(t *testing.T, value any, want int64) {
 	t.Helper()
 	number, ok := value.(json.Number)

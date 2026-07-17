@@ -547,7 +547,20 @@ func validateReceiptInput(input ReceiptInput) error {
 		return ErrInvalidReceiptInput
 	}
 	allowedStatus := map[string]bool{"planned": true, "approved": true, "running": true, "completed": true, "failed": true, "timed_out": true, "cancelled": true, "review_required": true, "review_blocked": true}
-	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || (strings.HasPrefix(input.Type, "billing.") && strings.HasSuffix(input.Type, ".v1") && !validBillingCost(input.Cost)) {
+	billingCostValid := true
+	if strings.HasPrefix(input.Type, "billing.") && strings.HasSuffix(input.Type, ".v1") {
+		switch input.Type {
+		case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1", "billing.reconciliation.v1":
+			billingCostValid = validBillingCost(input.Cost)
+		case "billing.workspace_renewed.v1":
+			billingCostValid = validWorkspaceBillingCost(input.Cost, true) && input.Cost["resourceId"] == input.WorkspaceID
+		case "billing.workspace_expired.v1":
+			billingCostValid = validWorkspaceBillingCost(input.Cost, false) && input.Cost["resourceId"] == input.WorkspaceID
+		default:
+			billingCostValid = false
+		}
+	}
+	if !allowedStatus[input.Status] || containsForbiddenReceiptKey(input) || !billingCostValid {
 		return ErrInvalidReceiptInput
 	}
 	return nil
@@ -617,6 +630,58 @@ func validBillingCost(cost map[string]any) bool {
 	}
 	userID, ok := integerValue(cost["sub2apiUserId"])
 	return ok && userID > 0
+}
+
+func validWorkspaceBillingCost(cost map[string]any, charged bool) bool {
+	wantFields := 9
+	if charged {
+		wantFields = 12
+	}
+	if len(cost) != wantFields || cost["currency"] != "USD" || cost["billingUnit"] != "calendar_month" || cost["resourceType"] != "workspace" {
+		return false
+	}
+	for _, key := range []string{"priceVersion", "resourceId"} {
+		value, ok := cost[key].(string)
+		if !ok || !isOpaqueReference(value) {
+			return false
+		}
+	}
+	periodStartText, periodOK := cost["periodStart"].(string)
+	paidThroughText, paidOK := cost["paidThrough"].(string)
+	periodStart, periodErr := time.Parse(time.RFC3339, periodStartText)
+	paidThrough, paidErr := time.Parse(time.RFC3339, paidThroughText)
+	if !periodOK || !paidOK || periodErr != nil || paidErr != nil || !paidThrough.After(periodStart) {
+		return false
+	}
+	total, totalOK := integerValue(cost["totalUsdMicros"])
+	components, componentsOK := cost["components"].(map[string]any)
+	if !totalOK || total <= 0 || !componentsOK || len(components) != 2 {
+		return false
+	}
+	compute, computeOK := components["compute"].(map[string]any)
+	storage, storageOK := components["storage"].(map[string]any)
+	if !computeOK || !storageOK || len(compute) != 3 || len(storage) != 4 || compute["resourceType"] != "compute" || storage["resourceType"] != "storage" {
+		return false
+	}
+	for _, component := range []map[string]any{compute, storage} {
+		resourceID, ok := component["resourceId"].(string)
+		if !ok || !isOpaqueReference(resourceID) {
+			return false
+		}
+	}
+	computeCost, computeCostOK := integerValue(compute["chargeUsdMicros"])
+	storageCost, storageCostOK := integerValue(storage["chargeUsdMicros"])
+	storageGB, storageGBOK := integerValue(storage["sizeGb"])
+	if !computeCostOK || !storageCostOK || !storageGBOK || computeCost <= 0 || storageCost <= 0 || storageGB <= 0 || computeCost > math.MaxInt64-storageCost || computeCost+storageCost != total {
+		return false
+	}
+	if !charged {
+		return true
+	}
+	userID, userOK := integerValue(cost["sub2apiUserId"])
+	postCharge, postChargeOK := integerValue(cost["postChargeBalanceUsdMicros"])
+	redeemCode, redeemOK := cost["sub2apiRedeemCode"].(string)
+	return userOK && userID > 0 && postChargeOK && postCharge >= 0 && redeemOK && isOpaqueReference(redeemCode)
 }
 
 func integerValue(value any) (int64, bool) {
@@ -708,7 +773,7 @@ func validateReconciliationReport(report map[string]any) error {
 		resourceType, resourceTypeOK := exception["resourceType"].(string)
 		resourceID, resourceIDOK := exception["resourceId"].(string)
 		code, codeOK := exception["code"].(string)
-		if !resourceTypeOK || (resourceType != "compute" && resourceType != "storage") || !resourceIDOK || !isOpaqueReference(resourceID) || !codeOK || !reconciliationExceptionCodes[code] {
+		if !resourceTypeOK || (resourceType != "compute" && resourceType != "storage" && resourceType != "workspace") || !resourceIDOK || !isOpaqueReference(resourceID) || !codeOK || !reconciliationExceptionCodes[code] {
 			return ErrInvalidReconciliationInput
 		}
 		exceptionResources[resourceType+"\x00"+resourceID] = true

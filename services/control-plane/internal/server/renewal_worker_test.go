@@ -42,6 +42,32 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 	return row
 }
 
+// ponytail: keep legacy resource-level behavior unit-tested without restoring it to the Workspace-only production scanner.
+func (app *controlPlaneServer) runLegacyMonthlyResourcesOnce(ctx context.Context, service *controlplane.Service, now time.Time) error {
+	computes, err := app.tables.ListComputes(ctx, "")
+	if err != nil {
+		return err
+	}
+	storages, err := app.tables.ListStorages(ctx, "")
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range computes {
+		app.observeMonthlyOperationalAlerts("compute", row)
+		if err := app.processMonthlyResource(ctx, service, "compute", row, now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
+			errs = append(errs, err)
+		}
+	}
+	for _, row := range storages {
+		app.observeMonthlyOperationalAlerts("storage", row)
+		if err := app.processMonthlyResource(ctx, service, "storage", row, now.UTC()); err != nil && !monthlyBusinessOutcome(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func TestMonthlyRenewalRejectsInvalidExistingProviderTruthBeforeDebit(t *testing.T) {
 	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
 	paidThrough := now.Add(24 * time.Hour)
@@ -170,7 +196,7 @@ func TestMonthlyRenewalRetriesGatewayKeyPreDebitFailure(t *testing.T) {
 			mustStore(t, app.tables.SaveCompute(context.Background(), row))
 			operationID := "renewal-" + stableID("compute", id, paidThrough.Format(time.RFC3339))[:18]
 
-			firstErr := app.runMonthlyBillingOnce(context.Background(), service, now)
+			firstErr := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now)
 			first, _ := app.getCompute(id)
 			if !errors.Is(firstErr, tc.err) || first["billingStatus"] != "renewal_pending" || first["billingOperationId"] != operationID || first["lastBillingError"] != "gateway_key_unavailable" {
 				t.Fatalf("first Gateway Key retry state=%#v err=%v", first, firstErr)
@@ -180,7 +206,7 @@ func TestMonthlyRenewalRetriesGatewayKeyPreDebitFailure(t *testing.T) {
 			}
 
 			sub2API.workspaceKeyErr = nil
-			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 				t.Fatalf("retry Gateway Key renewal: %v", err)
 			}
 			recovered, _ := app.getCompute(id)
@@ -226,13 +252,13 @@ func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 			} else {
 				mustStore(t, app.tables.SaveCompute(context.Background(), row))
 			}
-			if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour-time.Second)); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, paidThrough.Add(-24*time.Hour-time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			if len(*events) != 0 {
 				t.Fatalf("renewed before lead time: %#v", *events)
 			}
-			if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
 				t.Fatal(err)
 			}
 			renewed, _ := app.monthlyResource(resourceType, id)
@@ -251,7 +277,7 @@ func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 			if len(renewKeys) != 1 || renewKeys[0] != operationID+":provider-renew" || strings.Join(*events, ",") != strings.Join(wantEvents, ",") {
 				t.Fatalf("renewal keys=%#v events=%#v", renewKeys, *events)
 			}
-			if err := app.runMonthlyBillingOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, paidThrough.Add(-24*time.Hour)); err != nil {
 				t.Fatal(err)
 			}
 			if len(sub2API.charges) != 1 || len(renewKeys) != 1 || len(ledger.receipts) != 1 {
@@ -294,7 +320,7 @@ func TestMonthlyRenewalInsufficientBalanceKeepsCurrentEntitlement(t *testing.T) 
 	if err := app.tables.SaveCompute(context.Background(), monthlyActiveResource("compute", "compute-low-renewal", paidThrough)); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
 	row, _ := app.getCompute("compute-low-renewal")
@@ -311,7 +337,7 @@ func TestMonthlyRenewalUnknownChargeStaysRetryable(t *testing.T) {
 	if err := app.tables.SaveCompute(context.Background(), monthlyActiveResource("compute", "compute-review-renewal", paidThrough)); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
 		t.Fatalf("unknown renewal error = %v", err)
 	}
 	row, _ := app.getCompute("compute-review-renewal")
@@ -350,7 +376,7 @@ func TestMonthlyRenewalConfirmsLostAdjustmentFromAuthoritativeHistory(t *testing
 	if err != nil || result["billingStatus"] != "active" {
 		t.Fatalf("history-confirmed renewal=%#v err=%v", result, err)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
 	if len(gateway.codes) != 1 || gateway.codes[0] != wantCode || gateway.historyCalls != 1 || len(fabric.computeRenewKeys) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {
@@ -365,7 +391,7 @@ func TestMonthlyRenewalResumesPersistedChargeConfirmationAfterRestart(t *testing
 	fabric.preflightErr = errors.New("fabric preflight unavailable")
 	id := "compute-confirmation-restart"
 	mustStore(t, app.tables.SaveCompute(context.Background(), monthlyActiveResource("compute", id, paidThrough)))
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err == nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err == nil {
 		t.Fatal("preflight failure did not persist renewal")
 	}
 	pending, _ := app.getCompute(id)
@@ -382,7 +408,7 @@ func TestMonthlyRenewalResumesPersistedChargeConfirmationAfterRestart(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+	if err := restarted.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
 	result, _ := restarted.getCompute(id)
@@ -414,7 +440,7 @@ func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
 				fabric.computeRenewErr = errors.New("renew readback unavailable")
 				mustStore(t, app.tables.SaveCompute(context.Background(), row))
 			}
-			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 				t.Fatal(err)
 			}
 			review, _ := app.monthlyResource(resourceType, id)
@@ -422,7 +448,7 @@ func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
 				t.Fatalf("provider review row=%#v charges=%#v refunds=%#v receipts=%#v", review, sub2API.charges, sub2API.refunds, ledger.receipts)
 			}
 			before := len(*events)
-			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 				t.Fatal(err)
 			}
 			if len(*events) != before || len(sub2API.charges) != 1 {
@@ -521,7 +547,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 				mustStore(t, app.tables.SaveCompute(context.Background(), row))
 			}
 
-			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 				t.Fatal(err)
 			}
 			refunded, _ := app.monthlyResource(resourceType, id)
@@ -533,7 +559,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 				t.Fatalf("refund=%#v operation=%s", sub2API.refunds[0], operationID)
 			}
 			before := len(*events)
-			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 				t.Fatal(err)
 			}
 			refunded, _ = app.monthlyResource(resourceType, id)
@@ -541,7 +567,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 				t.Fatalf("refund receipt retry: row=%#v events=%#v charges=%#v refunds=%#v receipts=%#v", refunded, *events, sub2API.charges, sub2API.refunds, ledger.receipts)
 			}
 			before = len(*events)
-			if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+			if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 				t.Fatal(err)
 			}
 			refunded, _ = app.monthlyResource(resourceType, id)
@@ -564,7 +590,7 @@ func TestMonthlyRenewalStorageDoesNotRefundWithoutCBSNotFound(t *testing.T) {
 	}
 	mustStore(t, app.tables.SaveStorage(context.Background(), row))
 
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
 	review, _ := app.getStorage("storage-renew-attached")
@@ -581,7 +607,7 @@ func TestMonthlyAutoRenewDisabledWaitsForExpiry(t *testing.T) {
 	if err := app.tables.SaveCompute(context.Background(), row); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
 	current, _ := app.getCompute("compute-no-renew")
@@ -602,7 +628,7 @@ func TestMonthlyExpiryDestroysComputeAndRetainsStorage(t *testing.T) {
 	if err := app.tables.SaveStorage(context.Background(), storage); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
 	expiredCompute, _ := app.getCompute("compute-expired")
@@ -616,7 +642,7 @@ func TestMonthlyExpiryDestroysComputeAndRetainsStorage(t *testing.T) {
 	if len(ledger.receipts) != 2 || ledger.receipts[0].Type != "billing.resource_expired.v1" || ledger.receipts[1].Type != "billing.resource_expired.v1" {
 		t.Fatalf("expiry receipts=%#v", ledger.receipts)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now.Add(time.Hour)); err != nil {
+	if err := app.runLegacyMonthlyResourcesOnce(context.Background(), service, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if len(ledger.receipts) != 2 || strings.Count(strings.Join(*events, ","), "fabric.compute.cleanup") != 1 {

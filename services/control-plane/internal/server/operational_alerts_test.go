@@ -48,6 +48,38 @@ func TestOperatorSummaryDerivesOperationalNotifications(t *testing.T) {
 	}
 }
 
+func TestOperatorSummaryIncludesWorkspaceRenewalAlerts(t *testing.T) {
+	tests := []struct {
+		name, status, phase, errorCode, wantCode string
+	}{
+		{name: "manual review", status: "manual_review", phase: "verify_compute", errorCode: "fabric_compute_renewal_unconfirmed", wantCode: "manual_review"},
+		{name: "insufficient", status: "insufficient", phase: "debit", errorCode: "monthly_balance_insufficient", wantCode: "insufficient"},
+		{name: "renewal receipt", status: "verifying", phase: "receipt", errorCode: "ledger_receipt_pending", wantCode: "renewal_receipt_pending"},
+		{name: "expiry receipt", status: "expired_unpaid", phase: "expiry_receipt", errorCode: "ledger_expiry_receipt_pending", wantCode: "expiry_receipt_pending"},
+		{name: "cleanup", status: "expired_unpaid", phase: "expire_compute", errorCode: "workspace_expiry_compute_cleanup_pending", wantCode: "cleanup_pending"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newWorkspaceRenewalWorkerFixture(t, nil)
+			app, workspace := fixture.app, fixture.workspace
+			operation := workspaceRenewalOperation{
+				ID: "workspace-renewal-alert", Status: tc.status, CreatedAt: "2026-07-17T00:00:00Z", RequestHash: "alert-request",
+				Phase: tc.phase, AccountID: firstNonEmpty(stringValue(workspace["accountId"]), stringValue(workspace["ownerAccountId"])),
+				WorkspaceID: stringValue(workspace["id"]), PaidThrough: "2026-08-17T00:00:00Z", ErrorCode: tc.errorCode,
+			}
+			mustStore(t, app.tables.SaveRuntimeOperation(context.Background(), workspaceRenewalOperationRow(operation)))
+			notifications := app.operatorSummary()["notifications"].(map[string]any)
+			if notifications["total"] != 1 {
+				t.Fatalf("notifications=%#v", notifications)
+			}
+			item := notifications["recent"].([]any)[0].(map[string]any)
+			if item["resourceType"] != "workspace" || item["resourceId"] != workspace["id"] || item["code"] != tc.wantCode {
+				t.Fatalf("notification=%#v wantCode=%s", item, tc.wantCode)
+			}
+		})
+	}
+}
+
 func TestMonthlyOperationalLogsAreStableDeduplicatedAndRedacted(t *testing.T) {
 	var output bytes.Buffer
 	previousOutput, previousFlags, previousPrefix := log.Writer(), log.Flags(), log.Prefix()

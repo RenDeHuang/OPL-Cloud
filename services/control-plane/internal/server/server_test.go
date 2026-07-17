@@ -3220,29 +3220,21 @@ func TestPaidResourcePurchaseRequiresIdempotencyKeyBeforeSideEffects(t *testing.
 	}
 }
 
-func TestResourceAutoRenewProductCommandUpdatesOnlyControlPlaneState(t *testing.T) {
+func TestPerResourceAutoRenewRouteIsRemoved(t *testing.T) {
 	calls := []string{}
 	server := NewServer(newTestService(fakeLedgerClient{}, &fakeFabricClient{calls: &calls}))
 	session := tenantAdminSessionForTest(t, server)
 	compute := createResourceWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"accountId":"acct-alpha","packageId":"basic"}`)
-	resources := []map[string]any{
-		compute,
-		createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`),
-	}
+	storage := createResourceWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"accountId":"acct-alpha","packageId":"basic","sizeGb":10,"computeAllocationId":"`+stringValue(compute["id"])+`"}`)
 	before := len(calls)
-	for _, resource := range resources {
-		updated := createResourceWithSession(t, server, session, http.MethodPost, "/api/resources/"+stringValue(resource["id"])+"/auto-renew", `{"autoRenew":true}`)
-		if updated["id"] != resource["id"] || updated["autoRenew"] != true {
-			t.Fatalf("auto-renew response = %#v", updated)
+	for _, resource := range []map[string]any{compute, storage} {
+		response := requestWithSession(t, server, session, http.MethodPost, "/api/resources/"+stringValue(resource["id"])+"/auto-renew", `{"autoRenew":true}`)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("per-resource auto-renew status=%d body=%s", response.Code, response.Body.String())
 		}
 	}
 	if len(calls) != before {
-		t.Fatalf("auto-renew toggle touched Fabric: %#v", calls[before:])
-	}
-
-	invalid := requestWithSession(t, server, session, http.MethodPost, "/api/resources/"+stringValue(resources[0]["id"])+"/auto-renew", `{}`)
-	if invalid.Code != http.StatusBadRequest || !strings.Contains(invalid.Body.String(), "autoRenew_required") {
-		t.Fatalf("invalid auto-renew status=%d body=%s", invalid.Code, invalid.Body.String())
+		t.Fatalf("removed per-resource auto-renew touched Fabric: %#v", calls[before:])
 	}
 }
 

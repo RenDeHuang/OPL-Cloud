@@ -131,6 +131,32 @@ func TestBillingReceiptSchemaHTTP(t *testing.T) {
 	}
 }
 
+func TestWorkspaceBillingReceiptSchemaHTTP(t *testing.T) {
+	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
+	body := `{"type":"billing.workspace_renewed.v1","status":"completed","surface":"control_plane","accountId":"acct-alpha","workspaceId":"workspace-alpha","cost":{"priceVersion":"pilot-usd-2026-07-v1","currency":"USD","billingUnit":"calendar_month","totalUsdMicros":52580000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:workspace-renewal:charge:v1","postChargeBalanceUsdMicros":47420000,"periodStart":"2026-08-31T09:30:00Z","paidThrough":"2026-09-30T09:30:00Z","resourceType":"workspace","resourceId":"workspace-alpha","components":{"compute":{"resourceType":"compute","resourceId":"compute-alpha","chargeUsdMicros":50000000},"storage":{"resourceType":"storage","resourceId":"storage-alpha","sizeGb":10,"chargeUsdMicros":2580000}}}}`
+	valid := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(body))
+	valid.Header.Set("Idempotency-Key", "http-workspace-billing-schema")
+	validRec := httptest.NewRecorder()
+	server.ServeHTTP(validRec, valid)
+	if validRec.Code != http.StatusCreated {
+		t.Fatalf("valid Workspace billing receipt status=%d body=%s", validRec.Code, validRec.Body.String())
+	}
+	invalid := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(strings.Replace(body, `"totalUsdMicros":52580000`, `"totalUsdMicros":52579999`, 1)))
+	invalid.Header.Set("Idempotency-Key", "http-workspace-billing-total-mismatch")
+	invalidRec := httptest.NewRecorder()
+	server.ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched Workspace billing receipt status=%d body=%s", invalidRec.Code, invalidRec.Body.String())
+	}
+	crossWorkspace := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(strings.Replace(body, `"workspaceId":"workspace-alpha"`, `"workspaceId":"workspace-other"`, 1)))
+	crossWorkspace.Header.Set("Idempotency-Key", "http-workspace-billing-cross-workspace")
+	crossWorkspaceRec := httptest.NewRecorder()
+	server.ServeHTTP(crossWorkspaceRec, crossWorkspace)
+	if crossWorkspaceRec.Code != http.StatusBadRequest {
+		t.Fatalf("cross-Workspace billing receipt status=%d body=%s", crossWorkspaceRec.Code, crossWorkspaceRec.Body.String())
+	}
+}
+
 func TestReceiptHTTPPreservesLargeIntegerCost(t *testing.T) {
 	server := NewServer(ledger.NewMemoryStore(), "internal-secret")
 	req := testRequest(http.MethodPost, "/ledger/receipts", bytes.NewBufferString(`{"type":"billing.resource_purchased.v1","status":"completed","surface":"control_plane","workspaceId":"workspace-alpha","cost":{"pricingVersion":"pricing-v1","monthlyPriceCnyCents":9007199254740993,"chargeUsdMicros":50000000,"sub2apiUserId":41,"sub2apiRedeemCode":"opl:test:billing-alpha:charge:v1","periodStart":"2026-07-01T00:00:00Z","paidThrough":"2026-08-01T00:00:00Z","resourceType":"compute","resourceId":"compute-alpha"}}`))

@@ -198,11 +198,11 @@ func TestSinglePodCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	renewalStarted := time.Now()
-	if err := scanApp.runMonthlyBillingOnce(ctx, service, now); err != nil {
+	if err := scanApp.runLegacyMonthlyResourcesOnce(ctx, service, now); err != nil {
 		t.Fatal(err)
 	}
 	renewalDuration := time.Since(renewalStarted)
-	if err := scanApp.runMonthlyBillingOnce(ctx, service, now); err != nil {
+	if err := scanApp.runLegacyMonthlyResourcesOnce(ctx, service, now); err != nil {
 		t.Fatal(err)
 	}
 	stopConnectionMonitor()

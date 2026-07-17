@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "owner": "OPL Ledger",
   "purpose": "General execution, monthly billing, and current control-plane lifecycle evidence receipts.",
   "state": "current",
@@ -8,7 +8,7 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "currentScope": "general execution receipt v1, monthly resource billing receipts, Artifact Manifests, Review Results, versioned Review Policies and gates, continuation, and current Workspace lifecycle receipts",
+  "currentScope": "general execution receipt v1, monthly resource and Workspace subscription billing receipts, Artifact Manifests, Review Results, versioned Review Policies and gates, continuation, and current Workspace lifecycle receipts",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
@@ -26,6 +26,8 @@
     "billing.resource_refunded.v1",
     "billing.charge_review_required.v1",
     "billing.reconciliation.v1",
+    "billing.workspace_renewed.v1",
+    "billing.workspace_expired.v1",
     "artifact.manifest.v1",
     "review.result.v1",
     "execution.receipt.v1"
@@ -275,6 +277,43 @@
       "token"
     ]
   },
+  "workspaceMonthlyBillingReceiptV1": {
+    "types": [
+      "billing.workspace_renewed.v1",
+      "billing.workspace_expired.v1"
+    ],
+    "requiredCostFields": [
+      "priceVersion",
+      "currency",
+      "billingUnit",
+      "totalUsdMicros",
+      "periodStart",
+      "paidThrough",
+      "resourceType",
+      "resourceId",
+      "components"
+    ],
+    "renewedAdditionalCostFields": [
+      "sub2apiUserId",
+      "sub2apiRedeemCode",
+      "postChargeBalanceUsdMicros"
+    ],
+    "exactComponents": {
+      "compute": ["resourceType", "resourceId", "chargeUsdMicros"],
+      "storage": ["resourceType", "resourceId", "sizeGb", "chargeUsdMicros"]
+    },
+    "rules": [
+      "currency is USD and billingUnit is calendar_month",
+      "resourceType is workspace",
+      "cost.resourceId equals receipt workspaceId",
+      "all money and size fields are integers with positive component amounts",
+      "totalUsdMicros equals compute plus storage with int64 overflow rejection",
+      "paidThrough is strictly after periodStart",
+      "expired receipts contain no synthetic Sub2API charge identity"
+    ],
+    "writeProtocol": "append_first_with_idempotency",
+    "forbiddenContentRule": "same recursive case-insensitive exact-key rejection as general receipts"
+  },
   "reconciliationReportV1": {
     "recordApi": "POST /ledger/reconciliation",
     "idempotencyKey": "required_non_blank",
@@ -288,7 +327,7 @@
     "exceptions": {
       "type": "array",
       "requiredFields": ["resourceType", "resourceId", "code"],
-      "resourceTypes": ["compute", "storage"],
+      "resourceTypes": ["compute", "storage", "workspace"],
       "resourceId": "non_empty_opaque_string",
       "codes": [
         "billing_operation_invalid",
@@ -302,6 +341,12 @@
         "ledger_receipt_missing",
         "ledger_receipt_mismatch"
       ]
+    },
+    "workspaceRenewalAuthority": {
+      "customerOperationCardinality": 1,
+      "balanceFact": "one_combined_sub2api_charge",
+      "providerFacts": ["compute_renewal", "storage_renewal"],
+      "receiptType": "billing.workspace_renewed.v1"
     },
     "consistencyRules": [
       "counts.exceptions equals exceptions length",

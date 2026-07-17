@@ -38,6 +38,104 @@ func TestBillingReceiptSchemaMemory(t *testing.T) {
 	testBillingReceiptSchema(t, NewMemoryStore())
 }
 
+func validWorkspaceBillingReceiptInput(receiptType string) ReceiptInput {
+	input := ReceiptInput{
+		Type: receiptType, Status: "completed", Surface: "control_plane", AccountID: "acct-alpha", WorkspaceID: "workspace-alpha",
+		Cost: map[string]any{
+			"priceVersion": "pilot-usd-2026-07-v1", "currency": "USD", "billingUnit": "calendar_month",
+			"totalUsdMicros": int64(52_580_000), "periodStart": "2026-08-31T09:30:00Z", "paidThrough": "2026-09-30T09:30:00Z",
+			"resourceType": "workspace", "resourceId": "workspace-alpha",
+			"components": map[string]any{
+				"compute": map[string]any{"resourceType": "compute", "resourceId": "compute-alpha", "chargeUsdMicros": int64(50_000_000)},
+				"storage": map[string]any{"resourceType": "storage", "resourceId": "storage-alpha", "sizeGb": int64(10), "chargeUsdMicros": int64(2_580_000)},
+			},
+		},
+		IdempotencyKey: "workspace-billing-schema-" + receiptType,
+	}
+	if receiptType == "billing.workspace_renewed.v1" {
+		input.Cost["sub2apiUserId"], input.Cost["sub2apiRedeemCode"], input.Cost["postChargeBalanceUsdMicros"] = int64(41), "opl:workspace-renewal:charge:v1", int64(47_420_000)
+	}
+	return input
+}
+
+func TestWorkspaceBillingReceiptSchemaMemory(t *testing.T) {
+	testWorkspaceBillingReceiptSchema(t, NewMemoryStore())
+}
+
+func testWorkspaceBillingReceiptSchema(t *testing.T, store Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1"} {
+		t.Run(receiptType, func(t *testing.T) {
+			if _, err := store.RecordReceipt(ctx, validWorkspaceBillingReceiptInput(receiptType)); err != nil {
+				t.Fatalf("valid Workspace billing receipt: %v", err)
+			}
+			for _, field := range []string{"priceVersion", "currency", "billingUnit", "totalUsdMicros", "periodStart", "paidThrough", "resourceType", "resourceId", "components"} {
+				t.Run("missing "+field, func(t *testing.T) {
+					input := validWorkspaceBillingReceiptInput(receiptType)
+					delete(input.Cost, field)
+					input.IdempotencyKey += "-missing-" + field
+					if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+						t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+					}
+				})
+			}
+		})
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "total mismatch", mutate: func(cost map[string]any) { cost["totalUsdMicros"] = int64(52_579_999) }},
+		{name: "fractional total", mutate: func(cost map[string]any) { cost["totalUsdMicros"] = 52_580_000.5 }},
+		{name: "missing compute", mutate: func(cost map[string]any) { delete(cost["components"].(map[string]any), "compute") }},
+		{name: "extra component", mutate: func(cost map[string]any) { cost["components"].(map[string]any)["network"] = map[string]any{} }},
+		{name: "empty compute id", mutate: func(cost map[string]any) {
+			cost["components"].(map[string]any)["compute"].(map[string]any)["resourceId"] = ""
+		}},
+		{name: "fractional compute", mutate: func(cost map[string]any) {
+			cost["components"].(map[string]any)["compute"].(map[string]any)["chargeUsdMicros"] = 1.5
+		}},
+		{name: "negative storage", mutate: func(cost map[string]any) {
+			cost["components"].(map[string]any)["storage"].(map[string]any)["chargeUsdMicros"] = int64(-1)
+		}},
+		{name: "zero storage size", mutate: func(cost map[string]any) {
+			cost["components"].(map[string]any)["storage"].(map[string]any)["sizeGb"] = int64(0)
+		}},
+		{name: "wrong currency", mutate: func(cost map[string]any) { cost["currency"] = "CNY" }},
+		{name: "reversed period", mutate: func(cost map[string]any) { cost["paidThrough"] = "2026-08-01T00:00:00Z" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := validWorkspaceBillingReceiptInput("billing.workspace_renewed.v1")
+			test.mutate(input.Cost)
+			input.IdempotencyKey += "-" + strings.ReplaceAll(test.name, " ", "-")
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	for _, field := range []string{"sub2apiUserId", "sub2apiRedeemCode", "postChargeBalanceUsdMicros"} {
+		t.Run("renewed missing "+field, func(t *testing.T) {
+			input := validWorkspaceBillingReceiptInput("billing.workspace_renewed.v1")
+			delete(input.Cost, field)
+			input.IdempotencyKey += "-missing-" + field
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+	for _, receiptType := range []string{"billing.workspace_renewed.v1", "billing.workspace_expired.v1"} {
+		t.Run(receiptType+" cross Workspace", func(t *testing.T) {
+			input := validWorkspaceBillingReceiptInput(receiptType)
+			input.WorkspaceID = "workspace-other"
+			input.IdempotencyKey += "-cross-workspace"
+			if _, err := store.RecordReceipt(ctx, input); !errors.Is(err, ErrInvalidReceiptInput) {
+				t.Fatalf("error=%v, want ErrInvalidReceiptInput", err)
+			}
+		})
+	}
+}
+
 func testBillingReceiptSchema(t *testing.T, store Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -272,6 +370,13 @@ func testReconciliationSchema(t *testing.T, store Store) {
 		if _, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: report, IdempotencyKey: "reconciliation-" + code}); err != nil {
 			t.Fatalf("allowlisted code %q: %v", code, err)
 		}
+	}
+	workspace := validReconciliationReport("mismatch")
+	workspace["id"] = "recon-workspace-renewal"
+	workspace["exceptions"].([]any)[0].(map[string]any)["resourceType"] = "workspace"
+	workspace["exceptions"].([]any)[0].(map[string]any)["resourceId"] = "workspace-alpha"
+	if _, err := store.RecordReconciliation(ctx, ReconciliationInput{Report: workspace, IdempotencyKey: "reconciliation-workspace-renewal"}); err != nil {
+		t.Fatalf("Workspace reconciliation exception: %v", err)
 	}
 	multiple := validReconciliationReport("mismatch")
 	multiple["id"] = "recon-multiple"

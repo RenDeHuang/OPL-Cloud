@@ -336,6 +336,88 @@ func TestBillingReconciliationCompleteMatchIsDeterministic(t *testing.T) {
 	assertReconciliationReadOnly(t, fixture)
 }
 
+func TestBillingReconciliationTreatsWorkspaceRenewalAsOneCombinedOperation(t *testing.T) {
+	renewal := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	if err := renewal.app.runMonthlyBillingOnce(context.Background(), renewal.service, renewal.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := decodeWorkspaceRenewalOperation(renewal.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compute, _ := renewal.app.getCompute(operation.ComputeID)
+	storage, _ := renewal.app.getStorage(operation.StorageID)
+	usedBy := int64(41)
+	history := []clients.Sub2APIBalanceHistoryEntry{{
+		Code: operation.RedeemCode, Type: "balance", ValueUSDMicros: -operation.TotalUSDMicros, Status: "used", UsedBy: &usedBy,
+		UsedAt: &renewal.paidThrough, CreatedAt: renewal.paidThrough.Add(-time.Minute),
+	}}
+	ledger := &customerFactsLedger{page: clients.ReceiptPage{Receipts: []clients.Receipt{{
+		ReceiptInput: renewal.ledger.receipts[0], ReceiptID: operation.ReceiptID, CreatedAt: renewal.paidThrough.Format(time.RFC3339),
+	}}}}
+	sub2API := &customerFactsSub2API{
+		testSub2APIClient: &testSub2APIClient{balance: 1_000_000_000, charges: map[string]int64{}},
+		history:           map[int64][]clients.Sub2APIBalanceHistoryEntry{41: history},
+	}
+	calls := &[]string{}
+	fabric := &customerFactsFabric{fakeFabricClient: fakeFabricClient{calls: calls}, operations: []clients.FabricOperation{
+		workspaceRenewalReconciliationFabricOperation(operation, "compute", compute),
+		workspaceRenewalReconciliationFabricOperation(operation, "storage", storage),
+	}}
+	server, err := NewPersistentServer(controlplane.NewService(ledger, fabric, sub2API), renewal.app.tables)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := requestWithMutationKeyForTest(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`, "reconcile-workspace-renewal")
+	if response.Code != http.StatusCreated {
+		t.Fatalf("reconciliation status=%d body=%s", response.Code, response.Body.String())
+	}
+	assertReconciliationReport(t, decodeReconciliationResponse(t, response), "ok", 1, 1, 0)
+	if len(sub2API.history[41]) != 1 || len(ledger.page.Receipts) != 1 || len(fabric.operations) != 2 {
+		t.Fatalf("combined facts history=%#v receipts=%#v operations=%#v", sub2API.history[41], ledger.page.Receipts, fabric.operations)
+	}
+	originalCost := cloneMap(ledger.page.Receipts[0].Cost)
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "total", mutate: func(cost map[string]any) { cost["totalUsdMicros"] = int64(1) }},
+		{name: "billing unit", mutate: func(cost map[string]any) { cost["billingUnit"] = "rolling_month" }},
+		{name: "period start", mutate: func(cost map[string]any) {
+			cost["periodStart"] = renewal.paidThrough.Add(-time.Hour).Format(time.RFC3339)
+		}},
+		{name: "paid through", mutate: func(cost map[string]any) {
+			cost["paidThrough"] = renewal.renewedThrough.Add(time.Hour).Format(time.RFC3339)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ledger.page.Receipts[0].Cost = cloneMap(originalCost)
+			tc.mutate(ledger.page.Receipts[0].Cost)
+			key := "reconcile-workspace-renewal-" + strings.ReplaceAll(tc.name, " ", "-")
+			mismatch := requestWithMutationKeyForTest(t, server, operatorSessionForTest(t, server), http.MethodPost, "/api/billing/reconciliation", `{"confirm":true}`, key)
+			if mismatch.Code != http.StatusCreated {
+				t.Fatalf("mismatch status=%d body=%s", mismatch.Code, mismatch.Body.String())
+			}
+			mismatchBody := decodeReconciliationResponse(t, mismatch)
+			assertReconciliationReport(t, mismatchBody, "mismatch", 1, 0, 1)
+			assertReconciliationException(t, mismatchBody["report"].(map[string]any), "workspace", operation.WorkspaceID, "ledger_receipt_mismatch")
+		})
+	}
+}
+
+func workspaceRenewalReconciliationFabricOperation(operation workspaceRenewalOperation, resourceType string, row map[string]any) clients.FabricOperation {
+	action, kind := "renew_compute_allocation", "compute_allocation"
+	if resourceType == "storage" {
+		action, kind = "renew_storage_volume", "storage_volume"
+	}
+	return clients.FabricOperation{
+		ID: "fop-" + resourceType, OperationID: operation.ID + ":" + resourceType, CallerService: "control-plane", Action: action, ResourceKind: kind,
+		ResourceID: stringValue(row["id"]), AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Provider: stringValue(row["provider"]),
+		ProviderRequestID: stringValue(row["providerRequestId"]), IdempotencyKey: operation.ID + ":" + resourceType, Status: "succeeded",
+		RedactedProviderPayload: map[string]any{"providerResourceId": stringValue(row["providerResourceId"])},
+	}
+}
+
 func TestBillingReconciliationMismatchBlocksPurchasesWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name   string

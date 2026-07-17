@@ -158,11 +158,18 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 			writeError(w, http.StatusBadRequest, "invalid_evidence_ref")
 			return
 		}
-		result, err := app.resolveMonthlyBillingReview(r.Context(), service, billingReviewResolutionInput{
+		resolution := billingReviewResolutionInput{
 			ResourceType: strings.TrimSpace(r.PathValue("resourceType")), ResourceID: strings.TrimSpace(r.PathValue("id")),
 			AccountID: strings.TrimSpace(stringValue(input["accountId"])), BillingOperationID: strings.TrimSpace(stringValue(input["billingOperationId"])),
 			Decision: strings.TrimSpace(stringValue(input["decision"])), EvidenceRef: evidenceRef, IdempotencyKey: key, Reviewer: app.sessionUserID(r),
-		})
+		}
+		var result map[string]any
+		var err error
+		if resolution.ResourceType == "workspace" {
+			result, err = app.resolveWorkspaceRenewalReview(r.Context(), service, resolution)
+		} else {
+			result, err = app.resolveMonthlyBillingReview(r.Context(), service, resolution)
+		}
 		if err != nil {
 			writeBillingReviewResolutionError(w, err)
 			return

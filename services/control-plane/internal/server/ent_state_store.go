@@ -424,8 +424,11 @@ func workspaceLifecycleInactive(row map[string]any) bool {
 func normalizeWorkspaceBillingStateForWorkspace(row, workspace map[string]any) (workspaceBillingState, bool, error) {
 	currentComputeID := stringValue(workspace["currentComputeAllocationId"])
 	state, present, err := normalizeWorkspaceBillingState(row, currentComputeID, stringValue(workspace["storageId"]), stringValue(workspace["ownerUserId"]))
-	if err != nil || !present || state.RenewalStatus != "active" || currentComputeID != "" {
+	if err != nil || !present || state.RenewalStatus == "manual_review" || currentComputeID != "" {
 		return state, present, err
+	}
+	if state.AutoRenew {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
 	}
 	switch firstNonEmpty(stringValue(workspace["state"]), stringValue(workspace["status"])) {
 	case "suspended", "data_deleted", "unrecoverable":
@@ -503,8 +506,11 @@ func normalizeWorkspaceBillingState(row map[string]any, expectedComputeID, expec
 	if startErr != nil || paidErr != nil || nextErr != nil || !paidThrough.After(periodStart) || !nextRenewal.Equal(paidThrough.Add(-24*time.Hour)) {
 		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
 	}
-	if renewalStatus != "active" || strings.TrimSpace(computeID) == "" || strings.TrimSpace(storageID) == "" ||
+	if (renewalStatus != "active" && renewalStatus != "expired_unpaid") || strings.TrimSpace(computeID) == "" || strings.TrimSpace(storageID) == "" ||
 		expectedComputeID != "" && computeID != expectedComputeID || expectedStorageID == "" || storageID != expectedStorageID {
+		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
+	}
+	if renewalStatus == "expired_unpaid" && autoRenew {
 		return workspaceBillingState{}, false, errInvalidWorkspaceBillingState
 	}
 	if autoRenew && (authorizedBy == "" || authorizedAt == "") || authorizedBy != "" && authorizedBy != expectedOwnerID || (authorizedBy == "") != (authorizedAt == "") {
@@ -1731,6 +1737,167 @@ func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[strin
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err := saveWorkspaceRecord(ctx, tx.Client(), row); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error {
+	if err := validateWorkspaceBillingState(update.DesiredWorkspace); err != nil {
+		return err
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	entity, err := client.Workspace.Query().Where(workspace.IDEQ(update.WorkspaceID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceRenewalCASConflict
+		}
+		return err
+	}
+	current := recordFromEnt(entity, workspaceEntFields)
+	currentAutoRenew, validAutoRenew := current["autoRenew"].(bool)
+	if stringValue(current["accountId"]) != update.AccountID || stringValue(current["ownerUserId"]) != update.OwnerUserID ||
+		stringValue(current["paidThrough"]) != update.ExpectedPaidThrough || !validAutoRenew || currentAutoRenew != update.ExpectedAutoRenew {
+		return errWorkspaceRenewalCASConflict
+	}
+	operationEntities, err := client.RuntimeOperation.Query().Where(runtimeoperation.WorkspaceIDEQ(update.WorkspaceID), lockRowForUpdate).All(ctx)
+	if err != nil {
+		return err
+	}
+	operations := make([]map[string]any, 0, len(operationEntities))
+	for _, operation := range operationEntities {
+		row := recordFromEnt(operation, runtimeOpEntFields)
+		if stringValue(row["id"]) == stringValue(update.CommandOperation["id"]) {
+			return errWorkspaceRenewalCASConflict
+		}
+		operations = append(operations, row)
+	}
+	if runtimeOperationsVersion(operations, update.WorkspaceID) != update.ExpectedOperationsVersion {
+		return errWorkspaceRenewalCASConflict
+	}
+	builder := client.Workspace.UpdateOneID(update.WorkspaceID)
+	setRecordFieldsWithEmptyText(builder, update.DesiredWorkspace, workspaceEntFields, true)
+	if err := execCreate(ctx, builder); err != nil {
+		return err
+	}
+	command := controlPlaneRecord(update.CommandOperation)
+	if err := saveRecord(ctx, stringValue(command["id"]), command, client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+		if controlplaneent.IsConstraintError(err) {
+			return errWorkspaceRenewalCASConflict
+		}
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	entity, err := client.Workspace.Query().Where(workspace.IDEQ(claim.WorkspaceID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceRenewalCASConflict
+		}
+		return err
+	}
+	current := recordFromEnt(entity, workspaceEntFields)
+	autoRenew, validAutoRenew := current["autoRenew"].(bool)
+	if stringValue(current["accountId"]) != claim.AccountID || stringValue(current["paidThrough"]) != claim.ExpectedPaidThrough || !validAutoRenew || autoRenew != claim.ExpectedAutoRenew {
+		return errWorkspaceRenewalCASConflict
+	}
+	operationEntities, err := client.RuntimeOperation.Query().Where(runtimeoperation.WorkspaceIDEQ(claim.WorkspaceID), lockRowForUpdate).All(ctx)
+	if err != nil {
+		return err
+	}
+	operations := make([]map[string]any, 0, len(operationEntities))
+	desiredID := stringValue(claim.DesiredOperation["id"])
+	var existing map[string]any
+	for _, operation := range operationEntities {
+		row := recordFromEnt(operation, runtimeOpEntFields)
+		operations = append(operations, row)
+		if stringValue(row["id"]) == desiredID {
+			existing = row
+		}
+	}
+	if runtimeOperationsVersion(operations, claim.WorkspaceID) != claim.ExpectedOperationsVersion {
+		return errWorkspaceRenewalCASConflict
+	}
+	if claim.ExpectedOperationResult == "" {
+		if existing != nil {
+			return errWorkspaceRenewalCASConflict
+		}
+		if err := saveRecord(ctx, desiredID, controlPlaneRecord(claim.DesiredOperation), client.RuntimeOperation.Create(), runtimeOpEntFields); err != nil {
+			if controlplaneent.IsConstraintError(err) {
+				return errWorkspaceRenewalCASConflict
+			}
+			return err
+		}
+	} else {
+		if existing == nil || stringValue(existing["result"]) != claim.ExpectedOperationResult {
+			return errWorkspaceRenewalCASConflict
+		}
+		if !workspaceRenewalClaimIdentityMatches(existing, claim.DesiredOperation) {
+			return errIdempotencyConflict
+		}
+		builder := client.RuntimeOperation.UpdateOneID(desiredID)
+		setRecordFieldsWithEmptyText(builder, claim.DesiredOperation, runtimeOpEntFields, true)
+		if err := execCreate(ctx, builder); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *postgresEntStateStore) PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error {
+	if update.DesiredWorkspace != nil {
+		if err := validateWorkspaceBillingState(update.DesiredWorkspace); err != nil {
+			return err
+		}
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
+	if err != nil {
+		if controlplaneent.IsNotFound(err) {
+			return errWorkspaceRenewalCASConflict
+		}
+		return err
+	}
+	current := recordFromEnt(entity, runtimeOpEntFields)
+	if stringValue(current["result"]) != update.ExpectedOperationResult || stringValue(current["workspaceId"]) != stringValue(update.DesiredOperation["workspaceId"]) ||
+		stringValue(current["action"]) != stringValue(update.DesiredOperation["action"]) {
+		return errWorkspaceRenewalCASConflict
+	}
+	if update.DesiredWorkspace != nil {
+		workspaceID := stringValue(update.DesiredWorkspace["id"])
+		if workspaceID == "" || workspaceID != stringValue(current["workspaceId"]) {
+			return errWorkspaceRenewalCASConflict
+		}
+		if _, err := client.Workspace.Query().Where(workspace.IDEQ(workspaceID), lockRowForUpdate).Only(ctx); err != nil {
+			return err
+		}
+		builder := client.Workspace.UpdateOneID(workspaceID)
+		setRecordFieldsWithEmptyText(builder, update.DesiredWorkspace, workspaceEntFields, true)
+		if err := execCreate(ctx, builder); err != nil {
+			return err
+		}
+	}
+	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
+	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)
+	if err := execCreate(ctx, builder); err != nil {
 		return err
 	}
 	return tx.Commit()

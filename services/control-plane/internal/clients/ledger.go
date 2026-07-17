@@ -126,8 +126,19 @@ func NewLedgerHTTPClient(baseURL, token string, client *http.Client) LedgerClien
 
 func (c *ledgerHTTPClient) RecordReceipt(ctx context.Context, input ReceiptInput, idempotencyKey string) (Receipt, error) {
 	var result Receipt
-	err := c.post(ctx, "/ledger/receipts", input, idempotencyKey, &result)
-	return result, err
+	if err := c.post(ctx, "/ledger/receipts", input, idempotencyKey, &result); err != nil {
+		return Receipt{}, err
+	}
+	if input.Type == "billing.workspace_renewed.v1" || input.Type == "billing.workspace_expired.v1" {
+		submittedCost, submittedErr := json.Marshal(input.Cost)
+		returnedCost, returnedErr := json.Marshal(result.Cost)
+		if submittedErr != nil || returnedErr != nil || !bytes.Equal(submittedCost, returnedCost) || result.ReceiptID == "" ||
+			result.Type != input.Type || result.Status != input.Status || result.Surface != input.Surface || result.AccountID != input.AccountID ||
+			result.WorkspaceID != input.WorkspaceID || result.RequestID != input.RequestID {
+			return Receipt{}, fmt.Errorf("invalid Ledger Workspace billing receipt response")
+		}
+	}
+	return result, nil
 }
 
 func (c *ledgerHTTPClient) ListReceipts(ctx context.Context, query ReceiptQuery) (ReceiptPage, error) {

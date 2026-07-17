@@ -134,6 +134,9 @@ type controlPlaneTableStore interface {
 	DeleteAttachment(ctx context.Context, id string) error
 	ListWorkspaces(ctx context.Context, accountID string) ([]map[string]any, error)
 	SaveWorkspace(ctx context.Context, row map[string]any) error
+	ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error
+	ClaimWorkspaceRenewal(ctx context.Context, claim workspaceRenewalClaimCAS) error
+	PersistWorkspaceRenewal(ctx context.Context, update workspaceRenewalPersistCAS) error
 	ActivateWorkspace(ctx context.Context, row map[string]any) (map[string]any, error)
 	ClaimWorkspaceCreate(ctx context.Context, workspace map[string]any, operation map[string]any) error
 	ClaimWorkspaceResume(ctx context.Context, workspaceID string, operation map[string]any) (map[string]any, bool, error)

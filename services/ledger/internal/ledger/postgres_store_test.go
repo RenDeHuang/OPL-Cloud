@@ -202,6 +202,11 @@ func TestBillingReceiptSchemaPostgres(t *testing.T) {
 	testBillingReceiptSchema(t, store)
 }
 
+func TestWorkspaceBillingReceiptSchemaPostgres(t *testing.T) {
+	store, _ := installedLedgerTestPostgres(t)
+	testWorkspaceBillingReceiptSchema(t, store)
+}
+
 func TestReceiptRejectsSensitiveContentPostgres(t *testing.T) {
 	store, _ := installedLedgerTestPostgres(t)
 	testReceiptRejectsSensitiveContent(t, store)

@@ -488,6 +488,90 @@ func (s *memoryTableStore) SaveWorkspace(_ context.Context, row map[string]any) 
 	return nil
 }
 
+func (s *memoryTableStore) ApplyWorkspaceRenewalIntent(_ context.Context, update workspaceRenewalIntentCAS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.workspaces[update.WorkspaceID]
+	currentAutoRenew, validAutoRenew := current["autoRenew"].(bool)
+	if current == nil || stringValue(current["accountId"]) != update.AccountID || stringValue(current["ownerUserId"]) != update.OwnerUserID ||
+		stringValue(current["paidThrough"]) != update.ExpectedPaidThrough || !validAutoRenew || currentAutoRenew != update.ExpectedAutoRenew ||
+		runtimeOperationsVersion(s.runtimeOps, update.WorkspaceID) != update.ExpectedOperationsVersion {
+		return errWorkspaceRenewalCASConflict
+	}
+	for _, row := range s.runtimeOps {
+		if stringValue(row["id"]) == stringValue(update.CommandOperation["id"]) {
+			return errWorkspaceRenewalCASConflict
+		}
+	}
+	if err := validateWorkspaceBillingState(update.DesiredWorkspace); err != nil {
+		return err
+	}
+	s.workspaces[update.WorkspaceID] = cloneMap(update.DesiredWorkspace)
+	s.runtimeOps = append(s.runtimeOps, cloneMap(update.CommandOperation))
+	return nil
+}
+
+func (s *memoryTableStore) ClaimWorkspaceRenewal(_ context.Context, claim workspaceRenewalClaimCAS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspaces[claim.WorkspaceID]
+	autoRenew, validAutoRenew := workspace["autoRenew"].(bool)
+	if workspace == nil || stringValue(workspace["accountId"]) != claim.AccountID || stringValue(workspace["paidThrough"]) != claim.ExpectedPaidThrough ||
+		!validAutoRenew || autoRenew != claim.ExpectedAutoRenew || runtimeOperationsVersion(s.runtimeOps, claim.WorkspaceID) != claim.ExpectedOperationsVersion {
+		return errWorkspaceRenewalCASConflict
+	}
+	id := stringValue(claim.DesiredOperation["id"])
+	index := -1
+	for i, row := range s.runtimeOps {
+		if stringValue(row["id"]) == id {
+			index = i
+			break
+		}
+	}
+	if claim.ExpectedOperationResult == "" {
+		if index >= 0 {
+			return errWorkspaceRenewalCASConflict
+		}
+		s.runtimeOps = append(s.runtimeOps, cloneMap(claim.DesiredOperation))
+		return nil
+	}
+	if index < 0 || stringValue(s.runtimeOps[index]["result"]) != claim.ExpectedOperationResult {
+		return errWorkspaceRenewalCASConflict
+	}
+	if !workspaceRenewalClaimIdentityMatches(s.runtimeOps[index], claim.DesiredOperation) {
+		return errIdempotencyConflict
+	}
+	s.runtimeOps[index] = cloneMap(claim.DesiredOperation)
+	return nil
+}
+
+func (s *memoryTableStore) PersistWorkspaceRenewal(_ context.Context, update workspaceRenewalPersistCAS) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	index := -1
+	for i, row := range s.runtimeOps {
+		if stringValue(row["id"]) == update.OperationID {
+			index = i
+			break
+		}
+	}
+	if index < 0 || stringValue(s.runtimeOps[index]["result"]) != update.ExpectedOperationResult {
+		return errWorkspaceRenewalCASConflict
+	}
+	if update.DesiredWorkspace != nil {
+		if err := validateWorkspaceBillingState(update.DesiredWorkspace); err != nil {
+			return err
+		}
+		workspace := cloneMap(update.DesiredWorkspace)
+		access := cloneMap(mapField(workspace, "access"))
+		delete(access, "password")
+		workspace["access"] = access
+		s.workspaces[stringValue(workspace["id"])] = workspace
+	}
+	s.runtimeOps[index] = cloneMap(update.DesiredOperation)
+	return nil
+}
+
 func (s *memoryTableStore) ActivateWorkspace(_ context.Context, row map[string]any) (map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

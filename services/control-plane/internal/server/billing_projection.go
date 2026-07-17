@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -40,14 +41,46 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	resources := make([]billingReconciliationResource, 0, len(computes)+len(storages))
+	workspaces, err := app.tables.ListWorkspaces(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	runtimeOperations, err := app.tables.ListRuntimeOperations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resources := make([]billingReconciliationResource, 0, len(computes)+len(storages)+len(workspaces))
+	workspaceRenewals := map[string]workspaceRenewalOperation{}
+	for _, row := range runtimeOperations {
+		if stringValue(row["action"]) != "workspace.renewal" {
+			continue
+		}
+		operation, decodeErr := decodeWorkspaceRenewalOperation(row)
+		workspace := findRecord(workspaces, operation.WorkspaceID)
+		workspacePaidThrough, workspaceTimeErr := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
+		renewedThrough, renewedTimeErr := time.Parse(time.RFC3339, operation.RenewedThrough)
+		if decodeErr != nil || workspace == nil || (operation.Status != "active" && !(operation.Status == "verifying" && operation.EntitlementCommitted)) ||
+			workspaceTimeErr != nil || renewedTimeErr != nil || !workspacePaidThrough.Equal(renewedThrough) {
+			continue
+		}
+		if current, ok := workspaceRenewals[operation.WorkspaceID]; !ok || current.PaidThrough < operation.PaidThrough {
+			workspaceRenewals[operation.WorkspaceID] = operation
+		}
+	}
+	workspaceChildren := map[string]bool{}
+	for workspaceID, operation := range workspaceRenewals {
+		workspace := findRecord(workspaces, workspaceID)
+		resources = append(resources, billingReconciliationResource{resourceType: "workspace", row: workspaceRenewalBillingReconciliationRow(workspace, operation)})
+		workspaceChildren["compute\x00"+operation.ComputeID] = true
+		workspaceChildren["storage\x00"+operation.StorageID] = true
+	}
 	for _, row := range computes {
-		if stringValue(row["billingStatus"]) == "active" {
+		if stringValue(row["billingStatus"]) == "active" && !workspaceChildren["compute\x00"+stringValue(row["id"])] {
 			resources = append(resources, billingReconciliationResource{resourceType: "compute", row: row})
 		}
 	}
 	for _, row := range storages {
-		if stringValue(row["billingStatus"]) == "active" {
+		if stringValue(row["billingStatus"]) == "active" && !workspaceChildren["storage\x00"+stringValue(row["id"])] {
 			resources = append(resources, billingReconciliationResource{resourceType: "storage", row: row})
 		}
 	}
@@ -125,6 +158,21 @@ func (app *controlPlaneServer) billingReconciliationReport(ctx context.Context, 
 	return reconciliationReport(reportID, len(resources), matched, exceptions), nil
 }
 
+func workspaceRenewalBillingReconciliationRow(workspace map[string]any, operation workspaceRenewalOperation) map[string]any {
+	return map[string]any{
+		"id": operation.WorkspaceID, "accountId": operation.AccountID, "workspaceId": operation.WorkspaceID,
+		"billingOperationId": operation.ID, "sub2apiRedeemCode": operation.RedeemCode, "chargeUsdMicros": operation.TotalUSDMicros,
+		"lastReceiptId": operation.ReceiptID, "priceVersion": operation.PriceVersion, "periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
+		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "storageGb": operation.StorageGB,
+		"computeChargeUsdMicros": operation.ComputeUSDMicros, "storageChargeUsdMicros": operation.StorageUSDMicros,
+		"computeProvider": stringValue(operation.ComputeReadback["provider"]), "computeProviderRequestId": stringValue(operation.ComputeReadback["providerRequestId"]),
+		"computeProviderResourceId": stringValue(operation.ComputeReadback["providerResourceId"]),
+		"storageProvider":           stringValue(operation.StorageReadback["provider"]), "storageProviderRequestId": stringValue(operation.StorageReadback["providerRequestId"]),
+		"storageProviderResourceId": stringValue(operation.StorageReadback["providerResourceId"]),
+		"workspaceRenewalStatus":    operation.Status, "workspaceState": stringValue(workspace["state"]),
+	}
+}
+
 func reconciliationReport(id string, checked, matched int, exceptions []billingReconciliationException) map[string]any {
 	status := "ok"
 	if len(exceptions) > 0 {
@@ -147,6 +195,16 @@ func newBillingReconciliationException(resource billingReconciliationResource, c
 
 func validLocalBillingReconciliationFact(resourceType string, row map[string]any) bool {
 	charge, validCharge := requiredNonNegativeInteger(row, "chargeUsdMicros")
+	if resourceType == "workspace" {
+		computeCharge, validComputeCharge := requiredNonNegativeInteger(row, "computeChargeUsdMicros")
+		storageCharge, validStorageCharge := requiredNonNegativeInteger(row, "storageChargeUsdMicros")
+		return stringValue(row["id"]) != "" && stringValue(row["accountId"]) != "" && stringValue(row["workspaceId"]) == stringValue(row["id"]) &&
+			stringValue(row["billingOperationId"]) != "" && stringValue(row["sub2apiRedeemCode"]) != "" && validCharge && validComputeCharge && validStorageCharge &&
+			charge > 0 && computeCharge > 0 && storageCharge > 0 && charge == computeCharge+storageCharge && stringValue(row["priceVersion"]) != "" &&
+			stringValue(row["computeAllocationId"]) != "" && stringValue(row["storageId"]) != "" && numberField(row, "storageGb", 0) > 0 &&
+			stringValue(row["computeProvider"]) != "" && stringValue(row["computeProviderRequestId"]) != "" && stringValue(row["computeProviderResourceId"]) != "" &&
+			stringValue(row["storageProvider"]) != "" && stringValue(row["storageProviderRequestId"]) != "" && stringValue(row["storageProviderResourceId"]) != ""
+	}
 	return (resourceType == "compute" || resourceType == "storage") && stringValue(row["id"]) != "" && stringValue(row["accountId"]) != "" &&
 		stringValue(row["workspaceId"]) != "" && stringValue(row["billingOperationId"]) != "" && stringValue(row["sub2apiRedeemCode"]) != "" &&
 		validCharge && charge > 0 && stringValue(row["provider"]) != "" && stringValue(row["providerRequestId"]) != "" && stringValue(row["providerResourceId"]) != "" &&
@@ -171,6 +229,19 @@ func sub2APIReconciliationCode(row map[string]any, userID int64, history []clien
 }
 
 func fabricReconciliationCode(resourceType string, row map[string]any, operations []clients.FabricOperation) string {
+	if resourceType == "workspace" {
+		for _, component := range []struct {
+			action, kind, resourceID, key, provider, requestID, providerResourceID string
+		}{
+			{"renew_compute_allocation", "compute_allocation", stringValue(row["computeAllocationId"]), stringValue(row["billingOperationId"]) + ":compute", stringValue(row["computeProvider"]), stringValue(row["computeProviderRequestId"]), stringValue(row["computeProviderResourceId"])},
+			{"renew_storage_volume", "storage_volume", stringValue(row["storageId"]), stringValue(row["billingOperationId"]) + ":storage", stringValue(row["storageProvider"]), stringValue(row["storageProviderRequestId"]), stringValue(row["storageProviderResourceId"])},
+		} {
+			if code := fabricComponentReconciliationCode(row, operations, component.action, component.kind, component.resourceID, component.key, component.provider, component.requestID, component.providerResourceID); code != "" {
+				return code
+			}
+		}
+		return ""
+	}
 	action, kind, keySuffix := "create_compute_allocation", "compute_allocation", ":prepare"
 	if resourceType == "storage" {
 		action, kind = "create_storage_volume", "storage_volume"
@@ -181,9 +252,13 @@ func fabricReconciliationCode(resourceType string, row map[string]any, operation
 			action = "renew_storage_volume"
 		}
 	}
+	return fabricComponentReconciliationCode(row, operations, action, kind, stringValue(row["id"]), stringValue(row["billingOperationId"])+keySuffix, stringValue(row["provider"]), stringValue(row["providerRequestId"]), stringValue(row["providerResourceId"]))
+}
+
+func fabricComponentReconciliationCode(row map[string]any, operations []clients.FabricOperation, action, kind, resourceID, idempotencyKey, provider, providerRequestID, providerResourceID string) string {
 	matches := make([]clients.FabricOperation, 0, 1)
 	for _, operation := range operations {
-		if operation.Action == action && operation.ResourceKind == kind && operation.ResourceID == stringValue(row["id"]) && operation.IdempotencyKey == stringValue(row["billingOperationId"])+keySuffix && operation.Status == "succeeded" {
+		if operation.Action == action && operation.ResourceKind == kind && operation.ResourceID == resourceID && operation.IdempotencyKey == idempotencyKey && operation.Status == "succeeded" {
 			matches = append(matches, operation)
 		}
 	}
@@ -192,8 +267,7 @@ func fabricReconciliationCode(resourceType string, row map[string]any, operation
 	}
 	operation := matches[0]
 	if len(matches) != 1 || operation.CallerService != "control-plane" || operation.AccountID != stringValue(row["accountId"]) || operation.WorkspaceID != stringValue(row["workspaceId"]) ||
-		operation.Provider != stringValue(row["provider"]) || operation.ProviderRequestID != stringValue(row["providerRequestId"]) ||
-		stringValue(operation.RedactedProviderPayload["providerResourceId"]) != stringValue(row["providerResourceId"]) {
+		operation.Provider != provider || operation.ProviderRequestID != providerRequestID || stringValue(operation.RedactedProviderPayload["providerResourceId"]) != providerResourceID {
 		return "fabric_operation_mismatch"
 	}
 	return ""
@@ -210,6 +284,28 @@ func ledgerReconciliationCode(resourceType string, row map[string]any, receipts 
 		return "ledger_receipt_missing"
 	}
 	receipt := matches[0]
+	if resourceType == "workspace" {
+		total, validTotal := requiredNonNegativeInteger(receipt.Cost, "totalUsdMicros")
+		expectedTotal, validExpectedTotal := requiredNonNegativeInteger(row, "chargeUsdMicros")
+		components := mapField(receipt.Cost, "components")
+		compute := mapField(components, "compute")
+		storage := mapField(components, "storage")
+		computeCharge, validComputeCharge := requiredNonNegativeInteger(compute, "chargeUsdMicros")
+		storageCharge, validStorageCharge := requiredNonNegativeInteger(storage, "chargeUsdMicros")
+		expectedComputeCharge, validExpectedComputeCharge := requiredNonNegativeInteger(row, "computeChargeUsdMicros")
+		expectedStorageCharge, validExpectedStorageCharge := requiredNonNegativeInteger(row, "storageChargeUsdMicros")
+		if len(matches) != 1 || receipt.Type != "billing.workspace_renewed.v1" || receipt.Status != "completed" ||
+			receipt.AccountID != stringValue(row["accountId"]) || receipt.WorkspaceID != stringValue(row["workspaceId"]) || receipt.RequestID != stringValue(row["billingOperationId"]) ||
+			stringValue(receipt.Cost["resourceType"]) != "workspace" || stringValue(receipt.Cost["resourceId"]) != stringValue(row["id"]) ||
+			stringValue(receipt.Cost["priceVersion"]) != stringValue(row["priceVersion"]) || stringValue(receipt.Cost["currency"]) != pricingCurrency || stringValue(receipt.Cost["billingUnit"]) != pricingBillingUnit ||
+			stringValue(receipt.Cost["periodStart"]) != stringValue(row["periodStart"]) || stringValue(receipt.Cost["paidThrough"]) != stringValue(row["paidThrough"]) ||
+			!validTotal || !validExpectedTotal || total != expectedTotal || !validComputeCharge || !validExpectedComputeCharge || computeCharge != expectedComputeCharge ||
+			!validStorageCharge || !validExpectedStorageCharge || storageCharge != expectedStorageCharge || stringValue(compute["resourceId"]) != stringValue(row["computeAllocationId"]) ||
+			stringValue(storage["resourceId"]) != stringValue(row["storageId"]) || int64(numberField(storage, "sizeGb", -1)) != int64(numberField(row, "storageGb", -2)) {
+			return "ledger_receipt_mismatch"
+		}
+		return ""
+	}
 	expectedType := "billing.resource_purchased.v1"
 	if strings.HasPrefix(stringValue(row["billingOperationId"]), "renewal-") {
 		expectedType = "billing.resource_renewed.v1"

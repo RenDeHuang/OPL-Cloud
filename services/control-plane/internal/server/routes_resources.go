@@ -234,51 +234,6 @@ func registerResourceRoutes(mux *http.ServeMux, app *controlPlaneServer, service
 		}
 		writeJSON(w, http.StatusOK, body)
 	}))
-	mux.HandleFunc("POST /api/resources/{id}/auto-renew", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		input := decodeJSON(r)
-		if _, ok := requiredMutationKey(w, r); !ok {
-			return
-		}
-		autoRenew, ok := input["autoRenew"].(bool)
-		if !ok {
-			writeError(w, http.StatusBadRequest, "autoRenew_required")
-			return
-		}
-		id := strings.TrimSpace(r.PathValue("id"))
-		resourceType := "compute"
-		existing, ok := app.getCompute(id)
-		if !ok {
-			resourceType = "storage"
-			existing, ok = app.getStorage(id)
-		}
-		if !ok {
-			writeError(w, http.StatusNotFound, "resource_not_found")
-			return
-		}
-		if !app.canAccessResource(r, existing) {
-			writeError(w, http.StatusForbidden, "account_scope_forbidden")
-			return
-		}
-		unlock := app.lockResource(resourceType, id)
-		defer unlock()
-		existing, _ = app.monthlyResource(resourceType, id)
-		before := cloneMap(existing)
-		accountID := firstNonEmpty(stringValue(existing["accountId"]), stringValue(existing["ownerAccountId"]))
-		if err := app.tables.SetResourceAutoRenew(r.Context(), resourceType, id, accountID, autoRenew); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		existing["autoRenew"] = autoRenew
-		if err := app.appendAuditEvent(r, "resource.auto_renew", resourceType, id, accountID, before, existing, "succeeded"); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
-			return
-		}
-		if resourceType == "storage" {
-			writeJSON(w, http.StatusOK, storageResponse(existing))
-			return
-		}
-		writeJSON(w, http.StatusOK, computeResponse(existing))
-	}))
 	mux.HandleFunc("POST /api/storage-attachments", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		accountID, ok := app.scopedAccountID(w, r, input)

@@ -624,6 +624,96 @@ func TestSaveWorkspaceStaleProjectionCannotReenableOwnerRenewal(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRenewalInactiveLifecycleRejectsEnabledIntent(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		for _, state := range []string{"suspended", "data_deleted", "unrecoverable"} {
+			t.Run(storeCase.name+"/"+state, func(t *testing.T) {
+				workspace := canonicalWorkspaceRenewalRow(true)
+				workspace["state"], workspace["status"], workspace["currentComputeAllocationId"] = state, state, ""
+				if err := storeCase.new(t).SaveWorkspace(context.Background(), workspace); !errors.Is(err, errInvalidWorkspaceBillingState) {
+					t.Fatalf("inactive auto-renew error=%v, want %v", err, errInvalidWorkspaceBillingState)
+				}
+			})
+		}
+	}
+}
+
+func TestWorkspaceRenewalClaimIsAtomicAndRejectsDifferentRequestHash(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := storeCase.new(t)
+			workspace := canonicalWorkspaceRenewalRow(true)
+			workspace["state"], workspace["status"] = "running", "running"
+			mustStore(t, store.SaveWorkspace(ctx, workspace))
+			operation, err := newWorkspaceRenewalOperation(workspace, time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.LeaseToken, operation.LeaseExpiresAt = "claim-token", "2026-08-16T00:05:00Z"
+			operations, _ := store.ListRuntimeOperations(ctx)
+			claim := workspaceRenewalClaimCAS{
+				WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, ExpectedPaidThrough: stringValue(workspace["paidThrough"]), ExpectedAutoRenew: true,
+				ExpectedOperationsVersion: runtimeOperationsVersion(operations, operation.WorkspaceID), DesiredOperation: workspaceRenewalOperationRow(operation),
+			}
+			start := make(chan struct{})
+			results := make(chan error, 2)
+			var wg sync.WaitGroup
+			for range 2 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					results <- store.ClaimWorkspaceRenewal(ctx, claim)
+				}()
+			}
+			close(start)
+			wg.Wait()
+			close(results)
+			won, conflicted := 0, 0
+			for err := range results {
+				switch {
+				case err == nil:
+					won++
+				case errors.Is(err, errWorkspaceRenewalCASConflict):
+					conflicted++
+				default:
+					t.Fatalf("claim error=%v", err)
+				}
+			}
+			operations, err = store.ListRuntimeOperations(ctx)
+			if err != nil || won != 1 || conflicted != 1 || len(operations) != 1 || stringValue(operations[0]["id"]) != operation.ID {
+				t.Fatalf("claims won=%d conflicts=%d operations=%#v err=%v", won, conflicted, operations, err)
+			}
+			persisted, err := decodeWorkspaceRenewalOperation(operations[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			persisted.RequestHash = "different-request-hash"
+			conflictingClaim := workspaceRenewalClaimCAS{
+				WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, ExpectedPaidThrough: stringValue(workspace["paidThrough"]), ExpectedAutoRenew: true,
+				ExpectedOperationsVersion: runtimeOperationsVersion(operations, operation.WorkspaceID), ExpectedOperationResult: stringValue(operations[0]["result"]),
+				DesiredOperation: workspaceRenewalOperationRow(persisted),
+			}
+			if err := store.ClaimWorkspaceRenewal(ctx, conflictingClaim); !errors.Is(err, errIdempotencyConflict) {
+				t.Fatalf("different request hash error=%v, want %v", err, errIdempotencyConflict)
+			}
+		})
+	}
+}
+
 func TestPostgresSaveWorkspaceUpdatesWithoutDeleteInsert(t *testing.T) {
 	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
 	ctx := context.Background()
