@@ -315,7 +315,12 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
 			}
-			if err := app.appendAuditEvent(r, "workspace.auto_renew", "workspace", workspaceID, stringValue(workspace["accountId"]), workspace, update.DesiredWorkspace, "succeeded"); err != nil {
+			updatedWorkspace, ok := app.getWorkspace(workspaceID)
+			if !ok {
+				writeError(w, http.StatusInternalServerError, "state_read_failed")
+				return
+			}
+			if err := app.appendAuditEvent(r, "workspace.auto_renew", "workspace", workspaceID, stringValue(workspace["accountId"]), workspace, updatedWorkspace, "succeeded"); err != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
 			}

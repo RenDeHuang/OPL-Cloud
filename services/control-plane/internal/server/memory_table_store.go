@@ -503,10 +503,12 @@ func (s *memoryTableStore) ApplyWorkspaceRenewalIntent(_ context.Context, update
 			return errWorkspaceRenewalCASConflict
 		}
 	}
-	if err := validateWorkspaceBillingState(update.DesiredWorkspace); err != nil {
+	desired := cloneMap(current)
+	desired["autoRenew"], desired["authorizedBy"], desired["authorizedAt"] = update.WorkspacePatch.AutoRenew, update.WorkspacePatch.AuthorizedBy, update.WorkspacePatch.AuthorizedAt
+	if err := validateWorkspaceBillingState(desired); err != nil {
 		return err
 	}
-	s.workspaces[update.WorkspaceID] = cloneMap(update.DesiredWorkspace)
+	s.workspaces[update.WorkspaceID] = desired
 	s.runtimeOps = append(s.runtimeOps, cloneMap(update.CommandOperation))
 	return nil
 }

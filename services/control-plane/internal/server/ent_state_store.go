@@ -1743,9 +1743,6 @@ func (s *postgresEntStateStore) SaveWorkspace(ctx context.Context, row map[strin
 }
 
 func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error {
-	if err := validateWorkspaceBillingState(update.DesiredWorkspace); err != nil {
-		return err
-	}
 	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return err
@@ -1780,8 +1777,13 @@ func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context,
 	if runtimeOperationsVersion(operations, update.WorkspaceID) != update.ExpectedOperationsVersion {
 		return errWorkspaceRenewalCASConflict
 	}
+	desired := cloneMap(current)
+	desired["autoRenew"], desired["authorizedBy"], desired["authorizedAt"] = update.WorkspacePatch.AutoRenew, update.WorkspacePatch.AuthorizedBy, update.WorkspacePatch.AuthorizedAt
+	if err := validateWorkspaceBillingState(desired); err != nil {
+		return err
+	}
 	builder := client.Workspace.UpdateOneID(update.WorkspaceID)
-	setRecordFieldsWithEmptyText(builder, update.DesiredWorkspace, workspaceEntFields, true)
+	setRecordFieldsWithEmptyText(builder, desired, workspaceEntFields, true)
 	if err := execCreate(ctx, builder); err != nil {
 		return err
 	}

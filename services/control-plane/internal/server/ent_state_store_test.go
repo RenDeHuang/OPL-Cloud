@@ -813,6 +813,69 @@ func TestPersistWorkspaceRenewalMergesPatchWithoutOverwritingConcurrentWorkspace
 	}
 }
 
+func TestWorkspaceRenewalIntentMergesConcurrentRuntimeAndCredentialState(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := storeCase.new(t)
+			workspace := canonicalWorkspaceRenewalRow(true)
+			workspace["state"], workspace["status"], workspace["runtimeId"] = "running", "running", "runtime-old"
+			workspace["runtime"], workspace["runtimeServiceName"], workspace["serviceName"] = map[string]any{"serviceName": "runtime-service-old"}, "runtime-root-old", "service-old"
+			workspace["access"] = map[string]any{
+				"account": "account-old", "username": "user-old", "credentialStatus": "ready",
+				"credentialVersion": "credential-old", "secretRef": "secret-old",
+			}
+			mustStore(t, store.SaveWorkspace(ctx, workspace))
+
+			workspaces, err := store.ListWorkspaces(ctx, stringValue(workspace["accountId"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			operations, err := store.ListRuntimeOperations(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent, _, err := planWorkspaceRenewalIntent(recordByID(workspaces, stringValue(workspace["id"])), map[string]any{"id": workspace["ownerUserId"]}, operations, false, "concurrent-runtime-intent", time.Date(2026, 8, 16, 1, 3, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			concurrent := cloneMap(recordByID(workspaces, stringValue(workspace["id"])))
+			concurrent["runtimeId"] = "runtime-concurrent"
+			concurrent["runtime"], concurrent["runtimeServiceName"], concurrent["serviceName"] = map[string]any{"serviceName": "runtime-service-concurrent"}, "runtime-root-concurrent", "service-concurrent"
+			concurrent["access"] = map[string]any{
+				"account": "account-concurrent", "username": "user-concurrent", "credentialStatus": "rotating",
+				"credentialVersion": "credential-concurrent", "secretRef": "secret-concurrent",
+			}
+			mustStore(t, store.SaveWorkspace(ctx, concurrent))
+			mustStore(t, store.ApplyWorkspaceRenewalIntent(ctx, intent))
+
+			workspaces, err = store.ListWorkspaces(ctx, stringValue(workspace["accountId"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := recordByID(workspaces, stringValue(workspace["id"]))
+			for _, field := range []string{"runtimeId", "runtimeServiceName", "serviceName"} {
+				if got[field] != concurrent[field] {
+					t.Fatalf("renewal intent overwrote concurrent %s: got=%#v want=%#v Workspace=%#v", field, got[field], concurrent[field], got)
+				}
+			}
+			if !reflect.DeepEqual(mapField(got, "runtime"), mapField(concurrent, "runtime")) || !reflect.DeepEqual(mapField(got, "access"), mapField(concurrent, "access")) {
+				t.Fatalf("renewal intent overwrote concurrent runtime/access: got=%#v want=%#v", got, concurrent)
+			}
+			if got["autoRenew"] != false || stringValue(got["authorizedBy"]) != "" || stringValue(got["authorizedAt"]) != "" {
+				t.Fatalf("renewal intent patch not applied: %#v", got)
+			}
+		})
+	}
+}
+
 func TestPostgresWorkspaceRenewalPersistAndOwnerDisableUseSameLockOrder(t *testing.T) {
 	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
 	ctx := context.Background()

@@ -270,6 +270,50 @@ func workspaceRenewalReviewRequest(t *testing.T, server http.Handler, session *h
 	return requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/operator/billing-reviews/workspace/workspace-monthly/resolve", body, key)
 }
 
+func TestWorkspaceRenewalReviewResolutionRejectsOperationsWithoutPendingReview(t *testing.T) {
+	for _, operationCase := range []struct {
+		status    string
+		phase     string
+		receiptID string
+	}{
+		{status: "active", phase: "complete", receiptID: "receipt-existing"},
+		{status: "verifying", phase: "receipt"},
+	} {
+		t.Run(operationCase.status, func(t *testing.T) {
+			fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+			operation, err := newWorkspaceRenewalOperation(fixture.workspace, fixture.paidThrough.Add(-monthlyRenewalLead))
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.Status, operation.Phase, operation.ReceiptID = operationCase.status, operationCase.phase, operationCase.receiptID
+			operation.EntitlementCommitted = operationCase.status == "verifying"
+			operation.PreChargeBalanceUSDMicros, operation.PostChargeBalanceUSDMicros, operation.PostChargeBalanceKnown = 100_000_000, 47_420_000, true
+			operation.ChargeConfirmation = map[string]any{
+				"code": operation.RedeemCode, "userId": int64(41), "chargeUsdMicros": operation.TotalUSDMicros, "status": "used",
+			}
+			mustStore(t, fixture.app.tables.SaveRuntimeOperation(context.Background(), workspaceRenewalOperationRow(operation)))
+
+			before := fixture.operation(t)
+			beforeResult, beforeStatus := stringValue(before["result"]), stringValue(before["status"])
+			beforeEvents, beforeReceipts := len(*fixture.events), len(fixture.ledger.receipts)
+			result, resolveErr := fixture.app.resolveWorkspaceRenewalReview(context.Background(), fixture.service, billingReviewResolutionInput{
+				ResourceType: "workspace", ResourceID: operation.WorkspaceID, AccountID: operation.AccountID, BillingOperationID: operation.ID,
+				Decision: billingReviewActivateCharged, EvidenceRef: "case-without-pending-review", IdempotencyKey: "resolution-without-pending-review-" + operationCase.status, Reviewer: "operator-reviewer",
+			})
+			after := fixture.operation(t)
+			if !errors.Is(resolveErr, errBillingReviewNotPending) || result != nil {
+				t.Fatalf("resolution status=%s result=%#v err=%v, want %v", operationCase.status, result, resolveErr, errBillingReviewNotPending)
+			}
+			if stringValue(after["result"]) != beforeResult || stringValue(after["status"]) != beforeStatus {
+				t.Fatalf("rejected resolution changed operation: before=%#v after=%#v", before, after)
+			}
+			if len(*fixture.events) != beforeEvents || len(fixture.ledger.receipts) != beforeReceipts {
+				t.Fatalf("rejected resolution called Fabric/Ledger: events=%#v receipts=%#v", (*fixture.events)[beforeEvents:], fixture.ledger.receipts[beforeReceipts:])
+			}
+		})
+	}
+}
+
 func TestWorkspaceRenewalReviewResolutionRequiresBothProviderFactsAndResumes(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	fixture.fabric.storageRenewErr = errors.New("provider response lost")

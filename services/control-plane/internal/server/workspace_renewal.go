@@ -26,8 +26,14 @@ type workspaceRenewalIntentCAS struct {
 	ExpectedPaidThrough       string
 	ExpectedAutoRenew         bool
 	ExpectedOperationsVersion string
-	DesiredWorkspace          map[string]any
+	WorkspacePatch            workspaceRenewalIntentPatch
 	CommandOperation          map[string]any
+}
+
+type workspaceRenewalIntentPatch struct {
+	AutoRenew    bool
+	AuthorizedBy string
+	AuthorizedAt string
 }
 
 type workspaceAutoRenewCommandResult struct {
@@ -113,17 +119,16 @@ func planWorkspaceRenewalIntent(workspace, user map[string]any, operations []map
 	if err != nil {
 		return workspaceRenewalIntentCAS{}, nil, errInvalidWorkspaceBillingState
 	}
-	desired := cloneMap(workspace)
+	patch := workspaceRenewalIntentPatch{AutoRenew: autoRenew}
 	renewalStatus := "scheduled"
 	effectiveAfter := nextRenewal.UTC()
 	operation := currentWorkspaceRenewalOperation(operations, stringValue(workspace["id"]), paidThrough.Format(time.RFC3339Nano))
 	if autoRenew {
-		desired["autoRenew"], desired["authorizedBy"], desired["authorizedAt"] = true, stringValue(user["id"]), now.UTC().Format(time.RFC3339Nano)
+		patch.AuthorizedBy, patch.AuthorizedAt = stringValue(user["id"]), now.UTC().Format(time.RFC3339Nano)
 		if operation != nil {
 			renewalStatus = stringValue(operation["status"])
 		}
 	} else {
-		desired["autoRenew"], desired["authorizedBy"], desired["authorizedAt"] = false, "", ""
 		effectiveAfter, renewalStatus = paidThrough, "cancelled"
 		if operation != nil {
 			anchor := int(numberField(workspace, "billingAnchorDay", float64(paidThrough.Day())))
@@ -138,7 +143,7 @@ func planWorkspaceRenewalIntent(workspace, user map[string]any, operations []map
 	return workspaceRenewalIntentCAS{
 		WorkspaceID: stringValue(workspace["id"]), AccountID: stringValue(workspace["accountId"]), OwnerUserID: stringValue(user["id"]),
 		ExpectedPaidThrough: stringValue(workspace["paidThrough"]), ExpectedAutoRenew: workspace["autoRenew"] == true,
-		ExpectedOperationsVersion: runtimeOperationsVersion(operations, stringValue(workspace["id"])), DesiredWorkspace: desired,
+		ExpectedOperationsVersion: runtimeOperationsVersion(operations, stringValue(workspace["id"])), WorkspacePatch: patch,
 		CommandOperation: workspaceAutoRenewCommandRow(workspace, user, key, requestHash, response, now),
 	}, response, nil
 }
@@ -535,6 +540,9 @@ func (app *controlPlaneServer) resolveWorkspaceRenewalReview(ctx context.Context
 	}
 	if operation.WorkspaceID != input.ResourceID || operation.AccountID != input.AccountID || operation.ID != input.BillingOperationID {
 		return nil, errBillingReviewIdentity
+	}
+	if operation.ReviewResolutionKey == "" && operation.Status != "manual_review" {
+		return nil, errBillingReviewNotPending
 	}
 	if operation.Status != "manual_review" && operation.Status != "verifying" && operation.Status != "active" {
 		return nil, errBillingReviewNotPending
