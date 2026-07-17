@@ -145,6 +145,9 @@ func (s *MemoryOperationStore) ClaimRuntime(_ context.Context, operation FabricO
 		existing := s.operation[index]
 		if existing.Action == operation.Action && existing.IdempotencyKey == operation.IdempotencyKey && existing.Status != "rejected" {
 			if existing.Action == "destroy_workspace_runtime" && existing.Status == "failed" {
+				if !sameRuntimeOperationRequest(existing, operation) {
+					return existing, false, ErrRuntimeIdempotencyConflict
+				}
 				operation.ID = existing.ID
 				s.operation[index] = operation
 				return operation, true, nil
@@ -175,6 +178,16 @@ func (s *MemoryOperationStore) ReclaimRuntime(_ context.Context, id string, prio
 		return operation, false, nil
 	}
 	return FabricOperation{}, false, fmt.Errorf("runtime_operation_not_found")
+}
+
+func sameRuntimeOperationRequest(existing, requested FabricOperation) bool {
+	return existing.Action == requested.Action &&
+		existing.ResourceKind == requested.ResourceKind &&
+		existing.ResourceID == requested.ResourceID &&
+		existing.AccountID == requested.AccountID &&
+		existing.WorkspaceID == requested.WorkspaceID &&
+		existing.IdempotencyKey == requested.IdempotencyKey &&
+		existing.RequestHash == requested.RequestHash
 }
 
 func (s *MemoryOperationStore) SaveRuntime(_ context.Context, operation FabricOperation) error {
@@ -559,8 +572,21 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 		Order(fabricent.Desc(fabricoperation.FieldCreatedAt, fabricoperation.FieldID)).First(ctx)
 	if err == nil {
 		if existing.Action == "destroy_workspace_runtime" && existing.Status == "failed" {
+			if !sameRuntimeOperationRequest(fabricOperationFromEnt(existing), operation) {
+				return FabricOperation{}, false, ErrRuntimeIdempotencyConflict
+			}
 			updated, updateErr := s.client.FabricOperation.Update().
-				Where(fabricoperation.ID(existing.ID), fabricoperation.Status("failed")).
+				Where(
+					fabricoperation.ID(existing.ID),
+					fabricoperation.Status("failed"),
+					fabricoperation.Action(operation.Action),
+					fabricoperation.ResourceKind(operation.ResourceKind),
+					fabricoperation.ResourceID(operation.ResourceID),
+					fabricoperation.AccountID(operation.AccountID),
+					fabricoperation.WorkspaceID(operation.WorkspaceID),
+					fabricoperation.IdempotencyKey(operation.IdempotencyKey),
+					fabricoperation.RequestHash(operation.RequestHash),
+				).
 				SetStatus("started").
 				SetErrorCode("").
 				SetRetryable(false).
@@ -580,6 +606,9 @@ func (s *PostgresOperationStore) ClaimRuntime(ctx context.Context, operation Fab
 			existing, err = s.client.FabricOperation.Get(ctx, existing.ID)
 			if err != nil {
 				return FabricOperation{}, false, err
+			}
+			if !sameRuntimeOperationRequest(fabricOperationFromEnt(existing), operation) {
+				return FabricOperation{}, false, ErrRuntimeIdempotencyConflict
 			}
 		}
 		return fabricOperationFromEnt(existing), false, nil

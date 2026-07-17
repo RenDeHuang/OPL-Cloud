@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1719,6 +1720,37 @@ func TestDestroyWorkspaceRuntimeRetriesFailedProviderOperation(t *testing.T) {
 	}
 	if _, err := service.DestroyWorkspaceRuntime(context.Background(), "workspace-alpha", "runtime-destroy-once"); err != nil || provider.destroyCalls.Load() != 2 {
 		t.Fatalf("successful replay err=%v providerCalls=%d", err, provider.destroyCalls.Load())
+	}
+}
+
+func TestDestroyWorkspaceRuntimeRejectsFailedRetryForDifferentWorkspace(t *testing.T) {
+	store := NewMemoryOperationStore()
+	originalProvider := &failOnceDestroyProvider{}
+	originalService := NewServiceWithOperationStore(originalProvider, store)
+	if _, err := originalService.DestroyWorkspaceRuntime(context.Background(), "workspace-alpha", "runtime-destroy-once"); err == nil {
+		t.Fatal("first destroy succeeded, want transient failure")
+	}
+	before, err := store.List(context.Background())
+	if err != nil || len(before) != 1 || before[0].Status != "failed" {
+		t.Fatalf("failed operation = %#v err=%v", before, err)
+	}
+
+	otherProvider := &countingRuntimeProvider{}
+	otherService := NewServiceWithOperationStore(otherProvider, store)
+	if _, err := otherService.DestroyWorkspaceRuntime(context.Background(), "workspace-beta", "runtime-destroy-once"); !errors.Is(err, ErrRuntimeIdempotencyConflict) {
+		t.Fatalf("cross-workspace retry error = %v, want ErrRuntimeIdempotencyConflict", err)
+	}
+	after, err := store.List(context.Background())
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("cross-workspace retry changed operation: before=%#v after=%#v err=%v", before, after, err)
+	}
+	if otherProvider.destroyCalls.Load() != 0 {
+		t.Fatalf("cross-workspace provider calls = %d, want 0", otherProvider.destroyCalls.Load())
+	}
+
+	runtime, err := originalService.DestroyWorkspaceRuntime(context.Background(), "workspace-alpha", "runtime-destroy-once")
+	if err != nil || runtime.Status != "destroyed" || originalProvider.destroyCalls.Load() != 2 {
+		t.Fatalf("original retry = %#v err=%v providerCalls=%d", runtime, err, originalProvider.destroyCalls.Load())
 	}
 }
 

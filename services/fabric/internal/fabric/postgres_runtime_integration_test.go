@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -369,6 +370,66 @@ func TestPostgresRuntimeClaimAcrossServiceInstances(t *testing.T) {
 	replayed, err := NewServiceWithOperationStore(provider, secondStore).CreateWorkspaceRuntime(ctx, input)
 	if err != nil || replayed.ID != "runtime-alpha" || provider.calls.Load() != 1 {
 		t.Fatalf("postgres restart replay = %#v err=%v providerCalls=%d", replayed, err, provider.calls.Load())
+	}
+}
+
+func TestPostgresDestroyRuntimeFailedRetryBindsWorkspaceAcrossServiceInstances(t *testing.T) {
+	databaseURL := fabricTestDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	firstStore, err := NewPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatalf("open first operation store: %v", err)
+	}
+	defer firstStore.client.Close()
+	secondStore, err := NewPostgresOperationStore(databaseURL)
+	if err != nil {
+		t.Fatalf("open second operation store: %v", err)
+	}
+	defer secondStore.client.Close()
+
+	originalProvider := &failOnceDestroyProvider{}
+	originalService := NewServiceWithOperationStore(originalProvider, firstStore)
+	if _, err := originalService.DestroyWorkspaceRuntime(ctx, "workspace-alpha", "postgres-runtime-destroy-once"); err == nil {
+		t.Fatal("first destroy succeeded, want transient failure")
+	}
+	before, err := firstStore.List(ctx)
+	if err != nil || len(before) != 1 || before[0].Status != "failed" {
+		t.Fatalf("failed operation = %#v err=%v", before, err)
+	}
+
+	otherProvider := &countingRuntimeProvider{}
+	services := []*Service{
+		NewServiceWithOperationStore(otherProvider, firstStore),
+		NewServiceWithOperationStore(otherProvider, secondStore),
+	}
+	start := make(chan struct{})
+	results := make(chan error, len(services))
+	for _, service := range services {
+		service := service
+		go func() {
+			<-start
+			_, err := service.DestroyWorkspaceRuntime(ctx, "workspace-beta", "postgres-runtime-destroy-once")
+			results <- err
+		}()
+	}
+	close(start)
+	for range services {
+		if err := <-results; !errors.Is(err, ErrRuntimeIdempotencyConflict) {
+			t.Fatalf("cross-workspace retry error = %v, want ErrRuntimeIdempotencyConflict", err)
+		}
+	}
+	after, err := firstStore.List(ctx)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("cross-workspace retry changed operation: before=%#v after=%#v err=%v", before, after, err)
+	}
+	if otherProvider.destroyCalls.Load() != 0 {
+		t.Fatalf("cross-workspace provider calls = %d, want 0", otherProvider.destroyCalls.Load())
+	}
+
+	runtime, err := originalService.DestroyWorkspaceRuntime(ctx, "workspace-alpha", "postgres-runtime-destroy-once")
+	if err != nil || runtime.Status != "destroyed" || originalProvider.destroyCalls.Load() != 2 {
+		t.Fatalf("original retry = %#v err=%v providerCalls=%d", runtime, err, originalProvider.destroyCalls.Load())
 	}
 }
 
