@@ -6,8 +6,16 @@ import {
 } from "./production-verifier.ts";
 
 export const PROVIDER_ACCEPTANCE_CONFIRMATION = "I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS";
-const SLOT_ID = "verification-slot-01";
-const IDEMPOTENCY_KEY = `provider-acceptance:${SLOT_ID}`;
+export const PROVIDER_ACCEPTANCE_SLOTS = Object.freeze({
+  "verification-slot-basic-01": Object.freeze({
+    accountId: "acct-verification-slot-basic-01",
+    idempotencyKey: "provider-acceptance:verification-slot-basic-01"
+  }),
+  "verification-slot-pro-01": Object.freeze({
+    accountId: "acct-verification-slot-pro-01",
+    idempotencyKey: "provider-acceptance:verification-slot-pro-01"
+  })
+});
 
 function sleep(ms) {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
@@ -21,15 +29,15 @@ function safeResult(value) {
     .map(([key, nested]) => [key, safeResult(nested)]));
 }
 
-async function postAcceptance({ fetchImpl, origin, operatorToken, accountId, confirmation, signal, timeoutMs }) {
+async function postAcceptance({ fetchImpl, origin, operatorToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs }) {
   const response = await fetchImpl(`${origin}/api/operator/provider-acceptance`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-opl-operator-token": operatorToken,
-      "idempotency-key": IDEMPOTENCY_KEY
+      "idempotency-key": slot.idempotencyKey
     },
-    body: JSON.stringify({ accountId, confirmation, slotId: SLOT_ID }),
+    body: JSON.stringify({ accountId, confirmation, slotId, environmentApproved, purchaseBudget, maxApprovedProviderCost }),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
   });
   const text = await response.text();
@@ -46,8 +54,12 @@ async function postAcceptance({ fetchImpl, origin, operatorToken, accountId, con
 export async function runProviderAcceptance({
   origin,
   operatorToken,
+  slotId,
   accountId,
   confirmation,
+  environmentApproved,
+  purchaseBudget,
+  maxApprovedProviderCost,
   attempts = 90,
   retryDelayMs = 10_000,
   requestTimeoutMs = 30_000,
@@ -56,16 +68,21 @@ export async function runProviderAcceptance({
   fetchImpl = globalThis.fetch
 } = {}) {
   if (confirmation !== PROVIDER_ACCEPTANCE_CONFIRMATION) throw new Error("provider_acceptance_confirmation_required");
-	if (!String(operatorToken || "").trim()) throw new Error("provider_acceptance_operator_token_required");
-  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(String(accountId || ""))) throw new Error("provider_acceptance_account_id_required");
+  if (!String(operatorToken || "").trim()) throw new Error("provider_acceptance_operator_token_required");
+  const slot = PROVIDER_ACCEPTANCE_SLOTS[slotId];
+  if (!slot) throw new Error("provider_acceptance_slot_fixed");
+  if (accountId !== slot.accountId) throw new Error("provider_acceptance_account_fixed");
+  if (environmentApproved !== true) throw new Error("provider_acceptance_environment_approval_required");
+  if (purchaseBudget !== 1) throw new Error("provider_acceptance_purchase_budget_invalid");
+  if (!Number.isFinite(maxApprovedProviderCost) || maxApprovedProviderCost <= 0) throw new Error("provider_acceptance_provider_cost_approval_required");
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 120 || !Number.isFinite(retryDelayMs) || retryDelayMs < 0) throw new Error("provider_acceptance_retry_config_invalid");
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) throw new Error("provider_acceptance_request_timeout_invalid");
 
   const normalizedOrigin = assertPublicHttpsUrl(origin, "public_console_origin_required", { hostname: "cloud.medopl.cn" }).origin;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const payload = await postAcceptance({ fetchImpl, origin: normalizedOrigin, operatorToken, accountId, confirmation, signal, timeoutMs: requestTimeoutMs });
-    const result = safeResult({ ...payload, attempt, slotId: SLOT_ID });
-    if (["ready", "reused"].includes(payload.status) && payload.slot?.id === SLOT_ID) {
+    const payload = await postAcceptance({ fetchImpl, origin: normalizedOrigin, operatorToken, slotId, slot, accountId, confirmation, environmentApproved, purchaseBudget, maxApprovedProviderCost, signal, timeoutMs: requestTimeoutMs });
+    const result = safeResult({ ...payload, attempt, slotId });
+    if (["ready", "reused"].includes(payload.status) && payload.slot?.id === slotId) {
       await writeVerificationManifest(manifestPath, result);
       return result;
     }
@@ -89,8 +106,12 @@ export async function runProviderAcceptanceCli({
     const result = await runProviderAcceptance({
       origin: env.OPL_CONSOLE_ORIGIN,
       operatorToken: env.OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN,
+      slotId: env.OPL_PROVIDER_ACCEPTANCE_SLOT_ID,
       accountId: env.OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID,
       confirmation: env.OPL_PROVIDER_ACCEPTANCE_CONFIRMATION,
+      environmentApproved: env.OPL_PROVIDER_ACCEPTANCE_ENVIRONMENT_APPROVED === "true",
+      purchaseBudget: Number(env.OPL_PROVIDER_ACCEPTANCE_PURCHASE_BUDGET),
+      maxApprovedProviderCost: Number(env.OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST),
       attempts: Number(env.OPL_PROVIDER_ACCEPTANCE_ATTEMPTS || 90),
       retryDelayMs: Number(env.OPL_PROVIDER_ACCEPTANCE_RETRY_DELAY_MS || 10_000),
       requestTimeoutMs: Number(env.OPL_PROVIDER_ACCEPTANCE_REQUEST_TIMEOUT_MS || 30_000),

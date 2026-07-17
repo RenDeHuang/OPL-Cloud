@@ -21,14 +21,26 @@ const primaryWorkspaceRevision = "0d45e6c9f954ec63b029b678db5d7929a049a958";
 const fallbackWorkspaceTagCommit = "6339a48dee84cf290173b2efbb34f62647abdfe6";
 const fallbackWorkspaceConfigDigest = "sha256:4d89f20226b140c99102ba5fdc757755f954bed990b2f842ebb3e4d2410e8f05";
 const fallbackWorkspaceRevision = "35a9584f92d3fa2acad0d459a10a7caffaa04c0e";
-const fixedSlotDescriptor = {
-  id: "verification-slot-01",
+const basicSlotDescriptor = {
+  id: "verification-slot-basic-01",
   customerProduct: false,
   instanceType: "SA5.MEDIUM4",
   server: "2c4g",
   cpu: 2,
   memoryGb: 4,
   cbsGb: 10,
+  chargeType: "PREPAID",
+  periodMonths: 1,
+  renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+};
+const proSlotDescriptor = {
+  id: "verification-slot-pro-01",
+  customerProduct: false,
+  instanceType: "SA5.2XLARGE16",
+  server: "8c16g",
+  cpu: 8,
+  memoryGb: 16,
+  cbsGb: 100,
   chargeType: "PREPAID",
   periodMonths: 1,
   renewFlag: "NOTIFY_AND_MANUAL_RENEW"
@@ -214,16 +226,16 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assertWorkflowContract(deployWorkflow, contract.deployWorkflow, contract);
   assert.ok(contract.deployWorkflow.requiredEnv.includes("OPL_TENCENT_ZONE"));
   assert.equal(contract.productionVerificationWorkflow.launchStatus, "active");
-  assert.equal(contract.productionVerificationWorkflow.mode, "read_only_fixed_slot");
-  assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, ["account_id"]);
+  assert.equal(contract.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
+  assert.deepEqual(contract.productionVerificationWorkflow.requiredInputs, ["basic_account_id", "pro_account_id"]);
   assert.equal(contract.productionVerificationWorkflow.requestTimeoutMsDefault, 30_000);
   assert.equal(contract.productionVerificationWorkflow.timeoutMinutes, 15);
-  assert.deepEqual(contract.productionVerificationWorkflow.slotDescriptor, fixedSlotDescriptor);
+  assert.deepEqual(contract.productionVerificationWorkflow.slotDescriptors, [basicSlotDescriptor, proSlotDescriptor]);
   assertWorkflowContract(await readWorkflow(contract.productionVerificationWorkflow.file), contract.productionVerificationWorkflow, contract);
   assert.equal(contract.productionLiveQaJob.releaseGate, true);
-  assert.equal(contract.productionLiveQaJob.mode, "one_model_request_no_provider_mutation");
+  assert.equal(contract.productionLiveQaJob.mode, "one_model_request_per_fixed_slot_no_provider_mutation");
   assert.equal(contract.productionLiveQaJob.requestTimeoutMsDefault, 30_000);
-  assert.deepEqual(contract.productionLiveQaJob.slotDescriptor, fixedSlotDescriptor);
+  assert.deepEqual(contract.productionLiveQaJob.slotDescriptors, [basicSlotDescriptor, proSlotDescriptor]);
   assertWorkflowContract(deployWorkflow, contract.productionLiveQaJob, contract);
   assert.ok(contract.productionLegacySecretCleanupJob);
   assert.equal(contract.productionLegacySecretCleanupJob.trigger, "candidate_rollout_and_live_qa_successful");
@@ -238,7 +250,7 @@ test("TKE deploy workflow matches the current deployment contract", async () => 
   assert.doesNotMatch(JSON.stringify(contract), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
 });
 
-test("production verification is read only and fixed to the reusable prepaid slot", async () => {
+test("production verification is read only and requires both reusable prepaid slots", async () => {
   const workflow = await readWorkflow(".github/workflows/verify-production-chain.yml");
   assert.deepEqual(Object.keys(workflow.jobs), ["verify"]);
   const currentJob = workflowJob(workflow, "verify");
@@ -248,16 +260,24 @@ test("production verification is read only and fixed to the reusable prepaid slo
   assert.equal(workflow.concurrency.group, "production-resource-verification");
   assert.equal(workflow.concurrency["cancel-in-progress"], false);
   assert.equal(currentJob["timeout-minutes"], 15);
-  assert.equal(workflow.on.workflow_dispatch.inputs.account_id.required, true);
-  assert.equal(Object.hasOwn(workflow.on.workflow_dispatch.inputs.account_id, "default"), false);
+  assert.equal(workflow.on.workflow_dispatch.inputs.basic_account_id.required, true);
+  assert.equal(workflow.on.workflow_dispatch.inputs.pro_account_id.required, true);
+  assert.equal(Object.hasOwn(workflow.on.workflow_dispatch.inputs.basic_account_id, "default"), false);
+  assert.equal(Object.hasOwn(workflow.on.workflow_dispatch.inputs.pro_account_id, "default"), false);
   assert.equal(workflow.on.workflow_dispatch.inputs.request_timeout_ms.default, "30000");
   assert.equal(currentJob.env.OPL_VERIFY_REQUEST_TIMEOUT_MS, "${{ inputs.request_timeout_ms }}");
   assert.equal(inputs.includes("paid_confirmation"), false);
   assert.equal(Object.hasOwn(currentJob.env, "OPL_VERIFY_PAID_CONFIRMATION"), false);
   assert.equal(Object.hasOwn(currentJob.env, "OPL_VERIFY_MODEL_ACCESS_KEY"), false);
   assert.equal(currentJob.env.OPL_VERIFY_AUTH_USERS_JSON, "${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}");
-  assert.equal(currentJob.env.OPL_VERIFY_SLOT_ID, "verification-slot-01");
-  assert.deepEqual(JSON.parse(currentJob.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON), fixedSlotDescriptor);
+  assert.equal(currentJob.env.OPL_VERIFY_SLOT_ID, "${{ matrix.slot_id }}");
+  assert.equal(currentJob.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON, "${{ matrix.descriptor }}");
+  assert.deepEqual(currentJob.strategy.matrix.include.map((entry) => ({
+    slotId: entry.slot_id, accountId: entry.account_id, descriptor: JSON.parse(entry.descriptor)
+  })), [
+    { slotId: basicSlotDescriptor.id, accountId: "${{ inputs.basic_account_id }}", descriptor: basicSlotDescriptor },
+    { slotId: proSlotDescriptor.id, accountId: "${{ inputs.pro_account_id }}", descriptor: proSlotDescriptor }
+  ]);
   assert.equal(Object.hasOwn(currentJob.env, "OPL_VERIFY_PURCHASE_BUDGET_REMAINING"), false);
   assert.match(runs, /node tools\/production-verifier\.ts --browser-e2e/);
   assert.doesNotMatch(runs, /paid.confirmation|compute-allocations|storage-volumes|destroy|detach/i);
@@ -266,7 +286,7 @@ test("production verification is read only and fixed to the reusable prepaid slo
   assert.doesNotMatch(verifier, /cleanupVerificationResources|productionVerificationMutationKey|paid_confirmation_required|I_UNDERSTAND_THIS_SPENDS_REAL_BALANCE/);
 });
 
-test("TKE deploy runs separately gated real Workspace QA only after rollout", async () => {
+test("TKE deploy requires both fixed slots before separately gated real Workspace QA", async () => {
   const deployWorkflow = await readWorkflow(".github/workflows/deploy-tke-production.yml");
   const liveQa = workflowJob(deployWorkflow, "live-qa");
   const runs = serializedRuns(liveQa);
@@ -276,8 +296,15 @@ test("TKE deploy runs separately gated real Workspace QA only after rollout", as
   assert.equal(liveQa.environment, "production");
   assert.deepEqual([liveQa["runs-on"]].flat(), ["ubuntu-latest"]);
   assert.equal(liveQa.env.OPL_VERIFY_AUTH_USERS_JSON, "${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}");
-  assert.equal(liveQa.env.OPL_VERIFY_SLOT_ID, "verification-slot-01");
-  assert.deepEqual(JSON.parse(liveQa.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON), fixedSlotDescriptor);
+  assert.equal(liveQa.env.OPL_VERIFY_ACCOUNT_ID, "${{ matrix.account_id }}");
+  assert.equal(liveQa.env.OPL_VERIFY_SLOT_ID, "${{ matrix.slot_id }}");
+  assert.equal(liveQa.env.OPL_VERIFY_SLOT_DESCRIPTOR_JSON, "${{ matrix.descriptor }}");
+  assert.deepEqual(liveQa.strategy.matrix.include.map((entry) => ({
+    slotId: entry.slot_id, accountId: entry.account_id, descriptor: JSON.parse(entry.descriptor)
+  })), [
+    { slotId: basicSlotDescriptor.id, accountId: "${{ vars.OPL_VERIFY_BASIC_ACCOUNT_ID || '' }}", descriptor: basicSlotDescriptor },
+    { slotId: proSlotDescriptor.id, accountId: "${{ vars.OPL_VERIFY_PRO_ACCOUNT_ID || '' }}", descriptor: proSlotDescriptor }
+  ]);
   assert.equal(Object.hasOwn(liveQa.env, "OPL_VERIFY_PURCHASE_BUDGET_REMAINING"), false);
   assert.equal(liveQa.env.OPL_VERIFY_LIVE_QA_CONFIRMATION, "I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST");
   assert.equal(Object.hasOwn(liveQa.env, "OPL_VERIFY_MODEL_ACCESS_KEY"), false);

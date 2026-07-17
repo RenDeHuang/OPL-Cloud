@@ -118,15 +118,24 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     "prompt_or_response_content"
   ]);
 
-  assert.equal(freeze.verification.slot.computeInstanceType, "SA5.MEDIUM4");
-  assert.equal(freeze.verification.slot.resources.memoryGb, 4);
-  assert.equal(freeze.verification.slot.customerProduct, false);
-  assert.equal(freeze.verification.slot.reuseForBillingPeriod, true);
-  assert.equal(freeze.verification.purchaseBudget, 1);
+  assert.deepEqual(freeze.verification.slots, [
+    {
+      id: "verification-slot-basic-01", packageId: "basic", computeInstanceType: "SA5.MEDIUM4",
+      resources: { cpu: 2, memoryGb: 4, cbsGb: 10 }, customerProduct: false,
+      chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", reuseForBillingPeriod: true, concurrency: 1
+    },
+    {
+      id: "verification-slot-pro-01", packageId: "pro", computeInstanceType: "SA5.2XLARGE16",
+      resources: { cpu: 8, memoryGb: 16, cbsGb: 100 }, customerProduct: false,
+      chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW", reuseForBillingPeriod: true, concurrency: 1
+    }
+  ]);
+  assert.equal(freeze.verification.purchaseBudget, 2);
   assert.equal("purchaseBudgetRemaining" in freeze.verification, false);
   assert.deepEqual(freeze.verification.providerAcceptance, {
     operatorOnly: true,
-    operationCardinality: 1,
+    operationCardinality: 2,
+    operationCardinalityPerSlot: 1,
     fixedSlotOperationReplayable: true,
     slotExistenceSource: ["workspace", "compute", "storage"]
   });
@@ -213,9 +222,9 @@ test("read-only fixed-slot verification replaces the legacy paid release gate", 
 
   assert.equal(deployment.productionVerificationWorkflow.launchStatus, "active");
   assert.equal(deployment.productionVerificationWorkflow.releaseGate, false);
-  assert.equal(deployment.productionVerificationWorkflow.mode, "read_only_fixed_slot");
+  assert.equal(deployment.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
   assert.equal(deployment.productionLiveQaJob.releaseGate, true);
-  assert.equal(deployment.productionLiveQaJob.mode, "one_model_request_no_provider_mutation");
+  assert.equal(deployment.productionLiveQaJob.mode, "one_model_request_per_fixed_slot_no_provider_mutation");
   assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
   assert.equal(deployment.workspaceImage.sourceDigest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
   assert.equal(deployment.workspaceImage.productionReference, "repository@sha256");

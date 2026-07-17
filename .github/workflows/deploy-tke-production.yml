@@ -462,17 +462,27 @@ jobs:
           fi
 
   live-qa:
-    name: Verify real Workspace and dedicated Key after rollout
+    name: Verify ${{ matrix.slot_id }} after rollout
     needs: deploy
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - slot_id: verification-slot-basic-01
+            account_id: ${{ vars.OPL_VERIFY_BASIC_ACCOUNT_ID || '' }}
+            descriptor: '{"id":"verification-slot-basic-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
+          - slot_id: verification-slot-pro-01
+            account_id: ${{ vars.OPL_VERIFY_PRO_ACCOUNT_ID || '' }}
+            descriptor: '{"id":"verification-slot-pro-01","customerProduct":false,"instanceType":"SA5.2XLARGE16","server":"8c16g","cpu":8,"memoryGb":16,"cbsGb":100,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
     env:
       OPL_CONSOLE_ORIGIN: ${{ vars.OPL_PUBLIC_URL || 'https://cloud.medopl.cn' }}
       OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}
-      OPL_VERIFY_ACCOUNT_ID: ${{ vars.OPL_VERIFY_ACCOUNT_ID || '' }}
-      OPL_VERIFY_SLOT_ID: verification-slot-01
-      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: '{"id":"verification-slot-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
+      OPL_VERIFY_ACCOUNT_ID: ${{ matrix.account_id }}
+      OPL_VERIFY_SLOT_ID: ${{ matrix.slot_id }}
+      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: ${{ matrix.descriptor }}
       OPL_VERIFY_URL_ATTEMPTS: "90"
       OPL_VERIFY_RETRY_DELAY_MS: "10000"
       OPL_VERIFY_REQUEST_TIMEOUT_MS: "30000"
@@ -480,9 +490,9 @@ jobs:
       OPL_VERIFY_USAGE_RETRY_DELAY_MS: "5000"
       OPL_VERIFY_BROWSER_TIMEOUT_MS: "60000"
       OPL_VERIFY_MODEL_TIMEOUT_MS: "300000"
-      OPL_VERIFY_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      OPL_VERIFY_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.slot_id }}
       OPL_VERIFY_LIVE_QA_CONFIRMATION: I_UNDERSTAND_THIS_SENDS_ONE_REAL_MODEL_REQUEST
-      OPL_VERIFY_MANIFEST_PATH: artifacts/production-live-qa/manifest.json
+      OPL_VERIFY_MANIFEST_PATH: artifacts/production-live-qa-${{ matrix.slot_id }}/manifest.json
 
     steps:
       - name: Checkout
@@ -506,8 +516,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-live-qa
-          path: artifacts/production-live-qa
+          name: production-live-qa-${{ matrix.slot_id }}
+          path: artifacts/production-live-qa-${{ matrix.slot_id }}
           if-no-files-found: ignore
 
   retire-legacy-workspace-secret:

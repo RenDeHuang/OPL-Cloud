@@ -101,11 +101,18 @@ func (app *controlPlaneServer) workspaceAccessResponse(row map[string]any, now t
 }
 
 func providerAcceptanceWorkspaceBillingExempt(row map[string]any) bool {
+	if row["customerProduct"] != false {
+		return false
+	}
 	accountID := firstNonEmpty(stringValue(row["accountId"]), stringValue(row["ownerAccountId"]))
-	return row["customerProduct"] == false && stringValue(row["verificationSlotId"]) == providerAcceptanceSlotID &&
-		accountID == providerAcceptanceAccountID && stringValue(row["id"]) == primaryWorkspaceID(providerAcceptanceAccountID) &&
-		stringValue(row["computeAllocationId"]) == providerAcceptanceComputeID() && stringValue(row["currentComputeAllocationId"]) == providerAcceptanceComputeID() &&
-		stringValue(row["storageId"]) == providerAcceptanceStorageID()
+	for _, slot := range providerAcceptanceSlots {
+		if stringValue(row["verificationSlotId"]) == slot.ID && accountID == slot.AccountID && stringValue(row["id"]) == primaryWorkspaceID(slot.AccountID) &&
+			stringValue(row["computeAllocationId"]) == providerAcceptanceComputeID(slot) && stringValue(row["currentComputeAllocationId"]) == providerAcceptanceComputeID(slot) &&
+			stringValue(row["storageId"]) == providerAcceptanceStorageID(slot) {
+			return true
+		}
+	}
+	return false
 }
 
 func (app *controlPlaneServer) saveWorkspaceProjection(workspace domain.WorkspaceProjection, acceptedBillingState map[string]any) error {

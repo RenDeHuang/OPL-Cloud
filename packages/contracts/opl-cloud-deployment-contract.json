@@ -189,30 +189,29 @@
     "job": "verify",
     "launchStatus": "active",
     "releaseGate": false,
-    "mode": "read_only_fixed_slot",
-    "slotDescriptor": {
-      "id": "verification-slot-01",
-      "customerProduct": false,
-      "instanceType": "SA5.MEDIUM4",
-      "server": "2c4g",
-      "cpu": 2,
-      "memoryGb": 4,
-      "cbsGb": 10,
-      "chargeType": "PREPAID",
-      "periodMonths": 1,
-      "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
-    },
+    "mode": "read_only_dual_fixed_slots",
+    "slotDescriptors": [
+      {
+        "id": "verification-slot-basic-01", "customerProduct": false, "instanceType": "SA5.MEDIUM4", "server": "2c4g",
+        "cpu": 2, "memoryGb": 4, "cbsGb": 10, "chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
+      },
+      {
+        "id": "verification-slot-pro-01", "customerProduct": false, "instanceType": "SA5.2XLARGE16", "server": "8c16g",
+        "cpu": 8, "memoryGb": 16, "cbsGb": 100, "chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
+      }
+    ],
     "runner": [
       "ubuntu-latest"
     ],
     "inputs": [
       "run_id",
-      "account_id",
+      "basic_account_id",
+      "pro_account_id",
       "url_attempts",
       "retry_delay_ms",
       "request_timeout_ms"
     ],
-    "requiredInputs": ["account_id"],
+    "requiredInputs": ["basic_account_id", "pro_account_id"],
     "requestTimeoutMsDefault": 30000,
     "timeoutMinutes": 15,
     "requiredEnv": [
@@ -266,36 +265,69 @@
     "job": "accept",
     "launchStatus": "active",
     "releaseGate": false,
-    "mode": "operator_only_one_time_fixed_slot",
+    "mode": "operator_only_one_time_dual_fixed_slot",
     "endpoint": "/api/operator/provider-acceptance",
-    "fixedAccountId": "acct-verification-slot-01",
-    "fixedSlotId": "verification-slot-01",
-    "idempotencyKey": "provider-acceptance:verification-slot-01",
+    "lifetimePurchaseBudget": 2,
+    "fixedSlots": [
+      {
+        "id": "verification-slot-basic-01",
+        "accountId": "acct-verification-slot-basic-01",
+        "idempotencyKey": "provider-acceptance:verification-slot-basic-01",
+        "packageId": "basic",
+        "instanceType": "SA5.MEDIUM4",
+        "server": "2c4g",
+        "cpu": 2,
+        "memoryGb": 4,
+        "cbsGb": 10,
+        "chargeType": "PREPAID",
+        "periodMonths": 1,
+        "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+        "customerProduct": false
+      },
+      {
+        "id": "verification-slot-pro-01",
+        "accountId": "acct-verification-slot-pro-01",
+        "idempotencyKey": "provider-acceptance:verification-slot-pro-01",
+        "packageId": "pro",
+        "instanceType": "SA5.2XLARGE16",
+        "server": "8c16g",
+        "cpu": 8,
+        "memoryGb": 16,
+        "cbsGb": 100,
+        "chargeType": "PREPAID",
+        "periodMonths": 1,
+        "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+        "customerProduct": false
+      }
+    ],
     "confirmation": "I_UNDERSTAND_THIS_BUYS_ONE_PREPAID_CVM_AND_CBS",
-    "resourceShape": {
-      "instanceType": "SA5.MEDIUM4",
-      "cbsGb": 10,
-      "chargeType": "PREPAID",
-      "periodMonths": 1,
-      "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
-    },
     "runner": [
       "ubuntu-latest"
     ],
     "inputs": [
+      "slot_id",
       "account_id",
-      "confirmation"
+      "confirmation",
+      "purchase_budget",
+      "max_approved_provider_cost"
     ],
     "requiredInputs": [
+      "slot_id",
       "account_id",
-      "confirmation"
+      "confirmation",
+      "purchase_budget",
+      "max_approved_provider_cost"
     ],
     "timeoutMinutes": 30,
     "requiredEnv": [
       "OPL_CONSOLE_ORIGIN",
       "OPL_PROVIDER_ACCEPTANCE_OPERATOR_TOKEN",
+      "OPL_PROVIDER_ACCEPTANCE_SLOT_ID",
       "OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID",
       "OPL_PROVIDER_ACCEPTANCE_CONFIRMATION",
+      "OPL_PROVIDER_ACCEPTANCE_ENVIRONMENT_APPROVED",
+      "OPL_PROVIDER_ACCEPTANCE_PURCHASE_BUDGET",
+      "OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST",
       "OPL_PROVIDER_ACCEPTANCE_MANIFEST_PATH"
     ],
     "secretEnv": [
@@ -319,20 +351,18 @@
     "file": ".github/workflows/deploy-tke-production.yml",
     "job": "live-qa",
     "releaseGate": true,
-    "mode": "one_model_request_no_provider_mutation",
+    "mode": "one_model_request_per_fixed_slot_no_provider_mutation",
     "requestTimeoutMsDefault": 30000,
-    "slotDescriptor": {
-      "id": "verification-slot-01",
-      "customerProduct": false,
-      "instanceType": "SA5.MEDIUM4",
-      "server": "2c4g",
-      "cpu": 2,
-      "memoryGb": 4,
-      "cbsGb": 10,
-      "chargeType": "PREPAID",
-      "periodMonths": 1,
-      "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
-    },
+    "slotDescriptors": [
+      {
+        "id": "verification-slot-basic-01", "customerProduct": false, "instanceType": "SA5.MEDIUM4", "server": "2c4g",
+        "cpu": 2, "memoryGb": 4, "cbsGb": 10, "chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
+      },
+      {
+        "id": "verification-slot-pro-01", "customerProduct": false, "instanceType": "SA5.2XLARGE16", "server": "8c16g",
+        "cpu": 8, "memoryGb": 16, "cbsGb": 100, "chargeType": "PREPAID", "periodMonths": 1, "renewFlag": "NOTIFY_AND_MANUAL_RENEW"
+      }
+    ],
     "runner": [
       "ubuntu-latest"
     ],

@@ -217,24 +217,40 @@
     "currentImplementation": "Tenant-safe Ledger billing history and Sub2API request usage/stats projections are CI-verified without copied fact tables; deployed Console presentation and live evidence remain pending."
   },
   "verification": {
-    "purchaseBudget": 1,
+    "purchaseBudget": 2,
     "providerAcceptance": {
       "operatorOnly": true,
-      "operationCardinality": 1,
+      "operationCardinality": 2,
+      "operationCardinalityPerSlot": 1,
       "fixedSlotOperationReplayable": true,
       "slotExistenceSource": ["workspace", "compute", "storage"]
     },
-    "slot": {
-      "id": "verification-slot-01",
-      "computeInstanceType": "SA5.MEDIUM4",
-      "resources": { "cpu": 2, "memoryGb": 4, "cbsGb": 10 },
-      "customerProduct": false,
-      "chargeType": "PREPAID",
-      "periodMonths": 1,
-      "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
-      "reuseForBillingPeriod": true,
-      "concurrency": 1
-    },
+    "slots": [
+      {
+        "id": "verification-slot-basic-01",
+        "packageId": "basic",
+        "computeInstanceType": "SA5.MEDIUM4",
+        "resources": { "cpu": 2, "memoryGb": 4, "cbsGb": 10 },
+        "customerProduct": false,
+        "chargeType": "PREPAID",
+        "periodMonths": 1,
+        "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+        "reuseForBillingPeriod": true,
+        "concurrency": 1
+      },
+      {
+        "id": "verification-slot-pro-01",
+        "packageId": "pro",
+        "computeInstanceType": "SA5.2XLARGE16",
+        "resources": { "cpu": 8, "memoryGb": 16, "cbsGb": 100 },
+        "customerProduct": false,
+        "chargeType": "PREPAID",
+        "periodMonths": 1,
+        "renewFlag": "NOTIFY_AND_MANUAL_RENEW",
+        "reuseForBillingPeriod": true,
+        "concurrency": 1
+      }
+    ],
     "perRunTencentPurchase": false,
     "monthlyBillingBackend": "fake",
     "gatewayRequest": "real_dedicated_test_key",

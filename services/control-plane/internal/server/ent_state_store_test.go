@@ -465,49 +465,54 @@ func TestWorkspaceRenewalManualReviewMarkerRoundTrips(t *testing.T) {
 }
 
 func TestWorkspaceProviderAcceptanceBillingExceptionIsNarrow(t *testing.T) {
-	app := newControlPlaneApp()
-	workspaceID, computeID, storageID := primaryWorkspaceID(providerAcceptanceAccountID), providerAcceptanceComputeID(), providerAcceptanceStorageID()
-	mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
-		"id": computeID, "accountId": providerAcceptanceAccountID, "workspaceId": workspaceID,
-		"status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
-	}))
-	mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
-		"id": storageID, "accountId": providerAcceptanceAccountID, "workspaceId": workspaceID,
-		"status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
-	}))
-	attachmentID := "attachment-verification"
-	mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{
-		"id": attachmentID, "accountId": providerAcceptanceAccountID, "workspaceId": workspaceID,
-		"computeAllocationId": computeID, "storageId": storageID, "status": "attached",
-	}))
-	base := map[string]any{
-		"id": workspaceID, "accountId": providerAcceptanceAccountID, "ownerAccountId": providerAcceptanceAccountID,
-		"ownerUserId": "usr-verification", "customerProduct": false, "verificationSlotId": providerAcceptanceSlotID,
-		"computeAllocationId": computeID, "currentComputeAllocationId": computeID, "storageId": storageID,
-		"attachmentId": attachmentID, "currentAttachmentId": attachmentID, "state": "running", "status": "running",
-	}
-	response, reason := app.workspaceAccessResponse(base, time.Now().UTC())
-	if reason != "" || response["openable"] != true {
-		t.Fatalf("fixed Provider Acceptance slot openable=%#v reason=%q", response["openable"], reason)
-	}
-	for _, mutate := range []func(map[string]any){
-		func(row map[string]any) { row["customerProduct"] = true },
-		func(row map[string]any) { row["verificationSlotId"] = "verification-slot-other" },
-		func(row map[string]any) { row["accountId"], row["ownerAccountId"] = "acct-other", "acct-other" },
-		func(row map[string]any) { row["computeAllocationId"] = "" },
-		func(row map[string]any) { row["currentComputeAllocationId"] = "compute-other" },
-		func(row map[string]any) { row["currentComputeAllocationId"] = "" },
-		func(row map[string]any) { row["storageId"] = "storage-other" },
-	} {
-		workspace := cloneMap(base)
-		mutate(workspace)
-		if response, reason := app.workspaceAccessResponse(workspace, time.Now().UTC()); reason != "workspace_billing_state_invalid" || response["openable"] == true {
-			t.Fatalf("non-slot billing exception openable=%#v reason=%q row=%#v", response["openable"], reason, workspace)
-		}
-	}
-	ordinary := workspaceResponse(map[string]any{"computeAllocationId": "compute-accepted", "currentComputeAllocationId": ""})
-	if stringValue(ordinary["currentComputeAllocationId"]) != "" {
-		t.Fatalf("ordinary response revived accepted compute pointer: %#v", ordinary)
+	for _, slotID := range []string{"verification-slot-basic-01", "verification-slot-pro-01"} {
+		t.Run(slotID, func(t *testing.T) {
+			slot := providerAcceptanceSlots[slotID]
+			app := newControlPlaneApp()
+			workspaceID, computeID, storageID := primaryWorkspaceID(slot.AccountID), providerAcceptanceComputeID(slot), providerAcceptanceStorageID(slot)
+			mustStore(t, app.tables.SaveCompute(context.Background(), map[string]any{
+				"id": computeID, "accountId": slot.AccountID, "workspaceId": workspaceID,
+				"status": "running", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+			}))
+			mustStore(t, app.tables.SaveStorage(context.Background(), map[string]any{
+				"id": storageID, "accountId": slot.AccountID, "workspaceId": workspaceID,
+				"status": "available", "billingStatus": "active", "paidThrough": "2099-01-01T00:00:00Z",
+			}))
+			attachmentID := "attachment-verification"
+			mustStore(t, app.tables.SaveAttachment(context.Background(), map[string]any{
+				"id": attachmentID, "accountId": slot.AccountID, "workspaceId": workspaceID,
+				"computeAllocationId": computeID, "storageId": storageID, "status": "attached",
+			}))
+			base := map[string]any{
+				"id": workspaceID, "accountId": slot.AccountID, "ownerAccountId": slot.AccountID,
+				"ownerUserId": "usr-verification", "customerProduct": false, "verificationSlotId": slot.ID,
+				"computeAllocationId": computeID, "currentComputeAllocationId": computeID, "storageId": storageID,
+				"attachmentId": attachmentID, "currentAttachmentId": attachmentID, "state": "running", "status": "running",
+			}
+			response, reason := app.workspaceAccessResponse(base, time.Now().UTC())
+			if reason != "" || response["openable"] != true {
+				t.Fatalf("fixed Provider Acceptance slot openable=%#v reason=%q", response["openable"], reason)
+			}
+			for _, mutate := range []func(map[string]any){
+				func(row map[string]any) { row["customerProduct"] = true },
+				func(row map[string]any) { row["verificationSlotId"] = "verification-slot-other" },
+				func(row map[string]any) { row["accountId"], row["ownerAccountId"] = "acct-other", "acct-other" },
+				func(row map[string]any) { row["computeAllocationId"] = "" },
+				func(row map[string]any) { row["currentComputeAllocationId"] = "compute-other" },
+				func(row map[string]any) { row["currentComputeAllocationId"] = "" },
+				func(row map[string]any) { row["storageId"] = "storage-other" },
+			} {
+				workspace := cloneMap(base)
+				mutate(workspace)
+				if response, reason := app.workspaceAccessResponse(workspace, time.Now().UTC()); reason != "workspace_billing_state_invalid" || response["openable"] == true {
+					t.Fatalf("non-slot billing exception openable=%#v reason=%q row=%#v", response["openable"], reason, workspace)
+				}
+			}
+			ordinary := workspaceResponse(map[string]any{"computeAllocationId": "compute-accepted", "currentComputeAllocationId": ""})
+			if stringValue(ordinary["currentComputeAllocationId"]) != "" {
+				t.Fatalf("ordinary response revived accepted compute pointer: %#v", ordinary)
+			}
+		})
 	}
 }
 

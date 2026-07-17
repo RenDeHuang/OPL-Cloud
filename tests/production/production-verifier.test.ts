@@ -10,7 +10,7 @@ import {
   verifyProductionChain
 } from "../../tools/production-verifier.ts";
 
-const FIXED_VERIFICATION_SLOT_ID = "verification-slot-01";
+const FIXED_VERIFICATION_SLOT_ID = "verification-slot-basic-01";
 const fixedSlotDescriptor = {
   id: FIXED_VERIFICATION_SLOT_ID,
   customerProduct: false,
@@ -19,6 +19,18 @@ const fixedSlotDescriptor = {
   cpu: 2,
   memoryGb: 4,
   cbsGb: 10,
+  chargeType: "PREPAID",
+  periodMonths: 1,
+  renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+};
+const proSlotDescriptor = {
+  id: "verification-slot-pro-01",
+  customerProduct: false,
+  instanceType: "SA5.2XLARGE16",
+  server: "8c16g",
+  cpu: 8,
+  memoryGb: 16,
+  cbsGb: 100,
   chargeType: "PREPAID",
   periodMonths: 1,
   renewFlag: "NOTIFY_AND_MANUAL_RENEW"
@@ -282,6 +294,27 @@ test("ordinary production verifier reuses exactly one fixed slot without resourc
   assert.equal(fixture.calls.every((call) => call.signal instanceof AbortSignal), true);
 });
 
+test("ordinary production verifier accepts the fixed Pro slot without resource mutations", async () => {
+  const fixture = fixedSlotFixture({
+    mutate: ({ computeAllocations, storageVolumes, workspaces }) => {
+      computeAllocations[0].providerData.instanceType = proSlotDescriptor.instanceType;
+      storageVolumes[0].sizeGb = proSlotDescriptor.cbsGb;
+      storageVolumes[0].providerData.sizeGb = String(proSlotDescriptor.cbsGb);
+      workspaces[0].name = proSlotDescriptor.id;
+      workspaces[0].verificationSlotId = proSlotDescriptor.id;
+    }
+  });
+  const result = await verifyProductionChain({
+    origin: "https://cloud.medopl.cn", authUsersJson: ownerSeed, accountId: "acct-alpha",
+    slotId: proSlotDescriptor.id, slotDescriptor: proSlotDescriptor, runId: "read-only-pro-smoke",
+    fetchImpl: fixture.fetchImpl
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "reused");
+  assert.equal(result.slot.id, proSlotDescriptor.id);
+  assert.equal(fixture.calls.some((call) => /create|destroy|detach|sync|renew/i.test(call.path)), false);
+});
+
 test("zero slots only reports that independent Provider Acceptance is required", async () => {
   const fixture = fixedSlotFixture({ slotCount: 0 });
   const result = await verifyProductionChain({
@@ -418,7 +451,7 @@ test("production verifier CLI help describes read-only fixed-slot verification",
 
   assert.equal(code, 0);
   assert.match(stdout, /read-only/i);
-  assert.match(stdout, /verification-slot-01/);
+  assert.match(stdout, /verification-slot-basic-01/);
   assert.doesNotMatch(stdout, /paid.confirmation|spends real balance/i);
   assert.equal(calls, 0);
 });

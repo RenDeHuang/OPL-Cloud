@@ -3,32 +3,51 @@ name: Provider Acceptance
 on:
   workflow_dispatch:
     inputs:
+      slot_id:
+        description: Fixed internal Acceptance slot.
+        required: true
+        type: choice
+        options:
+          - verification-slot-basic-01
+          - verification-slot-pro-01
       account_id:
-        description: Dedicated account that owns verification-slot-01.
+        description: Dedicated account fixed to the selected slot.
         required: true
         type: string
       confirmation:
         description: Exact one-time PREPAID purchase confirmation.
         required: true
         type: string
+      purchase_budget:
+        description: Explicit per-slot lifetime purchase budget; must be 1.
+        required: true
+        type: number
+      max_approved_provider_cost:
+        description: Maximum approved combined provider quote in CNY.
+        required: true
+        type: number
 
 permissions:
   contents: read
 
 concurrency:
-  group: provider-acceptance-verification-slot-01
+  group: provider-acceptance-${{ inputs.slot_id }}
   cancel-in-progress: false
 
 jobs:
   accept:
-    name: Accept one fixed PREPAID verification slot
+    name: Accept selected fixed PREPAID verification slot
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
     env:
       OPL_CONSOLE_ORIGIN: https://cloud.medopl.cn
+      OPL_PROVIDER_ACCEPTANCE_SLOT_ID: ${{ inputs.slot_id }}
       OPL_PROVIDER_ACCEPTANCE_ACCOUNT_ID: ${{ inputs.account_id }}
       OPL_PROVIDER_ACCEPTANCE_CONFIRMATION: ${{ inputs.confirmation }}
+      OPL_PROVIDER_ACCEPTANCE_ENVIRONMENT_APPROVED: "true"
+      OPL_PROVIDER_ACCEPTANCE_PURCHASE_BUDGET: ${{ inputs.purchase_budget }}
+      OPL_PROVIDER_ACCEPTANCE_MAX_APPROVED_PROVIDER_COST: ${{ inputs.max_approved_provider_cost }}
       OPL_PROVIDER_ACCEPTANCE_ATTEMPTS: "90"
       OPL_PROVIDER_ACCEPTANCE_RETRY_DELAY_MS: "10000"
       OPL_PROVIDER_ACCEPTANCE_REQUEST_TIMEOUT_MS: "30000"

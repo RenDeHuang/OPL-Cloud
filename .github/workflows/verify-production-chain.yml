@@ -7,8 +7,12 @@ on:
         description: Optional verifier run id.
         required: false
         type: string
-      account_id:
-        description: Account id that owns the reusable verification slot.
+      basic_account_id:
+        description: Account id that owns the reusable Basic verification slot.
+        required: true
+        type: string
+      pro_account_id:
+        description: Account id that owns the reusable Pro verification slot.
         required: true
         type: string
       url_attempts:
@@ -36,19 +40,29 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify live OPL business chain
+    name: Verify ${{ matrix.slot_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - slot_id: verification-slot-basic-01
+            account_id: ${{ inputs.basic_account_id }}
+            descriptor: '{"id":"verification-slot-basic-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
+          - slot_id: verification-slot-pro-01
+            account_id: ${{ inputs.pro_account_id }}
+            descriptor: '{"id":"verification-slot-pro-01","customerProduct":false,"instanceType":"SA5.2XLARGE16","server":"8c16g","cpu":8,"memoryGb":16,"cbsGb":100,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
     outputs:
       workspace_id: ${{ steps.verify.outputs.workspace_id }}
       workspace_url: ${{ steps.verify.outputs.workspace_url }}
     env:
       OPL_CONSOLE_ORIGIN: "https://cloud.medopl.cn"
       OPL_VERIFY_AUTH_USERS_JSON: ${{ secrets.OPL_VERIFY_AUTH_USERS_JSON || secrets.OPL_CONSOLE_USERS_JSON }}
-      OPL_VERIFY_ACCOUNT_ID: ${{ inputs.account_id }}
-      OPL_VERIFY_SLOT_ID: verification-slot-01
-      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: '{"id":"verification-slot-01","customerProduct":false,"instanceType":"SA5.MEDIUM4","server":"2c4g","cpu":2,"memoryGb":4,"cbsGb":10,"chargeType":"PREPAID","periodMonths":1,"renewFlag":"NOTIFY_AND_MANUAL_RENEW"}'
+      OPL_VERIFY_ACCOUNT_ID: ${{ matrix.account_id }}
+      OPL_VERIFY_SLOT_ID: ${{ matrix.slot_id }}
+      OPL_VERIFY_SLOT_DESCRIPTOR_JSON: ${{ matrix.descriptor }}
       OPL_VERIFY_URL_ATTEMPTS: ${{ inputs.url_attempts }}
       OPL_VERIFY_RETRY_DELAY_MS: ${{ inputs.retry_delay_ms }}
       OPL_VERIFY_REQUEST_TIMEOUT_MS: ${{ inputs.request_timeout_ms }}
@@ -82,7 +96,7 @@ jobs:
           node -e '
             const fs = require("node:fs");
             const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-            if (payload.ok !== true || payload.status !== "reused" || payload.slot?.id !== "verification-slot-01") throw new Error("reusable_verification_slot_required");
+            if (payload.ok !== true || payload.status !== "reused" || payload.slot?.id !== process.env.OPL_VERIFY_SLOT_ID) throw new Error("reusable_verification_slot_required");
             if (!/^[A-Za-z0-9._:-]{1,128}$/.test(payload.workspaceId || "")) throw new Error("workspace_id_required");
             const url = new URL(payload.url);
             if (url.protocol !== "https:" || !url.pathname.startsWith("/w/")) throw new Error("workspace_url_required");
@@ -93,6 +107,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-browser-e2e
+          name: production-browser-e2e-${{ matrix.slot_id }}
           path: artifacts/production-browser-e2e
           if-no-files-found: ignore

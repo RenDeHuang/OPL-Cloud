@@ -8,7 +8,7 @@ import {
 } from "../../tools/production-live-qa.ts";
 
 const fixedSlotDescriptor = {
-  id: "verification-slot-01",
+  id: "verification-slot-basic-01",
   customerProduct: false,
   instanceType: "SA5.MEDIUM4",
   server: "2c4g",
@@ -145,7 +145,7 @@ function liveFixture({ changedResourceIds = false, frames = true, responseSuffix
         id: "workspace-slot-1",
         accountId: "acct-alpha",
         ownerAccountId: "acct-alpha",
-        verificationSlotId: "verification-slot-01",
+        verificationSlotId: "verification-slot-basic-01",
         customerProduct: false,
         currentComputeAllocationId: "compute-slot-1",
         storageId: "storage-slot-1",

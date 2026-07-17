@@ -2,20 +2,18 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const FIXED_VERIFICATION_SLOT_ID = "verification-slot-01";
+export const FIXED_VERIFICATION_SLOT_ID = "verification-slot-basic-01";
 
-const FIXED_VERIFICATION_SLOT_DESCRIPTOR = {
-  id: FIXED_VERIFICATION_SLOT_ID,
-  customerProduct: false,
-  instanceType: "SA5.MEDIUM4",
-  server: "2c4g",
-  cpu: 2,
-  memoryGb: 4,
-  cbsGb: 10,
-  chargeType: "PREPAID",
-  periodMonths: 1,
-  renewFlag: "NOTIFY_AND_MANUAL_RENEW"
-};
+export const FIXED_VERIFICATION_SLOT_DESCRIPTORS = Object.freeze({
+  "verification-slot-basic-01": Object.freeze({
+    id: "verification-slot-basic-01", customerProduct: false, instanceType: "SA5.MEDIUM4", server: "2c4g",
+    cpu: 2, memoryGb: 4, cbsGb: 10, chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+  }),
+  "verification-slot-pro-01": Object.freeze({
+    id: "verification-slot-pro-01", customerProduct: false, instanceType: "SA5.2XLARGE16", server: "8c16g",
+    cpu: 8, memoryGb: 16, cbsGb: 100, chargeType: "PREPAID", periodMonths: 1, renewFlag: "NOTIFY_AND_MANUAL_RENEW"
+  })
+});
 const DEFAULT_URL_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -178,10 +176,13 @@ function verificationSlotDescriptor(raw) {
       throw new Error("verification_slot_descriptor_invalid");
     }
   }
-  if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor) || Object.keys(descriptor).length !== Object.keys(FIXED_VERIFICATION_SLOT_DESCRIPTOR).length || Object.entries(FIXED_VERIFICATION_SLOT_DESCRIPTOR).some(([key, value]) => !Object.hasOwn(descriptor, key) || descriptor[key] !== value)) {
+  const expected = descriptor && typeof descriptor === "object" && !Array.isArray(descriptor)
+    ? FIXED_VERIFICATION_SLOT_DESCRIPTORS[descriptor.id]
+    : undefined;
+  if (!expected || Object.keys(descriptor).length !== Object.keys(expected).length || Object.entries(expected).some(([key, value]) => !Object.hasOwn(descriptor, key) || descriptor[key] !== value)) {
     throw new Error("verification_slot_descriptor_invalid");
   }
-  return FIXED_VERIFICATION_SLOT_DESCRIPTOR;
+  return expected;
 }
 
 function fixedSlotFromState(state, { slotId, slotDescriptor, accountId, nowMs }) {
@@ -324,7 +325,7 @@ export async function verifyProductionChain(options = {}) {
     fetchImpl = globalThis.fetch
   } = options;
   const slotDescriptor = verificationSlotDescriptor(rawSlotDescriptor);
-  if (slotId !== FIXED_VERIFICATION_SLOT_ID) throw new Error("verification_slot_id_fixed");
+  if (slotDescriptor.id !== slotId) throw new Error("verification_slot_id_fixed");
   if (!Number.isInteger(workspaceUrlAttempts) || workspaceUrlAttempts < 1 || !Number.isFinite(retryDelayMs) || retryDelayMs < 0) throw new Error("verification_retry_config_invalid");
   boundedRequestSignal(signal, requestTimeoutMs);
   const nowMs = new Date(now).getTime();
