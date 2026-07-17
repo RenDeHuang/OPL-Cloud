@@ -19,6 +19,7 @@ type monthlySub2API struct {
 	events            *[]string
 	balances          []int64
 	balanceErr        error
+	balanceErrors     []error
 	chargeErrors      []error
 	chargeResults     []clients.Sub2APICharge
 	charges           []clients.Sub2APIChargeInput
@@ -134,6 +135,13 @@ func (s *monthlySub2API) Version(context.Context) (string, error) { return "0.1.
 
 func (s *monthlySub2API) Balance(_ context.Context, userID int64) (clients.Sub2APIBalance, error) {
 	*s.events = append(*s.events, "sub2api.balance")
+	if len(s.balanceErrors) > 0 {
+		err := s.balanceErrors[0]
+		s.balanceErrors = s.balanceErrors[1:]
+		if err != nil {
+			return clients.Sub2APIBalance{}, err
+		}
+	}
 	if s.balanceErr != nil {
 		return clients.Sub2APIBalance{}, s.balanceErr
 	}
@@ -194,6 +202,7 @@ type monthlyFabric struct {
 	computeCleanupSync    clients.ComputeAllocation
 	computeCleanupSyncErr error
 	computeCleanupStarted bool
+	computeDestroyed      bool
 	syncErr               error
 	preflightResult       *clients.MonthlyPreflight
 	preflightResults      []clients.MonthlyPreflight
@@ -323,8 +332,12 @@ func (f *monthlyFabric) SyncComputeAllocation(_ context.Context, id string) (cli
 		}
 		if isTerminalResourceStatus(result.Status) || result.Status == "stopped" {
 			f.computeCleanupStarted = false
+			f.computeDestroyed = true
 		}
 		return result, f.computeCleanupSyncErr
+	}
+	if f.computeDestroyed {
+		return clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}, nil
 	}
 	result := f.computeSync
 	if result.ID == "" {
@@ -345,6 +358,9 @@ func (f *monthlyFabric) SyncStorageVolume(_ context.Context, id string) (clients
 func (f *monthlyFabric) RenewComputeAllocation(_ context.Context, id, key string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.renew")
 	f.computeRenewKeys = append(f.computeRenewKeys, key)
+	if f.computeDestroyed {
+		return clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}, errors.New("compute already destroyed")
+	}
 	result := f.computeRenew
 	if result.ID == "" {
 		result = clients.ComputeAllocation{ID: id, AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Status: "running", ProviderResourceID: "ins-" + id, ProviderRequestID: "renew-" + id, InstanceID: "ins-" + id, CVMInstanceID: "ins-" + id, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2", ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2026-09-30T09:30:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "renewalResult": "renewed", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"}}

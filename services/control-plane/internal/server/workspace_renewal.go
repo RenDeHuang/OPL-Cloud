@@ -375,7 +375,7 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 			if err != nil {
 				return err
 			}
-			coversCurrentExpiry := candidate.ExpiryStatus == "expired_unpaid" && candidate.ExpiryPaidThrough == stringValue(workspace["paidThrough"])
+			coversCurrentExpiry := (candidate.ExpiryStatus == "past_due" || candidate.ExpiryStatus == "expired_unpaid") && candidate.ExpiryPaidThrough == stringValue(workspace["paidThrough"])
 			if candidate.ID == expected.ID || !terminalWorkspaceRenewal(candidate) || coversCurrentExpiry {
 				operation, found = candidate, true
 				if !terminalWorkspaceRenewal(candidate) || coversCurrentExpiry {
@@ -399,7 +399,9 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 			operation.PriorStatus, operation.PriorErrorCode = operation.Status, operation.ErrorCode
 			operation.ExpiryStatus, operation.ExpiryPhase = "expired_unpaid", "suspend"
 			operation.ExpiryPeriodStart, operation.ExpiryPaidThrough = stringValue(workspace["periodStart"]), stringValue(workspace["paidThrough"])
-			if !workspaceRenewalFinancialRecoveryRequired(operation) {
+			if workspaceRenewalFinancialRecoveryRequired(operation) && operation.PaidThrough == operation.ExpiryPaidThrough {
+				operation.ExpiryStatus = "past_due"
+			} else if !workspaceRenewalFinancialRecoveryRequired(operation) {
 				operation.Status = "expired_unpaid"
 			}
 		}
@@ -426,6 +428,7 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 			return err
 		}
 		operation.PersistedResult = stringValue(desired["result"])
+		financialExpiryPending := expired && operation.ExpiryStatus == "past_due"
 		var expiryErr, renewalErr error
 		if expired {
 			expiryErr = app.progressWorkspaceRenewalExpiry(ctx, service, &operation)
@@ -440,6 +443,12 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 			}
 		}
 		if expired {
+			if financialExpiryPending && operation.ExpiryStatus != "" {
+				expiryErr = errors.Join(expiryErr, app.progressWorkspaceRenewalExpiry(ctx, service, &operation))
+				if current, loadErr := app.loadWorkspaceRenewalOperation(ctx, operation.ID); loadErr == nil {
+					operation = current
+				}
+			}
 			expiryErr = errors.Join(expiryErr, app.recordWorkspaceRenewalExpiryReceipt(ctx, service, &operation))
 		}
 		return errors.Join(renewalErr, expiryErr)
@@ -766,7 +775,7 @@ func (app *controlPlaneServer) debitWorkspaceRenewal(ctx context.Context, servic
 	}
 	postCharge, err := service.Sub2APIBalance(ctx, userID)
 	if err != nil {
-		return app.manualReviewWorkspaceRenewal(ctx, operation, "post_charge_balance_unavailable")
+		return app.retryWorkspaceRenewal(ctx, operation, "post_charge_balance_unavailable", err)
 	}
 	operation.PostChargeBalanceKnown, operation.PostChargeBalanceUSDMicros = true, postCharge.USDMicros
 	if postCharge.USDMicros < 0 || operation.PreChargeBalanceUSDMicros > 0 && postCharge.USDMicros > operation.PreChargeBalanceUSDMicros-operation.TotalUSDMicros {
@@ -946,13 +955,20 @@ func (app *controlPlaneServer) commitWorkspaceRenewalEntitlement(ctx context.Con
 	if err != nil {
 		return app.manualReviewWorkspaceRenewal(ctx, operation, "workspace_renewal_period_invalid")
 	}
+	fields := map[string]any{
+		"periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
+		"nextRenewalAt": renewedThrough.Add(-monthlyRenewalLead).Format(time.RFC3339Nano), "renewalStatus": "active",
+	}
+	if operation.ExpiryStatus == "past_due" && operation.ExpiryPaidThrough == operation.PaidThrough {
+		operation.PriorStatus, operation.PriorErrorCode = "", ""
+		operation.ExpiryStatus, operation.ExpiryPhase, operation.ExpiryErrorCode = "", "", ""
+		operation.ExpiryReceiptID, operation.ExpiryPeriodStart, operation.ExpiryPaidThrough = "", "", ""
+		fields["state"], fields["status"], fields["currentComputeAllocationId"] = "running", "running", operation.ComputeID
+	}
 	operation.Status, operation.Phase, operation.EntitlementCommitted = "verifying", "receipt", true
 	return app.persistWorkspaceRenewal(ctx, operation, &workspaceRenewalWorkspacePatch{
 		ExpectedPaidThrough: operation.PaidThrough,
-		Fields: map[string]any{
-			"periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
-			"nextRenewalAt": renewedThrough.Add(-monthlyRenewalLead).Format(time.RFC3339Nano), "renewalStatus": "active",
-		},
+		Fields:              fields,
 	})
 }
 
@@ -1019,11 +1035,31 @@ func (app *controlPlaneServer) progressWorkspaceRenewalExpiry(ctx context.Contex
 				return errors.New("workspace_expiry_workspace_missing")
 			}
 			operation.ExpiryPhase, operation.ExpiryErrorCode = "compute", ""
+			fields := map[string]any{
+				"renewalStatus": "expired_unpaid", "state": "suspended", "status": "suspended", "currentComputeAllocationId": "",
+			}
+			if operation.ExpiryStatus == "past_due" {
+				operation.ExpiryPhase = "financial"
+				fields = map[string]any{"state": "suspended", "status": "suspended"}
+			} else {
+				fields["autoRenew"], fields["authorizedBy"], fields["authorizedAt"] = false, "", ""
+			}
+			if err := app.persistWorkspaceRenewal(ctx, operation, &workspaceRenewalWorkspacePatch{
+				ExpectedPaidThrough: operation.ExpiryPaidThrough,
+				Fields:              fields,
+			}); err != nil {
+				return err
+			}
+		case "financial":
+			if operation.Status != "refunded" && operation.Status != "expired_unpaid" {
+				return nil
+			}
+			operation.ExpiryStatus, operation.ExpiryPhase, operation.ExpiryErrorCode = "expired_unpaid", "compute", ""
 			if err := app.persistWorkspaceRenewal(ctx, operation, &workspaceRenewalWorkspacePatch{
 				ExpectedPaidThrough: operation.ExpiryPaidThrough,
 				Fields: map[string]any{
 					"autoRenew": false, "authorizedBy": "", "authorizedAt": "", "renewalStatus": "expired_unpaid",
-					"state": "suspended", "status": "suspended", "currentComputeAllocationId": "",
+					"currentComputeAllocationId": "",
 				},
 			}); err != nil {
 				return err

@@ -931,7 +931,7 @@ func TestWorkspaceRenewalRetriesStableRefundCodeWhenAttemptHistoryMissing(t *tes
 	}
 }
 
-func TestWorkspaceRenewalRefundPendingCannotBlockExpiry(t *testing.T) {
+func TestWorkspaceRenewalRefundPendingDefersExpiryCleanup(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	fixture.fabric.computeRenewErr = errors.New("provider response lost")
 	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "external_deleted"}
@@ -946,7 +946,22 @@ func TestWorkspaceRenewalRefundPendingCannotBlockExpiry(t *testing.T) {
 			t.Fatalf("expired retry %d err=%v", attempt, err)
 		}
 	}
-	assertWorkspaceRenewalExpiredWhileEvidencePending(t, fixture, "refund_pending", "refund")
+	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	operation, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := strings.Join(*fixture.events, ",")
+	if workspace["state"] != "suspended" || workspace["status"] != "suspended" || workspace["currentComputeAllocationId"] != fixture.compute["id"] ||
+		operation.Status != "refund_pending" || operation.Phase != "refund" || operation.ExpiryStatus != "past_due" || operation.ExpiryPhase != "financial" ||
+		strings.Contains(events, "fabric.compute.cleanup") || strings.Contains(events, "fabric.storage.cleanup") {
+		t.Fatalf("refund-pending expiry workspace=%#v operation=%#v events=%#v", workspace, operation, *fixture.events)
+	}
+	for _, receipt := range fixture.ledger.receipts {
+		if receipt.Type == "billing.workspace_expired.v1" {
+			t.Fatalf("refund pending wrote expiry receipt: %#v", receipt)
+		}
+	}
 }
 
 func TestWorkspaceRenewalRefundReceiptCannotBlockExpiry(t *testing.T) {
@@ -1160,6 +1175,56 @@ func TestWorkspaceRenewalRecoversSuccessfulDebitAfterConfirmationPersistFailure(
 	}
 }
 
+func TestWorkspaceRenewalRetriesPostChargeBalanceAfterConfirmedDebit(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
+	balanceErr := errors.New("post-charge balance temporarily unavailable")
+	fixture.sub2API.balanceErrors = []error{nil, balanceErr, nil}
+	now := fixture.paidThrough.Add(-monthlyRenewalLead)
+
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now); !errors.Is(err, balanceErr) {
+		t.Fatalf("first run error=%v, want %v", err, balanceErr)
+	}
+	pending, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifications := fixture.app.operatorSummary()["notifications"].(map[string]any)
+	if pending.Status != "debit_pending" || pending.Phase != "debit" || pending.ErrorCode != "post_charge_balance_unavailable" || pending.ChargeConfirmation == nil ||
+		pending.PostChargeBalanceKnown || len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 ||
+		notifications["total"] != 1 || notifications["recent"].([]any)[0].(map[string]any)["code"] != "renewal_retry_pending" {
+		t.Fatalf("pending=%#v notifications=%#v charges=%#v compute=%#v storage=%#v", pending, notifications, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	}
+
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := strings.Join(*fixture.events, ",")
+	if resolved.Status != "active" || !resolved.PostChargeBalanceKnown || resolved.PostChargeBalanceUSDMicros != 47_420_000 || len(fixture.sub2API.charges) != 1 ||
+		strings.Count(events, "sub2api.balance") != 3 || strings.Count(events, "sub2api.charge") != 1 ||
+		len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.fabric.storageRenewKeys) != 1 || len(fixture.ledger.receipts) != 1 {
+		t.Fatalf("resolved=%#v events=%#v charges=%#v compute=%#v storage=%#v receipts=%#v", resolved, *fixture.events, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys, fixture.ledger.receipts)
+	}
+}
+
+func TestWorkspaceRenewalInvalidPostChargeBalanceStillNeedsManualReview(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 60_000_000})
+	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough.Add(-monthlyRenewalLead)); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.Status != "manual_review" || operation.ErrorCode != "post_charge_balance_invalid" || !operation.PostChargeBalanceKnown ||
+		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 0 || len(fixture.fabric.storageRenewKeys) != 0 {
+		t.Fatalf("operation=%#v charges=%#v compute=%#v storage=%#v", operation, fixture.sub2API.charges, fixture.fabric.computeRenewKeys, fixture.fabric.storageRenewKeys)
+	}
+}
+
 func TestWorkspaceRenewalDebitedCrashCrossingExpiryCompletesFinancialSaga(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	persistErr := errors.New("persist provider transition failed")
@@ -1195,12 +1260,15 @@ func TestWorkspaceRenewalDebitedCrashCrossingExpiryCompletesFinancialSaga(t *tes
 	for _, receipt := range fixture.ledger.receipts {
 		receipts[receipt.Type]++
 	}
+	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	compute, _ := fixture.app.getCompute(stringValue(fixture.compute["id"]))
 	events := strings.Join(*fixture.events, ",")
-	if operation.Status != "active" || operation.ExpiryStatus != "expired_unpaid" || operation.ExpiryPhase != "complete" ||
-		receipts["billing.workspace_renewed.v1"] != 1 || receipts["billing.workspace_expired.v1"] != 1 || len(fixture.sub2API.refunds) != 0 ||
+	if operation.Status != "active" || operation.ExpiryStatus != "" || operation.ExpiryPhase != "" ||
+		workspace["renewalStatus"] != "active" || workspace["state"] != "running" || workspace["status"] != "running" || workspace["currentComputeAllocationId"] != fixture.compute["id"] ||
+		compute["status"] != "running" || compute["billingStatus"] != "active" || receipts["billing.workspace_renewed.v1"] != 1 || receipts["billing.workspace_expired.v1"] != 0 || len(fixture.sub2API.refunds) != 0 ||
 		len(fixture.sub2API.charges) != 1 || len(fixture.fabric.computeRenewKeys) != 1 || len(fixture.fabric.storageRenewKeys) != 1 ||
-		strings.Count(events, "fabric.compute.cleanup") != 1 || strings.Contains(events, "fabric.storage.cleanup") {
-		t.Fatalf("cross-expiry recovery operation=%#v receipts=%#v charges=%#v refunds=%#v events=%#v", operation, receipts, fixture.sub2API.charges, fixture.sub2API.refunds, *fixture.events)
+		strings.Contains(events, "fabric.compute.cleanup") || strings.Contains(events, "fabric.storage.cleanup") {
+		t.Fatalf("cross-expiry recovery operation=%#v workspace=%#v compute=%#v receipts=%#v charges=%#v refunds=%#v events=%#v", operation, workspace, compute, receipts, fixture.sub2API.charges, fixture.sub2API.refunds, *fixture.events)
 	}
 }
 
@@ -1212,7 +1280,6 @@ func TestWorkspaceRenewalManualReviewCrossingExpiryRemainsResolvable(t *testing.
 		t.Fatal(err)
 	}
 	operationID := stringValue(fixture.operation(t)["id"])
-	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "destroyed"}
 	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough); err != nil {
 		t.Fatal(err)
 	}
@@ -1220,8 +1287,18 @@ func TestWorkspaceRenewalManualReviewCrossingExpiryRemainsResolvable(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if expiredReview.Status != "manual_review" || expiredReview.ExpiryStatus != "expired_unpaid" || expiredReview.ExpiryPhase != "complete" {
-		t.Fatalf("expiry lost review state: %#v", expiredReview)
+	pendingWorkspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	pendingCompute, _ := fixture.app.getCompute(stringValue(fixture.compute["id"]))
+	pendingNotifications := fixture.app.operatorSummary()["notifications"].(map[string]any)
+	pendingCodes := map[string]bool{}
+	for _, item := range pendingNotifications["recent"].([]any) {
+		pendingCodes[stringValue(item.(map[string]any)["code"])] = true
+	}
+	if expiredReview.Status != "manual_review" || expiredReview.ExpiryStatus != "past_due" || expiredReview.ExpiryPhase != "financial" ||
+		pendingWorkspace["state"] != "suspended" || pendingWorkspace["currentComputeAllocationId"] != fixture.compute["id"] || pendingCompute["status"] != "running" ||
+		strings.Contains(strings.Join(*fixture.events, ","), "fabric.compute.cleanup") || len(fixture.ledger.receipts) != 0 ||
+		pendingNotifications["total"] != 2 || !pendingCodes["manual_review"] || !pendingCodes["past_due"] {
+		t.Fatalf("pending review operation=%#v workspace=%#v compute=%#v notifications=%#v receipts=%#v events=%#v", expiredReview, pendingWorkspace, pendingCompute, pendingNotifications, fixture.ledger.receipts, *fixture.events)
 	}
 
 	fixture.fabric.computeSync, fixture.fabric.storageSync = fixture.fabric.computeRenew, fixture.fabric.storageRenew
@@ -1241,13 +1318,17 @@ func TestWorkspaceRenewalManualReviewCrossingExpiryRemainsResolvable(t *testing.
 	for _, receipt := range fixture.ledger.receipts {
 		receipts[receipt.Type]++
 	}
-	if resolved.Status != "active" || resolved.ReviewResolutionPhase != "completed" || resolved.ExpiryStatus != "expired_unpaid" ||
-		receipts["billing.workspace_renewed.v1"] != 1 || receipts["billing.workspace_expired.v1"] != 1 || len(fixture.sub2API.refunds) != 0 {
-		t.Fatalf("post-expiry resolution operation=%#v receipts=%#v refunds=%#v", resolved, receipts, fixture.sub2API.refunds)
+	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	compute, _ := fixture.app.getCompute(stringValue(fixture.compute["id"]))
+	if resolved.Status != "active" || resolved.ReviewResolutionPhase != "completed" || resolved.ExpiryStatus != "" || resolved.ExpiryPhase != "" ||
+		workspace["renewalStatus"] != "active" || workspace["state"] != "running" || workspace["status"] != "running" || workspace["currentComputeAllocationId"] != fixture.compute["id"] ||
+		compute["status"] != "running" || receipts["billing.workspace_renewed.v1"] != 1 || receipts["billing.workspace_expired.v1"] != 0 ||
+		strings.Contains(strings.Join(*fixture.events, ","), "fabric.compute.cleanup") || len(fixture.sub2API.refunds) != 0 {
+		t.Fatalf("post-expiry resolution operation=%#v workspace=%#v compute=%#v receipts=%#v refunds=%#v events=%#v", resolved, workspace, compute, receipts, fixture.sub2API.refunds, *fixture.events)
 	}
 }
 
-func TestWorkspaceRenewalManualReviewExpiresAndStopsCompute(t *testing.T) {
+func TestWorkspaceRenewalManualReviewCrossingExpirySuspendsWithoutDestroy(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, []int64{100_000_000, 47_420_000})
 	fixture.fabric.computeRenewErr = errors.New("provider response lost")
 	fixture.fabric.computeSync = clients.ComputeAllocation{ID: stringValue(fixture.compute["id"]), AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", Status: "renewing"}
@@ -1261,21 +1342,29 @@ func TestWorkspaceRenewalManualReviewExpiresAndStopsCompute(t *testing.T) {
 		t.Fatal(err)
 	}
 	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
-	operation := fixture.operation(t)
+	operation, err := decodeWorkspaceRenewalOperation(fixture.operation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compute, _ := fixture.app.getCompute(stringValue(fixture.compute["id"]))
 	events := strings.Join(*fixture.events, ",")
-	if workspace["renewalStatus"] != "expired_unpaid" || workspace["state"] != "suspended" || workspace["autoRenew"] != false ||
-		operation["status"] != "manual_review" || !strings.Contains(stringValue(operation["result"]), `"expiryPhase":"complete"`) || !strings.Contains(stringValue(operation["result"]), `"priorStatus":"manual_review"`) ||
-		strings.Count(events, "fabric.compute.cleanup") != 1 || strings.Contains(events, "fabric.storage.cleanup") {
+	if workspace["renewalStatus"] != "active" || workspace["state"] != "suspended" || workspace["autoRenew"] != true || workspace["currentComputeAllocationId"] != fixture.compute["id"] ||
+		operation.Status != "manual_review" || operation.ExpiryStatus != "past_due" || operation.ExpiryPhase != "financial" || compute["status"] != "running" ||
+		strings.Contains(events, "fabric.compute.cleanup") || strings.Contains(events, "fabric.storage.cleanup") {
 		t.Fatalf("manual-review expiry workspace=%#v operation=%#v events=%#v", workspace, operation, *fixture.events)
 	}
-	var expiryReceipt clients.ReceiptInput
 	for _, receipt := range fixture.ledger.receipts {
 		if receipt.Type == "billing.workspace_expired.v1" {
-			expiryReceipt = receipt
+			t.Fatalf("pending manual review wrote expiry receipt: %#v", receipt)
 		}
 	}
-	if expiryReceipt.Execution["priorStatus"] != "manual_review" || expiryReceipt.Execution["priorErrorCode"] != "fabric_compute_renewal_unconfirmed" {
-		t.Fatalf("expiry receipt prior evidence=%#v", expiryReceipt.Execution)
+	notifications := fixture.app.operatorSummary()["notifications"].(map[string]any)
+	codes := map[string]bool{}
+	for _, item := range notifications["recent"].([]any) {
+		codes[stringValue(item.(map[string]any)["code"])] = true
+	}
+	if notifications["total"] != 2 || !codes["manual_review"] || !codes["past_due"] {
+		t.Fatalf("pending manual-review notifications=%#v", notifications)
 	}
 }
 
@@ -1289,15 +1378,24 @@ func TestWorkspaceRenewalRefundedPeriodExpiresAndStopsCompute(t *testing.T) {
 	if operation := fixture.operation(t); operation["status"] != "refunded" || len(fixture.sub2API.refunds) != 1 {
 		t.Fatalf("pre-expiry operation=%#v refunds=%#v", operation, fixture.sub2API.refunds)
 	}
+	if strings.Contains(strings.Join(*fixture.events, ","), "fabric.compute.cleanup") {
+		t.Fatalf("compute cleaned before paid-through: events=%#v", *fixture.events)
+	}
 	if err := fixture.app.runMonthlyBillingOnce(context.Background(), fixture.service, fixture.paidThrough); err != nil {
 		t.Fatal(err)
 	}
 	workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
 	operation := fixture.operation(t)
 	events := strings.Join(*fixture.events, ",")
-	if workspace["renewalStatus"] != "expired_unpaid" || workspace["state"] != "suspended" || workspace["autoRenew"] != false ||
+	receipts := map[string]int{}
+	for _, receipt := range fixture.ledger.receipts {
+		receipts[receipt.Type]++
+	}
+	refundAt, cleanupAt, expiryReceiptAt := strings.Index(events, "sub2api.refund"), strings.Index(events, "fabric.compute.cleanup"), strings.LastIndex(events, "ledger.receipt")
+	if workspace["renewalStatus"] != "expired_unpaid" || workspace["state"] != "suspended" || workspace["autoRenew"] != false || stringValue(workspace["currentComputeAllocationId"]) != "" ||
 		operation["status"] != "refunded" || !strings.Contains(stringValue(operation["result"]), `"expiryPhase":"complete"`) || !strings.Contains(stringValue(operation["result"]), `"priorStatus":"refunded"`) ||
-		strings.Count(events, "fabric.compute.cleanup") != 1 || strings.Contains(events, "fabric.storage.cleanup") || len(fixture.sub2API.refunds) != 1 {
+		strings.Count(events, "fabric.compute.cleanup") != 1 || strings.Contains(events, "fabric.storage.cleanup") || len(fixture.sub2API.refunds) != 1 ||
+		receipts["billing.workspace_refunded.v1"] != 1 || receipts["billing.workspace_expired.v1"] != 1 || refundAt < 0 || cleanupAt < refundAt || expiryReceiptAt < cleanupAt {
 		t.Fatalf("refunded expiry workspace=%#v operation=%#v events=%#v refunds=%#v", workspace, operation, *fixture.events, fixture.sub2API.refunds)
 	}
 }

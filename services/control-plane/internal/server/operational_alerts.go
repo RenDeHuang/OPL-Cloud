@@ -27,7 +27,7 @@ func monthlyOperationalAlertCodes(row map[string]any) []string {
 	if status == "manual_review" || renewalStatus == "manual_review" {
 		codes = append(codes, "manual_review")
 	}
-	if status == "past_due" {
+	if status == "past_due" || expiryStatus == "past_due" {
 		codes = append(codes, "past_due")
 	}
 	if lastError == "ledger_receipt_pending" {
@@ -39,7 +39,7 @@ func monthlyOperationalAlertCodes(row map[string]any) []string {
 	if renewalStatus == "insufficient" {
 		codes = append(codes, "insufficient")
 	}
-	if renewalError == "fabric_compute_preflight_failed" || renewalError == "fabric_storage_preflight_failed" {
+	if renewalError == "fabric_compute_preflight_failed" || renewalError == "fabric_storage_preflight_failed" || renewalError == "post_charge_balance_unavailable" {
 		codes = append(codes, "renewal_retry_pending")
 	}
 	if strings.HasPrefix(renewalError, "ledger_receipt_") {

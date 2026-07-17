@@ -101,13 +101,13 @@ func TestOperatorSummaryKeepsFinancialAndExpiryAlerts(t *testing.T) {
 	}
 }
 
-func TestOperatorSummaryKeepsManualReviewAndExpiryAlerts(t *testing.T) {
+func TestOperatorSummaryKeepsManualReviewAndPastDueAlerts(t *testing.T) {
 	fixture := newWorkspaceRenewalWorkerFixture(t, nil)
 	workspace := fixture.workspace
 	operation := workspaceRenewalOperation{
 		ID: "workspace-renewal-review-expiry-alert", Status: "manual_review", CreatedAt: "2026-07-17T00:00:00Z", RequestHash: "review-expiry-alert-request",
 		Phase: "provider_compute", AccountID: stringValue(workspace["accountId"]), WorkspaceID: stringValue(workspace["id"]), PaidThrough: "2026-08-17T00:00:00Z",
-		ErrorCode: "fabric_compute_renewal_unconfirmed", ExpiryStatus: "expired_unpaid", ExpiryPhase: "compute", ExpiryErrorCode: "workspace_expiry_compute_cleanup_pending",
+		ErrorCode: "fabric_compute_renewal_unconfirmed", ExpiryStatus: "past_due", ExpiryPhase: "financial",
 	}
 	mustStore(t, fixture.app.tables.SaveRuntimeOperation(context.Background(), workspaceRenewalOperationRow(operation)))
 	notifications := fixture.app.operatorSummary()["notifications"].(map[string]any)
@@ -115,7 +115,7 @@ func TestOperatorSummaryKeepsManualReviewAndExpiryAlerts(t *testing.T) {
 	for _, item := range notifications["recent"].([]any) {
 		codes[stringValue(item.(map[string]any)["code"])] = true
 	}
-	if notifications["total"] != 2 || !codes["manual_review"] || !codes["cleanup_pending"] {
+	if notifications["total"] != 2 || !codes["manual_review"] || !codes["past_due"] {
 		t.Fatalf("manual-review expiry notifications=%#v", notifications)
 	}
 }
