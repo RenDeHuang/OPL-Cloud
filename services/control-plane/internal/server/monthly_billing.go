@@ -199,7 +199,7 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 			delete(row, "lastBillingError")
 		}
 		preChargeBalance := int64(0)
-		if _, confirmationExists := row["sub2apiChargeConfirmation"]; !confirmationExists {
+		if monthlyChargeNeedsBalancePreflight(row) {
 			balance, err := service.Sub2APIBalance(ctx, sub2APIUserID)
 			if err != nil {
 				return row, err
@@ -214,7 +214,8 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 		row, err = app.chargeMonthlyOperation(ctx, service, row, sub2APIUserID, preChargeBalance)
 		if err != nil {
 			if stringValue(row["billingStatus"]) == "manual_review" {
-				return app.markMonthlyManualReview(ctx, service, row, sub2APIUserID, firstNonEmpty(stringValue(row["lastBillingError"]), "sub2api_charge_unconfirmed"))
+				reviewed, reviewErr := app.markMonthlyManualReview(ctx, service, row, sub2APIUserID, firstNonEmpty(stringValue(row["lastBillingError"]), "sub2api_charge_unconfirmed"))
+				return reviewed, errors.Join(err, reviewErr)
 			}
 			return row, err
 		}
@@ -301,10 +302,24 @@ func (app *controlPlaneServer) chargeMonthlyOperation(ctx context.Context, servi
 			return row, errMonthlyChargeNeedsReview
 		}
 	} else {
-		charge, err := service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
-			UserID: sub2APIUserID, Code: stringValue(row["sub2apiRedeemCode"]), ChargeUSDMicros: chargeUSDMicros,
-			Notes: "OPL monthly " + stringValue(row["id"]),
-		})
+		var charge clients.Sub2APICharge
+		var err error
+		if stringValue(row["lastBillingError"]) == "sub2api_charge_unconfirmed" {
+			history, historyErr := service.Sub2APIBalanceHistory(ctx, sub2APIUserID)
+			switch code := sub2APIReconciliationCode(row, sub2APIUserID, history); {
+			case historyErr != nil || code == "sub2api_charge_missing":
+				err = clients.ErrSub2APIChargeUnknown
+			case code != "":
+				err = clients.ErrSub2APIChargeConflict
+			default:
+				charge = clients.Sub2APICharge{Code: stringValue(row["sub2apiRedeemCode"]), UserID: sub2APIUserID, ChargeUSDMicros: chargeUSDMicros, Status: "used"}
+			}
+		} else {
+			charge, err = service.ChargeSub2API(ctx, clients.Sub2APIChargeInput{
+				UserID: sub2APIUserID, Code: stringValue(row["sub2apiRedeemCode"]), ChargeUSDMicros: chargeUSDMicros,
+				Notes: "OPL monthly " + stringValue(row["id"]),
+			})
+		}
 		if err != nil {
 			row["lastBillingError"] = "sub2api_charge_unconfirmed"
 			if errors.Is(err, clients.ErrSub2APIChargeConflict) {
@@ -347,6 +362,11 @@ func (app *controlPlaneServer) chargeMonthlyOperation(ctx context.Context, servi
 	}
 	delete(row, "lastBillingError")
 	return row, nil
+}
+
+func monthlyChargeNeedsBalancePreflight(row map[string]any) bool {
+	_, confirmed := row["sub2apiChargeConfirmation"]
+	return !confirmed && stringValue(row["lastBillingError"]) != "sub2api_charge_unconfirmed"
 }
 
 func (app *controlPlaneServer) refundMonthlyOperation(ctx context.Context, service *controlplane.Service, row map[string]any, sub2APIUserID int64) (map[string]any, error) {

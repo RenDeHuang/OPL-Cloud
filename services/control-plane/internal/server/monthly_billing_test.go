@@ -34,12 +34,27 @@ type authoritativeReplaySub2API struct {
 	values       []string
 	historyCalls int
 	adjusted     bool
-	unknownFirst bool
 }
 
-func newAuthoritativeReplaySub2API(t *testing.T, unknownFirst bool) *authoritativeReplaySub2API {
+type authoritativeReplayConfig struct {
+	chargeValue       string
+	initialBalance    json.RawMessage
+	adjustedBalance   json.RawMessage
+	historyStatus     int
+	historyEntries    func(code, value string) []any
+	loseFirstResponse bool
+}
+
+func authoritativeHistoryEntry(code, value string) map[string]any {
+	return map[string]any{
+		"code": code, "type": "balance", "value": json.RawMessage(value), "status": "used", "used_by": 41,
+		"used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z",
+	}
+}
+
+func newAuthoritativeReplaySub2API(t *testing.T, config authoritativeReplayConfig) *authoritativeReplaySub2API {
 	t.Helper()
-	fixture := &authoritativeReplaySub2API{unknownFirst: unknownFirst, adjusted: !unknownFirst}
+	fixture := &authoritativeReplaySub2API{adjusted: !config.loseFirstResponse}
 	success := func(w http.ResponseWriter, data any) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{"code": 0, "message": "success", "data": data}); err != nil {
@@ -51,9 +66,9 @@ func newAuthoritativeReplaySub2API(t *testing.T, unknownFirst bool) *authoritati
 		case "/api/v1/auth/login":
 			success(w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
 		case "/api/v1/admin/users/41":
-			balance := 100
+			balance := config.initialBalance
 			if fixture.adjusted {
-				balance = 50
+				balance = config.adjustedBalance
 			}
 			success(w, map[string]any{"id": 41, "balance": balance, "status": "active"})
 		case "/api/v1/admin/users/41/api-keys":
@@ -70,12 +85,12 @@ func newAuthoritativeReplaySub2API(t *testing.T, unknownFirst bool) *authoritati
 			}
 			decoder := json.NewDecoder(r.Body)
 			decoder.UseNumber()
-			if err := decoder.Decode(&input); err != nil || input.Code == "" || input.Type != "balance" || input.UserID != 41 || input.Value.String() != "-50.000000" {
+			if err := decoder.Decode(&input); err != nil || input.Code == "" || input.Type != "balance" || input.UserID != 41 || input.Value.String() != config.chargeValue {
 				t.Fatalf("balance adjustment = %#v err=%v", input, err)
 			}
 			fixture.codes = append(fixture.codes, input.Code)
 			fixture.values = append(fixture.values, input.Value.String())
-			if fixture.unknownFirst && len(fixture.codes) == 1 {
+			if config.loseFirstResponse && len(fixture.codes) == 1 {
 				fixture.adjusted = true
 				http.Error(w, "response lost after adjustment", http.StatusInternalServerError)
 				return
@@ -86,10 +101,20 @@ func newAuthoritativeReplaySub2API(t *testing.T, unknownFirst bool) *authoritati
 			if len(fixture.codes) == 0 || r.URL.Query().Get("type") != "balance" {
 				t.Fatalf("history request without adjustment: %s", r.URL.String())
 			}
-			success(w, map[string]any{"items": []any{map[string]any{
-				"code": fixture.codes[len(fixture.codes)-1], "type": "balance", "value": json.RawMessage(fixture.values[len(fixture.values)-1]),
-				"status": "used", "used_by": 41, "used_at": "2026-07-16T00:01:00Z", "created_at": "2026-07-16T00:00:00Z",
-			}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+			if config.historyStatus != 0 {
+				http.Error(w, "history unavailable", config.historyStatus)
+				return
+			}
+			code, value := fixture.codes[len(fixture.codes)-1], fixture.values[len(fixture.values)-1]
+			items := []any{authoritativeHistoryEntry(code, value)}
+			if config.historyEntries != nil {
+				items = config.historyEntries(code, value)
+			}
+			pages := 1
+			if len(items) == 0 {
+				pages = 0
+			}
+			success(w, map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 1000, "pages": pages})
 		default:
 			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
 		}
@@ -928,47 +953,101 @@ func TestMonthlyPurchaseUnconfirmedDebitDoesNotMutateFabric(t *testing.T) {
 	}
 }
 
-func TestMonthlyPurchaseRecoversLostChargeResponseWithSameCode(t *testing.T) {
-	app, service, sub2API, fabric, _, _ := newMonthlyBillingTest(t, []int64{100_000_000, 100_000_000, 50_000_000})
-	sub2API.chargeErrors = []error{clients.ErrSub2APIChargeUnknown, nil}
-	input := monthlyPurchaseInput{ResourceType: "compute", ResourceID: "compute-recover", BillingOperationID: "billing-recover", AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)}
-	first, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if !errors.Is(err, clients.ErrSub2APIChargeUnknown) || first["billingStatus"] != "charge_pending" {
-		t.Fatalf("first result=%#v err=%v", first, err)
-	}
-	second, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || second["billingStatus"] != "active" {
-		t.Fatalf("recovered result=%#v err=%v", second, err)
-	}
-	if len(sub2API.charges) != 2 || sub2API.charges[0].Code != sub2API.charges[1].Code || len(fabric.computeIDs) != 1 {
-		t.Fatalf("charges=%#v computes=%#v", sub2API.charges, fabric.computeIDs)
+func TestMonthlyPurchaseRecoversLostChargeResponseWithSameCodeFromAuthoritativeHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name, resourceType, chargeValue string
+		initialBalance, adjustedBalance json.RawMessage
+		sizeGB                          int
+	}{
+		{name: "compute", resourceType: "compute", chargeValue: "-50.000000", initialBalance: json.RawMessage("51"), adjustedBalance: json.RawMessage("1")},
+		{name: "storage", resourceType: "storage", chargeValue: "-2.580000", initialBalance: json.RawMessage("3"), adjustedBalance: json.RawMessage("0.42"), sizeGB: 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := newAuthoritativeReplaySub2API(t, authoritativeReplayConfig{
+				chargeValue: tc.chargeValue, initialBalance: tc.initialBalance, adjustedBalance: tc.adjustedBalance, loseFirstResponse: true,
+			})
+			events := &[]string{}
+			fabric := &monthlyFabric{events: events}
+			ledger := &monthlyLedger{events: events}
+			app := newControlPlaneAppEmpty()
+			mustStore(t, app.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-monthly", "status": "active", "sub2apiUserId": int64(41)}))
+			service := controlplane.NewService(ledger, fabric, gateway.client)
+			operationID := "billing-history-replay-" + tc.resourceType
+			input := monthlyPurchaseInput{
+				ResourceType: tc.resourceType, ResourceID: tc.resourceType + "-history-replay", BillingOperationID: operationID,
+				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", SizeGB: tc.sizeGB,
+				ComputeID: "compute-placement", Zone: "ap-shanghai-2", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+			}
+			first, err := app.purchaseMonthlyResource(context.Background(), service, input)
+			if !errors.Is(err, clients.ErrSub2APIChargeUnknown) || first["billingStatus"] != "charge_pending" || len(fabric.computeIDs)+len(fabric.storageIDs) != 0 {
+				t.Fatalf("lost adjustment result=%#v compute=%#v storage=%#v err=%v", first, fabric.computeIDs, fabric.storageIDs, err)
+			}
+			second, err := app.purchaseMonthlyResource(context.Background(), service, input)
+			if err != nil || second["billingStatus"] != "active" || len(mapField(second, "sub2apiChargeConfirmation")) != 4 {
+				t.Fatalf("history-confirmed purchase=%#v err=%v", second, err)
+			}
+			third, err := app.purchaseMonthlyResource(context.Background(), service, input)
+			wantCode := monthlyRedeemCode("test", operationID)
+			if err != nil || third["billingStatus"] != "active" || len(gateway.codes) != 1 || gateway.codes[0] != wantCode || gateway.historyCalls != 1 || len(fabric.computeIDs)+len(fabric.storageIDs) != 1 || len(ledger.receipts) != 1 {
+				t.Fatalf("authoritative replay codes=%#v history=%d compute=%#v storage=%#v receipts=%#v third=%#v err=%v", gateway.codes, gateway.historyCalls, fabric.computeIDs, fabric.storageIDs, ledger.receipts, third, err)
+			}
+		})
 	}
 }
 
-func TestMonthlyPurchaseConfirmsLostAdjustmentFromAuthoritativeHistory(t *testing.T) {
-	gateway := newAuthoritativeReplaySub2API(t, true)
-	events := &[]string{}
-	fabric := &monthlyFabric{events: events}
-	ledger := &monthlyLedger{events: events}
-	app := newControlPlaneAppEmpty()
-	mustStore(t, app.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-monthly", "status": "active", "sub2apiUserId": int64(41)}))
-	service := controlplane.NewService(ledger, fabric, gateway.client)
-	input := monthlyPurchaseInput{
-		ResourceType: "compute", ResourceID: "compute-history-replay", BillingOperationID: "billing-history-replay",
-		AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Zone: "ap-shanghai-2", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+func TestMonthlyPurchaseLostAdjustmentHistoryFailsClosedWithoutSecondDebit(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		historyStatus  int
+		historyEntries func(code, value string) []any
+		wantErr        error
+		wantStatus     string
+	}{
+		{name: "missing", historyEntries: func(_ string, value string) []any {
+			return []any{authoritativeHistoryEntry("opl:other", value)}
+		}, wantErr: clients.ErrSub2APIChargeUnknown, wantStatus: "charge_pending"},
+		{name: "duplicate", historyEntries: func(code, value string) []any {
+			return []any{authoritativeHistoryEntry(code, value), authoritativeHistoryEntry(code, value)}
+		}, wantErr: clients.ErrSub2APIChargeConflict, wantStatus: "manual_review"},
+		{name: "mismatched", historyEntries: func(code, _ string) []any {
+			return []any{authoritativeHistoryEntry(code, "-49.000000")}
+		}, wantErr: clients.ErrSub2APIChargeConflict, wantStatus: "manual_review"},
+		{name: "unavailable", historyStatus: http.StatusServiceUnavailable, wantErr: clients.ErrSub2APIChargeUnknown, wantStatus: "charge_pending"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := newAuthoritativeReplaySub2API(t, authoritativeReplayConfig{
+				chargeValue: "-50.000000", initialBalance: json.RawMessage("51"), adjustedBalance: json.RawMessage("1"),
+				historyStatus: tc.historyStatus, historyEntries: tc.historyEntries, loseFirstResponse: true,
+			})
+			events := &[]string{}
+			fabric := &monthlyFabric{events: events}
+			ledger := &monthlyLedger{events: events}
+			app := newControlPlaneAppEmpty()
+			mustStore(t, app.tables.SaveAccount(context.Background(), map[string]any{"id": "acct-monthly", "status": "active", "sub2apiUserId": int64(41)}))
+			service := controlplane.NewService(ledger, fabric, gateway.client)
+			input := monthlyPurchaseInput{
+				ResourceType: "compute", ResourceID: "compute-history-" + tc.name, BillingOperationID: "billing-history-" + tc.name,
+				AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Zone: "ap-shanghai-2", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+			}
+			if _, err := app.purchaseMonthlyResource(context.Background(), service, input); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+				t.Fatalf("first lost response err=%v", err)
+			}
+			result, err := app.purchaseMonthlyResource(context.Background(), service, input)
+			if !errors.Is(err, tc.wantErr) || result["billingStatus"] != tc.wantStatus || len(gateway.codes) != 1 || gateway.historyCalls != 1 || len(fabric.computeIDs) != 0 {
+				t.Fatalf("result=%#v codes=%#v history=%d creates=%#v err=%v", result, gateway.codes, gateway.historyCalls, fabric.computeIDs, err)
+			}
+		})
 	}
-	first, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if !errors.Is(err, clients.ErrSub2APIChargeUnknown) || first["billingStatus"] != "charge_pending" || len(fabric.computeIDs) != 0 {
-		t.Fatalf("lost adjustment result=%#v creates=%#v err=%v", first, fabric.computeIDs, err)
-	}
-	second, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	if err != nil || second["billingStatus"] != "active" {
-		t.Fatalf("history-confirmed purchase=%#v err=%v", second, err)
-	}
-	third, err := app.purchaseMonthlyResource(context.Background(), service, input)
-	wantCode := monthlyRedeemCode("test", "billing-history-replay")
-	if err != nil || third["billingStatus"] != "active" || len(gateway.codes) != 2 || gateway.codes[0] != wantCode || gateway.codes[1] != wantCode || gateway.historyCalls != 1 || len(fabric.computeIDs) != 1 || len(ledger.receipts) != 1 {
-		t.Fatalf("authoritative replay codes=%#v history=%d creates=%#v receipts=%#v third=%#v err=%v", gateway.codes, gateway.historyCalls, fabric.computeIDs, ledger.receipts, third, err)
+}
+
+func TestMonthlyPurchaseNewCodeStillRejectsInsufficientBalance(t *testing.T) {
+	app, service, sub2API, fabric, _, _ := newMonthlyBillingTest(t, []int64{49_999_999})
+	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+		ResourceType: "compute", ResourceID: "compute-new-insufficient", BillingOperationID: "billing-new-insufficient",
+		AccountID: "acct-monthly", PackageID: "basic", Environment: "test", Now: time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC),
+	})
+	if !errors.Is(err, errMonthlyInsufficientBalance) || result["billingStatus"] != "failed" || len(sub2API.charges) != 0 || len(fabric.computeIDs) != 0 {
+		t.Fatalf("result=%#v charges=%#v creates=%#v err=%v", result, sub2API.charges, fabric.computeIDs, err)
 	}
 }
 

@@ -247,7 +247,7 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 	}
 	if known, _ := row["postChargeBalanceKnown"].(bool); !known {
 		preChargeBalance := int64(0)
-		if _, confirmationExists := row["sub2apiChargeConfirmation"]; !confirmationExists {
+		if monthlyChargeNeedsBalancePreflight(row) {
 			balance, err := service.Sub2APIBalance(ctx, userID)
 			if err != nil {
 				row["billingStatus"], row["lastBillingError"] = "past_due", "sub2api_balance_unavailable"
@@ -263,6 +263,9 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 		}
 		row, err = app.chargeMonthlyOperation(ctx, service, row, userID, preChargeBalance)
 		if err != nil {
+			if errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+				return row, err
+			}
 			if errors.Is(err, errMonthlyPreDebitGatewayKey) {
 				row["billingStatus"], row["lastBillingError"] = "renewal_pending", "gateway_key_unavailable"
 				delete(row, "manualReviewReason")
@@ -272,7 +275,8 @@ func (app *controlPlaneServer) renewMonthlyResource(ctx context.Context, service
 				return row, err
 			}
 			reason := firstNonEmpty(stringValue(row["lastBillingError"]), "sub2api_renewal_charge_unconfirmed")
-			return app.markMonthlyManualReview(ctx, service, row, userID, reason)
+			reviewed, reviewErr := app.markMonthlyManualReview(ctx, service, row, userID, reason)
+			return reviewed, errors.Join(err, reviewErr)
 		}
 		if err := app.saveMonthlyResource(ctx, resourceType, row); err != nil {
 			return row, err

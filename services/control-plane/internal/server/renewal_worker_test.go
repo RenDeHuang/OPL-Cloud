@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -302,7 +303,7 @@ func TestMonthlyRenewalInsufficientBalanceKeepsCurrentEntitlement(t *testing.T) 
 	}
 }
 
-func TestMonthlyRenewalUnknownChargeRequiresReview(t *testing.T) {
+func TestMonthlyRenewalUnknownChargeStaysRetryable(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	paidThrough := now.Add(12 * time.Hour)
 	app, service, sub2API, _, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000})
@@ -310,11 +311,11 @@ func TestMonthlyRenewalUnknownChargeRequiresReview(t *testing.T) {
 	if err := app.tables.SaveCompute(context.Background(), monthlyActiveResource("compute", "compute-review-renewal", paidThrough)); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
-		t.Fatal(err)
+	if err := app.runMonthlyBillingOnce(context.Background(), service, now); !errors.Is(err, clients.ErrSub2APIChargeUnknown) {
+		t.Fatalf("unknown renewal error = %v", err)
 	}
 	row, _ := app.getCompute("compute-review-renewal")
-	if row["billingStatus"] != "manual_review" || row["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.charge_review_required.v1" {
+	if row["billingStatus"] != "renewal_pending" || row["lastBillingError"] != "sub2api_charge_unconfirmed" || row["paidThrough"] != paidThrough.Format(time.RFC3339) || len(sub2API.charges) != 1 || len(ledger.receipts) != 0 {
 		t.Fatalf("unknown renewal row=%#v charges=%#v receipts=%#v", row, sub2API.charges, ledger.receipts)
 	}
 }
@@ -323,7 +324,9 @@ func TestMonthlyRenewalConfirmsLostAdjustmentFromAuthoritativeHistory(t *testing
 	t.Setenv("NODE_ENV", "test")
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "S5.MEDIUM4")
-	gateway := newAuthoritativeReplaySub2API(t, false)
+	gateway := newAuthoritativeReplaySub2API(t, authoritativeReplayConfig{
+		chargeValue: "-50.000000", initialBalance: json.RawMessage("1"), adjustedBalance: json.RawMessage("1"),
+	})
 	events := &[]string{}
 	fabric := &monthlyFabric{events: events}
 	ledger := &monthlyLedger{events: events}
@@ -350,7 +353,7 @@ func TestMonthlyRenewalConfirmsLostAdjustmentFromAuthoritativeHistory(t *testing
 	if err := app.runMonthlyBillingOnce(context.Background(), service, now); err != nil {
 		t.Fatal(err)
 	}
-	if len(gateway.codes) != 2 || gateway.codes[0] != wantCode || gateway.codes[1] != wantCode || gateway.historyCalls != 1 || len(fabric.computeRenewKeys) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {
+	if len(gateway.codes) != 1 || gateway.codes[0] != wantCode || gateway.historyCalls != 1 || len(fabric.computeRenewKeys) != 1 || len(ledger.receipts) != 1 || ledger.receipts[0].Type != "billing.resource_renewed.v1" {
 		t.Fatalf("authoritative renewal codes=%#v history=%d renews=%#v receipts=%#v", gateway.codes, gateway.historyCalls, fabric.computeRenewKeys, ledger.receipts)
 	}
 }
