@@ -30,14 +30,45 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.match(freeze.machineBoundary, /Six product surfaces.*OPL Serve.*planned_not_in_launch/);
   assert.deepEqual(Object.keys(freeze.ownerLanes), ["console", "fabric", "gateway", "ledger"]);
   assert.deepEqual(freeze.customerProducts.basic, {
-    compute: { cpu: 2, memoryGb: 4, cnyCents: 35000, usdMicros: 50000000 },
-    storage: { sizeGb: 10, cnyCents: 1800, usdMicros: 2571429 },
+    priceVersion: "pilot-usd-2026-07-v1",
+    currency: "USD",
+    compute: { cpu: 2, memoryGb: 4, usdMicros: 50000000 },
+    storage: { sizeGb: 10, usdMicros: 2580000 },
+    totalUsdMicros: 52580000,
     targetSaleable: true
   });
   assert.deepEqual(freeze.customerProducts.pro, {
-    compute: { cpu: 8, memoryGb: 16, cnyCents: 150000, usdMicros: 214285715 },
-    storage: { sizeGb: 100, cnyCents: 18000, usdMicros: 25714286 },
+    priceVersion: "pilot-usd-2026-07-v1",
+    currency: "USD",
+    compute: { cpu: 8, memoryGb: 16, usdMicros: 214280000 },
+    storage: { sizeGb: 100, usdMicros: 25800000 },
+    totalUsdMicros: 240080000,
     targetSaleable: true
+  });
+  assert.deepEqual(freeze.internalProviderCostEvidence, {
+    currency: "CNY",
+    computeMonthlyCnyCents: { basic: 35000, pro: 150000 },
+    storageMonthlyCnyCents: { "10": 1800, "100": 18000 },
+    customerChargeDerivation: "forbidden"
+  });
+  assert.equal(freeze.workspaceLaunch.priceVersion, "pilot-usd-2026-07-v1");
+  assert.equal(freeze.workspaceLaunch.currency, "USD");
+  assert.deepEqual(freeze.workspaceLaunch.requiredCreateFields, ["name", "packageId", "sizeGb", "autoRenew"]);
+  assert.deepEqual(freeze.workspaceLaunch.validPackageStoragePairs, [
+    { packageId: "basic", sizeGb: 10 },
+    { packageId: "pro", sizeGb: 100 }
+  ]);
+  assert.deepEqual(freeze.workspaceLaunch.requestHashFields, ["accountId", "ownerUserId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion"]);
+  assert.equal(freeze.workspaceLaunch.autoRenew.submission, "required_boolean");
+  assert.equal(freeze.workspaceLaunch.autoRenew.defaultProductIntent, false);
+  assert.equal(freeze.workspaceLaunch.autoRenew.childProjection, "read_only_compute_and_storage_compatibility_until_workspace_canonical_state");
+  assert.deepEqual(freeze.workspaceLaunch.customerResponsePricingFields, ["priceVersion", "currency", "totalChargeUsdMicros"]);
+  assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery, {
+    stillInReview: "visible_no_side_effects",
+    resolvedActive: "resume_same_child_phase_receipt_only_safe",
+    resolvedRefunded: "parent_refunded_terminal",
+    resolvedFailed: "parent_failed_terminal",
+    nonChildReview: "quiescent_operator_only"
   });
 
   assert.deepEqual(freeze.monthlySettlement.protocol, ["debit", "provision", "claim", "activate"]);

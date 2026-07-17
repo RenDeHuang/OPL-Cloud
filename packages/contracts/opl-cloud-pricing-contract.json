@@ -1,53 +1,63 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "owner": "OPL Control Plane",
-  "purpose": "Versioned fixed monthly prices for OPL compute and storage entitlements.",
+  "purpose": "Versioned fixed USD monthly prices for the paid OPL Workspace Pilot.",
   "state": "current",
-  "priceBasis": "opl_monthly_resource_catalog",
-  "providerCostBasis": "internal_evidence_only",
-  "machineBoundary": "Customer charges are fixed integer calendar-month prices. Provider procurement costs never alter a customer charge.",
+  "priceBasis": "fixed_pilot_usd_catalog",
+  "providerCostBasis": "internal_evidence_only_not_customer_formula",
+  "machineBoundary": "Customer charges are fixed integer USD micros. CNY provider cost evidence and exchange rates never derive, alter, or appear as a customer charge.",
   "lifecycle": {
     "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current pricing contract and matching entitlement migration."
+    "removalCondition": "Replace only with a newer current priceVersion and matching entitlement compatibility path."
   },
-  "catalogVersion": "2026-07-16-opl-monthly-v2",
+  "priceVersion": "pilot-usd-2026-07-v1",
   "billingUnit": "calendar_month",
-  "displayCurrency": "CNY",
+  "currency": "USD",
+  "displayCurrency": "USD",
   "walletCurrency": "USD",
-  "exchangeRateCnyPerUsd": 7,
   "computeMonthly": {
-    "basic": {
-      "cnyCents": 35000,
-      "usdMicros": 50000000
-    },
-    "pro": {
-      "cnyCents": 150000,
-      "usdMicros": 214285715
-    }
+    "basic": { "usdMicros": 50000000 },
+    "pro": { "usdMicros": 214280000 }
   },
   "storagePer10GbMonthly": {
-    "cnyCents": 1800,
-    "usdMicros": 2571429
+    "usdMicros": 2580000
   },
   "storageMonthly": {
-    "10": {
-      "cnyCents": 1800,
-      "usdMicros": 2571429
+    "10": { "usdMicros": 2580000 },
+    "100": { "usdMicros": 25800000 }
+  },
+  "workspaceMonthly": {
+    "basic": {
+      "packageId": "basic",
+      "sizeGb": 10,
+      "computeUsdMicros": 50000000,
+      "storageUsdMicros": 2580000,
+      "totalUsdMicros": 52580000
     },
-    "100": {
-      "cnyCents": 18000,
-      "usdMicros": 25714286
+    "pro": {
+      "packageId": "pro",
+      "sizeGb": 100,
+      "computeUsdMicros": 214280000,
+      "storageUsdMicros": 25800000,
+      "totalUsdMicros": 240080000
     }
+  },
+  "internalProviderCostEvidence": {
+    "currency": "CNY",
+    "computeMonthlyCnyCents": { "basic": 35000, "pro": 150000 },
+    "storageMonthlyCnyCents": { "10": 1800, "100": 18000 },
+    "customerChargeDerivation": "forbidden"
   },
   "storageSize": {
     "minimumGb": 10,
     "stepGb": 10
   },
-  "storageChargeRule": "Calculate total CNY cents for all 10GB blocks, then convert once to USD micros with ceiling division.",
+  "storageChargeRule": "Multiply the fixed 10GB USD-micros component by whole blocks; never convert a CNY amount into a customer charge.",
   "rules": [
-    "All charge decisions use integer CNY cents and USD micros.",
-    "Unknown compute packages and storage sizes outside the 10GB step fail before external side effects.",
-    "A resource keeps its price snapshot for the current period.",
-    "Provider costs are separate reconciliation evidence and never a customer pricing formula."
+    "All customer charge decisions use integer USD micros and priceVersion.",
+    "Workspace launch permits only Basic with 10GB and Pro with 100GB.",
+    "Unknown packages, invalid storage sizes, and cross-package storage combinations fail before external side effects.",
+    "A resource keeps its accepted price snapshot for the current period.",
+    "Provider costs are internal reconciliation evidence and never a customer pricing formula or browser DTO."
   ]
 }

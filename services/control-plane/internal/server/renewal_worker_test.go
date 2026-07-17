@@ -32,7 +32,7 @@ func monthlyActiveResource(resourceType, id string, paidThrough time.Time) map[s
 		row["diskType"] = "CLOUD_PREMIUM"
 		row["cbsStatus"] = "UNATTACHED"
 		row["monthlyPriceCnyCents"] = int64(1800)
-		row["chargeUsdMicros"] = int64(2_571_429)
+		row["chargeUsdMicros"] = int64(2_580_000)
 	} else {
 		row["instanceId"], row["cvmInstanceId"] = providerID, providerID
 		row["instanceType"] = "S5.MEDIUM4"
@@ -195,7 +195,7 @@ func TestMonthlyRenewalStartsAtLeadTimeAndDoesNotDuplicate(t *testing.T) {
 		t.Run(resourceType, func(t *testing.T) {
 			charge := int64(50_000_000)
 			if resourceType == "storage" {
-				charge = 2_571_429
+				charge = 2_580_000
 			}
 			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{charge, 0})
 			id := resourceType + "-renew"
@@ -383,7 +383,7 @@ func TestMonthlyRenewalUnknownOrPartialProviderResultNeedsReview(t *testing.T) {
 		t.Run(resourceType, func(t *testing.T) {
 			charge, postCharge := int64(50_000_000), int64(50_000_000)
 			if resourceType == "storage" {
-				charge, postCharge = 2_571_429, 97_428_571
+				charge, postCharge = 2_580_000, 97_420_000
 			}
 			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
 			id := resourceType + "-provider-review"
@@ -445,7 +445,7 @@ func TestMonthlyRenewalRejectsProviderIdentityDrift(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			charge, postCharge := int64(50_000_000), int64(50_000_000)
 			if tc.resourceType == "storage" {
-				charge, postCharge = 2_571_429, 97_428_571
+				charge, postCharge = 2_580_000, 97_420_000
 			}
 			app, service, sub2API, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
 			id := tc.resourceType + "-identity-drift"
@@ -478,7 +478,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 		t.Run(resourceType, func(t *testing.T) {
 			charge, postCharge := int64(50_000_000), int64(50_000_000)
 			if resourceType == "storage" {
-				charge, postCharge = 2_571_429, 97_428_571
+				charge, postCharge = 2_580_000, 97_420_000
 			}
 			app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, []int64{100_000_000, postCharge})
 			id := resourceType + "-renew-absent"
@@ -537,7 +537,7 @@ func TestMonthlyRenewalConfirmedAbsenceRefundsOnce(t *testing.T) {
 func TestMonthlyRenewalStorageDoesNotRefundWithoutCBSNotFound(t *testing.T) {
 	now := time.Date(2026, 8, 30, 9, 30, 0, 0, time.UTC)
 	paidThrough := now.Add(24 * time.Hour)
-	app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000, 97_428_571})
+	app, service, sub2API, fabric, _, events := newMonthlyBillingTest(t, []int64{100_000_000, 97_420_000})
 	row := monthlyActiveResource("storage", "storage-renew-attached", paidThrough)
 	fabric.storageRenewErr = errors.New("renew response unavailable")
 	fabric.storageSync = clients.StorageVolume{
@@ -609,7 +609,7 @@ func TestMonthlyExpiryDestroysComputeAndRetainsStorage(t *testing.T) {
 func TestRetainedStorageReactivatesFromCurrentTimeOnly(t *testing.T) {
 	now := time.Date(2026, 8, 3, 10, 15, 0, 0, time.UTC)
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_285_714}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_260_000}}
 	fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
 	fabric.storageInput = clients.StorageVolumeInput{ID: "storage-retained", AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", ComputeID: "compute-retained", Zone: "ap-shanghai-2", SizeGB: 30}
 	ledger := &monthlyLedger{events: events}
@@ -619,7 +619,7 @@ func TestRetainedStorageReactivatesFromCurrentTimeOnly(t *testing.T) {
 	}
 	retained := monthlyActiveResource("storage", "storage-retained", now.Add(-time.Hour))
 	retained["billingStatus"] = "retained"
-	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_714_286)
+	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_740_000)
 	retained["computeAllocationId"], retained["zone"] = "compute-retained", "ap-shanghai-2"
 	if err := app.tables.SaveStorage(context.Background(), retained); err != nil {
 		t.Fatal(err)
@@ -629,7 +629,7 @@ func TestRetainedStorageReactivatesFromCurrentTimeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result["billingStatus"] != "active" || result["periodStart"] != now.Format(time.RFC3339) || result["paidThrough"] != "2026-09-03T10:15:00Z" || int64(numberField(result, "sizeGb", 0)) != 30 || int64(numberField(result, "chargeUsdMicros", 0)) != 7_714_286 || len(fabric.storageIDs) != 0 || fabric.syncCalls != 1 || len(sub2API.charges) != 1 || sub2API.charges[0].ChargeUSDMicros != 7_714_286 {
+	if result["billingStatus"] != "active" || result["periodStart"] != now.Format(time.RFC3339) || result["paidThrough"] != "2026-09-03T10:15:00Z" || int64(numberField(result, "sizeGb", 0)) != 30 || int64(numberField(result, "chargeUsdMicros", 0)) != 7_740_000 || len(fabric.storageIDs) != 0 || fabric.syncCalls != 1 || len(sub2API.charges) != 1 || sub2API.charges[0].ChargeUSDMicros != 7_740_000 {
 		t.Fatalf("reactivated=%#v creates=%#v syncs=%d charges=%#v", result, fabric.storageIDs, fabric.syncCalls, sub2API.charges)
 	}
 	beforeEvents := len(*events)

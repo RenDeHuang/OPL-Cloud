@@ -43,19 +43,31 @@ test("current contracts name Sub2API as the only spendable balance", async () =>
 test("pricing contract fixes exact integer monthly charges", async () => {
   const pricing = await readJson("opl-cloud-pricing-contract.json");
 
-  assert.equal(pricing.catalogVersion, "2026-07-16-opl-monthly-v2");
+  assert.equal(pricing.priceVersion, "pilot-usd-2026-07-v1");
+  assert.equal(pricing.catalogVersion, undefined);
   assert.equal(pricing.billingUnit, "calendar_month");
-  assert.equal(pricing.displayCurrency, "CNY");
+  assert.equal(pricing.currency, "USD");
+  assert.equal(pricing.displayCurrency, "USD");
   assert.equal(pricing.walletCurrency, "USD");
-  assert.equal(pricing.exchangeRateCnyPerUsd, 7);
+  assert.equal(pricing.exchangeRateCnyPerUsd, undefined);
   assert.deepEqual(pricing.computeMonthly, {
-    basic: { cnyCents: 35000, usdMicros: 50000000 },
-    pro: { cnyCents: 150000, usdMicros: 214285715 }
+    basic: { usdMicros: 50000000 },
+    pro: { usdMicros: 214280000 }
   });
-  assert.deepEqual(pricing.storagePer10GbMonthly, { cnyCents: 1800, usdMicros: 2571429 });
+  assert.deepEqual(pricing.storagePer10GbMonthly, { usdMicros: 2580000 });
   assert.deepEqual(pricing.storageMonthly, {
-    "10": { cnyCents: 1800, usdMicros: 2571429 },
-    "100": { cnyCents: 18000, usdMicros: 25714286 }
+    "10": { usdMicros: 2580000 },
+    "100": { usdMicros: 25800000 }
+  });
+  assert.deepEqual(pricing.workspaceMonthly, {
+    basic: { packageId: "basic", sizeGb: 10, computeUsdMicros: 50000000, storageUsdMicros: 2580000, totalUsdMicros: 52580000 },
+    pro: { packageId: "pro", sizeGb: 100, computeUsdMicros: 214280000, storageUsdMicros: 25800000, totalUsdMicros: 240080000 }
+  });
+  assert.deepEqual(pricing.internalProviderCostEvidence, {
+    currency: "CNY",
+    computeMonthlyCnyCents: { basic: 35000, pro: 150000 },
+    storageMonthlyCnyCents: { "10": 1800, "100": 18000 },
+    customerChargeDerivation: "forbidden"
   });
   assert.deepEqual(pricing.storageSize, { minimumGb: 10, stepGb: 10 });
   assert.equal(pricing.computeHourly, undefined);

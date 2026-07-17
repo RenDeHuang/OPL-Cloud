@@ -129,6 +129,7 @@ func TestBillingReviewResolutionActivatesConfirmedChargedResourceIdempotently(t 
 	}
 	receipt := h.ledger.inputs[0]
 	if receipt.Type != "billing.resource_purchased.v1" || receipt.SupersedesReceiptID != "receipt-review-required" || receipt.RequestID != "purchase-review-001" ||
+		receipt.Cost["priceVersion"] != "opl-monthly-v2" || receipt.Cost["currency"] != "USD" ||
 		stringValue(receipt.ReviewerChecks["decision"]) != "activate_charged_resource" || stringValue(receipt.ReviewerChecks["reviewer"]) != "usr-admin" || stringValue(receipt.InputRefs["evidenceRef"]) != "case-20260716-001" {
 		t.Fatalf("closing receipt = %#v", receipt)
 	}

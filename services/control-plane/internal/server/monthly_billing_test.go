@@ -407,9 +407,9 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 		cnyCents     int64
 	}{
 		{name: "basic", resourceType: "compute", packageID: "basic", charge: 50_000_000, cnyCents: 35000},
-		{name: "pro", resourceType: "compute", packageID: "pro", charge: 214_285_715, cnyCents: 150000},
-		{name: "10GB attached storage", resourceType: "storage", packageID: "basic", sizeGB: 10, cbsStatus: "ATTACHED", charge: 2_571_429, cnyCents: 1800},
-		{name: "100GB storage", resourceType: "storage", packageID: "pro", sizeGB: 100, charge: 25_714_286, cnyCents: 18000},
+		{name: "pro", resourceType: "compute", packageID: "pro", charge: 214_280_000, cnyCents: 150000},
+		{name: "10GB attached storage", resourceType: "storage", packageID: "basic", sizeGB: 10, cbsStatus: "ATTACHED", charge: 2_580_000, cnyCents: 1800},
+		{name: "100GB storage", resourceType: "storage", packageID: "pro", sizeGB: 100, charge: 25_800_000, cnyCents: 18000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			initial := int64(1_000_000_000)
@@ -425,13 +425,16 @@ func TestMonthlyPurchaseChargesExactProductsAndActivates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("purchase %s: %v", tc.name, err)
 			}
-			if result["billingStatus"] != "active" || result["autoRenew"] != false || int64(numberField(result, "chargeUsdMicros", 0)) != tc.charge || int64(numberField(result, "monthlyPriceCnyCents", 0)) != tc.cnyCents || result["paidThrough"] != "2026-08-14T08:30:00Z" {
+			if result["billingStatus"] != "active" || result["autoRenew"] != false || result["priceVersion"] != pilotPriceVersion || result["currency"] != "USD" || int64(numberField(result, "chargeUsdMicros", 0)) != tc.charge || int64(numberField(result, "monthlyPriceCnyCents", 0)) != tc.cnyCents || result["paidThrough"] != "2026-08-14T08:30:00Z" {
 				t.Fatalf("monthly result = %#v", result)
+			}
+			if snapshot := mapField(result, "priceSnapshot"); snapshot["priceVersion"] != pilotPriceVersion || snapshot["currency"] != "USD" || int64(numberField(snapshot, "chargeUsdMicros", 0)) != tc.charge {
+				t.Fatalf("monthly price snapshot = %#v", snapshot)
 			}
 			if len(sub2API.charges) != 1 || sub2API.charges[0].Code != monthlyRedeemCode("test", "billing-"+tc.name) || sub2API.charges[0].ChargeUSDMicros != tc.charge {
 				t.Fatalf("charges = %#v", sub2API.charges)
 			}
-			if len(ledger.receipts) != 1 || int64(numberField(ledger.receipts[0].Cost, "chargeUsdMicros", 0)) != tc.charge {
+			if len(ledger.receipts) != 1 || ledger.receipts[0].Cost["priceVersion"] != pilotPriceVersion || ledger.receipts[0].Cost["currency"] != "USD" || int64(numberField(ledger.receipts[0].Cost, "chargeUsdMicros", 0)) != tc.charge {
 				t.Fatalf("receipts = %#v", ledger.receipts)
 			}
 			if len(fabric.preflightInputs) != 1 || fabric.preflightInputs[0].ResourceType != tc.resourceType || fabric.preflightInputs[0].PackageID != tc.packageID || fabric.preflightInputs[0].SizeGB != tc.sizeGB {
@@ -472,7 +475,7 @@ func TestRetainedStorageReactivationRecordsNewReceipt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 97_428_571})
+			app, service, _, fabric, ledger, _ := newMonthlyBillingTest(t, []int64{100_000_000, 97_420_000})
 			resourceID := "storage-reactivation-" + strings.ReplaceAll(tc.name, " ", "-")
 			retained := monthlyActiveResource("storage", resourceID, now.Add(-time.Hour))
 			retained["billingStatus"] = "retained"
@@ -980,6 +983,33 @@ func TestMonthlyPurchaseRetriesReceiptWithoutChargingAgain(t *testing.T) {
 	}
 }
 
+func TestMonthlyPurchaseReceiptReplayUsesPersistedPriceSnapshot(t *testing.T) {
+	app, service, sub2API, fabric, ledger, events := newMonthlyBillingTest(t, nil)
+	paidThrough := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
+	row := monthlyActiveResource("compute", "compute-old-price", paidThrough)
+	row["billingOperationId"] = "billing-old-price"
+	row["pricingVersion"] = "legacy-usd-v1"
+	row["monthlyPriceCnyCents"] = int64(28_765)
+	row["chargeUsdMicros"] = int64(41_234_567)
+	row["lastReceiptId"] = ""
+	mustStore(t, app.tables.SaveCompute(context.Background(), row))
+
+	result, err := app.purchaseMonthlyResource(context.Background(), service, monthlyPurchaseInput{
+		ResourceType: "compute", ResourceID: "compute-old-price", BillingOperationID: "billing-old-price",
+		AccountID: "acct-monthly", WorkspaceID: "workspace-monthly", PackageID: "basic", Environment: "test",
+		Now: time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil || result["billingStatus"] != "active" || result["priceVersion"] != "legacy-usd-v1" || result["lastReceiptId"] != "receipt-monthly" {
+		t.Fatalf("old-price receipt replay result=%#v err=%v", result, err)
+	}
+	if len(ledger.receipts) != 1 || ledger.receipts[0].Cost["pricingVersion"] != "legacy-usd-v1" || ledger.receipts[0].Cost["monthlyPriceCnyCents"] != int64(28_765) || ledger.receipts[0].Cost["chargeUsdMicros"] != int64(41_234_567) {
+		t.Fatalf("old-price receipt=%#v", ledger.receipts)
+	}
+	if strings.Join(*events, ",") != "ledger.receipt" || len(sub2API.charges) != 0 || len(fabric.preflightInputs) != 0 || len(fabric.computeIDs) != 0 {
+		t.Fatalf("old-price replay side effects: events=%#v charges=%#v preflights=%#v creates=%#v", *events, sub2API.charges, fabric.preflightInputs, fabric.computeIDs)
+	}
+}
+
 func TestMonthlyReviewAndReceiptPendingReturnPersistenceErrors(t *testing.T) {
 	persistErr := errors.New("monthly state unavailable")
 	row := map[string]any{
@@ -1075,7 +1105,7 @@ func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 
 func TestStoragePurchaseUsesOwnedComputeZone(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 97_428_571}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 97_420_000}}
 	fabric := &monthlyFabric{events: events}
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
@@ -1140,7 +1170,7 @@ func TestStoragePurchaseRejectsPackageMismatchBeforeExternalCalls(t *testing.T) 
 
 func TestPaidResourceRoutesRejectCallerSelectedNewResourceIDsBeforeExternalCalls(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000, 100_000_000, 100_000_000, 97_428_571}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 100_000_000, 50_000_000, 100_000_000, 100_000_000, 97_420_000}}
 	store := newMemoryTableStore()
 	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
 	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, sub2API), store)
@@ -1171,7 +1201,7 @@ func TestPaidResourceRoutesRejectCallerSelectedNewResourceIDsBeforeExternalCalls
 
 func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_285_714}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 92_260_000}}
 	fabric := &provisioningMonthlyFabric{monthlyFabric: monthlyFabric{events: events}}
 	fabric.storageInput = clients.StorageVolumeInput{ID: "storage-retained", AccountID: "acct-alpha", WorkspaceID: "workspace-monthly", ComputeID: "compute-retained", Zone: "ap-shanghai-2", SizeGB: 30}
 	store := newMemoryTableStore()
@@ -1182,7 +1212,7 @@ func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
 	}))
 	retained := monthlyActiveResource("storage", "storage-retained", time.Now().UTC().Add(-time.Hour))
 	retained["accountId"], retained["ownerUserId"], retained["billingStatus"] = "acct-alpha", "usr-alpha", "retained"
-	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_714_286)
+	retained["sizeGb"], retained["monthlyPriceCnyCents"], retained["chargeUsdMicros"] = 30, int64(5400), int64(7_740_000)
 	retained["computeAllocationId"], retained["zone"] = "compute-retained", "ap-shanghai-2"
 	mustStore(t, store.SaveStorage(context.Background(), retained))
 	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, fabric, sub2API), store)
@@ -1198,7 +1228,7 @@ func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 		t.Fatal(err)
 	}
-	if result["id"] != "storage-retained" || result["billingStatus"] != "active" || int64(numberField(result, "sizeGb", 0)) != 30 || int64(numberField(result, "chargeUsdMicros", 0)) != 7_714_286 || len(fabric.storageIDs) != 0 || fabric.syncCalls != 1 {
+	if result["id"] != "storage-retained" || result["billingStatus"] != "active" || int64(numberField(result, "sizeGb", 0)) != 30 || int64(numberField(result, "chargeUsdMicros", 0)) != 7_740_000 || len(fabric.storageIDs) != 0 || fabric.syncCalls != 1 {
 		t.Fatalf("retained reactivation result=%#v creates=%#v syncs=%d", result, fabric.storageIDs, fabric.syncCalls)
 	}
 }
@@ -1400,7 +1430,7 @@ func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
 
 func TestVerificationSlotUsesNormalIdempotentCommercialPurchase(t *testing.T) {
 	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 50_000_000, 47_428_571}}
+	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 50_000_000, 47_420_000}}
 	fabric := &monthlyFabric{events: events}
 	ledger := &monthlyLedger{events: events}
 	store := newMemoryTableStore()
@@ -1460,7 +1490,7 @@ func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
 		charge       int64
 	}{
 		{name: "compute get", createPath: "/api/compute-allocations", createBody: `{"packageId":"basic"}`, resourceType: "compute", charge: 50_000_000},
-		{name: "storage sync", createPath: "/api/storage-volumes", createBody: `{"sizeGb":10}`, resourceType: "storage", charge: 2_571_429},
+		{name: "storage sync", createPath: "/api/storage-volumes", createBody: `{"sizeGb":10}`, resourceType: "storage", charge: 2_580_000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			events := &[]string{}

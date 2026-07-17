@@ -29,11 +29,21 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusForbidden, "workspace_owner_required")
 			return
 		}
-		name := strings.TrimSpace(stringField(input, "name", stringField(input, "workspaceName", "Workspace")))
-		packageID := strings.TrimSpace(stringField(input, "packageId", "basic"))
+		name, validName := input["name"].(string)
+		packageID, validPackage := input["packageId"].(string)
+		name, packageID = strings.TrimSpace(name), strings.TrimSpace(packageID)
+		if !validName || !validPackage || name == "" || packageID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
+			return
+		}
 		storageGB, validSize := positiveIntegerField(input, "sizeGb")
 		if !validSize {
 			writeError(w, http.StatusBadRequest, "invalid_pricing_input")
+			return
+		}
+		autoRenew, validAutoRenew := input["autoRenew"].(bool)
+		if !validAutoRenew {
+			writeError(w, http.StatusBadRequest, "autoRenew_required")
 			return
 		}
 		quote, err := app.pricingPreviewResponse(r.Context(), map[string]any{"resourceType": "workspace", "packageId": packageID, "sizeGb": storageGB})
@@ -42,8 +52,8 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			return
 		}
 		operation := newWorkspaceLaunchOperation(
-			accountID, stringValue(user["id"]), name, packageID, int(storageGB), stringValue(quote["pricingVersion"]),
-			int64(numberField(quote, "totalMonthlyPriceCnyCents", 0)), int64(numberField(quote, "totalChargeUsdMicros", 0)), key,
+			accountID, stringValue(user["id"]), name, packageID, int(storageGB), autoRenew, stringValue(quote["priceVersion"]),
+			int64(numberField(quote, "totalChargeUsdMicros", 0)), key,
 		)
 
 		unlock := app.lockResource("workspace-launch", accountID)

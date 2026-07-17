@@ -19,14 +19,14 @@ func TestWorkspaceLaunchOperationRoundTripsWithoutSecrets(t *testing.T) {
 	input := workspaceLaunchOperation{
 		ID: "launch-alpha", Status: "preparing", RequestHash: "hash", Phase: "compute",
 		AccountID: "acct-alpha", OwnerUserID: "usr-alpha", WorkspaceID: "ws-alpha", Name: "Alpha", PackageID: "basic",
-		StorageGB: 10, PricingVersion: "2026-07-16", TotalMonthlyPriceCNYCents: 36_800, TotalChargeUSDMicros: 52_571_429,
+		StorageGB: 10, PricingVersion: pilotPriceVersion, TotalMonthlyPriceCNYCents: 36_800, TotalChargeUSDMicros: 52_580_000,
 		ComputeID: "ca-alpha", ComputeBillingOperationID: "billing-compute-alpha",
 		StorageID: "vol-alpha", StorageBillingOperationID: "billing-storage-alpha",
 		AttachmentID: "attachment-alpha", AttachmentOperationID: "attach-operation-alpha", WorkspaceOperationID: "workspace-operation-alpha",
 	}
 	row := workspaceLaunchOperationRow(input)
 	decoded, err := decodeWorkspaceLaunchOperation(row)
-	if err != nil || decoded.RequestHash != input.RequestHash || decoded.ID != input.ID || decoded.Status != input.Status {
+	if err != nil || decoded.RequestHash != input.RequestHash || decoded.ID != input.ID || decoded.Status != input.Status || decoded.PriceVersion != pilotPriceVersion || decoded.PricingVersion != "" || decoded.TotalMonthlyPriceCNYCents != 0 {
 		t.Fatalf("decoded=%#v err=%v", decoded, err)
 	}
 	if row["action"] != "workspace.launch" || row["resourceKind"] != "workspace_launch" || row["computeAllocationId"] != input.ComputeID || row["storageId"] != input.StorageID {
@@ -44,7 +44,7 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	operation := workspaceLaunchOperation{
 		ID: "launch-alpha", Status: "retryable", RequestHash: "hash", Phase: "runtime",
 		AccountID: "acct-alpha", OwnerUserID: "usr-private", WorkspaceID: "ws-alpha", Name: "Alpha", PackageID: "basic",
-		StorageGB: 10, PricingVersion: "2026-07-16", TotalMonthlyPriceCNYCents: 36_800, TotalChargeUSDMicros: 52_571_429,
+		StorageGB: 10, PricingVersion: pilotPriceVersion, TotalMonthlyPriceCNYCents: 36_800, TotalChargeUSDMicros: 52_580_000,
 		ComputeID: "ca-alpha", ComputeBillingOperationID: "billing-compute-private",
 		StorageID: "vol-alpha", StorageBillingOperationID: "billing-storage-private",
 		AttachmentID: "attachment-alpha", AttachmentOperationID: "attachment-operation-private", WorkspaceOperationID: "workspace-operation-private",
@@ -70,6 +70,14 @@ func TestWorkspaceLaunchResponseAllowsOnlyCustomerSafeFields(t *testing.T) {
 	}
 	if response["operationId"] != operation.ID || response["status"] != operation.Status || response["phase"] != operation.Phase || response["errorCode"] != operation.ErrorCode {
 		t.Fatalf("workspace launch response = %#v", response)
+	}
+	if response["priceVersion"] != pilotPriceVersion || response["autoRenew"] != false || response["totalChargeUsdMicros"] != int64(52_580_000) {
+		t.Fatalf("workspace launch pricing response = %#v", response)
+	}
+	for _, forbidden := range []string{"pricingVersion", "totalMonthlyPriceCnyCents"} {
+		if _, ok := response[forbidden]; ok {
+			t.Fatalf("workspace launch response exposed %s: %#v", forbidden, response)
+		}
 	}
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
@@ -131,9 +139,45 @@ func (f workspaceLaunchHTTPFixture) launch(t *testing.T, body, key string) *http
 	return requestWithMutationKeyForTest(t, f.server, f.session, http.MethodPost, "/api/workspace-launches", body, key)
 }
 
+func TestWorkspaceLaunchRequiresCompleteBodyBeforeExternalCalls(t *testing.T) {
+	for name, input := range map[string]struct{ body, errorCode string }{
+		"name":             {body: `{"packageId":"basic","sizeGb":10,"autoRenew":false}`},
+		"packageId":        {body: `{"name":"Alpha","sizeGb":10,"autoRenew":false}`},
+		"sizeGb":           {body: `{"name":"Alpha","packageId":"basic","autoRenew":false}`},
+		"autoRenew":        {body: `{"name":"Alpha","packageId":"basic","sizeGb":10}`, errorCode: "autoRenew_required"},
+		"autoRenew string": {body: `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":"false"}`, errorCode: "autoRenew_required"},
+		"autoRenew number": {body: `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":0}`, errorCode: "autoRenew_required"},
+		"autoRenew null":   {body: `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":null}`, errorCode: "autoRenew_required"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+			response := fixture.launch(t, input.body, "launch-alpha")
+			operations, _ := fixture.store.ListRuntimeOperations(context.Background())
+			if response.Code != http.StatusBadRequest || input.errorCode != "" && !strings.Contains(response.Body.String(), input.errorCode) || len(*fixture.events) != 0 || len(operations) != 0 {
+				t.Fatalf("missing %s status=%d body=%s events=%#v operations=%#v", name, response.Code, response.Body.String(), *fixture.events, operations)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchRejectsUnknownAndCrossPackageStorageBeforeExternalCalls(t *testing.T) {
+	for _, body := range []string{
+		`{"name":"Alpha","packageId":"basic","sizeGb":100,"autoRenew":false}`,
+		`{"name":"Alpha","packageId":"pro","sizeGb":10,"autoRenew":false}`,
+		`{"name":"Alpha","packageId":"enterprise","sizeGb":10,"autoRenew":false}`,
+	} {
+		fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+		response := fixture.launch(t, body, "launch-alpha")
+		operations, _ := fixture.store.ListRuntimeOperations(context.Background())
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_pricing_input") || len(*fixture.events) != 0 || len(operations) != 0 {
+			t.Fatalf("invalid package/storage status=%d body=%s events=%#v operations=%#v", response.Code, response.Body.String(), *fixture.events, operations)
+		}
+	}
+}
+
 func TestWorkspaceLaunchTotalPreflightRejectsInsufficientBalanceWithoutSideEffects(t *testing.T) {
-	fixture := newWorkspaceLaunchHTTPFixture(t, 52_571_428)
-	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+	fixture := newWorkspaceLaunchHTTPFixture(t, 52_579_999)
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-alpha")
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), errMonthlyInsufficientBalance.Error()) {
 		t.Fatalf("insufficient launch status = %d, want 409: %s", response.Code, response.Body.String())
 	}
@@ -162,7 +206,7 @@ func TestWorkspaceLaunchGatewayKeyPreflightFailsBeforeBalanceAndSideEffects(t *t
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
 			fixture.sub2API.workspaceKeyErr = tc.err
-			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-alpha")
 			if response.Code != tc.wantStatus || !strings.Contains(response.Body.String(), tc.wantCode) {
 				t.Fatalf("Gateway Key launch status = %d, want %d %s: %s", response.Code, tc.wantStatus, tc.wantCode, response.Body.String())
 			}
@@ -177,7 +221,7 @@ func TestWorkspaceLaunchGatewayKeyPreflightFailsBeforeBalanceAndSideEffects(t *t
 
 func TestWorkspaceLaunchReplayAndFingerprintConflictAvoidExternalSideEffects(t *testing.T) {
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
-	body := `{"name":"Alpha","packageId":"basic","sizeGb":10}`
+	body := `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`
 	first := fixture.launch(t, body, "launch-alpha")
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("first launch status = %d, want 202: %s", first.Code, first.Body.String())
@@ -196,9 +240,9 @@ func TestWorkspaceLaunchReplayAndFingerprintConflictAvoidExternalSideEffects(t *
 		t.Fatalf("launch replay = status %d body %#v events %#v", replay.Code, replayed, *fixture.events)
 	}
 	for _, changed := range []string{
-		`{"name":"Beta","packageId":"basic","sizeGb":10}`,
-		`{"name":"Alpha","packageId":"pro","sizeGb":10}`,
-		`{"name":"Alpha","packageId":"basic","sizeGb":20}`,
+		`{"name":"Beta","packageId":"basic","sizeGb":10,"autoRenew":false}`,
+		`{"name":"Alpha","packageId":"pro","sizeGb":100,"autoRenew":false}`,
+		`{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":true}`,
 	} {
 		conflict := fixture.launch(t, changed, "launch-alpha")
 		if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) {
@@ -246,7 +290,7 @@ func TestWorkspaceLaunchPreflightGuardsRunBeforeExternalCalls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newWorkspaceLaunchHTTPFixture(t)
 			tt.setup(t, fixture)
-			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+			response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-alpha")
 			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), tt.code) {
 				t.Fatalf("guarded launch status = %d, want 409 %s: %s", response.Code, tt.code, response.Body.String())
 			}
@@ -267,7 +311,7 @@ func TestWorkspaceLaunchRequiresOwnerBeforeExternalCalls(t *testing.T) {
 	user["role"] = "member"
 	mustStore(t, fixture.store.SaveUser(context.Background(), user))
 
-	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-alpha")
 	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "workspace_owner_required") {
 		t.Fatalf("member launch status = %d, want 403: %s", response.Code, response.Body.String())
 	}
@@ -279,7 +323,7 @@ func TestWorkspaceLaunchRequiresOwnerBeforeExternalCalls(t *testing.T) {
 
 func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
-	created := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+	created := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":true}`, "launch-alpha")
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
 	}
@@ -287,14 +331,17 @@ func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 	if err := json.NewDecoder(created.Body).Decode(&launch); err != nil {
 		t.Fatal(err)
 	}
+	if launch["autoRenew"] != true || launch["priceVersion"] != pilotPriceVersion || launch["totalChargeUsdMicros"] != float64(52_580_000) || strings.Contains(created.Body.String(), "pricingVersion") || strings.Contains(created.Body.String(), "totalMonthlyPriceCnyCents") {
+		t.Fatalf("created launch projection = %#v", launch)
+	}
 	operationID := stringValue(launch["operationId"])
 
 	alphaList := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches", "")
-	if alphaList.Code != http.StatusOK || !strings.Contains(alphaList.Body.String(), operationID) || strings.Contains(alphaList.Body.String(), "usr-alpha") {
+	if alphaList.Code != http.StatusOK || !strings.Contains(alphaList.Body.String(), operationID) || !strings.Contains(alphaList.Body.String(), `"autoRenew":true`) || !strings.Contains(alphaList.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaList.Body.String(), "usr-alpha") || strings.Contains(alphaList.Body.String(), "pricingVersion") {
 		t.Fatalf("alpha launch list status=%d body=%s", alphaList.Code, alphaList.Body.String())
 	}
 	alphaDetail := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches/"+operationID, "")
-	if alphaDetail.Code != http.StatusOK || !strings.Contains(alphaDetail.Body.String(), operationID) {
+	if alphaDetail.Code != http.StatusOK || !strings.Contains(alphaDetail.Body.String(), operationID) || !strings.Contains(alphaDetail.Body.String(), `"autoRenew":true`) || !strings.Contains(alphaDetail.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaDetail.Body.String(), "pricingVersion") {
 		t.Fatalf("alpha launch detail status=%d body=%s", alphaDetail.Code, alphaDetail.Body.String())
 	}
 
@@ -360,6 +407,8 @@ func (s *workspaceLaunchSub2API) WorkspaceKey(ctx context.Context, userID int64)
 type workspaceLaunchWorkerFixture struct {
 	app         *controlPlaneServer
 	service     *controlplane.Service
+	server      http.Handler
+	operator    *httptest.ResponseRecorder
 	store       *recordingWorkspaceLaunchStore
 	events      *[]string
 	sub2API     *workspaceLaunchSub2API
@@ -368,7 +417,7 @@ type workspaceLaunchWorkerFixture struct {
 	operationID string
 }
 
-func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error) workspaceLaunchWorkerFixture {
+func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeErrors []error, runtimeErr error, autoRenew ...bool) workspaceLaunchWorkerFixture {
 	t.Helper()
 	t.Setenv("OPL_MONTHLY_BILLING_WORKER_ENABLED", "false")
 	t.Setenv("OPL_PROVIDER_RECONCILE_WORKER_ENABLED", "false")
@@ -386,7 +435,11 @@ func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeError
 		t.Fatal(err)
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10}`, "launch-alpha")
+	autoRenewJSON := "false"
+	if len(autoRenew) != 0 && autoRenew[0] {
+		autoRenewJSON = "true"
+	}
+	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":`+autoRenewJSON+`}`, "launch-alpha")
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
 	}
@@ -399,7 +452,7 @@ func newWorkspaceLaunchWorkerFixture(t *testing.T, balances []int64, chargeError
 		t.Fatal(err)
 	}
 	return workspaceLaunchWorkerFixture{
-		app: app, service: service, store: store, events: &events, sub2API: sub2API, fabric: fabric, ledger: ledger,
+		app: app, service: service, server: server, operator: reservedOperatorSessionForTest(t, server), store: store, events: &events, sub2API: sub2API, fabric: fabric, ledger: ledger,
 		operationID: stringValue(response["operationId"]),
 	}
 }
@@ -425,7 +478,7 @@ func (f workspaceLaunchWorkerFixture) operation(t *testing.T) workspaceLaunchOpe
 
 func TestWorkspaceLaunchOrderPersistsEveryPhase(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t,
-		[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_428_571}, nil, nil,
+		[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_420_000}, nil, nil,
 	)
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
@@ -471,7 +524,7 @@ func TestWorkspaceLaunchOrderPersistsEveryPhase(t *testing.T) {
 
 func TestWorkspaceLaunchRestartResumesWithoutRepeatingCompletedPurchases(t *testing.T) {
 	fixture := newWorkspaceLaunchWorkerFixture(t,
-		[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_428_571}, nil, errors.New("runtime unavailable"),
+		[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_420_000}, nil, errors.New("runtime unavailable"),
 	)
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
 		t.Fatal("runtime failure did not leave a retryable launch")
@@ -502,7 +555,7 @@ func TestWorkspaceLaunchWaitsForChildResourceMutation(t *testing.T) {
 	for _, resourceType := range []string{"compute", "storage"} {
 		t.Run(resourceType, func(t *testing.T) {
 			fixture := newWorkspaceLaunchWorkerFixture(t,
-				[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_428_571}, nil, nil,
+				[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_420_000}, nil, nil,
 			)
 			operation := fixture.operation(t)
 			resourceID := operation.ComputeID
@@ -545,7 +598,7 @@ func TestWorkspaceLaunchResumesAfterBalanceTopUp(t *testing.T) {
 		t.Fatalf("insufficient child balance caused side effects: charges=%#v compute=%#v storage=%#v", fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
 	}
 
-	fixture.sub2API.balances = []int64{1_000_000_000, 950_000_000, 950_000_000, 947_428_571}
+	fixture.sub2API.balances = []int64{1_000_000_000, 950_000_000, 950_000_000, 947_420_000}
 	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
 		t.Fatal(err)
 	}
@@ -592,6 +645,177 @@ func TestWorkspaceLaunchWorkerSkipsManualReviewOperations(t *testing.T) {
 	if operation := fixture.operation(t); operation.Status != "manual_review" || operation.Phase != "compute" {
 		t.Fatalf("manual-review launch changed: %#v", operation)
 	}
+}
+
+func TestLegacyWorkspaceLaunchWithoutChildPriceSnapshotFailsClosed(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000}, nil, nil)
+	operation := fixture.operation(t)
+	operation.Status = "manual_review"
+	operation.ErrorCode = "workspace_launch_compute_manual_review"
+	operation.PriceVersion = "legacy-usd-v1"
+	operation.TotalChargeUSDMicros = 41_234_567
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	beforeEvents, beforeSaves := append([]string(nil), (*fixture.events)...), len(fixture.store.launchSaves)
+
+	err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service)
+	if err == nil || !strings.Contains(err.Error(), "workspace_launch_compute_price_snapshot_unavailable") {
+		t.Fatalf("legacy launch without snapshot error=%v", err)
+	}
+	operation = fixture.operation(t)
+	if operation.Status != "manual_review" || operation.Phase != "compute" || operation.ErrorCode != "workspace_launch_compute_price_snapshot_unavailable" {
+		t.Fatalf("legacy launch without snapshot=%#v", operation)
+	}
+	if !reflect.DeepEqual(*fixture.events, beforeEvents) || len(fixture.store.launchSaves) != beforeSaves+1 || len(fixture.sub2API.charges) != 0 || len(fixture.fabric.computeIDs) != 0 {
+		t.Fatalf("legacy launch without snapshot side effects: events=%#v saves=%d charges=%#v creates=%#v", *fixture.events, len(fixture.store.launchSaves), fixture.sub2API.charges, fixture.fabric.computeIDs)
+	}
+
+	beforeEvents, beforeSaves = append([]string(nil), (*fixture.events)...), len(fixture.store.launchSaves)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil || !reflect.DeepEqual(*fixture.events, beforeEvents) || len(fixture.store.launchSaves) != beforeSaves {
+		t.Fatalf("legacy snapshot review was rescanned: err=%v events=%#v saves=%d", err, *fixture.events, len(fixture.store.launchSaves))
+	}
+}
+
+func TestWorkspaceLaunchBillingReviewResolutionResumesActiveChildWithoutRepeatingPurchases(t *testing.T) {
+	for _, resourceType := range []string{"compute", "storage"} {
+		t.Run(resourceType, func(t *testing.T) {
+			fixture := newWorkspaceLaunchWorkerFixture(t,
+				[]int64{1_000_000_000, 1_000_000_000, 950_000_000, 950_000_000, 947_420_000}, nil, nil, true,
+			)
+			if resourceType == "compute" {
+				fixture.fabric.mutateCompute = func(value *clients.ComputeAllocation) { value.ChargeType = "POSTPAID_BY_HOUR" }
+			} else {
+				fixture.fabric.mutateStorage = func(value *clients.StorageVolume) { value.ProviderData["chargeType"] = "POSTPAID_BY_HOUR" }
+			}
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+				t.Fatal("invalid provider truth did not enter manual review")
+			}
+			operation := fixture.operation(t)
+			if operation.Status != "manual_review" || operation.Phase != resourceType {
+				t.Fatalf("manual-review launch = %#v", operation)
+			}
+			charges, computeCreates, storageCreates := len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.fabric.storageIDs)
+			fixture.setConfirmedReviewSync(operation, resourceType)
+			resolved := fixture.resolveReview(t, operation, resourceType, billingReviewActivateCharged)
+			if resolved.Code != http.StatusOK || !strings.Contains(resolved.Body.String(), `"billingStatus":"active"`) {
+				t.Fatalf("active resolution status=%d body=%s", resolved.Code, resolved.Body.String())
+			}
+			if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+				t.Fatal(err)
+			}
+			operation = fixture.operation(t)
+			if operation.Status != "succeeded" || operation.Phase != "complete" || operation.ErrorCode != "" {
+				t.Fatalf("resumed launch = %#v", operation)
+			}
+			if len(fixture.sub2API.charges) != 2 || len(fixture.fabric.computeIDs) != 1 || len(fixture.fabric.storageIDs) != 1 || (resourceType == "compute" && (charges != 1 || computeCreates != 1 || storageCreates != 0)) || (resourceType == "storage" && (charges != 2 || computeCreates != 1 || storageCreates != 1)) {
+				t.Fatalf("review resume repeated purchase: charges=%#v compute=%#v storage=%#v", fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.fabric.storageIDs)
+			}
+			computes, _ := fixture.store.ListComputes(context.Background(), "acct-alpha")
+			storages, _ := fixture.store.ListStorages(context.Background(), "acct-alpha")
+			if len(computes) != 1 || len(storages) != 1 || computes[0]["autoRenew"] != true || storages[0]["autoRenew"] != true {
+				t.Fatalf("autoRenew projection compute=%#v storage=%#v", computes, storages)
+			}
+		})
+	}
+}
+
+func TestWorkspaceLaunchBillingReviewResolutionMakesRefundedChildTerminal(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000, 950_000_000}, nil, nil)
+	fixture.fabric.mutateCompute = func(value *clients.ComputeAllocation) { value.ChargeType = "POSTPAID_BY_HOUR" }
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("invalid provider truth did not enter manual review")
+	}
+	operation := fixture.operation(t)
+	fixture.fabric.computeSync = clients.ComputeAllocation{ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Status: "external_deleted"}
+	resolved := fixture.resolveReview(t, operation, "compute", billingReviewRefundCharged)
+	if resolved.Code != http.StatusOK || !strings.Contains(resolved.Body.String(), `"billingStatus":"refunded"`) {
+		t.Fatalf("refund resolution status=%d body=%s", resolved.Code, resolved.Body.String())
+	}
+	charges, creates, refunds := len(fixture.sub2API.charges), len(fixture.fabric.computeIDs), len(fixture.sub2API.refunds)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if operation = fixture.operation(t); operation.Status != "refunded" || operation.Phase != "compute" {
+		t.Fatalf("refunded parent launch = %#v", operation)
+	}
+	if len(fixture.sub2API.charges) != charges || len(fixture.fabric.computeIDs) != creates || len(fixture.sub2API.refunds) != refunds || refunds != 1 {
+		t.Fatalf("refunded launch repurchased: charges=%#v creates=%#v refunds=%#v", fixture.sub2API.charges, fixture.fabric.computeIDs, fixture.sub2API.refunds)
+	}
+	beforeEvents, beforeSaves := append([]string(nil), (*fixture.events)...), len(fixture.store.launchSaves)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil || !reflect.DeepEqual(*fixture.events, beforeEvents) || len(fixture.store.launchSaves) != beforeSaves {
+		t.Fatalf("refunded terminal launch was rescanned: err=%v events=%#v saves=%d", err, *fixture.events, len(fixture.store.launchSaves))
+	}
+}
+
+func TestWorkspaceLaunchFailedChildBecomesTerminalWithoutRepurchase(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000, 1_000_000_000}, []error{clients.ErrSub2APIChargeConflict}, nil)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err == nil {
+		t.Fatal("charge conflict did not enter manual review")
+	}
+	operation := fixture.operation(t)
+	compute, ok := fixture.app.getCompute(operation.ComputeID)
+	if !ok {
+		t.Fatal("manual-review compute missing")
+	}
+	compute["billingStatus"] = "failed"
+	mustStore(t, fixture.store.SaveCompute(context.Background(), compute))
+	charges, creates := len(fixture.sub2API.charges), len(fixture.fabric.computeIDs)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if operation = fixture.operation(t); operation.Status != "failed" || operation.Phase != "compute" {
+		t.Fatalf("failed parent launch = %#v", operation)
+	}
+	if len(fixture.sub2API.charges) != charges || len(fixture.fabric.computeIDs) != creates {
+		t.Fatalf("failed child was repurchased: charges=%#v creates=%#v", fixture.sub2API.charges, fixture.fabric.computeIDs)
+	}
+	beforeEvents, beforeSaves := append([]string(nil), (*fixture.events)...), len(fixture.store.launchSaves)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil || !reflect.DeepEqual(*fixture.events, beforeEvents) || len(fixture.store.launchSaves) != beforeSaves {
+		t.Fatalf("failed terminal launch was rescanned: err=%v events=%#v saves=%d", err, *fixture.events, len(fixture.store.launchSaves))
+	}
+}
+
+func TestWorkspaceLaunchNonChildManualReviewRemainsQuiescent(t *testing.T) {
+	fixture := newWorkspaceLaunchWorkerFixture(t, []int64{1_000_000_000}, nil, nil)
+	operation := fixture.operation(t)
+	operation.Phase, operation.Status, operation.ErrorCode = "attachment", "manual_review", "workspace_launch_attachment_identity_mismatch"
+	mustStore(t, fixture.store.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	beforeEvents := append([]string(nil), (*fixture.events)...)
+	beforeSaves := len(fixture.store.launchSaves)
+	if err := fixture.app.runWorkspaceLaunchesOnce(context.Background(), fixture.service); err != nil {
+		t.Fatal(err)
+	}
+	if operation = fixture.operation(t); operation.Status != "manual_review" || operation.Phase != "attachment" || !reflect.DeepEqual(*fixture.events, beforeEvents) || len(fixture.store.launchSaves) != beforeSaves {
+		t.Fatalf("non-child review changed: operation=%#v events=%#v saves=%d", operation, *fixture.events, len(fixture.store.launchSaves))
+	}
+}
+
+func (f workspaceLaunchWorkerFixture) setConfirmedReviewSync(operation workspaceLaunchOperation, resourceType string) {
+	if resourceType == "storage" {
+		f.fabric.storageSync = clients.StorageVolume{
+			ID: operation.StorageID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, Status: "available",
+			Provider: "tencent-tke", ProviderResourceID: "disk-" + operation.StorageID, ProviderRequestID: "req-" + operation.StorageID,
+			SizeGB: operation.StorageGB, CBSStatus: "UNATTACHED", DiskType: "CLOUD_PREMIUM", Zone: "ap-shanghai-2",
+			RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"chargeType": "PREPAID"},
+		}
+		return
+	}
+	f.fabric.computeSync = clients.ComputeAllocation{
+		ID: operation.ComputeID, AccountID: operation.AccountID, WorkspaceID: operation.WorkspaceID, PackageID: operation.PackageID, Status: "running",
+		Provider: "tencent-tke", ProviderResourceID: "ins-" + operation.ComputeID, ProviderRequestID: "req-" + operation.ComputeID,
+		InstanceID: "ins-" + operation.ComputeID, CVMInstanceID: "ins-" + operation.ComputeID, InstanceType: "S5.MEDIUM4", Zone: "ap-shanghai-2",
+		ChargeType: "PREPAID", RenewFlag: "NOTIFY_AND_MANUAL_RENEW", Deadline: "2099-01-01T00:00:00Z", ProviderData: map[string]string{"chargeType": "PREPAID", "zone": "ap-shanghai-2", "instanceType": "S5.MEDIUM4"},
+	}
+}
+
+func (f workspaceLaunchWorkerFixture) resolveReview(t *testing.T, operation workspaceLaunchOperation, resourceType, decision string) *httptest.ResponseRecorder {
+	t.Helper()
+	resourceID, billingOperationID := operation.ComputeID, operation.ComputeBillingOperationID
+	if resourceType == "storage" {
+		resourceID, billingOperationID = operation.StorageID, operation.StorageBillingOperationID
+	}
+	body := `{"accountId":"` + operation.AccountID + `","billingOperationId":"` + billingOperationID + `","decision":"` + decision + `","evidenceRef":"case-20260717-launch001"}`
+	path := "/api/operator/billing-reviews/" + resourceType + "/" + resourceID + "/resolve"
+	return requestWithMutationKeyForTest(t, f.server, f.operator, http.MethodPost, path, body, "review-workspace-launch-001")
 }
 
 func countStrings(values []string, target string) int {

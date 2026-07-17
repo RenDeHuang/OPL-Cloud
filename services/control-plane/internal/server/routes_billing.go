@@ -118,8 +118,9 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 }
 
 func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, bool) {
-	monthlyPriceCNYCents, ok := requiredNonNegativeInteger(receipt.Cost, "monthlyPriceCnyCents")
-	if !ok {
+	priceVersion := firstNonEmpty(stringValue(receipt.Cost["priceVersion"]), stringValue(receipt.Cost["pricingVersion"]))
+	currency := firstNonEmpty(stringValue(receipt.Cost["currency"]), pricingCurrency)
+	if priceVersion == "" || currency != pricingCurrency {
 		return nil, false
 	}
 	chargeUSDMicros, ok := requiredNonNegativeInteger(receipt.Cost, "chargeUsdMicros")
@@ -130,7 +131,7 @@ func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, boo
 		"receiptId": receipt.ReceiptID, "type": receipt.Type, "status": receipt.Status,
 		"workspaceId": receipt.WorkspaceID, "createdAt": receipt.CreatedAt,
 		"resourceType": stringValue(receipt.Cost["resourceType"]), "resourceId": stringValue(receipt.Cost["resourceId"]),
-		"pricingVersion": stringValue(receipt.Cost["pricingVersion"]), "monthlyPriceCnyCents": monthlyPriceCNYCents,
+		"priceVersion": priceVersion, "currency": currency,
 		"chargeUsdMicros": chargeUSDMicros, "periodStart": stringValue(receipt.Cost["periodStart"]), "paidThrough": stringValue(receipt.Cost["paidThrough"]),
 	}, true
 }

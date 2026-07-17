@@ -13,19 +13,20 @@ import (
 )
 
 var (
-	errMonthlyInsufficientBalance = errors.New("monthly_balance_insufficient")
-	errMonthlyChargeNeedsReview   = errors.New("monthly_charge_needs_review")
-	errMonthlyPreDebitGatewayKey  = errors.New("monthly_pre_debit_gateway_key_unavailable")
-	errMonthlyAccountUnmapped     = errors.New("sub2api_account_mapping_required")
-	errMonthlyPurchaseRefunded    = errors.New("monthly_purchase_refunded")
-	errBillingReviewNotFound      = errors.New("billing_review_not_found")
-	errBillingReviewNotPending    = errors.New("billing_review_not_pending")
-	errBillingReviewIdentity      = errors.New("billing_review_identity_mismatch")
-	errBillingReviewChargeFact    = errors.New("billing_review_charge_fact_unconfirmed")
-	errBillingReviewProviderFact  = errors.New("billing_review_provider_fact_unconfirmed")
-	errBillingReviewReceipt       = errors.New("billing_review_receipt_pending")
-	errBillingReviewRefund        = errors.New("billing_review_refund_pending")
-	errInvalidBillingReview       = errors.New("invalid_billing_review_request")
+	errMonthlyInsufficientBalance      = errors.New("monthly_balance_insufficient")
+	errMonthlyChargeNeedsReview        = errors.New("monthly_charge_needs_review")
+	errMonthlyPreDebitGatewayKey       = errors.New("monthly_pre_debit_gateway_key_unavailable")
+	errMonthlyAccountUnmapped          = errors.New("sub2api_account_mapping_required")
+	errMonthlyPurchaseRefunded         = errors.New("monthly_purchase_refunded")
+	errMonthlyPriceSnapshotUnavailable = errors.New("price_snapshot_unavailable")
+	errBillingReviewNotFound           = errors.New("billing_review_not_found")
+	errBillingReviewNotPending         = errors.New("billing_review_not_pending")
+	errBillingReviewIdentity           = errors.New("billing_review_identity_mismatch")
+	errBillingReviewChargeFact         = errors.New("billing_review_charge_fact_unconfirmed")
+	errBillingReviewProviderFact       = errors.New("billing_review_provider_fact_unconfirmed")
+	errBillingReviewReceipt            = errors.New("billing_review_receipt_pending")
+	errBillingReviewRefund             = errors.New("billing_review_refund_pending")
+	errInvalidBillingReview            = errors.New("invalid_billing_review_request")
 )
 
 const (
@@ -74,11 +75,23 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 	} else {
 		input.Now = input.Now.UTC()
 	}
-	if existing, ok := app.monthlyResource(input.ResourceType, input.ResourceID); ok {
+	var existing map[string]any
+	replayingExisting := false
+	if current, ok := app.monthlyResource(input.ResourceType, input.ResourceID); ok {
+		existing = current
 		if stringValue(existing["accountId"]) != input.AccountID {
 			return existing, errIdempotencyConflict
 		}
-		if stringValue(existing["billingOperationId"]) != input.BillingOperationID {
+		if stringValue(existing["billingOperationId"]) == input.BillingOperationID {
+			replayingExisting = true
+			if !monthlyPriceSnapshotAvailable(existing) {
+				existing["billingStatus"], existing["lastBillingError"], existing["manualReviewReason"] = "manual_review", errMonthlyPriceSnapshotUnavailable.Error(), errMonthlyPriceSnapshotUnavailable.Error()
+				if err := app.saveMonthlyResource(ctx, input.ResourceType, existing); err != nil {
+					return existing, err
+				}
+				return existing, errMonthlyPriceSnapshotUnavailable
+			}
+		} else {
 			if input.ResourceType != "storage" || stringValue(existing["billingStatus"]) != "retained" {
 				return existing, errIdempotencyConflict
 			}
@@ -91,9 +104,18 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 			input.Zone = stringValue(existing["zone"])
 		}
 	}
-	quote, err := pricingPreviewResponse(map[string]any{"resourceType": input.ResourceType, "packageId": input.PackageID, "sizeGb": input.SizeGB})
-	if err != nil {
-		return nil, err
+	var quote map[string]any
+	if replayingExisting {
+		quote = map[string]any{
+			"priceVersion":         firstNonEmpty(stringValue(existing["priceVersion"]), stringValue(existing["pricingVersion"])),
+			"monthlyPriceCnyCents": existing["monthlyPriceCnyCents"], "chargeUsdMicros": existing["chargeUsdMicros"],
+		}
+	} else {
+		var err error
+		quote, err = pricingPreviewResponse(map[string]any{"resourceType": input.ResourceType, "packageId": input.PackageID, "sizeGb": input.SizeGB})
+		if err != nil {
+			return nil, err
+		}
 	}
 	sub2APIUserID, err := app.sub2APIUserID(ctx, input.AccountID)
 	if err != nil {
@@ -115,7 +137,7 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 		"name": input.Name, "packageId": input.PackageID, "resourceType": input.ResourceType, "billingStatus": "charge_pending", "billingOperationId": input.BillingOperationID,
 		"billingOperationStartedAt": input.Now.Format(time.RFC3339), "sub2apiRedeemCode": monthlyRedeemCode(input.Environment, input.BillingOperationID),
 		"sub2apiRefundCode": monthlyRefundCode(input.Environment, input.BillingOperationID),
-		"pricingVersion":    stringValue(quote["pricingVersion"]), "monthlyPriceCnyCents": int64(numberField(quote, "monthlyPriceCnyCents", 0)),
+		"pricingVersion":    stringValue(quote["priceVersion"]), "monthlyPriceCnyCents": int64(numberField(quote, "monthlyPriceCnyCents", 0)),
 		"chargeUsdMicros": chargeUSDMicros, "billingAnchorDay": int64(anchorDay), "periodStart": periodStart.Format(time.RFC3339),
 		"paidThrough": paidThrough.Format(time.RFC3339), "autoRenew": autoRenew, "lastReceiptId": "", "postChargeBalanceKnown": false,
 		"status": "provisioning", "desiredStatus": monthlyDesiredStatus(input.ResourceType), "providerStatus": "pending", "zone": input.Zone,
@@ -128,6 +150,8 @@ func (app *controlPlaneServer) purchaseMonthlyResource(ctx context.Context, serv
 		return nil, err
 	}
 	row = claimed
+	projectCanonicalMonthlyPrice(row)
+	chargeUSDMicros = int64(numberField(row, "chargeUsdMicros", 0))
 	switch stringValue(row["billingStatus"]) {
 	case "active":
 		return app.ensureMonthlyPurchaseReceipt(ctx, service, row, sub2APIUserID)
@@ -374,6 +398,7 @@ func (app *controlPlaneServer) resolveMonthlyBillingReview(ctx context.Context, 
 	if !ok {
 		return nil, errBillingReviewNotFound
 	}
+	projectCanonicalMonthlyPrice(row)
 	fingerprint := stableID(input.ResourceType, input.ResourceID, input.AccountID, input.BillingOperationID, input.Decision, input.EvidenceRef, input.Reviewer)
 	if key := stringValue(row["reviewResolutionKey"]); key != "" {
 		if key != input.IdempotencyKey || stringValue(row["reviewResolutionFingerprint"]) != fingerprint {
@@ -540,7 +565,7 @@ func billingReviewClosingReceipt(row map[string]any, userID int64) clients.Recei
 			"chargeFact": billingReviewChargeFact(decision), "providerFact": billingReviewProviderFact(decision),
 		},
 		Cost: map[string]any{
-			"pricingVersion": row["pricingVersion"], "monthlyPriceCnyCents": row["monthlyPriceCnyCents"], "chargeUsdMicros": row["chargeUsdMicros"],
+			"priceVersion": row["priceVersion"], "currency": row["currency"], "pricingVersion": row["pricingVersion"], "monthlyPriceCnyCents": row["monthlyPriceCnyCents"], "chargeUsdMicros": row["chargeUsdMicros"],
 			"sub2apiUserId": userID, "sub2apiRedeemCode": row["sub2apiRedeemCode"], "periodStart": periodStart, "paidThrough": paidThrough,
 			"resourceType": monthlyResourceType(row), "resourceId": row["id"],
 		},
@@ -622,7 +647,7 @@ func (app *controlPlaneServer) ensureMonthlyReceipt(ctx context.Context, service
 		WorkspaceID: firstNonEmpty(stringValue(row["workspaceId"]), "account-"+stringValue(row["accountId"])), RequestID: stringValue(row["billingOperationId"]),
 		Execution: map[string]any{"resourceType": resourceType, "resourceId": row["id"], "billingStatus": row["billingStatus"], "reason": row["manualReviewReason"]},
 		Cost: map[string]any{
-			"pricingVersion": row["pricingVersion"], "monthlyPriceCnyCents": row["monthlyPriceCnyCents"], "chargeUsdMicros": row["chargeUsdMicros"],
+			"priceVersion": row["priceVersion"], "currency": row["currency"], "pricingVersion": row["pricingVersion"], "monthlyPriceCnyCents": row["monthlyPriceCnyCents"], "chargeUsdMicros": row["chargeUsdMicros"],
 			"sub2apiUserId": sub2APIUserID, "sub2apiRedeemCode": row["sub2apiRedeemCode"], "periodStart": row["periodStart"], "paidThrough": row["paidThrough"],
 			"resourceType": resourceType, "resourceId": row["id"], "postChargeBalanceUsdMicros": row["postChargeBalanceUsdMicros"],
 		},
@@ -893,6 +918,24 @@ func monthlyResourceType(row map[string]any) string {
 	return "compute"
 }
 
+func projectCanonicalMonthlyPrice(row map[string]any) {
+	priceVersion := firstNonEmpty(stringValue(row["priceVersion"]), stringValue(row["pricingVersion"]))
+	row["priceVersion"], row["currency"] = priceVersion, pricingCurrency
+	snapshot := map[string]any{
+		"resourceType": monthlyResourceType(row), "priceVersion": priceVersion, "packageId": row["packageId"],
+		"currency": pricingCurrency, "displayCurrency": pricingCurrency, "billingUnit": pricingBillingUnit, "chargeUsdMicros": row["chargeUsdMicros"],
+	}
+	if sizeGB, ok := row["sizeGb"]; ok {
+		snapshot["sizeGb"] = sizeGB
+	}
+	row["priceSnapshot"] = snapshot
+}
+
+func monthlyPriceSnapshotAvailable(row map[string]any) bool {
+	return firstNonEmpty(stringValue(row["priceVersion"]), stringValue(row["pricingVersion"])) != "" &&
+		numberField(row, "monthlyPriceCnyCents", 0) > 0 && numberField(row, "chargeUsdMicros", 0) > 0
+}
+
 func monthlyEntitlementActive(row map[string]any, now time.Time) bool {
 	status := stringValue(row["billingStatus"])
 	if status != "active" && status != "past_due" {
@@ -918,6 +961,8 @@ func writeMonthlyPurchaseError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_pricing_input")
 	case errors.Is(err, errMonthlyInsufficientBalance):
 		writeError(w, http.StatusPaymentRequired, errMonthlyInsufficientBalance.Error())
+	case errors.Is(err, errMonthlyPriceSnapshotUnavailable):
+		writeError(w, http.StatusConflict, errMonthlyPriceSnapshotUnavailable.Error())
 	case errors.Is(err, errMonthlyAccountUnmapped), errors.Is(err, errMonthlyChargeNeedsReview), errors.Is(err, errMonthlyPurchaseRefunded), errors.Is(err, errIdempotencyConflict), errors.Is(err, errBillingOperationInProgress):
 		writeError(w, http.StatusConflict, err.Error())
 	default:

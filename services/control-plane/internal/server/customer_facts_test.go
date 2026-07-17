@@ -551,10 +551,10 @@ func assertCustomerBillingReceipt(t *testing.T, receipt map[string]any) {
 	t.Helper()
 	allowed := map[string]bool{
 		"receiptId": true, "type": true, "status": true, "workspaceId": true, "createdAt": true,
-		"resourceType": true, "resourceId": true, "pricingVersion": true, "monthlyPriceCnyCents": true,
+		"resourceType": true, "resourceId": true, "priceVersion": true, "currency": true,
 		"chargeUsdMicros": true, "periodStart": true, "paidThrough": true,
 	}
-	if len(receipt) != len(allowed) || receipt["receiptId"] != "receipt-1" || receipt["chargeUsdMicros"] != float64(50_000_000) {
+	if len(receipt) != len(allowed) || receipt["receiptId"] != "receipt-1" || receipt["priceVersion"] != "pricing-v1" || receipt["currency"] != "USD" || receipt["chargeUsdMicros"] != float64(50_000_000) {
 		t.Fatalf("billing receipt = %#v", receipt)
 	}
 	for key := range receipt {

@@ -8,15 +8,15 @@ import (
 )
 
 const (
-	pricingCatalogVersion        = "2026-07-16-opl-monthly-v2"
-	pricingCurrency              = "CNY"
-	pricingWalletCurrency        = "USD"
-	pricingBillingUnit           = "calendar_month"
-	pricingExchangeRateCNYPerUSD = int64(7)
-	storageBlockGB               = int64(10)
-	storageBlockPriceCNYCents    = int64(1800)
-	maxStorageBlocks             = (math.MaxInt64 - pricingExchangeRateCNYPerUSD + 1) / (storageBlockPriceCNYCents * 10000)
-	maxStorageGB                 = maxStorageBlocks * storageBlockGB
+	pricingCatalogVersion      = "pilot-usd-2026-07-v1"
+	pricingCurrency            = "USD"
+	pricingWalletCurrency      = "USD"
+	pricingBillingUnit         = "calendar_month"
+	storageBlockGB             = int64(10)
+	storageBlockPriceCNYCents  = int64(1800)
+	storageBlockPriceUSDMicros = int64(2_580_000)
+	maxStorageBlocks           = math.MaxInt64 / storageBlockPriceUSDMicros
+	maxStorageGB               = maxStorageBlocks * storageBlockGB
 )
 
 var errInvalidPricingInput = errors.New("invalid pricing input")
@@ -26,7 +26,6 @@ type pricingCatalogData struct {
 	Currency       string
 	WalletCurrency string
 	BillingUnit    string
-	ExchangeRate   int64
 	Packages       []pricingPackageData
 }
 
@@ -45,10 +44,10 @@ type pricingPackageData struct {
 func defaultPricingCatalog() pricingCatalogData {
 	return pricingCatalogData{
 		Version: pricingCatalogVersion, Currency: pricingCurrency, WalletCurrency: pricingWalletCurrency,
-		BillingUnit: pricingBillingUnit, ExchangeRate: pricingExchangeRateCNYPerUSD,
+		BillingUnit: pricingBillingUnit,
 		Packages: []pricingPackageData{
 			{ID: "basic", Name: "Basic", Available: true, CPU: 2, MemoryGB: 4, DiskGB: 10, Server: "2c4g", MonthlyPriceCNYCents: 35000, ChargeUSDMicros: 50000000},
-			{ID: "pro", Name: "Pro", Available: true, CPU: 8, MemoryGB: 16, DiskGB: 100, Server: "8c16g", MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214285715},
+			{ID: "pro", Name: "Pro", Available: true, CPU: 8, MemoryGB: 16, DiskGB: 100, Server: "8c16g", MonthlyPriceCNYCents: 150000, ChargeUSDMicros: 214280000},
 		},
 	}
 }
@@ -63,11 +62,11 @@ func (app *controlPlaneServer) pricingCatalogResponse(_ context.Context, compute
 
 func pricingCatalogDTO(catalog pricingCatalogData) map[string]any {
 	return map[string]any{
-		"pricingVersion": catalog.Version, "catalogVersion": catalog.Version, "billingUnit": catalog.BillingUnit,
+		"priceVersion": catalog.Version, "billingUnit": catalog.BillingUnit,
 		"displayCurrency": catalog.Currency, "walletCurrency": catalog.WalletCurrency,
-		"exchangeRateCnyPerUsd": catalog.ExchangeRate, "currency": catalog.Currency,
+		"currency":              catalog.Currency,
 		"storageSize":           map[string]any{"minimumGb": storageBlockGB, "stepGb": storageBlockGB},
-		"storagePer10GbMonthly": map[string]any{"cnyCents": storageBlockPriceCNYCents, "usdMicros": cnyCentsToUSDMicros(storageBlockPriceCNYCents)},
+		"storagePer10GbMonthly": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "usdMicros": storageBlockPriceUSDMicros},
 		"packages":              packageRows(catalog),
 	}
 }
@@ -77,7 +76,11 @@ func pricingPreviewResponse(input map[string]any) (map[string]any, error) {
 }
 
 func (app *controlPlaneServer) pricingPreviewResponse(_ context.Context, input map[string]any) (map[string]any, error) {
-	return pricingPreviewResponse(input)
+	preview, err := pricingPreviewResponse(input)
+	if err != nil {
+		return nil, err
+	}
+	return customerPricingPreviewDTO(preview), nil
 }
 
 func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {
@@ -95,8 +98,9 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 	}
 	monthlyPriceCNYCents, chargeUSDMicros := plan.MonthlyPriceCNYCents, plan.ChargeUSDMicros
 	snapshot := map[string]any{
-		"pricingVersion": catalog.Version, "packageId": plan.ID, "currency": catalog.Currency,
-		"billingUnit": catalog.BillingUnit, "monthlyPriceCnyCents": monthlyPriceCNYCents,
+		"priceVersion": catalog.Version, "pricingVersion": catalog.Version, "packageId": plan.ID, "currency": catalog.Currency,
+		"displayCurrency": catalog.Currency,
+		"billingUnit":     catalog.BillingUnit, "monthlyPriceCnyCents": monthlyPriceCNYCents,
 		"chargeUsdMicros": chargeUSDMicros, "resourceType": resourceType,
 	}
 	if resourceType == "storage" {
@@ -106,18 +110,23 @@ func pricingPreviewFromCatalog(catalog pricingCatalogData, input map[string]any)
 		}
 		blocks := int64(sizeGB) / storageBlockGB
 		monthlyPriceCNYCents = blocks * storageBlockPriceCNYCents
-		chargeUSDMicros = cnyCentsToUSDMicros(monthlyPriceCNYCents)
+		chargeUSDMicros = blocks * storageBlockPriceUSDMicros
 		snapshot["sizeGb"], snapshot["monthlyPriceCnyCents"], snapshot["chargeUsdMicros"] = sizeGB, monthlyPriceCNYCents, chargeUSDMicros
 	}
 	return map[string]any{
-		"pricingVersion": catalog.Version, "resourceType": resourceType, "packageId": plan.ID,
-		"currency": catalog.Currency, "billingUnit": catalog.BillingUnit,
+		"priceVersion": catalog.Version, "pricingVersion": catalog.Version, "resourceType": resourceType, "packageId": plan.ID,
+		"currency": catalog.Currency, "displayCurrency": catalog.Currency, "billingUnit": catalog.BillingUnit,
 		"monthlyPriceCnyCents": monthlyPriceCNYCents, "chargeUsdMicros": chargeUSDMicros,
 		"priceSnapshot": snapshot,
 	}, nil
 }
 
 func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (map[string]any, error) {
+	packageID := firstNonEmpty(stringField(input, "packageId", ""), "basic")
+	sizeGB := numberField(input, "sizeGb", numberField(input, "sizeGB", 10))
+	if packageID == "basic" && sizeGB != 10 || packageID == "pro" && sizeGB != 100 {
+		return nil, fmt.Errorf("%w: package %q does not support %.0fGB storage", errInvalidPricingInput, packageID, sizeGB)
+	}
 	computeInput := cloneMap(input)
 	computeInput["resourceType"] = "compute"
 	storageInput := cloneMap(input)
@@ -139,8 +148,8 @@ func workspacePricingPreview(catalog pricingCatalogData, input map[string]any) (
 		return nil, errInvalidPricingInput
 	}
 	return map[string]any{
-		"resourceType": "workspace", "pricingVersion": catalog.Version,
-		"packageId": stringValue(compute["packageId"]), "currency": catalog.Currency,
+		"resourceType": "workspace", "priceVersion": catalog.Version, "pricingVersion": catalog.Version,
+		"packageId": stringValue(compute["packageId"]), "currency": catalog.Currency, "displayCurrency": catalog.Currency,
 		"billingUnit": catalog.BillingUnit, "compute": compute, "storage": storage,
 		"totalMonthlyPriceCnyCents": cnyCents, "totalChargeUsdMicros": usdMicros,
 	}, nil
@@ -159,7 +168,7 @@ func packageRows(catalog pricingCatalogData) []any {
 		rows = append(rows, map[string]any{
 			"id": plan.ID, "name": plan.Name, "available": plan.Available, "cpu": plan.CPU,
 			"memoryGb": plan.MemoryGB, "diskGb": plan.DiskGB, "server": plan.Server,
-			"price": map[string]any{"monthlyPriceCnyCents": plan.MonthlyPriceCNYCents, "chargeUsdMicros": plan.ChargeUSDMicros},
+			"price": map[string]any{"priceVersion": catalog.Version, "currency": catalog.Currency, "displayCurrency": catalog.Currency, "chargeUsdMicros": plan.ChargeUSDMicros},
 		})
 	}
 	return rows
@@ -180,10 +189,6 @@ func packageRowsForComputePools(catalog pricingCatalogData, computePools []any) 
 	return rows
 }
 
-func cnyCentsToUSDMicros(cnyCents int64) int64 {
-	return (cnyCents*10000 + pricingExchangeRateCNYPerUSD - 1) / pricingExchangeRateCNYPerUSD
-}
-
 func packageByIDFromCatalog(catalog pricingCatalogData, packageID string) (pricingPackageData, bool) {
 	for _, plan := range catalog.Packages {
 		if plan.ID == packageID {
@@ -191,4 +196,32 @@ func packageByIDFromCatalog(catalog pricingCatalogData, packageID string) (prici
 		}
 	}
 	return pricingPackageData{}, false
+}
+
+func customerPricingPreviewDTO(preview map[string]any) map[string]any {
+	result := map[string]any{
+		"resourceType": preview["resourceType"], "priceVersion": preview["priceVersion"], "packageId": preview["packageId"],
+		"currency": preview["currency"], "displayCurrency": preview["displayCurrency"], "billingUnit": preview["billingUnit"],
+	}
+	if stringValue(preview["resourceType"]) == "workspace" {
+		result["compute"] = customerPricingPreviewDTO(mapField(preview, "compute"))
+		result["storage"] = customerPricingPreviewDTO(mapField(preview, "storage"))
+		result["totalChargeUsdMicros"] = preview["totalChargeUsdMicros"]
+		return result
+	}
+	result["chargeUsdMicros"] = preview["chargeUsdMicros"]
+	result["priceSnapshot"] = customerPricingSnapshotDTO(mapField(preview, "priceSnapshot"))
+	return result
+}
+
+func customerPricingSnapshotDTO(snapshot map[string]any) map[string]any {
+	result := map[string]any{
+		"resourceType": snapshot["resourceType"], "priceVersion": snapshot["priceVersion"], "packageId": snapshot["packageId"],
+		"currency": snapshot["currency"], "displayCurrency": snapshot["displayCurrency"], "billingUnit": snapshot["billingUnit"],
+		"chargeUsdMicros": snapshot["chargeUsdMicros"],
+	}
+	if sizeGB, ok := snapshot["sizeGb"]; ok {
+		result["sizeGb"] = sizeGB
+	}
+	return result
 }

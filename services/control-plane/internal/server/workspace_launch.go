@@ -26,8 +26,10 @@ type workspaceLaunchOperation struct {
 	Name                      string `json:"name"`
 	PackageID                 string `json:"packageId"`
 	StorageGB                 int    `json:"sizeGb"`
-	PricingVersion            string `json:"pricingVersion"`
-	TotalMonthlyPriceCNYCents int64  `json:"totalMonthlyPriceCnyCents"`
+	AutoRenew                 bool   `json:"autoRenew"`
+	PriceVersion              string `json:"priceVersion"`
+	PricingVersion            string `json:"pricingVersion,omitempty"`
+	TotalMonthlyPriceCNYCents int64  `json:"totalMonthlyPriceCnyCents,omitempty"`
 	TotalChargeUSDMicros      int64  `json:"totalChargeUsdMicros"`
 	ComputeID                 string `json:"computeAllocationId"`
 	ComputeBillingOperationID string `json:"computeBillingOperationId"`
@@ -47,14 +49,14 @@ func encodeWorkspaceLaunchOperation(operation workspaceLaunchOperation) string {
 	return string(payload)
 }
 
-func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string, storageGB int, pricingVersion string, totalMonthlyPriceCNYCents, totalChargeUSDMicros int64, key string) workspaceLaunchOperation {
+func newWorkspaceLaunchOperation(accountID, ownerUserID, name, packageID string, storageGB int, autoRenew bool, priceVersion string, totalChargeUSDMicros int64, key string) workspaceLaunchOperation {
 	operationID := "workspace-launch-" + stableID(accountID, key)[:18]
 	workspaceID := primaryWorkspaceID(accountID)
 	return workspaceLaunchOperation{
 		ID: operationID, Status: "preparing", Phase: "compute",
-		RequestHash: stableID("workspace-launch-v1", accountID, ownerUserID, name, packageID, strconv.Itoa(storageGB), pricingVersion),
+		RequestHash: stableID("workspace-launch-v2", accountID, ownerUserID, name, packageID, strconv.Itoa(storageGB), strconv.FormatBool(autoRenew), priceVersion),
 		AccountID:   accountID, OwnerUserID: ownerUserID, WorkspaceID: workspaceID, Name: name, PackageID: packageID,
-		StorageGB: storageGB, PricingVersion: pricingVersion, TotalMonthlyPriceCNYCents: totalMonthlyPriceCNYCents, TotalChargeUSDMicros: totalChargeUSDMicros,
+		StorageGB: storageGB, AutoRenew: autoRenew, PriceVersion: priceVersion, TotalChargeUSDMicros: totalChargeUSDMicros,
 		ComputeID: resourceIDForMutation("ca", accountID, operationID+":compute"), ComputeBillingOperationID: "billing-" + stableID("compute", accountID, operationID)[:18],
 		StorageID: resourceIDForMutation("vol", accountID, operationID+":storage"), StorageBillingOperationID: "billing-" + stableID("storage", accountID, operationID)[:18],
 		AttachmentOperationID: operationID + ":attachment", WorkspaceOperationID: operationID + ":workspace",
@@ -66,9 +68,14 @@ func decodeWorkspaceLaunchOperation(row map[string]any) (workspaceLaunchOperatio
 	if err := json.Unmarshal([]byte(stringValue(row["result"])), &operation); err != nil {
 		return workspaceLaunchOperation{}, errInvalidWorkspaceLaunchOperation
 	}
+	if operation.PriceVersion == "" {
+		operation.PriceVersion = operation.PricingVersion
+	}
+	operation.PricingVersion = ""
+	operation.TotalMonthlyPriceCNYCents = 0
 	operation.ID = firstNonEmpty(stringValue(row["operationId"]), stringValue(row["id"]))
 	operation.Status = stringValue(row["status"])
-	if operation.ID == "" || operation.Status == "" || operation.RequestHash == "" || operation.AccountID == "" || operation.WorkspaceID == "" {
+	if operation.ID == "" || operation.Status == "" || operation.RequestHash == "" || operation.AccountID == "" || operation.WorkspaceID == "" || operation.PriceVersion == "" {
 		return workspaceLaunchOperation{}, errInvalidWorkspaceLaunchOperation
 	}
 	for field, want := range map[string]string{
@@ -99,8 +106,8 @@ func workspaceLaunchResponse(row map[string]any) (map[string]any, error) {
 	return map[string]any{
 		"operationId": operation.ID, "status": operation.Status, "phase": operation.Phase,
 		"accountId": operation.AccountID, "workspaceId": operation.WorkspaceID, "name": operation.Name,
-		"packageId": operation.PackageID, "sizeGb": operation.StorageGB, "pricingVersion": operation.PricingVersion,
-		"totalMonthlyPriceCnyCents": operation.TotalMonthlyPriceCNYCents, "totalChargeUsdMicros": operation.TotalChargeUSDMicros,
+		"packageId": operation.PackageID, "sizeGb": operation.StorageGB, "autoRenew": operation.AutoRenew, "priceVersion": operation.PriceVersion,
+		"currency": pricingCurrency, "totalChargeUsdMicros": operation.TotalChargeUSDMicros,
 		"computeAllocationId": operation.ComputeID, "storageId": operation.StorageID, "attachmentId": operation.AttachmentID,
 		"runtimeServiceName": operation.RuntimeServiceName, "url": operation.URL, "receiptId": operation.ReceiptID,
 		"errorCode": operation.ErrorCode, "createdAt": row["createdAt"], "updatedAt": row["updatedAt"],
@@ -116,6 +123,12 @@ func (app *controlPlaneServer) runWorkspaceLaunchesOnce(ctx context.Context, ser
 	for _, row := range rows {
 		if stringValue(row["action"]) != "workspace.launch" || terminalWorkspaceLaunchStatus(stringValue(row["status"])) {
 			continue
+		}
+		if stringValue(row["status"]) == "manual_review" {
+			operation, err := decodeWorkspaceLaunchOperation(row)
+			if err != nil || !workspaceLaunchChildReview(operation) {
+				continue
+			}
 		}
 		if err := app.runWorkspaceLaunch(ctx, service, stringValue(row["id"])); err != nil {
 			errs = append(errs, err)
@@ -135,14 +148,26 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 	if err != nil || !ok || terminalWorkspaceLaunchStatus(operation.Status) {
 		return err
 	}
+	if operation.Status == "manual_review" {
+		if app.workspaceLaunchPriceSnapshotUnavailable(operation) {
+			return app.manualReviewWorkspaceLaunch(ctx, operation, "workspace_launch_"+operation.Phase+"_price_snapshot_unavailable")
+		}
+		resume, err := app.reconcileWorkspaceLaunchChildReview(ctx, &operation)
+		if err != nil || !resume {
+			return err
+		}
+	}
 
 	for range 6 {
+		if app.workspaceLaunchPriceSnapshotUnavailable(operation) {
+			return app.manualReviewWorkspaceLaunch(ctx, operation, "workspace_launch_"+operation.Phase+"_price_snapshot_unavailable")
+		}
 		switch operation.Phase {
 		case "compute":
 			row, err := app.purchaseWorkspaceLaunchResource(ctx, service, monthlyPurchaseInput{
 				ResourceType: "compute", ResourceID: operation.ComputeID, BillingOperationID: operation.ComputeBillingOperationID,
 				AccountID: operation.AccountID, OwnerUserID: operation.OwnerUserID, WorkspaceID: operation.WorkspaceID,
-				Name: operation.Name, PackageID: operation.PackageID, Zone: monthlyComputeLaunchZone(), Environment: monthlyEnvironment(),
+				Name: operation.Name, PackageID: operation.PackageID, Zone: monthlyComputeLaunchZone(), Environment: monthlyEnvironment(), AutoRenew: &operation.AutoRenew,
 			})
 			if err != nil {
 				return app.failWorkspaceLaunchPurchase(ctx, operation, row, err)
@@ -168,7 +193,7 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 				ResourceType: "storage", ResourceID: operation.StorageID, BillingOperationID: operation.StorageBillingOperationID,
 				AccountID: operation.AccountID, OwnerUserID: operation.OwnerUserID, WorkspaceID: operation.WorkspaceID,
 				Name: operation.Name, PackageID: operation.PackageID, SizeGB: operation.StorageGB, ComputeID: operation.ComputeID,
-				Zone: zone, Environment: monthlyEnvironment(),
+				Zone: zone, Environment: monthlyEnvironment(), AutoRenew: &operation.AutoRenew,
 			})
 			if err != nil {
 				return app.failWorkspaceLaunchPurchase(ctx, operation, row, err)
@@ -275,7 +300,53 @@ func (app *controlPlaneServer) runWorkspaceLaunch(ctx context.Context, service *
 }
 
 func terminalWorkspaceLaunchStatus(status string) bool {
-	return status == "succeeded" || status == "manual_review"
+	return status == "succeeded" || status == "refunded" || status == "failed"
+}
+
+func workspaceLaunchChildReview(operation workspaceLaunchOperation) bool {
+	return (operation.Phase == "compute" || operation.Phase == "storage") &&
+		operation.ErrorCode == "workspace_launch_"+operation.Phase+"_manual_review"
+}
+
+func (app *controlPlaneServer) workspaceLaunchPriceSnapshotUnavailable(operation workspaceLaunchOperation) bool {
+	if operation.Phase != "compute" && operation.Phase != "storage" || operation.PriceVersion == pricingCatalogVersion {
+		return false
+	}
+	resourceID, billingOperationID := operation.ComputeID, operation.ComputeBillingOperationID
+	if operation.Phase == "storage" {
+		resourceID, billingOperationID = operation.StorageID, operation.StorageBillingOperationID
+	}
+	child, ok := app.monthlyResource(operation.Phase, resourceID)
+	return !ok || stringValue(child["accountId"]) != operation.AccountID || stringValue(child["billingOperationId"]) != billingOperationID ||
+		firstNonEmpty(stringValue(child["priceVersion"]), stringValue(child["pricingVersion"])) != operation.PriceVersion || !monthlyPriceSnapshotAvailable(child)
+}
+
+func (app *controlPlaneServer) reconcileWorkspaceLaunchChildReview(ctx context.Context, operation *workspaceLaunchOperation) (bool, error) {
+	if !workspaceLaunchChildReview(*operation) {
+		return false, nil
+	}
+	resourceID, billingOperationID := operation.ComputeID, operation.ComputeBillingOperationID
+	if operation.Phase == "storage" {
+		resourceID, billingOperationID = operation.StorageID, operation.StorageBillingOperationID
+	}
+	child, ok := app.monthlyResource(operation.Phase, resourceID)
+	if !ok || stringValue(child["accountId"]) != operation.AccountID || stringValue(child["billingOperationId"]) != billingOperationID {
+		return false, nil
+	}
+	switch stringValue(child["billingStatus"]) {
+	case "active":
+		operation.Status, operation.ErrorCode = "preparing", ""
+		if err := app.saveWorkspaceLaunchOperation(ctx, *operation); err != nil {
+			return false, err
+		}
+		return true, nil
+	case "refunded", "failed":
+		operation.Status = stringValue(child["billingStatus"])
+		operation.ErrorCode = "workspace_launch_" + operation.Phase + "_" + operation.Status
+		return false, app.saveWorkspaceLaunchOperation(ctx, *operation)
+	default:
+		return false, nil
+	}
 }
 
 func (app *controlPlaneServer) purchaseWorkspaceLaunchResource(ctx context.Context, service *controlplane.Service, input monthlyPurchaseInput) (map[string]any, error) {
@@ -326,6 +397,9 @@ func (app *controlPlaneServer) manualReviewWorkspaceLaunch(ctx context.Context, 
 
 func (app *controlPlaneServer) failWorkspaceLaunchPurchase(ctx context.Context, operation workspaceLaunchOperation, row map[string]any, cause error) error {
 	status := stringValue(row["billingStatus"])
+	if errors.Is(cause, errMonthlyPriceSnapshotUnavailable) {
+		return app.manualReviewWorkspaceLaunch(ctx, operation, "workspace_launch_"+operation.Phase+"_price_snapshot_unavailable")
+	}
 	if status == "failed" && errors.Is(cause, errMonthlyInsufficientBalance) {
 		row["billingStatus"] = "charge_pending"
 		if err := app.saveMonthlyResource(ctx, operation.Phase, row); err != nil {
