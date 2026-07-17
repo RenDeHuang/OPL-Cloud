@@ -104,16 +104,23 @@ func registerProviderAcceptanceRoutes(mux *http.ServeMux, app *controlPlaneServe
 			writeError(w, http.StatusInternalServerError, "state_read_failed")
 			return
 		}
+		attachment, attachmentCount, err := app.providerAcceptanceAttachment(r.Context(), slot)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "state_read_failed")
+			return
+		}
 		identitiesValid := providerAcceptanceResourceInventoryValid(computes, slot, providerAcceptanceComputeID(slot), ownerID) &&
 			providerAcceptanceResourceInventoryValid(storages, slot, providerAcceptanceStorageID(slot), ownerID)
 		workspaceIdentityValid := workspace == nil || providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID)
-		emptyInventory := workspace == nil && len(computes) == 0 && len(storages) == 0
+		attachmentInventoryValid := attachmentCount == 0 || (attachmentCount == 1 && providerAcceptanceAttachmentValid(attachment, slot))
+		emptyInventory := workspace == nil && len(computes) == 0 && len(storages) == 0 && attachmentCount == 0
 		now := time.Now().UTC()
 		completeInventory := providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) && len(computes) == 1 && len(storages) == 1 &&
-			providerAcceptanceComputeValid(computes[0], slot, ownerID, now) && providerAcceptanceStorageValid(storages[0], slot, ownerID, now)
+			providerAcceptanceComputeValid(computes[0], slot, ownerID, now) && providerAcceptanceStorageValid(storages[0], slot, ownerID, now) &&
+			attachmentCount == 1 && providerAcceptanceAttachmentValid(attachment, slot)
 		invalidOperation := operationExists && !providerAcceptanceOperationValid(operation, slot)
 		unclaimedAmbiguousInventory := !operationExists && !emptyInventory && !completeInventory
-		if !workspaceIdentityValid || !identitiesValid || invalidOperation || unclaimedAmbiguousInventory {
+		if !workspaceIdentityValid || !identitiesValid || !attachmentInventoryValid || invalidOperation || unclaimedAmbiguousInventory {
 			writeError(w, http.StatusConflict, "provider_acceptance_inventory_ambiguous")
 			return
 		}
@@ -430,6 +437,17 @@ func (app *controlPlaneServer) providerAcceptanceStorageCandidates(ctx context.C
 	}), nil
 }
 
+func (app *controlPlaneServer) providerAcceptanceAttachmentCandidates(ctx context.Context, slot providerAcceptanceSlot) ([]map[string]any, error) {
+	rows, err := app.tables.ListAttachments(ctx, "")
+	if err != nil {
+		return nil, errProviderAcceptanceStateRead
+	}
+	return providerAcceptanceCandidates(rows, map[string]string{
+		"accountId": slot.AccountID, "workspaceId": primaryWorkspaceID(slot.AccountID), "computeAllocationId": providerAcceptanceComputeID(slot),
+		"storageId": providerAcceptanceStorageID(slot), "verificationSlotId": slot.ID,
+	}), nil
+}
+
 func (app *controlPlaneServer) providerAcceptanceWorkspaceExact(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, bool, error) {
 	rows, err := app.providerAcceptanceWorkspaceCandidates(ctx, slot)
 	if err != nil {
@@ -541,7 +559,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 	if err != nil {
 		return "", "", err
 	}
-	if attachmentCount > 1 {
+	if attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentValid(attachment, slot)) {
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
 	if attachmentCount == 0 {
@@ -555,7 +573,7 @@ func (app *controlPlaneServer) advanceProviderAcceptance(ctx context.Context, se
 			return "", "provider_acceptance_attachment_result_unknown", nil
 		}
 	}
-	if stringValue(attachment["status"]) != "attached" || stringValue(attachment["workspaceId"]) != workspaceID || stringValue(attachment["computeAllocationId"]) != computeID || stringValue(attachment["storageId"]) != storageID {
+	if !providerAcceptanceAttachmentValid(attachment, slot) {
 		return "", "provider_acceptance_attachment_state_ambiguous", nil
 	}
 
@@ -673,18 +691,20 @@ func providerAcceptanceStorageValid(row map[string]any, slot providerAcceptanceS
 }
 
 func (app *controlPlaneServer) providerAcceptanceAttachment(ctx context.Context, slot providerAcceptanceSlot) (map[string]any, int, error) {
-	attachments, err := app.tables.ListAttachments(ctx, "")
+	attachments, err := app.providerAcceptanceAttachmentCandidates(ctx, slot)
 	if err != nil {
 		return nil, 0, errProviderAcceptanceStateRead
 	}
-	var found map[string]any
-	count := 0
-	for _, attachment := range attachments {
-		if stringValue(attachment["workspaceId"]) == primaryWorkspaceID(slot.AccountID) {
-			found, count = attachment, count+1
-		}
+	if len(attachments) == 0 {
+		return nil, 0, nil
 	}
-	return found, count, nil
+	return attachments[len(attachments)-1], len(attachments), nil
+}
+
+func providerAcceptanceAttachmentValid(attachment map[string]any, slot providerAcceptanceSlot) bool {
+	return attachment != nil && stringValue(attachment["accountId"]) == slot.AccountID && stringValue(attachment["workspaceId"]) == primaryWorkspaceID(slot.AccountID) &&
+		stringValue(attachment["computeAllocationId"]) == providerAcceptanceComputeID(slot) && stringValue(attachment["storageId"]) == providerAcceptanceStorageID(slot) &&
+		stringValue(attachment["status"]) == "attached"
 }
 
 func providerAcceptanceWorkspaceProjection(workspace map[string]any, runtime clients.WorkspaceRuntime, slot providerAcceptanceSlot) domain.WorkspaceProjection {
@@ -727,12 +747,12 @@ func (app *controlPlaneServer) providerAcceptanceReadySlot(ctx context.Context, 
 	if err != nil {
 		return nil, false, err
 	}
-	if workspaceConflict || computeConflict || storageConflict {
+	if workspaceConflict || computeConflict || storageConflict || attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentValid(attachment, slot)) {
 		return nil, false, errProviderAcceptanceStateRead
 	}
 	if !providerAcceptanceWorkspaceCandidateValid(workspace, slot, ownerID) || stringValue(workspace["url"]) == "" ||
 		!computeOK || !storageOK || attachmentCount != 1 || !providerAcceptanceComputeValid(compute, slot, ownerID, now) || !providerAcceptanceStorageValid(storage, slot, ownerID, now) ||
-		stringValue(attachment["status"]) != "attached" || app.workspaceResponse(cloneMap(workspace))["openable"] != true {
+		!providerAcceptanceAttachmentValid(attachment, slot) || app.workspaceResponse(cloneMap(workspace))["openable"] != true {
 		return nil, false, nil
 	}
 	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), true, nil
@@ -751,11 +771,11 @@ func (app *controlPlaneServer) providerAcceptanceSlotSummary(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	attachment, _, err := app.providerAcceptanceAttachment(ctx, slot)
+	attachment, attachmentCount, err := app.providerAcceptanceAttachment(ctx, slot)
 	if err != nil {
 		return nil, err
 	}
-	if workspaceConflict || computeConflict || storageConflict {
+	if workspaceConflict || computeConflict || storageConflict || attachmentCount > 1 || (attachmentCount == 1 && !providerAcceptanceAttachmentValid(attachment, slot)) {
 		return nil, errProviderAcceptanceStateRead
 	}
 	return providerAcceptanceSlotResponse(slot, workspace, compute, storage, attachment), nil

@@ -213,11 +213,16 @@ func seedProviderAcceptanceIdentity(t *testing.T, store StateStore, slot provide
 
 func newProviderAcceptanceServer(t *testing.T, fabric *providerAcceptanceFabric, store StateStore) http.Handler {
 	t.Helper()
+	return newProviderAcceptanceServerWithSub2API(t, fabric, store, &testSub2APIClient{balance: 1_000_000, charges: map[string]int64{}})
+}
+
+func newProviderAcceptanceServerWithSub2API(t *testing.T, fabric *providerAcceptanceFabric, store StateStore, sub2API *testSub2APIClient) http.Handler {
+	t.Helper()
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	t.Setenv("OPL_BASIC_COMPUTE_INSTANCE_TYPE", "SA5.MEDIUM4")
 	t.Setenv("OPL_PRO_COMPUTE_INSTANCE_TYPE", "SA5.2XLARGE16")
 	t.Setenv("OPL_PROVIDER_ACCEPTANCE_TOKEN", testProviderAcceptanceToken)
-	service := controlplane.NewService(fakeLedgerClient{}, fabric, &testSub2APIClient{balance: 1_000_000, charges: map[string]int64{}})
+	service := controlplane.NewService(fakeLedgerClient{}, fabric, sub2API)
 	server, err := NewPersistentServer(service, store)
 	if err != nil {
 		t.Fatalf("create Provider Acceptance server: %v", err)
@@ -419,6 +424,10 @@ func TestProviderAcceptanceFailsClosedOnSecondInventoryReadError(t *testing.T) {
 			seedProviderAcceptanceIdentity(t, base, slot)
 			if kind == "attachment" {
 				seedCompleteProviderAcceptanceResources(t, base, slot, "usr-"+slot.ID)
+				mustStore(t, base.SaveAttachment(context.Background(), map[string]any{
+					"id": "att-" + slot.ID, "accountId": slot.AccountID, "workspaceId": primaryWorkspaceID(slot.AccountID),
+					"computeAllocationId": providerAcceptanceComputeID(slot), "storageId": providerAcceptanceStorageID(slot), "status": "attached",
+				}))
 			}
 			store := &providerAcceptanceReadFailureStore{StateStore: base, failKind: kind}
 			fabric := &providerAcceptanceFabric{}
@@ -487,6 +496,64 @@ func TestProviderAcceptanceRejectsCrossUserCandidatesForBothSlots(t *testing.T) 
 					}
 				})
 			}
+		}
+	}
+}
+
+func TestProviderAcceptanceRejectsInvalidAttachmentInventoryBeforeExternalCalls(t *testing.T) {
+	for _, slotID := range []string{"verification-slot-basic-01", "verification-slot-pro-01"} {
+		slot := providerAcceptanceSlots[slotID]
+		for _, test := range []struct {
+			name      string
+			field     string
+			value     string
+			duplicate bool
+		}{
+			{name: "account", field: "accountId", value: "acct-cross-user"},
+			{name: "workspace", field: "workspaceId", value: "ws-cross-user"},
+			{name: "compute", field: "computeAllocationId", value: "ca-cross-user"},
+			{name: "storage", field: "storageId", value: "vol-cross-user"},
+			{name: "status", field: "status", value: "pending"},
+			{name: "multiple", duplicate: true},
+		} {
+			t.Run(slot.PackageID+"/"+test.name, func(t *testing.T) {
+				store := newMemoryTableStore()
+				seedProviderAcceptanceIdentity(t, store, slot)
+				seedCompleteProviderAcceptanceResources(t, store, slot, "usr-"+slot.ID)
+				attachment := map[string]any{
+					"id": "att-" + slot.ID, "accountId": slot.AccountID, "workspaceId": primaryWorkspaceID(slot.AccountID),
+					"computeAllocationId": providerAcceptanceComputeID(slot), "storageId": providerAcceptanceStorageID(slot), "status": "attached",
+				}
+				if test.field != "" {
+					attachment[test.field] = test.value
+				}
+				mustStore(t, store.SaveAttachment(context.Background(), attachment))
+				if test.duplicate {
+					attachment["id"] = "att-duplicate-" + slot.ID
+					mustStore(t, store.SaveAttachment(context.Background(), attachment))
+				}
+				mustStore(t, store.SaveRuntimeOperation(context.Background(), providerAcceptanceOperationRow("started", slot)))
+
+				fabric := &providerAcceptanceFabric{}
+				sub2API := &testSub2APIClient{balance: 1_000_000, charges: map[string]int64{}}
+				server := newProviderAcceptanceServerWithSub2API(t, fabric, store, sub2API)
+				session := operatorSessionForTest(t, server)
+				rec := providerAcceptanceRequest(server, session, providerAcceptanceBodyForSlot(slot, true, 1, 20), slot.Key)
+				if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "provider_acceptance_inventory_ambiguous") {
+					t.Errorf("invalid %s %s attachment = %d: %s", slot.PackageID, test.name, rec.Code, rec.Body.String())
+				}
+
+				sub2API.mu.Lock()
+				workspaceKeyCalls := len(sub2API.workspaceKeyUserIDs)
+				sub2API.mu.Unlock()
+				fabric.mu.Lock()
+				defer fabric.mu.Unlock()
+				if workspaceKeyCalls != 0 || fabric.preflightCalls != 0 || fabric.computeCreates != 0 || fabric.storageCreates != 0 ||
+					fabric.attachmentCreates != 0 || fabric.secretWrites != 0 || fabric.runtimeCreates != 0 {
+					t.Fatalf("invalid %s %s attachment reached external calls: key=%d preflight=%d compute=%d storage=%d attachment=%d secret=%d runtime=%d",
+						slot.PackageID, test.name, workspaceKeyCalls, fabric.preflightCalls, fabric.computeCreates, fabric.storageCreates, fabric.attachmentCreates, fabric.secretWrites, fabric.runtimeCreates)
+				}
+			})
 		}
 	}
 }
