@@ -309,18 +309,12 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 				writeError(w, http.StatusConflict, "workspace_billing_state_invalid")
 				return
 			}
+			before := workspaceRenewalIntentState(workspace["autoRenew"] == true, stringValue(workspace["authorizedBy"]), stringValue(workspace["authorizedAt"]))
+			after := workspaceRenewalIntentState(update.WorkspacePatch.AutoRenew, update.WorkspacePatch.AuthorizedBy, update.WorkspacePatch.AuthorizedAt)
+			update.AuditEvent = bindWorkspaceAutoRenewAudit(update.CommandOperation, app.auditEvent(r, "workspace.auto_renew", "workspace", workspaceID, stringValue(workspace["accountId"]), before, after, "succeeded"))
 			if err := app.tables.ApplyWorkspaceRenewalIntent(r.Context(), update); errors.Is(err, errWorkspaceRenewalCASConflict) {
 				continue
 			} else if err != nil {
-				writeError(w, http.StatusInternalServerError, "state_persist_failed")
-				return
-			}
-			updatedWorkspace, ok := app.getWorkspace(workspaceID)
-			if !ok {
-				writeError(w, http.StatusInternalServerError, "state_read_failed")
-				return
-			}
-			if err := app.appendAuditEvent(r, "workspace.auto_renew", "workspace", workspaceID, stringValue(workspace["accountId"]), workspace, updatedWorkspace, "succeeded"); err != nil {
 				writeError(w, http.StatusInternalServerError, "state_persist_failed")
 				return
 			}

@@ -508,8 +508,25 @@ func (s *memoryTableStore) ApplyWorkspaceRenewalIntent(_ context.Context, update
 	if err := validateWorkspaceBillingState(desired); err != nil {
 		return err
 	}
+	if err := validateWorkspaceRenewalIntentAudit(update, current); err != nil {
+		return err
+	}
+	auditExists := false
+	for _, row := range s.auditEvents {
+		if stringValue(row["id"]) != stringValue(update.AuditEvent["id"]) {
+			continue
+		}
+		if !workspaceRenewalIntentAuditIdentityMatches(row, update.AuditEvent) {
+			return errIdempotencyConflict
+		}
+		auditExists = true
+		break
+	}
 	s.workspaces[update.WorkspaceID] = desired
 	s.runtimeOps = append(s.runtimeOps, cloneMap(update.CommandOperation))
+	if !auditExists {
+		s.auditEvents = append(s.auditEvents, cloneMap(update.AuditEvent))
+	}
 	return nil
 }
 

@@ -116,8 +116,16 @@ func init() {
 	adminauditeventDescUserAgent := adminauditeventFields[11].Descriptor()
 	// adminauditevent.DefaultUserAgent holds the default value on creation for the user_agent field.
 	adminauditevent.DefaultUserAgent = adminauditeventDescUserAgent.Default.(string)
+	// adminauditeventDescBeforeJSON is the schema descriptor for before_json field.
+	adminauditeventDescBeforeJSON := adminauditeventFields[12].Descriptor()
+	// adminauditevent.DefaultBeforeJSON holds the default value on creation for the before_json field.
+	adminauditevent.DefaultBeforeJSON = adminauditeventDescBeforeJSON.Default.(string)
+	// adminauditeventDescAfterJSON is the schema descriptor for after_json field.
+	adminauditeventDescAfterJSON := adminauditeventFields[13].Descriptor()
+	// adminauditevent.DefaultAfterJSON holds the default value on creation for the after_json field.
+	adminauditevent.DefaultAfterJSON = adminauditeventDescAfterJSON.Default.(string)
 	// adminauditeventDescResult is the schema descriptor for result field.
-	adminauditeventDescResult := adminauditeventFields[12].Descriptor()
+	adminauditeventDescResult := adminauditeventFields[14].Descriptor()
 	// adminauditevent.DefaultResult holds the default value on creation for the result field.
 	adminauditevent.DefaultResult = adminauditeventDescResult.Default.(string)
 	// adminauditeventDescID is the schema descriptor for id field.
@@ -204,8 +212,16 @@ func init() {
 	archivedadminauditeventDescUserAgent := archivedadminauditeventFields[11].Descriptor()
 	// archivedadminauditevent.DefaultUserAgent holds the default value on creation for the user_agent field.
 	archivedadminauditevent.DefaultUserAgent = archivedadminauditeventDescUserAgent.Default.(string)
+	// archivedadminauditeventDescBeforeJSON is the schema descriptor for before_json field.
+	archivedadminauditeventDescBeforeJSON := archivedadminauditeventFields[12].Descriptor()
+	// archivedadminauditevent.DefaultBeforeJSON holds the default value on creation for the before_json field.
+	archivedadminauditevent.DefaultBeforeJSON = archivedadminauditeventDescBeforeJSON.Default.(string)
+	// archivedadminauditeventDescAfterJSON is the schema descriptor for after_json field.
+	archivedadminauditeventDescAfterJSON := archivedadminauditeventFields[13].Descriptor()
+	// archivedadminauditevent.DefaultAfterJSON holds the default value on creation for the after_json field.
+	archivedadminauditevent.DefaultAfterJSON = archivedadminauditeventDescAfterJSON.Default.(string)
 	// archivedadminauditeventDescResult is the schema descriptor for result field.
-	archivedadminauditeventDescResult := archivedadminauditeventFields[12].Descriptor()
+	archivedadminauditeventDescResult := archivedadminauditeventFields[14].Descriptor()
 	// archivedadminauditevent.DefaultResult holds the default value on creation for the result field.
 	archivedadminauditevent.DefaultResult = archivedadminauditeventDescResult.Default.(string)
 	// archivedadminauditeventDescID is the schema descriptor for id field.

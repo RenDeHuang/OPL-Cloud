@@ -174,6 +174,34 @@ func (aaaec *ArchivedAdminAuditEventCreate) SetNillableUserAgent(s *string) *Arc
 	return aaaec
 }
 
+// SetBeforeJSON sets the "before_json" field.
+func (aaaec *ArchivedAdminAuditEventCreate) SetBeforeJSON(s string) *ArchivedAdminAuditEventCreate {
+	aaaec.mutation.SetBeforeJSON(s)
+	return aaaec
+}
+
+// SetNillableBeforeJSON sets the "before_json" field if the given value is not nil.
+func (aaaec *ArchivedAdminAuditEventCreate) SetNillableBeforeJSON(s *string) *ArchivedAdminAuditEventCreate {
+	if s != nil {
+		aaaec.SetBeforeJSON(*s)
+	}
+	return aaaec
+}
+
+// SetAfterJSON sets the "after_json" field.
+func (aaaec *ArchivedAdminAuditEventCreate) SetAfterJSON(s string) *ArchivedAdminAuditEventCreate {
+	aaaec.mutation.SetAfterJSON(s)
+	return aaaec
+}
+
+// SetNillableAfterJSON sets the "after_json" field if the given value is not nil.
+func (aaaec *ArchivedAdminAuditEventCreate) SetNillableAfterJSON(s *string) *ArchivedAdminAuditEventCreate {
+	if s != nil {
+		aaaec.SetAfterJSON(*s)
+	}
+	return aaaec
+}
+
 // SetResult sets the "result" field.
 func (aaaec *ArchivedAdminAuditEventCreate) SetResult(s string) *ArchivedAdminAuditEventCreate {
 	aaaec.mutation.SetResult(s)
@@ -273,6 +301,14 @@ func (aaaec *ArchivedAdminAuditEventCreate) defaults() {
 		v := archivedadminauditevent.DefaultUserAgent
 		aaaec.mutation.SetUserAgent(v)
 	}
+	if _, ok := aaaec.mutation.BeforeJSON(); !ok {
+		v := archivedadminauditevent.DefaultBeforeJSON
+		aaaec.mutation.SetBeforeJSON(v)
+	}
+	if _, ok := aaaec.mutation.AfterJSON(); !ok {
+		v := archivedadminauditevent.DefaultAfterJSON
+		aaaec.mutation.SetAfterJSON(v)
+	}
 	if _, ok := aaaec.mutation.Result(); !ok {
 		v := archivedadminauditevent.DefaultResult
 		aaaec.mutation.SetResult(v)
@@ -313,6 +349,12 @@ func (aaaec *ArchivedAdminAuditEventCreate) check() error {
 	}
 	if _, ok := aaaec.mutation.UserAgent(); !ok {
 		return &ValidationError{Name: "user_agent", err: errors.New(`ent: missing required field "ArchivedAdminAuditEvent.user_agent"`)}
+	}
+	if _, ok := aaaec.mutation.BeforeJSON(); !ok {
+		return &ValidationError{Name: "before_json", err: errors.New(`ent: missing required field "ArchivedAdminAuditEvent.before_json"`)}
+	}
+	if _, ok := aaaec.mutation.AfterJSON(); !ok {
+		return &ValidationError{Name: "after_json", err: errors.New(`ent: missing required field "ArchivedAdminAuditEvent.after_json"`)}
 	}
 	if _, ok := aaaec.mutation.Result(); !ok {
 		return &ValidationError{Name: "result", err: errors.New(`ent: missing required field "ArchivedAdminAuditEvent.result"`)}
@@ -400,6 +442,14 @@ func (aaaec *ArchivedAdminAuditEventCreate) createSpec() (*ArchivedAdminAuditEve
 	if value, ok := aaaec.mutation.UserAgent(); ok {
 		_spec.SetField(archivedadminauditevent.FieldUserAgent, field.TypeString, value)
 		_node.UserAgent = value
+	}
+	if value, ok := aaaec.mutation.BeforeJSON(); ok {
+		_spec.SetField(archivedadminauditevent.FieldBeforeJSON, field.TypeString, value)
+		_node.BeforeJSON = value
+	}
+	if value, ok := aaaec.mutation.AfterJSON(); ok {
+		_spec.SetField(archivedadminauditevent.FieldAfterJSON, field.TypeString, value)
+		_node.AfterJSON = value
 	}
 	if value, ok := aaaec.mutation.Result(); ok {
 		_spec.SetField(archivedadminauditevent.FieldResult, field.TypeString, value)

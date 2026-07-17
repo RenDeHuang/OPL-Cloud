@@ -302,6 +302,8 @@ func adminAuditEventFields() []ent.Field {
 		field.String("resource_id").Default(""),
 		field.String("ip_address").Default(""),
 		field.String("user_agent").Default(""),
+		field.String("before_json").Default(""),
+		field.String("after_json").Default(""),
 		field.String("result").Default(""),
 	)
 }

@@ -39,6 +39,8 @@ var (
 		{Name: "resource_id", Type: field.TypeString, Default: ""},
 		{Name: "ip_address", Type: field.TypeString, Default: ""},
 		{Name: "user_agent", Type: field.TypeString, Default: ""},
+		{Name: "before_json", Type: field.TypeString, Default: ""},
+		{Name: "after_json", Type: field.TypeString, Default: ""},
 		{Name: "result", Type: field.TypeString, Default: ""},
 	}
 	// ControlPlaneAdminAuditEventsTable holds the schema information for the "control_plane_admin_audit_events" table.
@@ -77,6 +79,8 @@ var (
 		{Name: "resource_id", Type: field.TypeString, Default: ""},
 		{Name: "ip_address", Type: field.TypeString, Default: ""},
 		{Name: "user_agent", Type: field.TypeString, Default: ""},
+		{Name: "before_json", Type: field.TypeString, Default: ""},
+		{Name: "after_json", Type: field.TypeString, Default: ""},
 		{Name: "result", Type: field.TypeString, Default: ""},
 	}
 	// ControlPlaneArchivedAdminAuditEventsTable holds the schema information for the "control_plane_archived_admin_audit_events" table.

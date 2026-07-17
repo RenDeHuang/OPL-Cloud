@@ -17,6 +17,7 @@ var (
 	errWorkspaceReactivationRequired = errors.New("workspace_reactivation_required")
 	errWorkspaceRenewalCASConflict   = errors.New("workspace_renewal_cas_conflict")
 	errInvalidWorkspaceRenewalPatch  = errors.New("invalid_workspace_renewal_patch")
+	errInvalidWorkspaceRenewalAudit  = errors.New("invalid_workspace_renewal_audit")
 )
 
 type workspaceRenewalIntentCAS struct {
@@ -28,6 +29,7 @@ type workspaceRenewalIntentCAS struct {
 	ExpectedOperationsVersion string
 	WorkspacePatch            workspaceRenewalIntentPatch
 	CommandOperation          map[string]any
+	AuditEvent                map[string]any
 }
 
 type workspaceRenewalIntentPatch struct {
@@ -43,6 +45,50 @@ type workspaceAutoRenewCommandResult struct {
 
 func workspaceAutoRenewCommandID(workspaceID, key string) string {
 	return "workspace-renewal-intent-" + stableID(workspaceID, key)[:18]
+}
+
+func workspaceAutoRenewAuditID(commandID string) string {
+	return "audit-" + stableID("workspace.auto_renew", commandID)[:12]
+}
+
+func workspaceRenewalIntentState(autoRenew bool, authorizedBy, authorizedAt string) map[string]any {
+	return map[string]any{"autoRenew": autoRenew, "authorizedBy": authorizedBy, "authorizedAt": authorizedAt}
+}
+
+func bindWorkspaceAutoRenewAudit(command, event map[string]any) map[string]any {
+	event = cloneMap(event)
+	event["id"] = workspaceAutoRenewAuditID(stringValue(command["id"]))
+	event["createdAt"] = command["createdAt"]
+	return event
+}
+
+func validateWorkspaceRenewalIntentAudit(update workspaceRenewalIntentCAS, current map[string]any) error {
+	event, command := update.AuditEvent, update.CommandOperation
+	before := workspaceRenewalIntentState(current["autoRenew"] == true, stringValue(current["authorizedBy"]), stringValue(current["authorizedAt"]))
+	after := workspaceRenewalIntentState(update.WorkspacePatch.AutoRenew, update.WorkspacePatch.AuthorizedBy, update.WorkspacePatch.AuthorizedAt)
+	if stringValue(event["id"]) != workspaceAutoRenewAuditID(stringValue(command["id"])) ||
+		stringValue(event["createdAt"]) == "" || stringValue(event["createdAt"]) != stringValue(command["createdAt"]) ||
+		stringValue(event["actorUserId"]) != update.OwnerUserID || stringValue(event["actorRole"]) != "owner" ||
+		stringValue(event["actorAccountId"]) != update.AccountID || stringValue(event["targetAccountId"]) != update.AccountID ||
+		stringValue(event["action"]) != "workspace.auto_renew" || stringValue(event["resourceKind"]) != "workspace" ||
+		stringValue(event["resourceId"]) != update.WorkspaceID || stringValue(event["result"]) != "succeeded" ||
+		string(mustJSON(event["before"])) != string(mustJSON(before)) || string(mustJSON(event["after"])) != string(mustJSON(after)) {
+		return errInvalidWorkspaceRenewalAudit
+	}
+	return nil
+}
+
+func workspaceRenewalIntentAuditIdentityMatches(current, desired map[string]any) bool {
+	identity := func(row map[string]any) map[string]any {
+		return map[string]any{
+			"id": stringValue(row["id"]), "actorUserId": stringValue(row["actorUserId"]), "actorRole": stringValue(row["actorRole"]),
+			"actorAccountId": stringValue(row["actorAccountId"]), "targetAccountId": stringValue(row["targetAccountId"]),
+			"action": stringValue(row["action"]), "resourceKind": stringValue(row["resourceKind"]), "resourceId": stringValue(row["resourceId"]),
+			"ipAddress": stringValue(row["ipAddress"]), "userAgent": stringValue(row["userAgent"]), "result": stringValue(row["result"]),
+			"createdAt": stringValue(row["createdAt"]), "before": row["before"], "after": row["after"],
+		}
+	}
+	return string(mustJSON(identity(current))) == string(mustJSON(identity(desired)))
 }
 
 func workspaceAutoRenewRequestHash(workspaceID string, autoRenew bool) string {

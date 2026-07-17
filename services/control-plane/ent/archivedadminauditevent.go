@@ -39,6 +39,10 @@ type ArchivedAdminAuditEvent struct {
 	IPAddress string `json:"ip_address,omitempty"`
 	// UserAgent holds the value of the "user_agent" field.
 	UserAgent string `json:"user_agent,omitempty"`
+	// BeforeJSON holds the value of the "before_json" field.
+	BeforeJSON string `json:"before_json,omitempty"`
+	// AfterJSON holds the value of the "after_json" field.
+	AfterJSON string `json:"after_json,omitempty"`
 	// Result holds the value of the "result" field.
 	Result       string `json:"result,omitempty"`
 	selectValues sql.SelectValues
@@ -49,7 +53,7 @@ func (*ArchivedAdminAuditEvent) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case archivedadminauditevent.FieldID, archivedadminauditevent.FieldActorUserID, archivedadminauditevent.FieldActorRole, archivedadminauditevent.FieldActorAccountID, archivedadminauditevent.FieldTargetAccountID, archivedadminauditevent.FieldAction, archivedadminauditevent.FieldResourceKind, archivedadminauditevent.FieldResourceID, archivedadminauditevent.FieldIPAddress, archivedadminauditevent.FieldUserAgent, archivedadminauditevent.FieldResult:
+		case archivedadminauditevent.FieldID, archivedadminauditevent.FieldActorUserID, archivedadminauditevent.FieldActorRole, archivedadminauditevent.FieldActorAccountID, archivedadminauditevent.FieldTargetAccountID, archivedadminauditevent.FieldAction, archivedadminauditevent.FieldResourceKind, archivedadminauditevent.FieldResourceID, archivedadminauditevent.FieldIPAddress, archivedadminauditevent.FieldUserAgent, archivedadminauditevent.FieldBeforeJSON, archivedadminauditevent.FieldAfterJSON, archivedadminauditevent.FieldResult:
 			values[i] = new(sql.NullString)
 		case archivedadminauditevent.FieldCreatedAt, archivedadminauditevent.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -140,6 +144,18 @@ func (aaae *ArchivedAdminAuditEvent) assignValues(columns []string, values []any
 			} else if value.Valid {
 				aaae.UserAgent = value.String
 			}
+		case archivedadminauditevent.FieldBeforeJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field before_json", values[i])
+			} else if value.Valid {
+				aaae.BeforeJSON = value.String
+			}
+		case archivedadminauditevent.FieldAfterJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field after_json", values[i])
+			} else if value.Valid {
+				aaae.AfterJSON = value.String
+			}
 		case archivedadminauditevent.FieldResult:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field result", values[i])
@@ -214,6 +230,12 @@ func (aaae *ArchivedAdminAuditEvent) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("user_agent=")
 	builder.WriteString(aaae.UserAgent)
+	builder.WriteString(", ")
+	builder.WriteString("before_json=")
+	builder.WriteString(aaae.BeforeJSON)
+	builder.WriteString(", ")
+	builder.WriteString("after_json=")
+	builder.WriteString(aaae.AfterJSON)
 	builder.WriteString(", ")
 	builder.WriteString("result=")
 	builder.WriteString(aaae.Result)

@@ -35,6 +35,10 @@ const (
 	FieldIPAddress = "ip_address"
 	// FieldUserAgent holds the string denoting the user_agent field in the database.
 	FieldUserAgent = "user_agent"
+	// FieldBeforeJSON holds the string denoting the before_json field in the database.
+	FieldBeforeJSON = "before_json"
+	// FieldAfterJSON holds the string denoting the after_json field in the database.
+	FieldAfterJSON = "after_json"
 	// FieldResult holds the string denoting the result field in the database.
 	FieldResult = "result"
 	// Table holds the table name of the adminauditevent in the database.
@@ -55,6 +59,8 @@ var Columns = []string{
 	FieldResourceID,
 	FieldIPAddress,
 	FieldUserAgent,
+	FieldBeforeJSON,
+	FieldAfterJSON,
 	FieldResult,
 }
 
@@ -93,6 +99,10 @@ var (
 	DefaultIPAddress string
 	// DefaultUserAgent holds the default value on creation for the "user_agent" field.
 	DefaultUserAgent string
+	// DefaultBeforeJSON holds the default value on creation for the "before_json" field.
+	DefaultBeforeJSON string
+	// DefaultAfterJSON holds the default value on creation for the "after_json" field.
+	DefaultAfterJSON string
 	// DefaultResult holds the default value on creation for the "result" field.
 	DefaultResult string
 	// IDValidator is a validator for the "id" field. It is called by the builders before save.
@@ -160,6 +170,16 @@ func ByIPAddress(opts ...sql.OrderTermOption) OrderOption {
 // ByUserAgent orders the results by the user_agent field.
 func ByUserAgent(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUserAgent, opts...).ToFunc()
+}
+
+// ByBeforeJSON orders the results by the before_json field.
+func ByBeforeJSON(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBeforeJSON, opts...).ToFunc()
+}
+
+// ByAfterJSON orders the results by the after_json field.
+func ByAfterJSON(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAfterJSON, opts...).ToFunc()
 }
 
 // ByResult orders the results by the result field.

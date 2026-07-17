@@ -80,6 +80,61 @@ func TestApplyPrimaryWorkspaceAddsClassificationAndFailsClosedOnDuplicates(t *te
 	}
 }
 
+func TestAutoRenewAuditMigrationUpgradesExistingTablesIdempotently(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("CONTROL_PLANE_TEST_DATABASE_URL"))
+	if databaseURL == "" {
+		t.Fatal("CONTROL_PLANE_TEST_DATABASE_URL is required for PostgreSQL tests")
+	}
+	admin, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	if err := admin.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("control_plane_auto_renew_audit_migration_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`) })
+	db, err := sql.Open("postgres", postgresURLWithSearchPath(databaseURL, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE control_plane_admin_audit_events (id TEXT PRIMARY KEY);
+		CREATE TABLE control_plane_archived_admin_audit_events (id TEXT PRIMARY KEY);
+		INSERT INTO control_plane_admin_audit_events VALUES ('audit-active');
+		INSERT INTO control_plane_archived_admin_audit_events VALUES ('audit-archived');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	driver := entsql.OpenDB(dialect.Postgres, db)
+	for range 2 {
+		if err := ApplyAutoRenewAudit(context.Background(), driver); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, table := range []string{"control_plane_admin_audit_events", "control_plane_archived_admin_audit_events"} {
+		var before, after string
+		if err := db.QueryRow(`SELECT before_json, after_json FROM `+table+` LIMIT 1`).Scan(&before, &after); err != nil {
+			t.Fatal(err)
+		}
+		if before != "" || after != "" {
+			t.Fatalf("%s existing row snapshots = %q/%q", table, before, after)
+		}
+		var columns int
+		if err := db.QueryRow(`SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name IN ('before_json', 'after_json')`, table).Scan(&columns); err != nil {
+			t.Fatal(err)
+		}
+		if columns != 2 {
+			t.Fatalf("%s snapshot column count=%d", table, columns)
+		}
+	}
+}
+
 func TestWorkspaceRenewalMigrationPostgres(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("CONTROL_PLANE_TEST_DATABASE_URL"))
 	if databaseURL == "" {

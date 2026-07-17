@@ -119,6 +119,16 @@ func UserAgent(v string) predicate.ArchivedAdminAuditEvent {
 	return predicate.ArchivedAdminAuditEvent(sql.FieldEQ(FieldUserAgent, v))
 }
 
+// BeforeJSON applies equality check predicate on the "before_json" field. It's identical to BeforeJSONEQ.
+func BeforeJSON(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldEQ(FieldBeforeJSON, v))
+}
+
+// AfterJSON applies equality check predicate on the "after_json" field. It's identical to AfterJSONEQ.
+func AfterJSON(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldEQ(FieldAfterJSON, v))
+}
+
 // Result applies equality check predicate on the "result" field. It's identical to ResultEQ.
 func Result(v string) predicate.ArchivedAdminAuditEvent {
 	return predicate.ArchivedAdminAuditEvent(sql.FieldEQ(FieldResult, v))
@@ -787,6 +797,136 @@ func UserAgentEqualFold(v string) predicate.ArchivedAdminAuditEvent {
 // UserAgentContainsFold applies the ContainsFold predicate on the "user_agent" field.
 func UserAgentContainsFold(v string) predicate.ArchivedAdminAuditEvent {
 	return predicate.ArchivedAdminAuditEvent(sql.FieldContainsFold(FieldUserAgent, v))
+}
+
+// BeforeJSONEQ applies the EQ predicate on the "before_json" field.
+func BeforeJSONEQ(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldEQ(FieldBeforeJSON, v))
+}
+
+// BeforeJSONNEQ applies the NEQ predicate on the "before_json" field.
+func BeforeJSONNEQ(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldNEQ(FieldBeforeJSON, v))
+}
+
+// BeforeJSONIn applies the In predicate on the "before_json" field.
+func BeforeJSONIn(vs ...string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldIn(FieldBeforeJSON, vs...))
+}
+
+// BeforeJSONNotIn applies the NotIn predicate on the "before_json" field.
+func BeforeJSONNotIn(vs ...string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldNotIn(FieldBeforeJSON, vs...))
+}
+
+// BeforeJSONGT applies the GT predicate on the "before_json" field.
+func BeforeJSONGT(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldGT(FieldBeforeJSON, v))
+}
+
+// BeforeJSONGTE applies the GTE predicate on the "before_json" field.
+func BeforeJSONGTE(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldGTE(FieldBeforeJSON, v))
+}
+
+// BeforeJSONLT applies the LT predicate on the "before_json" field.
+func BeforeJSONLT(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldLT(FieldBeforeJSON, v))
+}
+
+// BeforeJSONLTE applies the LTE predicate on the "before_json" field.
+func BeforeJSONLTE(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldLTE(FieldBeforeJSON, v))
+}
+
+// BeforeJSONContains applies the Contains predicate on the "before_json" field.
+func BeforeJSONContains(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldContains(FieldBeforeJSON, v))
+}
+
+// BeforeJSONHasPrefix applies the HasPrefix predicate on the "before_json" field.
+func BeforeJSONHasPrefix(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldHasPrefix(FieldBeforeJSON, v))
+}
+
+// BeforeJSONHasSuffix applies the HasSuffix predicate on the "before_json" field.
+func BeforeJSONHasSuffix(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldHasSuffix(FieldBeforeJSON, v))
+}
+
+// BeforeJSONEqualFold applies the EqualFold predicate on the "before_json" field.
+func BeforeJSONEqualFold(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldEqualFold(FieldBeforeJSON, v))
+}
+
+// BeforeJSONContainsFold applies the ContainsFold predicate on the "before_json" field.
+func BeforeJSONContainsFold(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldContainsFold(FieldBeforeJSON, v))
+}
+
+// AfterJSONEQ applies the EQ predicate on the "after_json" field.
+func AfterJSONEQ(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldEQ(FieldAfterJSON, v))
+}
+
+// AfterJSONNEQ applies the NEQ predicate on the "after_json" field.
+func AfterJSONNEQ(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldNEQ(FieldAfterJSON, v))
+}
+
+// AfterJSONIn applies the In predicate on the "after_json" field.
+func AfterJSONIn(vs ...string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldIn(FieldAfterJSON, vs...))
+}
+
+// AfterJSONNotIn applies the NotIn predicate on the "after_json" field.
+func AfterJSONNotIn(vs ...string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldNotIn(FieldAfterJSON, vs...))
+}
+
+// AfterJSONGT applies the GT predicate on the "after_json" field.
+func AfterJSONGT(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldGT(FieldAfterJSON, v))
+}
+
+// AfterJSONGTE applies the GTE predicate on the "after_json" field.
+func AfterJSONGTE(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldGTE(FieldAfterJSON, v))
+}
+
+// AfterJSONLT applies the LT predicate on the "after_json" field.
+func AfterJSONLT(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldLT(FieldAfterJSON, v))
+}
+
+// AfterJSONLTE applies the LTE predicate on the "after_json" field.
+func AfterJSONLTE(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldLTE(FieldAfterJSON, v))
+}
+
+// AfterJSONContains applies the Contains predicate on the "after_json" field.
+func AfterJSONContains(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldContains(FieldAfterJSON, v))
+}
+
+// AfterJSONHasPrefix applies the HasPrefix predicate on the "after_json" field.
+func AfterJSONHasPrefix(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldHasPrefix(FieldAfterJSON, v))
+}
+
+// AfterJSONHasSuffix applies the HasSuffix predicate on the "after_json" field.
+func AfterJSONHasSuffix(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldHasSuffix(FieldAfterJSON, v))
+}
+
+// AfterJSONEqualFold applies the EqualFold predicate on the "after_json" field.
+func AfterJSONEqualFold(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldEqualFold(FieldAfterJSON, v))
+}
+
+// AfterJSONContainsFold applies the ContainsFold predicate on the "after_json" field.
+func AfterJSONContainsFold(v string) predicate.ArchivedAdminAuditEvent {
+	return predicate.ArchivedAdminAuditEvent(sql.FieldContainsFold(FieldAfterJSON, v))
 }
 
 // ResultEQ applies the EQ predicate on the "result" field.

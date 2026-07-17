@@ -845,6 +845,7 @@ func TestWorkspaceRenewalIntentMergesConcurrentRuntimeAndCredentialState(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
+			attachWorkspaceRenewalIntentAuditForTest(&intent, workspace)
 
 			concurrent := cloneMap(recordByID(workspaces, stringValue(workspace["id"])))
 			concurrent["runtimeId"] = "runtime-concurrent"
@@ -871,6 +872,131 @@ func TestWorkspaceRenewalIntentMergesConcurrentRuntimeAndCredentialState(t *test
 			}
 			if got["autoRenew"] != false || stringValue(got["authorizedBy"]) != "" || stringValue(got["authorizedAt"]) != "" {
 				t.Fatalf("renewal intent patch not applied: %#v", got)
+			}
+		})
+	}
+}
+
+func TestWorkspaceRenewalIntentCommitsWorkspaceCommandAndAudit(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := storeCase.new(t)
+			workspace := canonicalWorkspaceRenewalRow(false)
+			mustStore(t, store.SaveWorkspace(ctx, workspace))
+			operations, err := store.ListRuntimeOperations(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent, _, err := planWorkspaceRenewalIntent(workspace, map[string]any{"id": workspace["ownerUserId"]}, operations, true, "atomic-audit", time.Date(2026, 8, 16, 1, 3, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			attachWorkspaceRenewalIntentAuditForTest(&intent, workspace)
+			mustStore(t, store.ApplyWorkspaceRenewalIntent(ctx, intent))
+
+			workspaces, workspaceErr := store.ListWorkspaces(ctx, stringValue(workspace["accountId"]))
+			operations, operationErr := store.ListRuntimeOperations(ctx)
+			audits, auditErr := store.ListAuditEvents(ctx, stringValue(workspace["accountId"]))
+			if workspaceErr != nil || operationErr != nil || auditErr != nil {
+				t.Fatalf("load atomic renewal facts: workspace=%v command=%v audit=%v", workspaceErr, operationErr, auditErr)
+			}
+			if len(workspaces) != 1 || workspaces[0]["autoRenew"] != true || len(operations) != 1 || stringValue(operations[0]["id"]) != stringValue(intent.CommandOperation["id"]) {
+				t.Fatalf("renewal Workspace/command not committed: workspaces=%#v operations=%#v", workspaces, operations)
+			}
+			if len(audits) != 1 || mapField(audits[0], "after")["autoRenew"] != true {
+				t.Fatalf("renewal audit not committed with patch: audits=%#v", audits)
+			}
+		})
+	}
+}
+
+func TestPostgresWorkspaceRenewalIntentAuditInsertFailureRollsBackWorkspaceAndCommand(t *testing.T) {
+	ctx := context.Background()
+	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
+	workspace := canonicalWorkspaceRenewalRow(false)
+	mustStore(t, store.SaveWorkspace(ctx, workspace))
+	operations, err := store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, _, err := planWorkspaceRenewalIntent(workspace, map[string]any{"id": workspace["ownerUserId"]}, operations, true, "audit-insert-failure", time.Date(2026, 8, 16, 1, 3, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachWorkspaceRenewalIntentAuditForTest(&intent, workspace)
+	if _, err := db.Exec(`
+		CREATE FUNCTION reject_workspace_auto_renew_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.action = 'workspace.auto_renew' THEN
+				RAISE EXCEPTION 'forced workspace auto-renew audit failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER reject_workspace_auto_renew_audit
+		BEFORE INSERT ON control_plane_admin_audit_events
+		FOR EACH ROW EXECUTE FUNCTION reject_workspace_auto_renew_audit();
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ApplyWorkspaceRenewalIntent(ctx, intent); err == nil {
+		t.Fatal("renewal intent succeeded despite forced audit insert failure")
+	}
+	workspaces, workspaceErr := store.ListWorkspaces(ctx, stringValue(workspace["accountId"]))
+	operations, operationErr := store.ListRuntimeOperations(ctx)
+	audits, auditErr := store.ListAuditEvents(ctx, stringValue(workspace["accountId"]))
+	if workspaceErr != nil || operationErr != nil || auditErr != nil {
+		t.Fatalf("load rolled back renewal facts: workspace=%v command=%v audit=%v", workspaceErr, operationErr, auditErr)
+	}
+	if len(workspaces) != 1 || workspaces[0]["autoRenew"] != false || len(operations) != 0 || len(audits) != 0 {
+		t.Fatalf("audit failure left partial renewal facts: workspaces=%#v operations=%#v audits=%#v", workspaces, operations, audits)
+	}
+}
+
+func TestWorkspaceRenewalIntentRejectsConflictingDeterministicAuditIdentity(t *testing.T) {
+	for _, storeCase := range []struct {
+		name string
+		new  func(*testing.T) controlPlaneTableStore
+	}{
+		{name: "memory", new: func(*testing.T) controlPlaneTableStore { return newMemoryTableStore() }},
+		{name: "postgres", new: newPostgresWorkspaceRenewalStore},
+	} {
+		t.Run(storeCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := storeCase.new(t)
+			workspace := canonicalWorkspaceRenewalRow(false)
+			mustStore(t, store.SaveWorkspace(ctx, workspace))
+			operations, err := store.ListRuntimeOperations(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent, _, err := planWorkspaceRenewalIntent(workspace, map[string]any{"id": workspace["ownerUserId"]}, operations, true, "conflicting-audit", time.Date(2026, 8, 16, 1, 3, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			attachWorkspaceRenewalIntentAuditForTest(&intent, workspace)
+			conflicting := cloneMap(intent.AuditEvent)
+			conflicting["userAgent"] = "different-request"
+			mustStore(t, store.SaveAuditEvent(ctx, conflicting))
+
+			if err := store.ApplyWorkspaceRenewalIntent(ctx, intent); !errors.Is(err, errIdempotencyConflict) {
+				t.Fatalf("conflicting audit error=%v, want %v", err, errIdempotencyConflict)
+			}
+			workspaces, workspaceErr := store.ListWorkspaces(ctx, stringValue(workspace["accountId"]))
+			operations, operationErr := store.ListRuntimeOperations(ctx)
+			audits, auditErr := store.ListAuditEvents(ctx, stringValue(workspace["accountId"]))
+			if workspaceErr != nil || operationErr != nil || auditErr != nil {
+				t.Fatalf("load conflict facts: workspace=%v command=%v audit=%v", workspaceErr, operationErr, auditErr)
+			}
+			if len(workspaces) != 1 || workspaces[0]["autoRenew"] != false || len(operations) != 0 || len(audits) != 1 || audits[0]["userAgent"] != "different-request" {
+				t.Fatalf("audit conflict changed facts: workspaces=%#v operations=%#v audits=%#v", workspaces, operations, audits)
 			}
 		})
 	}
@@ -909,6 +1035,7 @@ func TestPostgresWorkspaceRenewalPersistAndOwnerDisableUseSameLockOrder(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	attachWorkspaceRenewalIntentAuditForTest(&intent, workspace)
 	operation.Status, operation.Phase, operation.EntitlementCommitted = "verifying", "receipt", true
 	persist := workspaceRenewalPersistCAS{
 		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: workspaceRenewalOperationRow(operation),

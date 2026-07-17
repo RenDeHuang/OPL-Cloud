@@ -730,6 +730,8 @@ type AdminAuditEventMutation struct {
 	resource_id       *string
 	ip_address        *string
 	user_agent        *string
+	before_json       *string
+	after_json        *string
 	result            *string
 	clearedFields     map[string]struct{}
 	done              bool
@@ -1237,6 +1239,78 @@ func (m *AdminAuditEventMutation) ResetUserAgent() {
 	m.user_agent = nil
 }
 
+// SetBeforeJSON sets the "before_json" field.
+func (m *AdminAuditEventMutation) SetBeforeJSON(s string) {
+	m.before_json = &s
+}
+
+// BeforeJSON returns the value of the "before_json" field in the mutation.
+func (m *AdminAuditEventMutation) BeforeJSON() (r string, exists bool) {
+	v := m.before_json
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBeforeJSON returns the old "before_json" field's value of the AdminAuditEvent entity.
+// If the AdminAuditEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AdminAuditEventMutation) OldBeforeJSON(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBeforeJSON is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBeforeJSON requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBeforeJSON: %w", err)
+	}
+	return oldValue.BeforeJSON, nil
+}
+
+// ResetBeforeJSON resets all changes to the "before_json" field.
+func (m *AdminAuditEventMutation) ResetBeforeJSON() {
+	m.before_json = nil
+}
+
+// SetAfterJSON sets the "after_json" field.
+func (m *AdminAuditEventMutation) SetAfterJSON(s string) {
+	m.after_json = &s
+}
+
+// AfterJSON returns the value of the "after_json" field in the mutation.
+func (m *AdminAuditEventMutation) AfterJSON() (r string, exists bool) {
+	v := m.after_json
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAfterJSON returns the old "after_json" field's value of the AdminAuditEvent entity.
+// If the AdminAuditEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AdminAuditEventMutation) OldAfterJSON(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAfterJSON is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAfterJSON requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAfterJSON: %w", err)
+	}
+	return oldValue.AfterJSON, nil
+}
+
+// ResetAfterJSON resets all changes to the "after_json" field.
+func (m *AdminAuditEventMutation) ResetAfterJSON() {
+	m.after_json = nil
+}
+
 // SetResult sets the "result" field.
 func (m *AdminAuditEventMutation) SetResult(s string) {
 	m.result = &s
@@ -1307,7 +1381,7 @@ func (m *AdminAuditEventMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AdminAuditEventMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 14)
 	if m.created_at != nil {
 		fields = append(fields, adminauditevent.FieldCreatedAt)
 	}
@@ -1340,6 +1414,12 @@ func (m *AdminAuditEventMutation) Fields() []string {
 	}
 	if m.user_agent != nil {
 		fields = append(fields, adminauditevent.FieldUserAgent)
+	}
+	if m.before_json != nil {
+		fields = append(fields, adminauditevent.FieldBeforeJSON)
+	}
+	if m.after_json != nil {
+		fields = append(fields, adminauditevent.FieldAfterJSON)
 	}
 	if m.result != nil {
 		fields = append(fields, adminauditevent.FieldResult)
@@ -1374,6 +1454,10 @@ func (m *AdminAuditEventMutation) Field(name string) (ent.Value, bool) {
 		return m.IPAddress()
 	case adminauditevent.FieldUserAgent:
 		return m.UserAgent()
+	case adminauditevent.FieldBeforeJSON:
+		return m.BeforeJSON()
+	case adminauditevent.FieldAfterJSON:
+		return m.AfterJSON()
 	case adminauditevent.FieldResult:
 		return m.Result()
 	}
@@ -1407,6 +1491,10 @@ func (m *AdminAuditEventMutation) OldField(ctx context.Context, name string) (en
 		return m.OldIPAddress(ctx)
 	case adminauditevent.FieldUserAgent:
 		return m.OldUserAgent(ctx)
+	case adminauditevent.FieldBeforeJSON:
+		return m.OldBeforeJSON(ctx)
+	case adminauditevent.FieldAfterJSON:
+		return m.OldAfterJSON(ctx)
 	case adminauditevent.FieldResult:
 		return m.OldResult(ctx)
 	}
@@ -1494,6 +1582,20 @@ func (m *AdminAuditEventMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUserAgent(v)
+		return nil
+	case adminauditevent.FieldBeforeJSON:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBeforeJSON(v)
+		return nil
+	case adminauditevent.FieldAfterJSON:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAfterJSON(v)
 		return nil
 	case adminauditevent.FieldResult:
 		v, ok := value.(string)
@@ -1583,6 +1685,12 @@ func (m *AdminAuditEventMutation) ResetField(name string) error {
 		return nil
 	case adminauditevent.FieldUserAgent:
 		m.ResetUserAgent()
+		return nil
+	case adminauditevent.FieldBeforeJSON:
+		m.ResetBeforeJSON()
+		return nil
+	case adminauditevent.FieldAfterJSON:
+		m.ResetAfterJSON()
 		return nil
 	case adminauditevent.FieldResult:
 		m.ResetResult()
@@ -2294,6 +2402,8 @@ type ArchivedAdminAuditEventMutation struct {
 	resource_id       *string
 	ip_address        *string
 	user_agent        *string
+	before_json       *string
+	after_json        *string
 	result            *string
 	clearedFields     map[string]struct{}
 	done              bool
@@ -2801,6 +2911,78 @@ func (m *ArchivedAdminAuditEventMutation) ResetUserAgent() {
 	m.user_agent = nil
 }
 
+// SetBeforeJSON sets the "before_json" field.
+func (m *ArchivedAdminAuditEventMutation) SetBeforeJSON(s string) {
+	m.before_json = &s
+}
+
+// BeforeJSON returns the value of the "before_json" field in the mutation.
+func (m *ArchivedAdminAuditEventMutation) BeforeJSON() (r string, exists bool) {
+	v := m.before_json
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBeforeJSON returns the old "before_json" field's value of the ArchivedAdminAuditEvent entity.
+// If the ArchivedAdminAuditEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ArchivedAdminAuditEventMutation) OldBeforeJSON(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBeforeJSON is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBeforeJSON requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBeforeJSON: %w", err)
+	}
+	return oldValue.BeforeJSON, nil
+}
+
+// ResetBeforeJSON resets all changes to the "before_json" field.
+func (m *ArchivedAdminAuditEventMutation) ResetBeforeJSON() {
+	m.before_json = nil
+}
+
+// SetAfterJSON sets the "after_json" field.
+func (m *ArchivedAdminAuditEventMutation) SetAfterJSON(s string) {
+	m.after_json = &s
+}
+
+// AfterJSON returns the value of the "after_json" field in the mutation.
+func (m *ArchivedAdminAuditEventMutation) AfterJSON() (r string, exists bool) {
+	v := m.after_json
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAfterJSON returns the old "after_json" field's value of the ArchivedAdminAuditEvent entity.
+// If the ArchivedAdminAuditEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ArchivedAdminAuditEventMutation) OldAfterJSON(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAfterJSON is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAfterJSON requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAfterJSON: %w", err)
+	}
+	return oldValue.AfterJSON, nil
+}
+
+// ResetAfterJSON resets all changes to the "after_json" field.
+func (m *ArchivedAdminAuditEventMutation) ResetAfterJSON() {
+	m.after_json = nil
+}
+
 // SetResult sets the "result" field.
 func (m *ArchivedAdminAuditEventMutation) SetResult(s string) {
 	m.result = &s
@@ -2871,7 +3053,7 @@ func (m *ArchivedAdminAuditEventMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ArchivedAdminAuditEventMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 14)
 	if m.created_at != nil {
 		fields = append(fields, archivedadminauditevent.FieldCreatedAt)
 	}
@@ -2904,6 +3086,12 @@ func (m *ArchivedAdminAuditEventMutation) Fields() []string {
 	}
 	if m.user_agent != nil {
 		fields = append(fields, archivedadminauditevent.FieldUserAgent)
+	}
+	if m.before_json != nil {
+		fields = append(fields, archivedadminauditevent.FieldBeforeJSON)
+	}
+	if m.after_json != nil {
+		fields = append(fields, archivedadminauditevent.FieldAfterJSON)
 	}
 	if m.result != nil {
 		fields = append(fields, archivedadminauditevent.FieldResult)
@@ -2938,6 +3126,10 @@ func (m *ArchivedAdminAuditEventMutation) Field(name string) (ent.Value, bool) {
 		return m.IPAddress()
 	case archivedadminauditevent.FieldUserAgent:
 		return m.UserAgent()
+	case archivedadminauditevent.FieldBeforeJSON:
+		return m.BeforeJSON()
+	case archivedadminauditevent.FieldAfterJSON:
+		return m.AfterJSON()
 	case archivedadminauditevent.FieldResult:
 		return m.Result()
 	}
@@ -2971,6 +3163,10 @@ func (m *ArchivedAdminAuditEventMutation) OldField(ctx context.Context, name str
 		return m.OldIPAddress(ctx)
 	case archivedadminauditevent.FieldUserAgent:
 		return m.OldUserAgent(ctx)
+	case archivedadminauditevent.FieldBeforeJSON:
+		return m.OldBeforeJSON(ctx)
+	case archivedadminauditevent.FieldAfterJSON:
+		return m.OldAfterJSON(ctx)
 	case archivedadminauditevent.FieldResult:
 		return m.OldResult(ctx)
 	}
@@ -3058,6 +3254,20 @@ func (m *ArchivedAdminAuditEventMutation) SetField(name string, value ent.Value)
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUserAgent(v)
+		return nil
+	case archivedadminauditevent.FieldBeforeJSON:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBeforeJSON(v)
+		return nil
+	case archivedadminauditevent.FieldAfterJSON:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAfterJSON(v)
 		return nil
 	case archivedadminauditevent.FieldResult:
 		v, ok := value.(string)
@@ -3147,6 +3357,12 @@ func (m *ArchivedAdminAuditEventMutation) ResetField(name string) error {
 		return nil
 	case archivedadminauditevent.FieldUserAgent:
 		m.ResetUserAgent()
+		return nil
+	case archivedadminauditevent.FieldBeforeJSON:
+		m.ResetBeforeJSON()
+		return nil
+	case archivedadminauditevent.FieldAfterJSON:
+		m.ResetAfterJSON()
 		return nil
 	case archivedadminauditevent.FieldResult:
 		m.ResetResult()

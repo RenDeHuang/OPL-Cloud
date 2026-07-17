@@ -174,6 +174,34 @@ func (aaeu *AdminAuditEventUpdate) SetNillableUserAgent(s *string) *AdminAuditEv
 	return aaeu
 }
 
+// SetBeforeJSON sets the "before_json" field.
+func (aaeu *AdminAuditEventUpdate) SetBeforeJSON(s string) *AdminAuditEventUpdate {
+	aaeu.mutation.SetBeforeJSON(s)
+	return aaeu
+}
+
+// SetNillableBeforeJSON sets the "before_json" field if the given value is not nil.
+func (aaeu *AdminAuditEventUpdate) SetNillableBeforeJSON(s *string) *AdminAuditEventUpdate {
+	if s != nil {
+		aaeu.SetBeforeJSON(*s)
+	}
+	return aaeu
+}
+
+// SetAfterJSON sets the "after_json" field.
+func (aaeu *AdminAuditEventUpdate) SetAfterJSON(s string) *AdminAuditEventUpdate {
+	aaeu.mutation.SetAfterJSON(s)
+	return aaeu
+}
+
+// SetNillableAfterJSON sets the "after_json" field if the given value is not nil.
+func (aaeu *AdminAuditEventUpdate) SetNillableAfterJSON(s *string) *AdminAuditEventUpdate {
+	if s != nil {
+		aaeu.SetAfterJSON(*s)
+	}
+	return aaeu
+}
+
 // SetResult sets the "result" field.
 func (aaeu *AdminAuditEventUpdate) SetResult(s string) *AdminAuditEventUpdate {
 	aaeu.mutation.SetResult(s)
@@ -270,6 +298,12 @@ func (aaeu *AdminAuditEventUpdate) sqlSave(ctx context.Context) (n int, err erro
 	}
 	if value, ok := aaeu.mutation.UserAgent(); ok {
 		_spec.SetField(adminauditevent.FieldUserAgent, field.TypeString, value)
+	}
+	if value, ok := aaeu.mutation.BeforeJSON(); ok {
+		_spec.SetField(adminauditevent.FieldBeforeJSON, field.TypeString, value)
+	}
+	if value, ok := aaeu.mutation.AfterJSON(); ok {
+		_spec.SetField(adminauditevent.FieldAfterJSON, field.TypeString, value)
 	}
 	if value, ok := aaeu.mutation.Result(); ok {
 		_spec.SetField(adminauditevent.FieldResult, field.TypeString, value)
@@ -440,6 +474,34 @@ func (aaeuo *AdminAuditEventUpdateOne) SetNillableUserAgent(s *string) *AdminAud
 	return aaeuo
 }
 
+// SetBeforeJSON sets the "before_json" field.
+func (aaeuo *AdminAuditEventUpdateOne) SetBeforeJSON(s string) *AdminAuditEventUpdateOne {
+	aaeuo.mutation.SetBeforeJSON(s)
+	return aaeuo
+}
+
+// SetNillableBeforeJSON sets the "before_json" field if the given value is not nil.
+func (aaeuo *AdminAuditEventUpdateOne) SetNillableBeforeJSON(s *string) *AdminAuditEventUpdateOne {
+	if s != nil {
+		aaeuo.SetBeforeJSON(*s)
+	}
+	return aaeuo
+}
+
+// SetAfterJSON sets the "after_json" field.
+func (aaeuo *AdminAuditEventUpdateOne) SetAfterJSON(s string) *AdminAuditEventUpdateOne {
+	aaeuo.mutation.SetAfterJSON(s)
+	return aaeuo
+}
+
+// SetNillableAfterJSON sets the "after_json" field if the given value is not nil.
+func (aaeuo *AdminAuditEventUpdateOne) SetNillableAfterJSON(s *string) *AdminAuditEventUpdateOne {
+	if s != nil {
+		aaeuo.SetAfterJSON(*s)
+	}
+	return aaeuo
+}
+
 // SetResult sets the "result" field.
 func (aaeuo *AdminAuditEventUpdateOne) SetResult(s string) *AdminAuditEventUpdateOne {
 	aaeuo.mutation.SetResult(s)
@@ -566,6 +628,12 @@ func (aaeuo *AdminAuditEventUpdateOne) sqlSave(ctx context.Context) (_node *Admi
 	}
 	if value, ok := aaeuo.mutation.UserAgent(); ok {
 		_spec.SetField(adminauditevent.FieldUserAgent, field.TypeString, value)
+	}
+	if value, ok := aaeuo.mutation.BeforeJSON(); ok {
+		_spec.SetField(adminauditevent.FieldBeforeJSON, field.TypeString, value)
+	}
+	if value, ok := aaeuo.mutation.AfterJSON(); ok {
+		_spec.SetField(adminauditevent.FieldAfterJSON, field.TypeString, value)
 	}
 	if value, ok := aaeuo.mutation.Result(); ok {
 		_spec.SetField(adminauditevent.FieldResult, field.TypeString, value)

@@ -101,6 +101,9 @@ func NewPostgresEntStateStore(databaseURL string) (StateStore, error) {
 		{Version: "202607170002_workspace_renewal", Run: func(ctx context.Context) error {
 			return controlplanemigrations.ApplyWorkspaceRenewal(ctx, driver)
 		}},
+		{Version: "202607170003_workspace_auto_renew_audit", Run: func(ctx context.Context) error {
+			return controlplanemigrations.ApplyAutoRenewAudit(ctx, driver)
+		}},
 	}); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -321,6 +324,10 @@ func billingJSONField(entityField, setter string) entRecordField {
 
 func workspaceBillingJSONField(entityField, setter string) entRecordField {
 	return entRecordField{EntityField: entityField, Setter: setter, Kind: "workspace_billing_json"}
+}
+
+func jsonTextField(entityField, setter string, path ...string) entRecordField {
+	return entRecordField{EntityField: entityField, Setter: setter, Path: path, Kind: "json_text"}
 }
 
 type workspaceBillingState struct {
@@ -875,6 +882,8 @@ var (
 		textField("ResourceID", "SetResourceID", "resourceId"),
 		textField("IPAddress", "SetIPAddress", "ipAddress"),
 		textField("UserAgent", "SetUserAgent", "userAgent"),
+		jsonTextField("BeforeJSON", "SetBeforeJSON", "before"),
+		jsonTextField("AfterJSON", "SetAfterJSON", "after"),
 		textField("Result", "SetResult", "result"),
 	}
 	supportEntFields = []entRecordField{
@@ -1782,6 +1791,20 @@ func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context,
 	if err := validateWorkspaceBillingState(desired); err != nil {
 		return err
 	}
+	if err := validateWorkspaceRenewalIntentAudit(update, current); err != nil {
+		return err
+	}
+	auditID := stringValue(update.AuditEvent["id"])
+	auditExists := false
+	auditEntity, err := client.AdminAuditEvent.Query().Where(adminauditevent.IDEQ(auditID), lockRowForUpdate).Only(ctx)
+	if err == nil {
+		auditExists = true
+		if !workspaceRenewalIntentAuditIdentityMatches(recordFromEnt(auditEntity, auditEntFields), update.AuditEvent) {
+			return errIdempotencyConflict
+		}
+	} else if !controlplaneent.IsNotFound(err) {
+		return err
+	}
 	builder := client.Workspace.UpdateOneID(update.WorkspaceID)
 	setRecordFieldsWithEmptyText(builder, desired, workspaceEntFields, true)
 	if err := execCreate(ctx, builder); err != nil {
@@ -1793,6 +1816,15 @@ func (s *postgresEntStateStore) ApplyWorkspaceRenewalIntent(ctx context.Context,
 			return errWorkspaceRenewalCASConflict
 		}
 		return err
+	}
+	if !auditExists {
+		audit := controlPlaneRecord(update.AuditEvent)
+		if err := saveRecord(ctx, auditID, audit, client.AdminAuditEvent.Create(), auditEntFields); err != nil {
+			if controlplaneent.IsConstraintError(err) {
+				return errIdempotencyConflict
+			}
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -2561,6 +2593,13 @@ func recordFromEnt(entity any, fields []entRecordField) controlPlaneRecord {
 			workspaceBillingJSON = stringValue(raw)
 			continue
 		}
+		if field.Kind == "json_text" {
+			var decoded any
+			if text := stringValue(raw); text != "" && json.Unmarshal([]byte(text), &decoded) == nil {
+				setPath(row, field.Path, decoded)
+			}
+			continue
+		}
 		if isZero(raw) && field.Kind != "bool" {
 			continue
 		}
@@ -2635,6 +2674,10 @@ func setRecordFieldsWithEmptyText(builder any, row controlPlaneRecord, fields []
 		case "workspace_billing_json":
 			if encoded, err := encodeWorkspaceBillingState(row); err == nil {
 				callSetter(builder, field.Setter, encoded)
+			}
+		case "json_text":
+			if encoded, err := json.Marshal(value); err == nil {
+				callSetter(builder, field.Setter, string(encoded))
 			}
 		default:
 			text := stringValue(value)

@@ -22,6 +22,9 @@ var invitedAccountIdentity string
 //go:embed 202607170002_workspace_renewal.sql
 var workspaceRenewal string
 
+//go:embed 202607170003_workspace_auto_renew_audit.sql
+var autoRenewAudit string
+
 func Apply(ctx context.Context, driver dialect.Driver) error {
 	return driver.Exec(ctx, monthlyHardCut, []any{}, nil)
 }
@@ -56,4 +59,8 @@ func ApplyWorkspaceRenewal(ctx context.Context, driver dialect.Driver) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func ApplyAutoRenewAudit(ctx context.Context, driver dialect.Driver) error {
+	return driver.Exec(ctx, autoRenewAudit, []any{}, nil)
 }
