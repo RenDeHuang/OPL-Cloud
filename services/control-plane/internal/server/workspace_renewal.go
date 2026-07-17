@@ -328,25 +328,21 @@ func workspaceRenewalClaimIdentityMatches(current, desired map[string]any) bool 
 }
 
 func terminalWorkspaceRenewal(operation workspaceRenewalOperation) bool {
-	if operation.ExpiryStatus == "expired_unpaid" {
-		return operation.ExpiryPhase == "complete" && operation.Status == "expired_unpaid"
-	}
-	if operation.Status == "expired_unpaid" {
-		return operation.Phase == "complete"
-	}
+	financialTerminal := false
 	switch operation.Status {
 	case "active", "cancelled", "manual_review":
-		return true
+		financialTerminal = true
 	case "refunded":
-		return operation.Phase == "complete"
-	default:
-		return false
+		financialTerminal = operation.Phase == "complete"
+	case "expired_unpaid":
+		financialTerminal = operation.ExpiryStatus == "expired_unpaid" || operation.Phase == "complete"
 	}
+	return financialTerminal && (operation.ExpiryStatus == "" || operation.ExpiryPhase == "complete")
 }
 
-func workspaceRenewalEvidencePending(operation workspaceRenewalOperation) bool {
-	return operation.Status == "refund_pending" || operation.Status == "refunded" && operation.Phase == "refund_receipt" ||
-		operation.Status == "verifying" && operation.Phase == "receipt" && operation.EntitlementCommitted
+func workspaceRenewalFinancialRecoveryRequired(operation workspaceRenewalOperation) bool {
+	return operation.Status == "manual_review" || operation.ChargeAttempted || operation.ChargeConfirmation != nil ||
+		operation.RefundAttempted || operation.RefundConfirmation != nil || operation.EntitlementCommitted
 }
 
 func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, service *controlplane.Service, workspaceID string, now time.Time) error {
@@ -403,7 +399,7 @@ func (app *controlPlaneServer) processWorkspaceRenewal(ctx context.Context, serv
 			operation.PriorStatus, operation.PriorErrorCode = operation.Status, operation.ErrorCode
 			operation.ExpiryStatus, operation.ExpiryPhase = "expired_unpaid", "suspend"
 			operation.ExpiryPeriodStart, operation.ExpiryPaidThrough = stringValue(workspace["periodStart"]), stringValue(workspace["paidThrough"])
-			if !workspaceRenewalEvidencePending(operation) {
+			if !workspaceRenewalFinancialRecoveryRequired(operation) {
 				operation.Status = "expired_unpaid"
 			}
 		}
@@ -469,6 +465,9 @@ func releaseWorkspaceRenewalLease(operation *workspaceRenewalOperation) {
 }
 
 func (app *controlPlaneServer) retryWorkspaceRenewal(ctx context.Context, operation *workspaceRenewalOperation, code string, cause error) error {
+	if cause == nil {
+		cause = errors.New(code)
+	}
 	operation.ErrorCode = code
 	releaseWorkspaceRenewalLease(operation)
 	return errors.Join(cause, app.persistWorkspaceRenewal(ctx, operation, nil))
@@ -1031,20 +1030,40 @@ func (app *controlPlaneServer) progressWorkspaceRenewalExpiry(ctx context.Contex
 			}
 		case "compute":
 			compute, ok := app.getCompute(operation.ComputeID)
-			if ok && !isTerminalResourceStatus(stringValue(compute["status"])) {
-				result, err := service.CleanupMonthlyCompute(ctx, operation.ComputeID, operation.ID+":compute-expire")
-				if err != nil {
-					operation.ExpiryErrorCode = "workspace_expiry_compute_cleanup_pending"
-					releaseWorkspaceRenewalLease(operation)
-					return errors.Join(err, app.persistWorkspaceRenewal(ctx, operation, nil))
+			status := stringValue(compute["status"])
+			if ok && !isTerminalResourceStatus(status) && status != "stopped" {
+				if status != "destroying" {
+					result, err := service.CleanupMonthlyCompute(ctx, operation.ComputeID, operation.ID+":compute-expire")
+					if err != nil {
+						operation.ExpiryErrorCode = "workspace_expiry_compute_cleanup_pending"
+						releaseWorkspaceRenewalLease(operation)
+						return errors.Join(err, app.persistWorkspaceRenewal(ctx, operation, nil))
+					}
+					if result.ID != operation.ComputeID {
+						operation.ExpiryErrorCode = "workspace_expiry_compute_identity_mismatch"
+						releaseWorkspaceRenewalLease(operation)
+						return errors.Join(errors.New(operation.ExpiryErrorCode), app.persistWorkspaceRenewal(ctx, operation, nil))
+					}
 				}
-				if result.ID != operation.ComputeID {
+				result, err := service.SyncMonthlyCompute(ctx, operation.ComputeID)
+				if err == nil && result.ID != operation.ComputeID {
 					operation.ExpiryErrorCode = "workspace_expiry_compute_identity_mismatch"
 					releaseWorkspaceRenewalLease(operation)
 					return errors.Join(errors.New(operation.ExpiryErrorCode), app.persistWorkspaceRenewal(ctx, operation, nil))
 				}
-				compute = mergeMaps(compute, structToMap(result))
-				compute["billingStatus"], compute["autoRenew"] = "stopped", false
+				if err == nil {
+					compute = mergeMaps(compute, structToMap(result))
+				} else {
+					compute["status"] = "destroying"
+				}
+				compute["autoRenew"] = false
+				if err != nil || !isTerminalResourceStatus(stringValue(compute["status"])) && stringValue(compute["status"]) != "stopped" {
+					compute["status"] = firstNonEmpty(stringValue(compute["status"]), "destroying")
+					operation.ExpiryErrorCode = "workspace_expiry_compute_cleanup_pending"
+					releaseWorkspaceRenewalLease(operation)
+					return errors.Join(err, app.tables.SaveCompute(ctx, compute), errors.New(operation.ExpiryErrorCode), app.persistWorkspaceRenewal(ctx, operation, nil))
+				}
+				compute["billingStatus"] = "stopped"
 				if err := app.tables.SaveCompute(ctx, compute); err != nil {
 					return err
 				}
@@ -1065,10 +1084,6 @@ func (app *controlPlaneServer) recordWorkspaceRenewalExpiryReceipt(ctx context.C
 		return nil
 	}
 	if operation.ExpiryPhase == "complete" {
-		if operation.Status != "expired_unpaid" && !workspaceRenewalEvidencePending(*operation) {
-			operation.Status = "expired_unpaid"
-			return app.persistWorkspaceRenewal(ctx, operation, nil)
-		}
 		return nil
 	}
 	if operation.ExpiryPhase != "receipt" {
@@ -1104,9 +1119,6 @@ func (app *controlPlaneServer) recordWorkspaceRenewalExpiryReceipt(ctx context.C
 	operation.ExpiryReceiptID, operation.ExpiryPhase, operation.ExpiryErrorCode = receipt.ReceiptID, "complete", ""
 	if operation.ReceiptID == "" {
 		operation.ReceiptID = receipt.ReceiptID
-	}
-	if !workspaceRenewalEvidencePending(*operation) {
-		operation.Status = "expired_unpaid"
 	}
 	releaseWorkspaceRenewalLease(operation)
 	return app.persistWorkspaceRenewal(ctx, operation, nil)

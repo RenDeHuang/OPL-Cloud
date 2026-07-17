@@ -813,6 +813,126 @@ func TestPersistWorkspaceRenewalMergesPatchWithoutOverwritingConcurrentWorkspace
 	}
 }
 
+func TestPostgresWorkspaceRenewalPersistAndOwnerDisableUseSameLockOrder(t *testing.T) {
+	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
+	ctx := context.Background()
+	workspace := canonicalWorkspaceRenewalRow(true)
+	workspace["state"], workspace["status"] = "running", "running"
+	mustStore(t, store.SaveWorkspace(ctx, workspace))
+	operation, err := newWorkspaceRenewalOperation(workspace, time.Date(2026, 8, 16, 1, 2, 3, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations, err := store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := workspaceRenewalClaimCAS{
+		WorkspaceID: operation.WorkspaceID, AccountID: operation.AccountID, ExpectedPaidThrough: operation.PaidThrough, ExpectedAutoRenew: true,
+		ExpectedOperationsVersion: runtimeOperationsVersion(operations, operation.WorkspaceID), DesiredOperation: workspaceRenewalOperationRow(operation),
+	}
+	mustStore(t, store.ClaimWorkspaceRenewal(ctx, claim))
+	operation.PersistedResult = stringValue(claim.DesiredOperation["result"])
+
+	workspaces, err := store.ListWorkspaces(ctx, operation.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations, err = store.ListRuntimeOperations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, _, err := planWorkspaceRenewalIntent(recordByID(workspaces, operation.WorkspaceID), map[string]any{"id": operation.OwnerUserID}, operations, false, "owner-disable-during-persist", time.Date(2026, 8, 16, 1, 3, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Status, operation.Phase, operation.EntitlementCommitted = "verifying", "receipt", true
+	persist := workspaceRenewalPersistCAS{
+		OperationID: operation.ID, ExpectedOperationResult: operation.PersistedResult, DesiredOperation: workspaceRenewalOperationRow(operation),
+		WorkspaceID: operation.WorkspaceID, ExpectedWorkspacePaidThrough: operation.PaidThrough,
+		WorkspacePatch: map[string]any{
+			"periodStart": operation.PaidThrough, "paidThrough": operation.RenewedThrough,
+			"nextRenewalAt": "2026-09-16T01:02:03Z", "renewalStatus": "active",
+		},
+	}
+
+	var schema string
+	if err := db.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	newStore := func(applicationName string) *postgresEntStateStore {
+		stateStore, err := NewPostgresEntStateStore(controlPlaneTestPostgresURL(t, "postgres", schema) + " application_name=" + applicationName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := stateStore.(*postgresEntStateStore)
+		t.Cleanup(func() { _ = result.client.Close() })
+		return result
+	}
+	ownerStore := newStore("task7_owner_disable")
+	workerStore := newStore("task7_worker_persist")
+
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback() }()
+	var lockedID string
+	if err := blocker.QueryRowContext(ctx, `SELECT id FROM control_plane_workspaces WHERE id = $1 FOR UPDATE`, operation.WorkspaceID).Scan(&lockedID); err != nil {
+		t.Fatal(err)
+	}
+	type transactionResult struct {
+		name string
+		err  error
+	}
+	results := make(chan transactionResult, 2)
+	go func() {
+		results <- transactionResult{name: "owner", err: ownerStore.ApplyWorkspaceRenewalIntent(ctx, intent)}
+	}()
+	waitForPostgresApplicationLock(t, db, "task7_owner_disable")
+	go func() {
+		results <- transactionResult{name: "worker", err: workerStore.PersistWorkspaceRenewal(ctx, persist)}
+	}()
+	waitForPostgresApplicationLock(t, db, "task7_worker_persist")
+	if err := blocker.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		select {
+		case result := <-results:
+			if result.err != nil {
+				t.Fatalf("%s transaction failed: %v", result.name, result.err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("owner disable and renewal persist did not converge")
+		}
+	}
+	workspaces, err = store.ListWorkspaces(ctx, operation.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := recordByID(workspaces, operation.WorkspaceID)
+	if got["autoRenew"] != false || stringValue(got["authorizedBy"]) != "" || stringValue(got["authorizedAt"]) != "" || got["paidThrough"] != operation.RenewedThrough {
+		t.Fatalf("concurrent owner intent and entitlement patch did not merge: %#v", got)
+	}
+}
+
+func waitForPostgresApplicationLock(t *testing.T, db *sql.DB, applicationName string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting bool
+		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = $1 AND wait_event_type = 'Lock')`, applicationName).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("PostgreSQL transaction %s did not wait on the expected row lock", applicationName)
+}
+
 func TestPostgresSaveWorkspaceUpdatesWithoutDeleteInsert(t *testing.T) {
 	store, db := newPostgresWorkspaceRenewalStoreWithDB(t)
 	ctx := context.Background()

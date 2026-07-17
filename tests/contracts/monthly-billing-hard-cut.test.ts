@@ -110,7 +110,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	assert.deepEqual(evidence.reconciliationReportV1.exceptions.resourceTypes, ["compute", "storage", "workspace"]);
 	assert.deepEqual(evidence.reconciliationReportV1.workspaceRenewalAuthority, billing.reconciliationPolicy.workspaceRenewalAuthority);
 	const management = await readJson("opl-cloud-management-contract.json");
-	assert.equal(management.schemaVersion, 5);
+	assert.equal(management.schemaVersion, 6);
 	assert.equal(
 		management.operatorNotifications.source,
 		"Derived from current Workspace renewal operations plus current compute and storage compatibility state; no alert table or second source of truth."
@@ -121,6 +121,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 		"ledger_receipt_pending",
 		"cleanup_failed",
 		"insufficient",
+		"renewal_retry_pending",
 		"renewal_receipt_pending",
 		"refund_receipt_pending",
 		"expiry_receipt_pending",
@@ -128,7 +129,7 @@ test("receipt contract exposes monthly product behavior only", async () => {
 	]);
 	assert.deepEqual(management.operatorNotifications.severity, {
 		error: ["manual_review", "cleanup_failed", "cleanup_pending"],
-		warning: ["past_due", "ledger_receipt_pending", "insufficient", "renewal_receipt_pending", "refund_receipt_pending", "expiry_receipt_pending"]
+		warning: ["past_due", "ledger_receipt_pending", "insufficient", "renewal_retry_pending", "renewal_receipt_pending", "refund_receipt_pending", "expiry_receipt_pending"]
 	});
 	assert.match(management.operatorNotifications.logPolicy, /hashed resource references/);
 	assert.match(management.operatorNotifications.logPolicy, /account IDs, resource IDs, redeem codes, balances, credentials, and provider errors are excluded/);

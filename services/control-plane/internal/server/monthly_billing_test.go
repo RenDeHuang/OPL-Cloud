@@ -186,28 +186,33 @@ func (s *monthlySub2API) Refund(_ context.Context, input clients.Sub2APIRefundIn
 
 type monthlyFabric struct {
 	fakeFabricClient
-	events           *[]string
-	createErr        error
-	cleanupErr       error
-	cleanupStatus    string
-	syncErr          error
-	preflightResult  *clients.MonthlyPreflight
-	preflightErr     error
-	preflightInputs  []clients.MonthlyPreflightInput
-	mutateCompute    func(*clients.ComputeAllocation)
-	mutateStorage    func(*clients.StorageVolume)
-	computeIDs       []string
-	storageIDs       []string
-	storageInputs    []clients.StorageVolumeInput
-	computeSync      clients.ComputeAllocation
-	storageSync      clients.StorageVolume
-	computeRenew     clients.ComputeAllocation
-	storageRenew     clients.StorageVolume
-	computeRenewErr  error
-	storageRenewErr  error
-	computeRenewKeys []string
-	storageRenewKeys []string
-	afterRuntime     func()
+	events                *[]string
+	createErr             error
+	cleanupErr            error
+	cleanupStatus         string
+	computeCleanupStatus  string
+	computeCleanupSync    clients.ComputeAllocation
+	computeCleanupSyncErr error
+	computeCleanupStarted bool
+	syncErr               error
+	preflightResult       *clients.MonthlyPreflight
+	preflightResults      []clients.MonthlyPreflight
+	preflightErr          error
+	preflightInputs       []clients.MonthlyPreflightInput
+	mutateCompute         func(*clients.ComputeAllocation)
+	mutateStorage         func(*clients.StorageVolume)
+	computeIDs            []string
+	storageIDs            []string
+	storageInputs         []clients.StorageVolumeInput
+	computeSync           clients.ComputeAllocation
+	storageSync           clients.StorageVolume
+	computeRenew          clients.ComputeAllocation
+	storageRenew          clients.StorageVolume
+	computeRenewErr       error
+	storageRenewErr       error
+	computeRenewKeys      []string
+	storageRenewKeys      []string
+	afterRuntime          func()
 }
 
 func (f *monthlyFabric) CreateWorkspaceRuntime(ctx context.Context, input clients.WorkspaceRuntimeInput, key string) (clients.WorkspaceRuntime, error) {
@@ -230,6 +235,11 @@ type provisioningMonthlyFabric struct {
 func (f *monthlyFabric) MonthlyPreflight(_ context.Context, input clients.MonthlyPreflightInput) (clients.MonthlyPreflight, error) {
 	*f.events = append(*f.events, "fabric.monthly.preflight")
 	f.preflightInputs = append(f.preflightInputs, input)
+	if len(f.preflightResults) > 0 {
+		result := f.preflightResults[0]
+		f.preflightResults = f.preflightResults[1:]
+		return result, f.preflightErr
+	}
 	if f.preflightResult != nil {
 		return *f.preflightResult, f.preflightErr
 	}
@@ -303,6 +313,19 @@ func (f *monthlyFabric) CreateStorageVolume(_ context.Context, input clients.Sto
 
 func (f *monthlyFabric) SyncComputeAllocation(_ context.Context, id string) (clients.ComputeAllocation, error) {
 	*f.events = append(*f.events, "fabric.compute.sync")
+	if f.computeCleanupStarted {
+		result := f.computeCleanupSync
+		if result.ID == "" {
+			result.ID = id
+		}
+		if result.Status == "" {
+			result.Status = "destroyed"
+		}
+		if isTerminalResourceStatus(result.Status) || result.Status == "stopped" {
+			f.computeCleanupStarted = false
+		}
+		return result, f.computeCleanupSyncErr
+	}
 	result := f.computeSync
 	if result.ID == "" {
 		result.ID = id
@@ -344,7 +367,8 @@ func (f *monthlyFabric) DestroyComputeAllocation(_ context.Context, id, _ string
 	if f.cleanupErr != nil {
 		return clients.ComputeAllocation{ID: id}, f.cleanupErr
 	}
-	return clients.ComputeAllocation{ID: id, Status: "destroyed"}, nil
+	f.computeCleanupStarted = true
+	return clients.ComputeAllocation{ID: id, Status: firstNonEmpty(f.computeCleanupStatus, "destroyed")}, nil
 }
 
 func (f *monthlyFabric) DestroyStorageVolume(_ context.Context, id, _ string) (clients.StorageVolume, error) {

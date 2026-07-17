@@ -1864,6 +1864,26 @@ func (s *postgresEntStateStore) PersistWorkspaceRenewal(ctx context.Context, upd
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
+	var mergedWorkspace map[string]any
+	if update.WorkspacePatch != nil {
+		if update.WorkspaceID == "" || update.ExpectedWorkspacePaidThrough == "" || update.WorkspaceID != stringValue(update.DesiredOperation["workspaceId"]) {
+			return errWorkspaceRenewalCASConflict
+		}
+		entity, err := client.Workspace.Query().Where(workspace.IDEQ(update.WorkspaceID), lockRowForUpdate).Only(ctx)
+		if err != nil {
+			return err
+		}
+		currentWorkspace := recordFromEnt(entity, workspaceEntFields)
+		if stringValue(currentWorkspace["paidThrough"]) != update.ExpectedWorkspacePaidThrough {
+			return errWorkspaceRenewalCASConflict
+		}
+		mergedWorkspace, err = mergeWorkspaceRenewalPatch(currentWorkspace, update.WorkspacePatch)
+		if err != nil {
+			return err
+		}
+	} else if update.WorkspaceID != "" || update.ExpectedWorkspacePaidThrough != "" {
+		return errInvalidWorkspaceRenewalPatch
+	}
 	entity, err := client.RuntimeOperation.Query().Where(runtimeoperation.IDEQ(update.OperationID), lockRowForUpdate).Only(ctx)
 	if err != nil {
 		if controlplaneent.IsNotFound(err) {
@@ -1876,29 +1896,15 @@ func (s *postgresEntStateStore) PersistWorkspaceRenewal(ctx context.Context, upd
 		stringValue(current["action"]) != stringValue(update.DesiredOperation["action"]) {
 		return errWorkspaceRenewalCASConflict
 	}
-	if update.WorkspacePatch != nil {
-		if update.WorkspaceID == "" || update.ExpectedWorkspacePaidThrough == "" || update.WorkspaceID != stringValue(current["workspaceId"]) {
+	if mergedWorkspace != nil {
+		if update.WorkspaceID != stringValue(current["workspaceId"]) {
 			return errWorkspaceRenewalCASConflict
-		}
-		entity, err := client.Workspace.Query().Where(workspace.IDEQ(update.WorkspaceID), lockRowForUpdate).Only(ctx)
-		if err != nil {
-			return err
-		}
-		currentWorkspace := recordFromEnt(entity, workspaceEntFields)
-		if stringValue(currentWorkspace["paidThrough"]) != update.ExpectedWorkspacePaidThrough {
-			return errWorkspaceRenewalCASConflict
-		}
-		merged, err := mergeWorkspaceRenewalPatch(currentWorkspace, update.WorkspacePatch)
-		if err != nil {
-			return err
 		}
 		builder := client.Workspace.UpdateOneID(update.WorkspaceID)
-		setRecordFieldsWithEmptyText(builder, merged, workspaceEntFields, true)
+		setRecordFieldsWithEmptyText(builder, mergedWorkspace, workspaceEntFields, true)
 		if err := execCreate(ctx, builder); err != nil {
 			return err
 		}
-	} else if update.WorkspaceID != "" || update.ExpectedWorkspacePaidThrough != "" {
-		return errInvalidWorkspaceRenewalPatch
 	}
 	builder := client.RuntimeOperation.UpdateOneID(update.OperationID)
 	setRecordFieldsWithEmptyText(builder, update.DesiredOperation, runtimeOpEntFields, true)

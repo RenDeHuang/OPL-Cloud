@@ -58,6 +58,7 @@ func TestOperatorSummaryIncludesWorkspaceRenewalAlerts(t *testing.T) {
 		{name: "refund receipt", status: "refunded", phase: "refund_receipt", errorCode: "ledger_refund_receipt_pending", wantCode: "refund_receipt_pending"},
 		{name: "expiry receipt", status: "expired_unpaid", phase: "expiry_receipt", errorCode: "ledger_expiry_receipt_pending", wantCode: "expiry_receipt_pending"},
 		{name: "cleanup", status: "expired_unpaid", phase: "expire_compute", errorCode: "workspace_expiry_compute_cleanup_pending", wantCode: "cleanup_pending"},
+		{name: "retry pending", status: "claimed", phase: "preflight_compute", errorCode: "fabric_compute_preflight_failed", wantCode: "renewal_retry_pending"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,6 +98,25 @@ func TestOperatorSummaryKeepsFinancialAndExpiryAlerts(t *testing.T) {
 	}
 	if notifications["total"] != 2 || !codes["refund_receipt_pending"] || !codes["cleanup_pending"] {
 		t.Fatalf("dual notifications=%#v", notifications)
+	}
+}
+
+func TestOperatorSummaryKeepsManualReviewAndExpiryAlerts(t *testing.T) {
+	fixture := newWorkspaceRenewalWorkerFixture(t, nil)
+	workspace := fixture.workspace
+	operation := workspaceRenewalOperation{
+		ID: "workspace-renewal-review-expiry-alert", Status: "manual_review", CreatedAt: "2026-07-17T00:00:00Z", RequestHash: "review-expiry-alert-request",
+		Phase: "provider_compute", AccountID: stringValue(workspace["accountId"]), WorkspaceID: stringValue(workspace["id"]), PaidThrough: "2026-08-17T00:00:00Z",
+		ErrorCode: "fabric_compute_renewal_unconfirmed", ExpiryStatus: "expired_unpaid", ExpiryPhase: "compute", ExpiryErrorCode: "workspace_expiry_compute_cleanup_pending",
+	}
+	mustStore(t, fixture.app.tables.SaveRuntimeOperation(context.Background(), workspaceRenewalOperationRow(operation)))
+	notifications := fixture.app.operatorSummary()["notifications"].(map[string]any)
+	codes := map[string]bool{}
+	for _, item := range notifications["recent"].([]any) {
+		codes[stringValue(item.(map[string]any)["code"])] = true
+	}
+	if notifications["total"] != 2 || !codes["manual_review"] || !codes["cleanup_pending"] {
+		t.Fatalf("manual-review expiry notifications=%#v", notifications)
 	}
 }
 

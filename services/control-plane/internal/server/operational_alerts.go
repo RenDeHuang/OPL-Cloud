@@ -9,15 +9,19 @@ import (
 
 var operationalAlertCodes = [...]string{
 	"manual_review", "past_due", "ledger_receipt_pending", "cleanup_failed",
-	"insufficient", "renewal_receipt_pending", "refund_receipt_pending", "expiry_receipt_pending", "cleanup_pending",
+	"insufficient", "renewal_retry_pending", "renewal_receipt_pending", "refund_receipt_pending", "expiry_receipt_pending", "cleanup_pending",
 }
 
 func monthlyOperationalAlertCodes(row map[string]any) []string {
 	codes := make([]string, 0, len(operationalAlertCodes))
 	status, lastError := stringValue(row["billingStatus"]), stringValue(row["lastBillingError"])
 	renewalStatus, renewalError := stringValue(row["renewalStatus"]), stringValue(row["renewalErrorCode"])
+	expiryStatus := stringValue(row["renewalExpiryStatus"])
 	expiryError := stringValue(row["renewalExpiryErrorCode"])
-	if expiryError == "" && renewalStatus == "expired_unpaid" {
+	if expiryStatus == "" && renewalStatus == "expired_unpaid" {
+		expiryStatus = renewalStatus
+	}
+	if expiryError == "" && expiryStatus == "expired_unpaid" {
 		expiryError = renewalError
 	}
 	if status == "manual_review" || renewalStatus == "manual_review" {
@@ -34,6 +38,9 @@ func monthlyOperationalAlertCodes(row map[string]any) []string {
 	}
 	if renewalStatus == "insufficient" {
 		codes = append(codes, "insufficient")
+	}
+	if renewalError == "fabric_compute_preflight_failed" || renewalError == "fabric_storage_preflight_failed" {
+		codes = append(codes, "renewal_retry_pending")
 	}
 	if strings.HasPrefix(renewalError, "ledger_receipt_") {
 		codes = append(codes, "renewal_receipt_pending")
@@ -65,7 +72,8 @@ func workspaceRenewalOperationalRows(workspaces controlPlaneRecordSet, operation
 			continue
 		}
 		paidThroughByWorkspace[operation.WorkspaceID] = operation.PaidThrough
-		rows[operation.WorkspaceID]["renewalStatus"] = firstNonEmpty(operation.ExpiryStatus, operation.Status)
+		rows[operation.WorkspaceID]["renewalStatus"] = operation.Status
+		rows[operation.WorkspaceID]["renewalExpiryStatus"] = operation.ExpiryStatus
 		rows[operation.WorkspaceID]["renewalPhase"] = operation.Phase
 		rows[operation.WorkspaceID]["renewalErrorCode"] = operation.ErrorCode
 		rows[operation.WorkspaceID]["renewalExpiryPhase"] = operation.ExpiryPhase
@@ -81,7 +89,7 @@ func operationalNotificationSummary(workspaces, computes, storages controlPlaneR
 		for _, row := range rows {
 			for _, code := range monthlyOperationalAlertCodes(row) {
 				severity := "error"
-				if code == "past_due" || code == "ledger_receipt_pending" || code == "insufficient" || code == "renewal_receipt_pending" || code == "refund_receipt_pending" || code == "expiry_receipt_pending" {
+				if code == "past_due" || code == "ledger_receipt_pending" || code == "insufficient" || code == "renewal_retry_pending" || code == "renewal_receipt_pending" || code == "refund_receipt_pending" || code == "expiry_receipt_pending" {
 					severity = "warning"
 					warningCount++
 				} else {
