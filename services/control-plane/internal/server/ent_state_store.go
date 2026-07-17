@@ -1839,7 +1839,15 @@ func (s *postgresEntStateStore) ClaimWorkspaceCreate(ctx context.Context, worksp
 	if err == nil {
 		current, currentErr := decodeWorkspaceCreateOperation(recordFromEnt(existing, runtimeOpEntFields))
 		claim, claimErr := decodeWorkspaceCreateOperation(operation)
-		if currentErr != nil || claimErr != nil || workspaceCreateClaimIdentity(current) != workspaceCreateClaimIdentity(claim) || current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID || existing.AccountID != accountID || existing.WorkspaceID != workspaceID {
+		persistedEntity, persistedErr := tx.Workspace.Query().Where(workspace.IDEQ(workspaceID), lockRowForUpdate).Only(ctx)
+		if controlplaneent.IsNotFound(persistedErr) {
+			return errPrimaryWorkspaceExists
+		}
+		if persistedErr != nil {
+			return persistedErr
+		}
+		persisted := recordFromEnt(persistedEntity, workspaceEntFields)
+		if currentErr != nil || claimErr != nil || !workspaceCreateClaimCompatible(current, claim, persisted) || existing.AccountID != accountID || existing.WorkspaceID != workspaceID {
 			return errPrimaryWorkspaceExists
 		}
 		if existing.Status != "retryable" && (existing.Status != "started" || current.LeaseExpiresAt != nil && current.LeaseExpiresAt.After(time.Now().UTC())) {

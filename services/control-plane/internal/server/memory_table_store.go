@@ -526,14 +526,14 @@ func (s *memoryTableStore) ClaimWorkspaceCreate(_ context.Context, workspace map
 		}
 		current, currentErr := decodeWorkspaceCreateOperation(existing)
 		claim, claimErr := decodeWorkspaceCreateOperation(operation)
-		if currentErr != nil || claimErr != nil || workspaceCreateClaimIdentity(current) != workspaceCreateClaimIdentity(claim) || current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID {
+		persisted := s.workspaces[stringValue(workspace["id"])]
+		if currentErr != nil || claimErr != nil || !workspaceCreateClaimCompatible(current, claim, persisted) {
 			return errPrimaryWorkspaceExists
 		}
 		status := stringValue(existing["status"])
 		if status != "retryable" && (status != "started" || current.LeaseExpiresAt != nil && current.LeaseExpiresAt.After(time.Now().UTC())) {
 			return errPrimaryWorkspaceExists
 		}
-		persisted := s.workspaces[stringValue(workspace["id"])]
 		if persisted == nil || firstNonEmpty(stringValue(persisted["accountId"]), stringValue(persisted["ownerAccountId"])) != accountID {
 			return errPrimaryWorkspaceExists
 		}

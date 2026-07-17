@@ -60,6 +60,18 @@ func workspaceCreateClaimIdentity(result workspaceCreateOperationResult) string 
 	return stableID(result.RequestHash, string(billingState))
 }
 
+func workspaceCreateClaimCompatible(current, claim workspaceCreateOperationResult, persisted map[string]any) bool {
+	if current.Workspace.ID != claim.Workspace.ID || current.Workspace.AccountID != claim.Workspace.AccountID {
+		return false
+	}
+	if workspaceCreateClaimIdentity(current) == workspaceCreateClaimIdentity(claim) {
+		return true
+	}
+	return current.AcceptedBillingState == nil && claim.AcceptedBillingState != nil && current.RequestHash == claim.RequestHash &&
+		workspaceCreateProjectionCompatible(persisted, current.Workspace, claim.AcceptedBillingState, true) &&
+		workspaceCreateProjectionCompatible(persisted, claim.Workspace, claim.AcceptedBillingState, true)
+}
+
 func decodeWorkspaceGatewaySecretOperation(operation map[string]any) (workspaceGatewaySecretOperationResult, error) {
 	var result workspaceGatewaySecretOperationResult
 	if err := json.Unmarshal([]byte(stringValue(operation["result"])), &result); err != nil || result.RequestHash == "" || result.SecretRef == "" || result.Fingerprint == "" {
