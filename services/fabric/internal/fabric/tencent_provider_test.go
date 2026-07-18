@@ -953,6 +953,23 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	})
 	assertUnready("additional NetworkPolicy allows unrestricted egress")
 	networkPolicies = networkPolicies[:1]
+	podLabels := pod["metadata"].(map[string]any)["labels"].(map[string]any)
+	podLabels["app.kubernetes.io/instance"] = "opl-compute-other"
+	assertUnready("Ready Pod NetworkPolicy selector labels drift")
+	podLabels["app.kubernetes.io/instance"] = "opl-compute-alpha"
+	podLabels["oplcloud.cn/runtime-marker"] = "live"
+	networkPolicies = append(networkPolicies, map[string]any{
+		"kind":     "NetworkPolicy",
+		"metadata": map[string]any{"name": "live-pod-egress-open"},
+		"spec": map[string]any{
+			"podSelector": map[string]any{"matchLabels": map[string]any{"oplcloud.cn/runtime-marker": "live"}},
+			"policyTypes": []any{"Egress"},
+			"egress":      []any{map[string]any{}},
+		},
+	})
+	assertUnready("additional NetworkPolicy selects only the actual Pod")
+	networkPolicies = networkPolicies[:1]
+	delete(podLabels, "oplcloud.cn/runtime-marker")
 	deploymentContainer := deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
 	podContainer := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
 	delete(deploymentContainer, "volumeMounts")

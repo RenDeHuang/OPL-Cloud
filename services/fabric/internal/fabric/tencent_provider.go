@@ -788,7 +788,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		{Name: "deployment_uses_retained_pvc", OK: workloadUsesPVC(deployment, pvcName)},
 		{Name: "ready_pod_uses_retained_pvc", OK: readyPodUsesPVC, Details: podDetails},
 		{Name: "service_targets_workspace", OK: selectorMatches(service, deployment)},
-		{Name: "workspace_network_policy", OK: workspaceNetworkPoliciesReady(networkPolicies, deployment)},
+		{Name: "workspace_network_policy", OK: workspaceNetworkPoliciesReady(networkPolicies, deployment, pods)},
 		{Name: "workspace_runtime_isolation", OK: workspaceRuntimeIsolationReady(deployment, pods)},
 		{Name: "service_endpoints_ready", OK: readyAddresses > 0, Details: mergeDetails(map[string]any{"readyAddresses": readyAddresses}, podDetails)},
 		{Name: "ingress_routes_workspace_gateway", OK: ingressRoutesGateway(ingress)},
@@ -1478,19 +1478,44 @@ func workspaceNetworkPolicyReady(policy map[string]any, deployment map[string]an
 	return len(port) == 2 && stringValue(port["protocol"]) == "TCP" && number(port["port"]) == 3000
 }
 
-func workspaceNetworkPoliciesReady(policies []any, deployment map[string]any) bool {
+func workspaceNetworkPoliciesReady(policies []any, deployment map[string]any, pods []any) bool {
 	deploymentName := stringValue(nested(deployment, "metadata", "name"))
-	if !workspaceNetworkPolicyReady(findK8s(policies, "NetworkPolicy", deploymentName), deployment) {
+	canonicalPolicy := findK8s(policies, "NetworkPolicy", deploymentName)
+	if !workspaceNetworkPolicyReady(canonicalPolicy, deployment) {
 		return false
 	}
-	podLabelValues, _ := nested(deployment, "spec", "template", "metadata", "labels").(map[string]any)
-	podLabels := k8slabels.Set{}
-	for key, value := range podLabelValues {
-		text, ok := value.(string)
+	podLabelValues := []any{nested(deployment, "spec", "template", "metadata", "labels")}
+	for _, item := range pods {
+		pod, ok := item.(map[string]any)
 		if !ok {
 			return false
 		}
-		podLabels[key] = text
+		podLabelValues = append(podLabelValues, nested(pod, "metadata", "labels"))
+	}
+	podLabelSets := make([]k8slabels.Set, 0, len(podLabelValues))
+	for _, value := range podLabelValues {
+		values, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		labelSet := k8slabels.Set{}
+		for key, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				return false
+			}
+			labelSet[key] = text
+		}
+		podLabelSets = append(podLabelSets, labelSet)
+	}
+	canonicalSelector, ok := networkPolicyPodSelector(canonicalPolicy)
+	if !ok {
+		return false
+	}
+	for _, podLabels := range podLabelSets {
+		if !canonicalSelector.Matches(podLabels) {
+			return false
+		}
 	}
 	for _, item := range policies {
 		policy, ok := item.(map[string]any)
@@ -1505,26 +1530,31 @@ func workspaceNetworkPoliciesReady(policies []any, deployment map[string]any) bo
 		if !hasEgress {
 			continue
 		}
-		rawSelector, err := json.Marshal(nested(policy, "spec", "podSelector"))
-		if err != nil {
+		selector, ok := networkPolicyPodSelector(policy)
+		if !ok {
 			return false
 		}
-		var labelSelector metav1.LabelSelector
-		if err := json.Unmarshal(rawSelector, &labelSelector); err != nil {
-			return false
-		}
-		selector, err := metav1.LabelSelectorAsSelector(&labelSelector)
-		if err != nil {
-			return false
-		}
-		if selector.Matches(podLabels) {
-			egress, _ := nested(policy, "spec", "egress").([]any)
-			if !bytes.Equal(mustJSON(egress), mustJSON(workspaceEgressRules())) {
+		egress, _ := nested(policy, "spec", "egress").([]any)
+		for _, podLabels := range podLabelSets {
+			if selector.Matches(podLabels) && !bytes.Equal(mustJSON(egress), mustJSON(workspaceEgressRules())) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func networkPolicyPodSelector(policy map[string]any) (k8slabels.Selector, bool) {
+	rawSelector, err := json.Marshal(nested(policy, "spec", "podSelector"))
+	if err != nil {
+		return nil, false
+	}
+	var labelSelector metav1.LabelSelector
+	if err := json.Unmarshal(rawSelector, &labelSelector); err != nil {
+		return nil, false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(&labelSelector)
+	return selector, err == nil
 }
 
 func workspaceRuntimeIsolationReady(deployment map[string]any, pods []any) bool {
