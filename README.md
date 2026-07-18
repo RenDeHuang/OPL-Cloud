@@ -8,17 +8,17 @@ deployment.
 
 ## Runtime Boundaries
 
-- **Console** is the browser UI. It calls only Control Plane product APIs.
-- **Control Plane** serves Console product commands and projections. It owns
-  auth, account-to-Sub2API mapping, monthly entitlements, Workspaces, and
-  orchestration state.
+- **Console** is the Vue browser UI. It calls only Control Plane product APIs.
+- **Control Plane** owns local sessions, the account-to-Sub2API mapping,
+  Workspace lifecycle, monthly operations, and customer-safe projections. It
+  does not own customer passwords or a second identity system.
 - **Fabric** owns CVM/CBS, attachments, runtimes, Tencent/Kubernetes calls, and
   provider facts. It does not own billing state.
 - **Ledger** owns append-only receipts, reviews, artifacts, audit evidence, and
   reconciliation reports. It is not a spendable-balance service.
-- **Sub2API at `gflabtoken.cn`** owns the only spendable USD balance, API keys,
-  model routing, and request usage. It remains an external service and source
-  repository.
+- **Sub2API** owns customer authentication, the only spendable USD wallet, API
+  keys, model routing, request usage, and balance history. It remains external
+  to this repository.
 
 ```text
 Console -> Control Plane -> Sub2API balance/charge
@@ -29,20 +29,23 @@ Console -> Control Plane -> Sub2API balance/charge
 Control Plane exposes product commands only. It has no generic Fabric, Ledger,
 or Sub2API proxy routes.
 
-## Commercial Truth
+## Invite-Only Pilot
 
-Resources are prepaid by calendar month. Display prices are fixed CNY amounts;
-charges use exact integer USD micros at `1 USD = 7 CNY`.
+The first cohort is 2-5 manually invited customer accounts. One Console User
+maps to one OPL Account and one Sub2API User/Wallet. Console and Sub2API emails
+must match after `lower(trim(email))`. Operators pre-fund the Sub2API wallet;
+there is no public registration, payment/order UI, or customer Key mutation.
 
-| Resource | Display price | Sub2API charge |
-| --- | ---: | ---: |
-| Basic compute, 2 CPU / 4 GB | CNY 350/month | 50,000,000 USD micros |
-| Pro compute, 8 CPU / 16 GB | CNY 1,500/month | 214,285,715 USD micros |
-| Basic default storage, 10 GB | CNY 18/month | 2,571,429 USD micros |
-| Pro default storage, 100 GB | CNY 180/month | 25,714,286 USD micros |
+Customer prices are fixed monthly USD facts. The browser displays server DTOs
+and never converts provider costs or derives totals.
 
-Storage must be at least 10 GB and divisible by 10 GB. Unknown compute plans and
-invalid storage sizes are rejected at both Control Plane and Fabric boundaries.
+| Workspace | Compute | Storage | Monthly total |
+| --- | ---: | ---: | ---: |
+| Basic (2 CPU / 4 GB) | USD 50.00 | USD 2.58 / 10 GB | USD 52.58 |
+| Pro (8 CPU / 16 GB) | USD 214.28 | USD 25.80 / 100 GB | USD 240.08 |
+
+Only Basic with 10 GB and Pro with 100 GB are accepted in this Pilot. The price
+version is `pilot-usd-2026-07-v1`; all charge decisions use integer USD micros.
 
 The approved launch settlement reuses the deployed Sub2API deterministic
 Redeem Code and Idempotency-Key path:
@@ -56,9 +59,8 @@ validate -> read-only prepaid capacity/price preflight -> confirm balance
 Stable operation identities make debit, provider mutation, claim, activation,
 refund, and receipt retries safe. A confirmed no-resource result permits one
 idempotent refund; a partial or ambiguous provider result enters manual review
-without refund or repurchase. The current implementation still prepares Fabric
-before debit and uses postpaid CVM; see `docs/invariants.md` for the frozen target
-and per-stage delivery gaps.
+without refund or repurchase. This debit-first PREPAID chain is code-complete;
+real Sub2API and Tencent execution evidence is still pending.
 
 ## Workspace Model
 
@@ -77,15 +79,20 @@ https://workspace.medopl.cn/w/<workspaceId>/
 ```
 
 Opening a Workspace requires the Runtime password. One account owns exactly one
-primary Workspace. A second Workspace creation returns 409; project, backup
-clone, and collaboration flows cannot bypass that limit.
+primary Workspace. A second Workspace creation returns 409. Backup, recovery,
+sync, transfer, and collaboration flows are not Pilot capabilities.
 
-Destroying compute does not delete storage. Storage deletion always requires an
-explicit destructive command.
+Workspace file bodies stay on CBS and never enter OPL PostgreSQL or Ledger. CBS
+survives ordinary Pod/CVM replacement, but OPL provides no Workspace backup or
+recovery guarantee for deletion or corruption. Ordinary expiry, release, QA,
+and rollback never delete CBS.
+
+`autoRenew` defaults off. The current API rejects enabling it, and Console must
+not expose an enable control until a real renewal is proven.
 
 ## Repository Layout
 
-- `apps/console-ui`: React Console.
+- `apps/console-ui`: Vue Console.
 - `services/control-plane`: Console API and product orchestration.
 - `services/fabric`: cloud resource and runtime owner.
 - `services/ledger`: evidence owner.
@@ -105,12 +112,13 @@ npm run build
 (cd services/ledger && go test ./...)
 ```
 
-Run the API locally with a PostgreSQL database, a Console auth seed whose users
-contain positive integer `sub2apiUserId` values, and Sub2API admin credentials:
+Run the API locally with PostgreSQL and Sub2API admin credentials. Do not set
+the retired `OPL_CONSOLE_USERS_JSON`; invited owners are created through the
+operator API and resolved by normalized email in Sub2API.
 
 ```bash
 DATABASE_URL=postgres://opl:secret@127.0.0.1:5432/opl_cloud \
-OPL_SUB2API_BASE_URL=https://gflabtoken.cn \
+OPL_SUB2API_BASE_URL=<sub2api-base-url> \
 OPL_SUB2API_ADMIN_EMAIL=<admin-email> \
 OPL_SUB2API_ADMIN_PASSWORD=<admin-password> \
 PORT=8787 npm start
@@ -136,11 +144,16 @@ The `Deploy TKE Production` workflow installs database, internal-service,
 Console auth, Sub2API, Tencent, image-pull, and Workspace secrets; renders the
 manifest; restarts Control Plane, Fabric, and Ledger; and waits for each rollout.
 
-The legacy production verifier is blocked by the launch freeze and is not a
-release gate. It charges a real monthly product and creates then deletes Tencent
-resources on every run. Its replacement must reuse the fixed prepaid
-`SA5.MEDIUM4` and 10GB CBS Verification Slot, use fake monthly settlement, and
-pay only for a dedicated test-key Gateway request.
+Basic and Pro each have a separate retained Provider Acceptance slot. Ordinary
+release verification requires both slots but runs live QA once with one Basic
+reserved account, one dedicated Key, and one model request. The code verifies
+exact-one Usage, balance delta, image IDs, receipts, stable CVM/CBS facts, and
+zero provider mutation. Provider Acceptance and this real request have not been
+run for the current candidate, so the Pilot is not production-proven.
+
+The current deploy workflow still references the retired
+`OPL_CONSOLE_USERS_JSON` secret while the Control Plane fails closed when it is
+present. That deployment cutover must be fixed and verified before production.
 
 See [docs/runtime/production-runbook.md](./docs/runtime/production-runbook.md)
 for rollout and recovery commands.

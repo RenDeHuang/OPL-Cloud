@@ -2,17 +2,19 @@
 
 ## Deployment Boundary
 
-Tencent TKE is the production runtime provider for the current OPL Console / OPL Workspace control-plane slice.
+Tencent TKE is the production runtime provider for the invite-only OPL Console
+and OPL Workspace Pilot.
 
 The deployment owns:
 
-- OPL Console control-plane pod.
+- separate Control Plane, Fabric, and Ledger Kubernetes Deployments.
+- Vue Console assets served by Control Plane.
 - ComputePool and ComputeAllocation handoff to TKE.
 - TCR image references.
 - Kubernetes Service and Ingress routing.
 - Persistent workspace storage through PVC/CBS.
 - one-person-lab-app runtime scheduling onto user-owned CVM nodes.
-- PostgreSQL control-plane persistence.
+- separate Control Plane, Fabric, and Ledger PostgreSQL schemas.
 
 ## Manifest Rules
 
@@ -34,11 +36,18 @@ Production deploy workflow must:
 - use a VPC-capable self-hosted runner for cluster access;
 - validate rendered manifests before apply;
 - install secrets without printing secret values;
-- restart and wait for the control-plane rollout;
-- leave diagnostics read-only unless the deploy job is explicitly mutating.
+- restart and wait for Control Plane, Fabric, and Ledger rollouts;
+- require both retained Basic/Pro Acceptance slots before an ordinary release;
+- run live QA once with one Basic reserved account, one dedicated Key, and one
+  model request for the entire release;
+- perform no Tencent purchase, renewal, or deletion. Provider Acceptance is a
+  separate manually approved workflow.
 
 ## Pricing Defaults
 
 Current price defaults belong in a versioned pricing contract and environment template.
 
-Tests should assert the contract and runtime consume the same versioned catalog, not that prose or workflow text contains a particular historical price snapshot.
+Customer prices come only from `opl-cloud-pricing-contract.json` and server DTOs.
+Environment values may consume the selected `priceVersion`; they cannot derive
+or override customer amounts. Tests assert the contract and runtime consume the
+same versioned catalog.

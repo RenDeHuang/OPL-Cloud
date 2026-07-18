@@ -1,5 +1,8 @@
 # Slide 6 Runtime Owner Isolation Implementation Plan
 
+> **Historical / Superseded - do not execute.** Current Pilot authority is the
+> launch freeze, source-truth contracts, and the integration plan approved in chat.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Repository policy forbids subagents for this work.
 
 **Goal:** Ensure ordinary Runtime status never returns a password and only `Workspace.ownerUserId` can reveal or rotate the Runtime password.

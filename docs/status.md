@@ -2,42 +2,42 @@
 
 ## Current Boundary
 
-Current status is a controlled CPU Workspace pilot, not public GA.
+Current status is a Fast Invite-Only Paid Pilot candidate for 2-5 customer
+accounts. It is code-complete through Task 10, but not production-proven and not
+yet saleable.
 
-Implemented:
+Code-complete and locally tested:
 
-- owner/admin login and server-side tenant isolation;
-- live-verified positive `sub2apiUserId` account mapping before user creation;
-- live Sub2API USD balance in Console;
-- Basic monthly compute purchase;
-- storage purchase in 10 GB blocks;
-- stable purchase/renewal redeem codes and recovery states;
-- renewal, auto-renew control, expiration, retained storage, and entitlement gates;
-- dedicated Tencent CVM, CBS, attachment, runtime, and Workspace URL flows;
-- Ledger billing receipts and product-scoped receipt lookup;
-- separate PostgreSQL-backed Control Plane, Fabric, and Ledger services;
-- TKE deployment workflow and a legacy production-verifier implementation.
+- one Console User to one Account to one Sub2API User/Wallet identity hard cut,
+  normalized-email verification, Sub2API password authority, and tenant Sessions;
+- granular source DTOs for Auth, Wallet, Key list/status, Usage, Usage Stats,
+  balance history, Workspace, Runtime readiness, and Ledger receipts;
+- fixed Basic `52_580_000` and Pro `240_080_000` USD-micros monthly Workspace prices;
+- one-submit durable Workspace launch with debit-before-provider recovery;
+- one Workspace-level renewal operation, while enabling `autoRenew` remains blocked;
+- PREPAID Tencent CVM/CBS request/readback, retained CBS expiry behavior, Runtime,
+  owner-only credential commands, and account-scoped Gateway Secret handling;
+- Ledger validation, receipts, reconciliation, and replay safety;
+- dual Basic/Pro Provider Acceptance code and one-request Basic release live-QA;
+- immutable Ready-Pod imageID checks, security boundaries, and grouped rollback.
 
-Not ready:
+Remaining blockers:
 
-- Pro purchase and provider evidence, although its `8c16g`, CNY 1,500 compute,
-  and CNY 180/100GB storage definition is approved;
-- debit-before-provider ordering, confirmed-absence refund, and ambiguous-result
-  manual review for monthly resource settlement;
-- prepaid Tencent CVM/CBS procurement and renewal;
-- account-owned `opl-workspace` Key projection and Fabric Secret injection;
-- immutable deployment of the verified `one-person-lab-webui:26.7.13` source digest;
-- the reusable `SA5.MEDIUM4` plus 10GB CBS Verification Slot;
-- safe refund/manual-review verification; the legacy paid verifier is blocked and is not a release gate;
-- GPU packages;
-- public self-registration or a reusable unified identity system;
-- production backup/restore, because the current TKE snapshot installation does
-  not expose the required GA `snapshot.storage.k8s.io/v1` API;
-- public GA operational evidence.
+- Task 11 truth hard cut must land, then Task 12 must integrate the clean UI commit;
+- the deploy workflow still injects retired `OPL_CONSOLE_USERS_JSON`, which the
+  Control Plane now rejects; deployment identity cutover is pending;
+- Task 13A Node, Go, four isolated PostgreSQL suites, Sentrux, and desktop/mobile
+  source-truth QA have not run on one final SHA;
+- Basic and Pro Provider Acceptance has not run and no real Tencent resource
+  evidence exists for this candidate;
+- no approved real renewal, production rollout, browser login/WebSocket, model
+  request, exact-one Usage/wallet delta, or rollback evidence exists;
+- public registration, payment/order UI, Key mutation, backup/recovery/sync/
+  transfer, HA, GPU, and multiple Workspaces are outside the Pilot.
 
-Sub2API source, deployment, API keys, routing, request usage, and balance remain
-outside this repository. Console may read the signed-in account's single active
-`opl-workspace` Key and Key DTO usage on demand, but never mirrors them.
+Workspace file bodies remain only on CBS. Platform PostgreSQL contains identity,
+operation, reference, and audit facts only; PostgreSQL recovery does not back up
+or restore Workspace files.
 
 ## Completion Gate
 
@@ -51,6 +51,7 @@ npm run build
 git diff --check
 ```
 
-Production delivery additionally requires CI, immutable image publication,
-bounded rollout status for all three services, recovery evidence, and the
-reusable verification receipt defined by `docs/invariants.md`.
+Production delivery additionally requires immutable image publication, both
+retained Acceptance slots, one approved Basic live-QA request, bounded rollout
+for all three services, source-truth readback, and the evidence defined by
+`docs/invariants.md`.

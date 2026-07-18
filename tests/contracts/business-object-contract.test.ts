@@ -17,7 +17,7 @@ test("business object contract defines the current commercial object boundary", 
   assert.deepEqual(contract.repositoryBoundaries, ["opl-console", "opl-fabric", "opl-ledger"]);
   assert.deepEqual(contract.routeKinds, ["read_model", "business_object", "external_integration"]);
   assert.ok(contract.principles.includes("Active business object contract contains only current commercial objects."));
-  assert.ok(contract.repoBoundaryRules.includes("Console owns UI, auth, route contracts, and product presentation through Control Plane APIs only."));
+  assert.ok(contract.repoBoundaryRules.includes("Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials."));
   assert.ok(contract.repoBoundaryRules.includes("Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries."));
   assert.ok(contract.repoBoundaryRules.includes("Ledger owns evidence, audit, reconciliation, and review policy boundaries."));
 });
@@ -30,9 +30,9 @@ test("business object contract contains only current OPL Cloud business facts", 
     ["Account", ["list", "detail", "read", "audit"]],
     ["User", ["list", "detail", "read", "write", "action", "audit"]],
     ["Session", ["detail", "read", "action", "audit"]],
-    ["ComputeAllocation", ["list", "detail", "read", "write", "action", "evidence"]],
-    ["StorageVolume", ["list", "detail", "read", "write", "action", "evidence"]],
-    ["StorageAttachment", ["list", "detail", "read", "write", "action", "evidence"]],
+    ["ComputeAllocation", ["list", "detail", "read", "evidence"]],
+    ["StorageVolume", ["list", "detail", "read", "evidence"]],
+    ["StorageAttachment", ["list", "detail", "read", "evidence"]],
     ["Workspace", ["list", "detail", "read", "write", "action"]],
     ["Balance", ["list", "detail", "read", "audit"]],
     ["EvidenceReceipt", ["list", "read", "evidence", "audit"]],
@@ -61,6 +61,11 @@ test("business object contract contains only current OPL Cloud business facts", 
     "User",
     "Workspace"
   ].sort());
+  for (const kind of ["ComputeAllocation", "StorageVolume", "StorageAttachment"]) {
+    assert.equal(kinds.get(kind).customerSurface, "workspace_detail_read_only");
+    assert.equal(kinds.get(kind).requiredCapabilitiesForImplemented.includes("write"), false);
+    assert.equal(kinds.get(kind).requiredCapabilitiesForImplemented.includes("action"), false);
+  }
 });
 
 test("Workspace contract is the stable URL, storage, and current runtime pointer", async () => {

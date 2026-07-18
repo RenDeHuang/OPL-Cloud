@@ -8,6 +8,16 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
+  "deliveryEvidence": {
+    "releaseVerificationCodeComplete": true,
+    "identityDeploymentCutover": "pending",
+    "productionEvidence": "pending"
+  },
+  "identityDeploymentCutover": {
+    "retiredInput": "OPL_CONSOLE_USERS_JSON",
+    "controlPlaneBehavior": "non_empty_value_fails_closed",
+    "workflowStatus": "pending_removal_before_deploy"
+  },
   "runner": [
     "self-hosted",
     "tencent-cloud",
@@ -374,6 +384,7 @@
     "reservedAccountCount": 1,
     "dedicatedKeyCount": 1,
     "modelRequestCount": 1,
+    "providerMutationCount": 0,
     "requestTimeoutMsDefault": 30000,
     "slotDescriptors": [
       {

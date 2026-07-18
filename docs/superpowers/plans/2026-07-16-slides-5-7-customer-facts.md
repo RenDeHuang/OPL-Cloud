@@ -1,5 +1,8 @@
 # Slides 5 and 7 Customer Facts Implementation Plan
 
+> **Historical / Superseded - do not execute.** Current Pilot authority is the
+> granular Console source-truth contract and the integration plan approved in chat.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Repository policy forbids subagents for this work.
 
 **Goal:** Expose complete tenant billing history plus Sub2API request usage/stats and compute an exception-only reconciliation report without copying authoritative facts.

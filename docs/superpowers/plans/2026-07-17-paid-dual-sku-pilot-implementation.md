@@ -1,5 +1,8 @@
 # Paid Dual-SKU Pilot Implementation Plan
 
+> **Historical / Superseded - do not execute.** Tasks 1-10 are retained as
+> implementation history; current Tasks 11-13 are governed by the Fast Invite-Only Pilot instructions approved in chat.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the code, security, recovery, release, and runtime-evidence gaps required to sell invited Basic and Pro Workspaces with optional Workspace-level automatic renewal.

@@ -1,5 +1,8 @@
 # Slides 4 and 8-10 Production Proof Implementation Plan
 
+> **Historical / Superseded - do not execute.** Current Pilot authority is the
+> dual Acceptance and one-request Basic release contract; no production action is authorized here.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Repository policy forbids subagents for this work.
 
 **Goal:** Deploy the integrated Pilot B candidate safely, create/reuse the one fixed Provider Acceptance slot, prove the real Workspace/Gateway path, and retain migration/recovery/reconciliation evidence.

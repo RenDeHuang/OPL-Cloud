@@ -2,11 +2,12 @@
   "schemaVersion": 1,
   "owner": "OPL Console",
   "purpose": "Retired Console package boundary record. Active service ownership lives in opl-cloud-service-boundary-contract.json.",
-  "state": "current",
+  "state": "superseded",
   "machineBoundary": "The shared Console implementation package is retired. Runtime code belongs under services/*, UI code under apps/console-ui, and contracts under packages/contracts.",
   "lifecycle": {
-    "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current contract for the same boundary."
+    "type": "historical_contract",
+    "supersededBy": "opl-cloud-service-boundary-contract.json",
+    "removalCondition": "Keep only as the historical record of the retired shared Console package."
   },
   "consoleImportRules": [],
   "apiRouteModules": [],

@@ -29,7 +29,22 @@
   },
   "entitlementPolicy": {
     "owner": "opl-control-plane",
-    "requiredFields": [
+    "customerRenewalAuthority": "workspace",
+    "workspaceCustomerFields": [
+      "priceVersion",
+      "currency",
+      "totalUsdMicros",
+      "periodStart",
+      "paidThrough",
+      "autoRenew",
+      "renewalStatus"
+    ],
+    "resourceCompatibility": {
+      "renewalIntentAuthority": false,
+      "customerPricingAuthority": false,
+      "customerSurface": "workspace_detail_read_only"
+    },
+    "resourceCompatibilityFields": [
       "billingStatus",
       "billingOperationId",
       "pricingVersion",
@@ -45,6 +60,7 @@
   "ledgerEvidencePolicy": {
     "owner": "opl-ledger",
     "recordApi": "POST /ledger/receipts",
+    "resourceReceiptSchemaStatus": "superseded_internal_compatibility",
     "receiptTypes": [
       "billing.resource_purchased.v1",
       "billing.resource_renewed.v1",

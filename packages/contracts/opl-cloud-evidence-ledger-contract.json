@@ -8,15 +8,13 @@
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
   },
-  "currentScope": "general execution receipt v1, monthly resource and Workspace subscription billing receipts, Artifact Manifests, Review Results, versioned Review Policies and gates, continuation, and current Workspace lifecycle receipts",
+  "currentScope": "Invite-only Pilot Workspace receipts, internal resource compatibility receipts, reconciliation evidence, and non-customer general execution evidence.",
   "receiptTypes": [
     "workspace.created",
     "workspace.compute_stopped",
     "workspace.compute_restarted",
     "workspace.compute_recreated",
     "workspace.compute_destroyed",
-    "workspace.storage_backup_created",
-    "workspace.storage_restored",
     "workspace.storage_destroyed",
     "workspace.access_token_reset",
     "workspace.access_token_deleted",
@@ -41,6 +39,7 @@
     "Idempotency-Key header"
   ],
   "generalReceiptV1": {
+    "pilotStatus": "not_exposed_in_invite_only_pilot",
     "api": {
       "record": "POST /ledger/receipts",
       "list": "GET /ledger/receipts",
@@ -236,6 +235,7 @@
     ]
   },
   "monthlyBillingReceiptV1": {
+    "status": "superseded_internal_compatibility",
     "types": [
       "billing.resource_purchased.v1",
       "billing.resource_renewed.v1",
@@ -411,6 +411,7 @@
     }
   },
   "nonGoals": [
+    "workspace backup recovery sync or transfer evidence",
     "artifact byte storage ownership",
     "domain reviewer implementation logic",
     "agent package execution",

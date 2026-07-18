@@ -24,10 +24,11 @@ test("product contract treats app image as runtime template, not commercial reso
   assert.equal(product.runtimeTemplatePolicy.billingObject, false);
   assert.match(product.runtimeTemplatePolicy.ownershipRule, /never own accounts/);
   assert.deepEqual(product.defaultPackages.map((plan) => plan.id), ["basic", "pro"]);
-  assert.deepEqual(product.defaultPackages.map(({ id, cpu, memoryGb, diskGb, available }) => ({ id, cpu, memoryGb, diskGb, available })), [
-    { id: "basic", cpu: 2, memoryGb: 4, diskGb: 10, available: true },
-    { id: "pro", cpu: 8, memoryGb: 16, diskGb: 100, available: true }
+  assert.deepEqual(product.defaultPackages.map(({ id, cpu, memoryGb, diskGb, targetPackage }) => ({ id, cpu, memoryGb, diskGb, targetPackage })), [
+    { id: "basic", cpu: 2, memoryGb: 4, diskGb: 10, targetPackage: true },
+    { id: "pro", cpu: 8, memoryGb: 16, diskGb: 100, targetPackage: true }
   ]);
+  assert.equal(product.defaultPackages.some((plan) => "available" in plan), false);
   assert.equal(product.access.urlPattern, "https://workspace.medopl.cn/w/<workspaceId>/");
   assert.equal(product.access.mode, "runtime_password");
   assert.equal(product.access.requiresLogin, true);
@@ -43,7 +44,7 @@ test("business object contract keeps runtime template out of billing ownership",
   assert.ok(contract.principles.includes("RuntimeTemplate/ImageRef is deployable runtime configuration only; it is not a billing object, storage owner, or Workspace identity."));
 });
 
-test("Fabric catalog exposes both saleable monthly packages", async () => {
+test("Fabric catalog is the live availability authority for both target packages", async () => {
   const catalog = await readJson(fabricCatalogContractPath);
 
   assert.deepEqual(catalog.supportedPackages, ["basic", "pro"]);

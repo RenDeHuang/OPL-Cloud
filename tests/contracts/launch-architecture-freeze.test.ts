@@ -60,8 +60,10 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     { packageId: "pro", sizeGb: 100 }
   ]);
   assert.deepEqual(freeze.workspaceLaunch.requestHashFields, ["accountId", "ownerUserId", "name", "packageId", "sizeGb", "autoRenew", "priceVersion"]);
-  assert.equal(freeze.workspaceLaunch.autoRenew.submission, "required_boolean");
+  assert.equal(freeze.workspaceLaunch.autoRenew.submission, "required_false_boolean");
   assert.equal(freeze.workspaceLaunch.autoRenew.defaultProductIntent, false);
+  assert.equal(freeze.workspaceLaunch.autoRenew.customerMutable, false);
+  assert.equal(freeze.workspaceLaunch.autoRenew.enablementGate, "hidden_until_real_renewal_evidence");
   assert.equal(freeze.workspaceLaunch.autoRenew.childProjection, "read_only_compute_and_storage_compatibility_until_workspace_canonical_state");
   assert.deepEqual(freeze.workspaceLaunch.customerResponsePricingFields, ["priceVersion", "currency", "totalChargeUsdMicros"]);
   assert.deepEqual(freeze.workspaceLaunch.manualReviewRecovery, {
@@ -104,6 +106,9 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.equal(freeze.gateway.usageMoneyRepresentation, "integer_usd_micros");
   assert.equal(freeze.gateway.rawAdminDTOForwarding, false);
   assert.equal(freeze.gateway.missingCapabilityBehavior, "dependent_surface_unavailable_never_zero");
+  assert.equal(freeze.gateway.summaryApi, undefined);
+  assert.equal(freeze.gateway.customerReadContract, "opl-cloud-console-source-truth-contract.json");
+  assert.deepEqual(freeze.gateway.customerMutationApis, []);
   assert.equal(freeze.consoleFinancialProjection.mode, "read_only_projection");
   assert.deepEqual(freeze.consoleFinancialProjection.authorities, {
     balanceApiKeysAndRequestUsage: "Sub2API",
@@ -116,6 +121,9 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     "billing_fact_table",
     "raw_admin_dto",
     "browser_to_sub2api",
+    "frontend_financial_derivation",
+    "payment_or_topup_ui",
+    "key_mutation",
     "prompt_or_response_content"
   ]);
 
@@ -230,7 +238,9 @@ test("read-only fixed-slot verification replaces the legacy paid release gate", 
   assert.equal(deployment.productionVerificationWorkflow.releaseGate, false);
   assert.equal(deployment.productionVerificationWorkflow.mode, "read_only_dual_fixed_slots");
   assert.equal(deployment.productionLiveQaJob.releaseGate, true);
-  assert.equal(deployment.productionLiveQaJob.mode, "one_model_request_per_fixed_slot_no_provider_mutation");
+  assert.equal(deployment.productionLiveQaJob.mode, "one_basic_reserved_account_one_dedicated_key_one_model_request_no_provider_mutation");
+  assert.equal(deployment.productionLiveQaJob.modelRequestCount, 1);
+  assert.equal(deployment.productionLiveQaJob.providerMutationCount, 0);
   assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
   assert.equal(deployment.workspaceImage.sourceDigest, "sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76");
   assert.equal(deployment.workspaceImage.productionReference, "repository@sha256");

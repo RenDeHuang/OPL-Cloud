@@ -23,9 +23,9 @@
       "language": "go",
       "persistence": "postgresql",
       "owns": [
-        "auth",
-        "organizations",
-        "memberships",
+        "sessions",
+        "accountMappings",
+        "internalOneToOneIdentityCompatibilityRecords",
         "workspaces",
         "monthlyEntitlements",
         "billingOperations",
@@ -87,8 +87,10 @@
   "externalServices": {
     "gateway": {
       "product": "Sub2API",
-      "origin": "https://gflabtoken.cn",
+      "origin": "configured_sub2api_base_url",
       "owns": [
+        "customerIdentities",
+        "customerPasswords",
         "spendableBalances",
         "apiKeys",
         "routePolicies",
@@ -105,6 +107,16 @@
       ],
       "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy"
     }
+  },
+  "browserBoundary": {
+    "onlyCalls": "control_plane_product_apis",
+    "forbidden": ["sub2api_direct", "gflabtoken_link", "iframe", "html_scraping", "raw_admin_dto"]
+  },
+  "customerMutationBoundary": {
+    "payment": false,
+    "topUp": false,
+    "keyCreate": false,
+    "keyRevoke": false
   },
   "migration": {
     "compatibilityLayer": "forbidden",

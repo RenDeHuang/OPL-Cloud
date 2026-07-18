@@ -3,16 +3,19 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const contractsDir = new URL("../../packages/contracts/", import.meta.url);
+const root = new URL("../../", import.meta.url);
 
 async function readContract(file) {
   return JSON.parse(await readFile(new URL(file, contractsDir), "utf8"));
 }
 
-test("shared execution contract fixes canonical identities, states, writes, and errors", async () => {
+test("superseded shared execution contract retains its historical shape", async () => {
   const contract = await readContract("opl-cloud-shared-execution-contract.json");
   const objects = Object.fromEntries(contract.canonicalObjects.map((object) => [object.kind, object]));
 
   assert.equal(contract.schemaVersion, 3);
+  assert.equal(contract.state, "superseded");
+  assert.equal(contract.pilotStatus, "not_exposed_in_invite_only_pilot");
   assert.deepEqual(Object.keys(objects), ["Project", "Task", "ExecutionRequest", "Approval", "Job", "Artifact", "Review", "Receipt", "Continuation"]);
   assert.deepEqual(contract.identity.canonicalIdFields, ["projectId", "taskId", "requestId", "approvalId", "jobId", "artifactId", "reviewId", "receiptId", "continuationId"]);
   assert.deepEqual(contract.stateMachines.task, ["draft", "planned", "awaiting_approval", "queued", "running", "review_required", "review_blocked", "completed", "failed", "cancelled", "archived"]);
@@ -52,6 +55,9 @@ test("Ledger general receipt uses the shared execution identity and states", asy
   });
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("rawCredential"));
   assert.ok(ledger.generalReceiptV1.forbiddenContent.includes("password"));
+  assert.equal(ledger.generalReceiptV1.pilotStatus, "not_exposed_in_invite_only_pilot");
+  assert.equal(ledger.receiptTypes.includes("workspace.storage_backup_created"), false);
+  assert.equal(ledger.receiptTypes.includes("workspace.storage_restored"), false);
   assert.ok(ledger.receiptTypes.includes("execution.receipt.v1"));
   assert.deepEqual(ledger.workspaceAccessTokenResetReceipt, {
     type: "workspace.access_token_reset",
@@ -66,23 +72,28 @@ test("Ledger general receipt uses the shared execution identity and states", asy
   assert.match(ledger.generalReceiptV1.reviewGate.receiptReadRule, /omit continuationId and continuation/);
 });
 
-test("service owners match the shared execution contract", async () => {
-  const shared = await readContract("opl-cloud-shared-execution-contract.json");
+test("current service boundary does not inherit customer authority from the superseded contract", async () => {
   const boundary = await readContract("opl-cloud-service-boundary-contract.json");
 
-  for (const object of shared.canonicalObjects) {
-    assert.ok(boundary.services[object.service].owns.includes(object.ownershipKey), `${object.kind} ownership must stay with ${object.service}`);
-  }
-  assert.deepEqual(boundary.externalServices.gateway.owns, ["spendableBalances", "apiKeys", "routePolicies", "modelPolicies", "usageEvents"]);
+  assert.deepEqual(boundary.externalServices.gateway.owns, ["customerIdentities", "customerPasswords", "spendableBalances", "apiKeys", "routePolicies", "modelPolicies", "usageEvents"]);
   assert.equal(boundary.externalServices.gateway.calls, undefined);
   assert.equal(boundary.externalServices.gateway.evidenceSink, undefined);
+  assert.equal(boundary.services.controlPlane.owns.includes("auth"), false);
+  assert.equal(boundary.services.controlPlane.owns.includes("organizations"), false);
+  assert.equal(boundary.services.controlPlane.owns.includes("memberships"), false);
   assert.ok(boundary.services.ledger.owns.includes("reviewPolicies"));
   assert.ok(boundary.services.ledger.readApis.includes("reviewGateEvaluation"));
 });
 
-test("published HTTP APIs preserve service ownership without compatibility routes", async () => {
+test("superseded sync APIs remain historical and are not registered for the Pilot", async () => {
   const shared = await readContract("opl-cloud-shared-execution-contract.json");
   const ledger = await readContract("opl-cloud-evidence-ledger-contract.json");
+  const server = await readFile(new URL("services/control-plane/internal/server/server.go", root), "utf8");
+
+  assert.equal(shared.state, "superseded");
+  assert.equal(shared.pilotStatus, "not_exposed_in_invite_only_pilot");
+  assert.doesNotMatch(server, /registerSyncRoutes\(mux/);
+  assert.match(server, /case "backups", "recovery", "sync", "transfers", "transfer", "contents"/);
 
   assert.deepEqual(shared.httpApis.controlPlane, {
     createProject: "POST /api/projects",

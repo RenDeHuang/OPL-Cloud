@@ -3,10 +3,16 @@
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
-  "machineBoundary": "One customer Account, User, Organization, and owner Membership per Sub2API identity; disabled status, remote authentication, session lookup, and management API shape.",
+  "machineBoundary": "One Console User, one OPL Account, and one Sub2API User/Wallet per invited customer; Organization and Membership are internal one-to-one compatibility records only.",
   "lifecycle": {
     "type": "long_term_contract",
     "removalCondition": "Replace only with a newer current contract for the same boundary."
+  },
+  "pilotCohort": {
+    "mode": "invite_only",
+    "minimumCustomerAccounts": 2,
+    "maximumCustomerAccounts": 5,
+    "publicRegistration": false
   },
   "entities": {
     "account": {
@@ -40,7 +46,9 @@
         "status",
         "createdAt",
         "updatedAt"
-      ]
+      ],
+      "pilotRole": "internal_one_to_one_compatibility",
+      "authorizationAuthority": false
     },
     "membership": {
       "requiredFields": [
@@ -53,7 +61,9 @@
         "createdAt",
         "updatedAt"
       ],
-      "roles": ["owner"]
+      "roles": ["owner"],
+      "pilotRole": "internal_one_to_one_compatibility",
+      "authorizationAuthority": false
     },
     "supportTicketMapping": {
       "requiredFields": [
@@ -76,20 +86,27 @@
     }
   },
   "customerIdentityGraph": {
-    "cardinality": "exactly_one_account_user_organization_membership",
+    "cardinality": "exactly_one_console_user_account_sub2api_user_wallet",
     "accountUser": "account.ownerUserId_equals_user.id_and_user.accountId_equals_account.id",
-    "organization": "exactly_one_organization_with_billingAccountId_equals_account.id",
-    "membership": "exactly_one_owner_membership_joining_the_same_account_user_and_organization",
+    "sub2apiIdentity": "account.sub2apiUserId_equals_the_single_remote_user_id_and_wallet_owner",
+    "normalizedEmail": "lower_trim_console_email_equals_lower_trim_sub2api_email",
     "customerRole": "owner_only",
-    "customerAccess": "account_user_organization_membership_must_all_be_active",
+    "customerAccess": "session_user_owns_account_and_remote_identity_is_active",
     "operatorException": "fixed_usr_admin_on_acct_admin_uses_admin_role_outside_customer_graph"
+  },
+  "internalCompatibilityRecords": {
+    "organizationAndMembership": "one_to_one_storage_only",
+    "customerAuthorizationAuthority": false,
+    "browserProjection": false,
+    "sharedBehavior": false,
+    "mutationRoutes": "retired"
   },
   "workspaceOwnership": {
     "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping."
   },
   "identityProvisioning": {
     "onlyMutation": "POST /api/users",
-    "atomicInvite": "After Sub2API resolves or creates the remote identity, one transaction commits the mapped Account, normalized owner User, deterministic active Organization, and active owner Membership.",
+    "atomicInvite": "After Sub2API resolves or creates and re-reads the remote identity, one transaction commits the mapped Account and normalized owner User plus internal one-to-one Organization/Membership compatibility rows.",
     "atomicFacts": ["account", "user", "organization", "membership"],
     "callerSuppliedSub2apiUserId": "forbidden",
     "partialFailure": "rollback_all_four_facts",
@@ -110,7 +127,7 @@
     "secretProjection": "Passwords and password hashes are excluded from browser responses and audit facts."
   },
   "bootstrapLifecycle": {
-    "operatorProvisioning": "A fresh PostgreSQL database resolves or creates the fixed Sub2API operator identity and atomically commits its exact Account, User, Organization, and owner Membership graph.",
+    "operatorProvisioning": "A fresh PostgreSQL database reads the fixed Sub2API operator identity and atomically commits its Account/User mapping plus internal compatibility rows.",
     "legacyLocalUsersEnv": "retired_nonempty_value_fails_startup"
   },
   "identityDelivery": {
@@ -120,7 +137,7 @@
   },
   "userLifecycle": {
     "sessionPolicy": "Disabling or deleting a User revokes that User's sessions.",
-    "ownerRenewalPolicy": "Disabling or deleting an owner turns off current Control Plane compute and storage autoRenew intent for that Account without deleting provider resources; non-owner lifecycle changes do not alter Account renewal intent."
+    "ownerRenewalPolicy": "Disabling or deleting an owner turns off the Workspace autoRenew intent without deleting provider resources."
   },
   "api": {
     "createAccount": "POST /api/users (atomic owner invite only)",

@@ -17,8 +17,8 @@ npm run validate:production-manifest -- \
 ## Required Inputs
 
 - PostgreSQL `DATABASE_URL`;
-- Console auth users with positive integer `sub2apiUserId` values;
-- `OPL_SUB2API_BASE_URL`, supported version list, timeout, and admin credentials;
+- Sub2API admin credentials whose live identity is `admin@medopl.cn`;
+- `OPL_SUB2API_BASE_URL`, request timeout, and the required read-only capability inventory;
 - TKE kubeconfig, namespace, domains, TLS, storage class, and image-pull secret;
 - OPL Cloud and Workspace image references;
 - Tencent mutation credentials, region, cluster, subnet, and security groups;
@@ -28,6 +28,16 @@ Secrets must be GitHub/Kubernetes secrets. Customer Workspace Gateway Keys are
 account-scoped Kubernetes Secrets written by Fabric, not a global deployment
 environment variable. Never place credentials in the manifest, command
 arguments, logs, or verifier artifacts.
+
+`OPL_CONSOLE_USERS_JSON` is retired and any non-empty value makes Control Plane
+startup fail closed. The current deploy workflow still installs that secret;
+do not deploy until the workflow/manifest cutover is fixed and verified. Invite
+customers through `POST /api/users`; the backend resolves or creates one
+Sub2API identity by normalized email and atomically stores the local mapping.
+
+Workspace file bodies remain only on CBS. The PostgreSQL procedures below
+protect platform identity, operation, resource-reference, and receipt state;
+they never copy, back up, restore, sync, or transfer Workspace files.
 
 ## Database Startup Migrations
 
@@ -49,7 +59,7 @@ set and `applied_at` values must remain unchanged. Correlate the same window wit
 PostgreSQL CPU, WAL generation, and storage metrics; a repeated DDL, bulk UPDATE,
 or migration-related WAL spike is a failed rollout.
 
-## PostgreSQL Capacity And Recovery
+## Platform PostgreSQL Capacity And Recovery
 
 Run these read-only statements as the database administrator before sizing or
 recovery work:
@@ -194,12 +204,12 @@ OPL_CAPACITY_TESTS=1 go test ./internal/server \
   -run '^TestSinglePodCapacity$' -count=1 -v -timeout=15m
 ```
 
-The gate creates an isolated schema, seeds 1,000 accounts and 1,000 compute
-records, sends 100 concurrent tenant Console requests, sends 20 concurrent
-resource commands and replays their idempotency keys, then scans 1,000 due
-renewals twice. It requires zero request errors, one charge, resource claim, and
-receipt per operation, request P95 below five seconds, and renewal completion
-within five minutes.
+The historical gate creates an isolated schema, seeds 1,000 accounts and
+resource rows, sends 100 concurrent Console requests, and replays 20 resource
+commands. Its 1,000-resource renewal scan predates the Workspace-level renewal
+saga and is not current renewal evidence. Task 13 must run the current isolated
+PostgreSQL Workspace renewal suites without SKIP; do not use the historical scan
+to claim Pilot capacity or renewal readiness.
 
 The accepted local baseline used Go 1.22.2, PostgreSQL 16.14, and an i7-8700 host:
 
@@ -220,20 +230,22 @@ additional replicas.
 
 ## Operational Alerts
 
-`GET /api/operator/summary` derives `notifications` from current compute and
-storage rows. It does not persist a second alert state:
+`GET /api/operator/summary` derives `notifications` from Workspace renewal
+operations plus compute/storage compatibility facts. It does not persist a
+second alert state:
 
 | Code | Severity | Source state |
 | --- | --- | --- |
-| `manual_review` | error | `billingStatus=manual_review` |
-| `past_due` | warning | `billingStatus=past_due` |
-| `ledger_receipt_pending` | warning | `lastBillingError=ledger_receipt_pending` |
-| `cleanup_failed` | error | cleanup/destroy failure code in `lastBillingError` |
+| `manual_review` | error | renewal or launch requires operator decision |
+| `cleanup_failed`, `cleanup_pending` | error | provider cleanup did not converge |
+| `past_due`, `insufficient` | warning | Workspace period cannot be extended |
+| `ledger_receipt_pending`, `renewal_receipt_pending`, `refund_receipt_pending`, `expiry_receipt_pending` | warning | external side effect is stable; only evidence remains |
+| `renewal_retry_pending` | warning | same Workspace renewal operation must resume |
 
 Control Plane logs active and recovered transitions in this CLS-safe shape:
 
 ```text
-event=opl_operational_state code=<stable-code> state=<active|recovered> resource_type=<compute|storage> resource_ref=<12-hex-hash>
+event=opl_operational_state code=<stable-code> state=<active|recovered> resource_type=<workspace|compute|storage> resource_ref=<12-hex-hash>
 ```
 
 The line must never contain an account ID, raw resource ID, redeem code, balance,
@@ -356,49 +368,48 @@ kubectl -n opl-cloud rollout status deployment/opl-cloud-ledger --timeout=5m
 Then check health and readiness through the production endpoints. An old image
 digest or timeout is a failed rollout.
 
-## Blocked Legacy Verifier
+## Provider Acceptance And Release Live QA
 
-Do not run the legacy paid verifier. It charges a real monthly product and
-creates then deletes Tencent resources on every run, so it is not a launch or
-release gate.
+Do not run the legacy paid verifier. The replacement is code-complete and
+fake-tested, but no real Provider Acceptance or live-QA run is authorized by
+this document.
 
-The approved replacement must:
+Provider Acceptance separately creates or adopts these retained non-customer
+slots after read-only inventory and explicit approval:
 
-1. use fake Sub2API debit/refund and fake provider mutation for the monthly commercial path;
-2. reuse `verification-slot-01`, a prepaid `SA5.MEDIUM4` plus 10GB CBS Slot;
-3. deploy and authenticate to the candidate Workspace image on that Slot;
-4. prove WebSocket behavior and one real model request with a dedicated test key;
-5. record Ledger verification evidence;
-6. delete only temporary Kubernetes workloads and test-only data;
-7. prove that the Tencent CVM, CBS, node-pool, and PV IDs are unchanged.
+- `verification-slot-basic-01`: `SA5.MEDIUM4`, 2c4g, 10GB CBS;
+- `verification-slot-pro-01`: `SA5.2XLARGE16`, 8c16g, 100GB CBS.
 
-Creating or renewing the Slot is a separate manual Provider Acceptance action,
-not part of deployment or release verification. Until this replacement exists,
-production verification remains blocked.
+An ordinary release requires both slots. It then uses one Basic reserved
+account, one dedicated Key, and one model request for the entire release. The
+run must prove Ready Pod `imageID`, Workspace login and WebSocket frames,
+exact-one Usage with Key/request/model/endpoint/Token/cost fields, an equal
+wallet balance delta, stable Ledger Receipt/CVM/CBS/PV/RuntimeOperation facts,
+and zero Tencent purchase, renewal, deletion, or other provider mutation.
+
+Provider Acceptance, the real model request, and any slot renewal each require
+fresh explicit approval. Release verification never deletes retained provider
+resources.
 
 ## Billing Recovery
 
 - `preflight`: read-only checks only; no debit or provider write is allowed.
 - `debit_pending`: replay the same persisted Redeem Code and Idempotency-Key;
-  never create a new identity.
-- debit succeeded with confirmed no billable resource: replay the one deterministic
+  confirm a lost response through exact Sub2API balance-history evidence.
+- debit succeeded with confirmed no billable resource: replay one deterministic
   refund identity and verify its readback.
 - debit succeeded with partial or unknown provider result: enter `manual_review`
   without refund, cleanup, or repurchase.
-- `active` with missing receipt: retry only the Ledger receipt write.
-- expired compute: confirm provider deletion.
-- expired storage: preserve data and block attachment until reactivation.
+- one Workspace renewal owns one combined debit and the same CVM/CBS IDs. Resume
+  from its persisted phase; never run independent customer compute/storage renewal.
+- active entitlement with a missing receipt retries only the Ledger write.
+- unpaid expiry stops compute and denies access; it never deletes CBS.
+- `autoRenew=true` is unavailable to Pilot users until a real approved renewal
+  has been proven.
 
 ## Sub2API Updates
 
-Sub2API stays on official images. Run the config repository's guarded updater:
-
-```bash
-cd /home/ubuntu/sub2api
-bash tests/safe-update.test.sh
-bash scripts/safe-update.sh
-```
-
-The updater accepts only an approved version/revision, probes login, version,
-balance-read, and adjustment-route availability without changing a real balance,
-and restores the previous digest on failure.
+This repository does not deploy or update Sub2API. Any Sub2API change is a
+separate external operations change with its own approval, rollback, and
+capability verification. OPL Cloud release procedures only perform the approved
+read-only capability inventory against the deployed service.

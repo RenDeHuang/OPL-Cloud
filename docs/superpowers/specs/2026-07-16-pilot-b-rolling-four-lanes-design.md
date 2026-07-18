@@ -1,5 +1,8 @@
 # Pilot B Rolling Four-Lane Design
 
+> **Historical / Superseded - do not execute.** Current Pilot authority is the
+> Fast Invite-Only Pilot freeze and current machine contracts.
+
 **Date:** 2026-07-16
 **Status:** Approved for implementation by the product owner
 **Base revision:** `b83a61e9767dff46e4ad79891e93267eb71d6f9e`

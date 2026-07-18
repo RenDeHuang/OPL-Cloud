@@ -51,14 +51,22 @@ test("management contract hard-cuts customer identity to Sub2API and one atomic 
   });
   assert.deepEqual(management.entities.membership.requiredFields, ["id", "organizationId", "accountId", "userId", "role", "status", "createdAt", "updatedAt"]);
   assert.deepEqual(management.customerIdentityGraph, {
-    cardinality: "exactly_one_account_user_organization_membership",
+    cardinality: "exactly_one_console_user_account_sub2api_user_wallet",
     accountUser: "account.ownerUserId_equals_user.id_and_user.accountId_equals_account.id",
-    organization: "exactly_one_organization_with_billingAccountId_equals_account.id",
-    membership: "exactly_one_owner_membership_joining_the_same_account_user_and_organization",
+    sub2apiIdentity: "account.sub2apiUserId_equals_the_single_remote_user_id_and_wallet_owner",
+    normalizedEmail: "lower_trim_console_email_equals_lower_trim_sub2api_email",
     customerRole: "owner_only",
-    customerAccess: "account_user_organization_membership_must_all_be_active",
+    customerAccess: "session_user_owns_account_and_remote_identity_is_active",
     operatorException: "fixed_usr_admin_on_acct_admin_uses_admin_role_outside_customer_graph"
   });
+  assert.deepEqual(management.pilotCohort, {
+    mode: "invite_only",
+    minimumCustomerAccounts: 2,
+    maximumCustomerAccounts: 5,
+    publicRegistration: false
+  });
+  assert.equal(management.internalCompatibilityRecords.sharedBehavior, false);
+  assert.equal(management.internalCompatibilityRecords.customerAuthorizationAuthority, false);
   assert.deepEqual(management.identityProvisioning.atomicFacts, ["account", "user", "organization", "membership"]);
   assert.deepEqual(management.entities.membership.roles, ["owner"]);
   assert.equal(management.identityProvisioning.onlyMutation, "POST /api/users");
@@ -102,7 +110,7 @@ test("offer identity reports the Control Plane hard cut without claiming deploym
 
   assert.equal(
     stage.currentState,
-    "Control Plane atomic mapped-owner provisioning, strict one-to-one customer identity, and Sub2API password authority are code-complete; Memory and isolated PostgreSQL tests are locally verified; deployment cutover from the retired OPL_CONSOLE_USERS_JSON path and authenticated runtime evidence remain pending, while self-registration and SSO are outside the Pilot and Pro remains incomplete."
+    "Control Plane atomic mapped-owner provisioning, strict one-to-one customer identity, and Sub2API password authority are code-complete; Memory and isolated PostgreSQL tests are locally verified; deployment cutover from the retired OPL_CONSOLE_USERS_JSON path and authenticated runtime evidence remain pending, while self-registration and SSO are outside the Pilot."
   );
   assert.doesNotMatch(stage.currentState, /CI-verified/);
   assert.doesNotMatch(stage.currentState, /operator password reset/);

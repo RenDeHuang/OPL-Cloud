@@ -10,7 +10,8 @@
   },
   "productTruth": "OPL Console / OPL Cloud Console commercial launch slice",
   "frameworkTruth": "one-person-lab",
-  "currentSlice": "Business-chain closure for account login, live Sub2API balance, monthly compute and storage entitlements, attachments, stable Workspace URL, Ledger receipts, Fabric operations, admin audit, and support mappings.",
+  "currentSlice": "Invite-only owner login, live Sub2API Wallet/Key/Usage facts, one Workspace subscription, Fabric resource details, Runtime readiness, and Ledger receipts.",
+  "customerRenewalAuthority": "workspace",
   "repositoryBoundaries": [
     "opl-console",
     "opl-fabric",
@@ -31,15 +32,16 @@
     "Destroying compute suspends the Workspace URL and retains storage; rebuilding compute reuses the same Workspace URL and StorageVolume.",
     "Destroying storage makes the Workspace unrecoverable because the file body is gone.",
     "Sub2API owns the only spendable balance, API keys, AI usage, and real-time API debits.",
+    "Sub2API owns customer credential authentication; Control Plane stores only the verified mapping and local Session.",
     "Control Plane owns the account-to-Sub2API mapping, monthly charge operations, price snapshots, entitlement, renewal, and expiry policy.",
     "Ledger owns append-only evidence receipts, review evidence, and reconciliation reports; it does not own a spendable balance.",
     "Fabric owns provider execution evidence and FabricOperation facts.",
-    "Console owns Account, User, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and product presentation; it calls only Control Plane product APIs.",
+    "Console presents Account, Session, Workspace lifecycle, AdminAuditEvent, SupportTicketMapping, and product DTOs; it calls only Control Plane product APIs.",
     "Frontend displays backend DTOs and must not derive pricing, billing, lifecycle, or provider state locally.",
-    "Future approval, policy, raw provider diagnostics, snapshot/recovery, payment orders, usage logs, and retired runtime lifecycle objects live outside the active contract until implemented."
+    "Backup, recovery, sync, transfer, payment orders, Key mutation, and raw provider diagnostics are forbidden Pilot customer surfaces."
   ],
   "repoBoundaryRules": [
-    "Console owns UI, auth, route contracts, and product presentation through Control Plane APIs only.",
+    "Console owns UI and product presentation through Control Plane APIs only; Sub2API authenticates customer credentials.",
     "Fabric owns compute, storage, attachment, Workspace runtime, and provider execution boundaries.",
     "Ledger owns evidence, audit, reconciliation, and review policy boundaries."
   ],
@@ -118,19 +120,16 @@
       ],
       "requiredBillingFields": [
         "billingStatus",
-        "pricingVersion",
-        "monthlyPriceCnyCents",
+        "priceVersion",
         "chargeUsdMicros",
         "periodStart",
-        "paidThrough",
-        "autoRenew"
+        "paidThrough"
       ],
+      "customerSurface": "workspace_detail_read_only",
       "requiredCapabilitiesForImplemented": [
         "list",
         "detail",
         "read",
-        "write",
-        "action",
         "evidence"
       ]
     },
@@ -143,21 +142,18 @@
         "list",
         "detail",
         "read",
-        "write",
-        "action",
         "evidence"
       ],
       "evidenceRequired": true,
       "boundary": "Account-owned storage with a monthly entitlement that can exist without compute and can attach to one active ComputeAllocation at a time.",
       "requiredBillingFields": [
         "billingStatus",
-        "pricingVersion",
-        "monthlyPriceCnyCents",
+        "priceVersion",
         "chargeUsdMicros",
         "periodStart",
-        "paidThrough",
-        "autoRenew"
-      ]
+        "paidThrough"
+      ],
+      "customerSurface": "workspace_detail_read_only"
     },
     {
       "kind": "StorageAttachment",
@@ -168,12 +164,11 @@
         "list",
         "detail",
         "read",
-        "write",
-        "action",
         "evidence"
       ],
       "evidenceRequired": true,
-      "boundary": "Mounts one StorageVolume to one ComputeAllocation runtime."
+      "boundary": "Mounts one StorageVolume to one ComputeAllocation runtime.",
+      "customerSurface": "workspace_detail_read_only"
     },
     {
       "kind": "Workspace",

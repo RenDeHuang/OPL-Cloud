@@ -1,12 +1,18 @@
 {
   "schemaVersion": 3,
   "owner": "OPL Platform Architecture",
-  "purpose": "Canonical cross-surface execution identity, state, write, ownership, and error contract.",
-  "state": "current",
-  "machineBoundary": "Canonical Project-to-Continuation identities, execution states, mutation envelope, logical service operations, error semantics, and one cross-repository example.",
+  "purpose": "Historical shared execution design retained for reference; it is not an invite-only Pilot surface.",
+  "state": "superseded",
+  "pilotStatus": "not_exposed_in_invite_only_pilot",
+  "machineBoundary": "Superseded Project-to-Continuation and Workspace sync design. Current Pilot authority lives in the launch, source-truth, management, billing, and service-boundary contracts.",
   "lifecycle": {
-    "type": "long_term_contract",
-    "removalCondition": "Replace only with a newer current shared execution contract after App, Gateway, Control Plane, Fabric, and Ledger callers move together."
+    "type": "historical_contract",
+    "supersededBy": [
+      "opl-cloud-launch-freeze-contract.json",
+      "opl-cloud-console-source-truth-contract.json",
+      "opl-cloud-service-boundary-contract.json"
+    ],
+    "removalCondition": "Keep as historical context; never use it to expose sync, transfer, approval, job, or continuation UI in the Pilot."
   },
   "repositoryBoundaries": [
     "one-person-lab",

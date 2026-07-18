@@ -1,5 +1,8 @@
 # Slides 1-3 Launch Operation Implementation Plan
 
+> **Historical / Superseded - do not execute.** Current Pilot authority is the
+> launch freeze, source-truth contracts, and the integration plan approved in chat.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Repository policy forbids subagents for this work.
 
 **Goal:** Add the minimal manual identity completion and a server-owned, durable, one-submit Workspace launch with total quote and total balance preflight.

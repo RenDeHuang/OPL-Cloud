@@ -26,16 +26,17 @@ function walk(value, visit) {
   }
 }
 
-test("all OPL Cloud contracts declare current lifecycle metadata", async () => {
+test("all OPL Cloud contracts declare current or superseded lifecycle metadata", async () => {
   for (const file of await contractFiles()) {
     const contract = await readContract(file);
 
     assert.equal(Number.isInteger(contract.schemaVersion) && contract.schemaVersion >= 1, true, `${file} schemaVersion`);
     assert.ok(contract.owner, `${file} owner`);
     assert.ok(contract.purpose, `${file} purpose`);
-    assert.equal(contract.state, "current", `${file} state`);
+    assert.ok(["current", "superseded"].includes(contract.state), `${file} state`);
     assert.ok(contract.machineBoundary, `${file} machineBoundary`);
-    assert.equal(contract.lifecycle?.type, "long_term_contract", `${file} lifecycle.type`);
+    assert.equal(contract.lifecycle?.type, contract.state === "current" ? "long_term_contract" : "historical_contract", `${file} lifecycle.type`);
+    if (contract.state === "superseded") assert.ok(contract.lifecycle?.supersededBy, `${file} lifecycle.supersededBy`);
     assert.ok(contract.lifecycle?.removalCondition, `${file} lifecycle.removalCondition`);
   }
 });
@@ -43,6 +44,7 @@ test("all OPL Cloud contracts declare current lifecycle metadata", async () => {
 test("current contracts do not preserve compatibility aliases as product truth", async () => {
   for (const file of await contractFiles()) {
     const contract = await readContract(file);
+    if (contract.state !== "current") continue;
     walk(contract, (key, value) => {
       if (/compatibility.*Allowed/.test(key)) {
         assert.equal(value, false, `${file} ${key} must be false`);

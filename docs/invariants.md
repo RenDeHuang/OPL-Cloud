@@ -10,16 +10,41 @@ The five product surfaces are OPL Gateway, OPL Workspace, OPL Console, OPL Fabri
 
 The four implementation owner lanes are Console/Control Plane, Fabric, Gateway integration, and Ledger. Gateway integration is an adapter to the externally deployed Sub2API, never a second Gateway service.
 
+## Pilot Scope
+
+- The first cohort is 2-5 invited customer accounts; public registration is forbidden.
+- One Console User maps to one OPL Account and one Sub2API User/Wallet. Console
+  and Sub2API email must match after `lower(trim(email))`.
+- Organization and Membership rows are internal one-to-one compatibility
+  records only. They do not authorize sharing or appear in customer DTOs.
+- Operators manually pre-fund the Sub2API wallet. There is no customer payment,
+  top-up, payment-order, or Key create/revoke surface.
+- Each account has one Workspace. Basic and Pro are the only Pilot packages.
+- `autoRenew` defaults off. Enabling it is rejected and hidden until a real
+  renewal has been approved and proven.
+- Backup, recovery, sync, transfer, HA, and multiple Workspaces are not Pilot
+  capabilities.
+
 ## Console
 
 - Console calls only Control Plane product APIs.
-- Control Plane owns account-to-Sub2API mapping, quotes, monthly orchestration, entitlements, renewal, expiry, and operator review.
-- Pilot customer identities are provisioned and mapped manually. Operators can reset a customer's password and revoke existing sessions; self-registration and SSO are not Pilot claims.
+- Sub2API authenticates customer credentials. Control Plane owns local Sessions,
+  account mapping, quotes, monthly orchestration, entitlements, expiry, and
+  operator review; it stores no second customer password truth.
+- Operators invite customers through `POST /api/users`. The backend resolves or
+  creates the Sub2API identity by normalized email and atomically stores the
+  one-to-one local graph. Self-registration and SSO are not Pilot claims.
 - Console displays live Sub2API balance, Key metadata, request usage, usage stats, and Ledger billing receipts without creating a wallet, Key database, usage database, or billing fact table.
-- Basic compute is `2c4g` for CNY 350/month; its default 10GB storage is billed separately at CNY 18/month.
-- Pro compute is `8c16g` for CNY 1,500/month; its default 100GB storage is billed separately at CNY 180/month.
-- Basic and Pro are target-saleable products. A production catalog entry becomes available only with matching pricing, PREPAID provider behavior, idempotency tests, and runtime evidence.
-- The internal Verification Slot is not a customer product and never appears in catalog or quote paths.
+- Basic is `2c4g` plus 10GB for `52_580_000` USD micros/month:
+  `50_000_000` compute plus `2_580_000` storage.
+- Pro is `8c16g` plus 100GB for `240_080_000` USD micros/month:
+  `214_280_000` compute plus `25_800_000` storage.
+- Basic and Pro are the target Pilot packages. A customer catalog entry becomes
+  available only from matching live Fabric availability and after the production
+  evidence gate passes.
+- Internal Acceptance slots are not customer products and never appear in
+  catalog or quote paths. Static package definitions are targets; actual
+  availability comes from live Fabric catalog readback.
 
 ## Fabric
 
@@ -52,9 +77,19 @@ The four implementation owner lanes are Console/Control Plane, Fabric, Gateway i
 - Request charges use Sub2API `actual_cost`, converted once to integer USD micros. Control Plane returns an explicit unavailable state for a missing capability or upstream failure and never substitutes zero.
 - Control Plane decodes a strict customer-safe DTO allowlist. Raw Sub2API admin responses, nested raw Keys, upstream account internals, prompts, and response content never reach Console, OPL PostgreSQL, Ledger, logs, or caches.
 - Key DTO fields `quota_used`, `usage_5h`, `usage_1d`, `usage_7d`, and `last_used_at` remain quota and recent-window signals; they do not replace request-level usage and aggregate stats.
-- The owner may request the Key through a dedicated `private, no-store` endpoint. It is masked by default and never enters `/api/state`, browser storage, OPL PostgreSQL, Ledger, logs, caches, or operation payloads.
+- The owner may request the Key only through audited
+  `POST /api/gateway/keys/opl-workspace/reveal`. It is masked by default and
+  never enters `/api/state`, browser storage, OPL PostgreSQL, Ledger, logs,
+  caches, or operation payloads. The retired Gateway summary route is a 404.
 - Kubernetes Secret is the only authorized Key persistence point. Fabric writes or rotates an account-scoped Secret, and Workspace runtime receives only its reference.
 - The global `OPL_CODEX_API_KEY` is forbidden for customer Workspaces.
+
+Every Console source projection carries `source`, `status`, `available`, and
+`fetchedAt`. `empty` means a successful authoritative read with zero rows;
+`unavailable` means the dependency failed and must not include fallback data,
+zero values, empty collections, or a success state. `sourceUpdatedAt` is omitted
+unless the authority supplies it. Identity scope comes only from the current
+Session; browser `accountId`, `user_id`, and `api_key_id` inputs are ignored.
 
 ## Monthly Settlement
 
@@ -79,17 +114,27 @@ validate account and quote
 - A partial or unknown provider result enters `manual_review` without refund or a second purchase.
 - A Ledger failure after activation leaves the entitlement active and retries only its receipt.
 - Replays never create a second debit, refund, purchase, renewal, Secret, or receipt.
-- The merged implementation follows debit before provider mutation. Server-computed read-only reconciliation and its blocking purchase guard are CI-verified; production rollout and live reconciliation evidence remain pending.
+- The merged implementation follows debit before provider mutation.
+  Server-computed read-only reconciliation and its blocking purchase guard are
+  code-complete and locally tested; production rollout and live reconciliation
+  evidence remain pending.
 
 ## Products And Lifecycle
 
-- Compute and storage are independent monthly entitlements. Workspace creation requires one active compute entitlement and one active storage entitlement.
-- Prices are integer CNY cents and USD micros at fixed `1 USD = 7 CNY`; conversion happens once with ceiling division.
+- Workspace is the customer subscription and owns the canonical renewal intent,
+  price snapshot, period, paid-through value, and renewal status. Compute and
+  storage rows are provider and compatibility facts.
+- Customer prices are fixed integer USD micros under
+  `pilot-usd-2026-07-v1`; provider costs never derive a customer charge.
 - Provider SKU may vary by approved environment but must satisfy the customer CPU and memory contract.
-- Renewal follows preflight, debit, provider manual renewal, readback, entitlement extension, and receipt.
+- One Workspace renewal uses one combined Sub2API debit, manual provider renewal
+  of the same CVM/CBS, readback, entitlement extension, and one receipt.
 - Tencent automatic renewal is forbidden.
-- Expired compute is stopped or destroyed. Expired storage is retained and inaccessible until reactivated or explicitly destroyed.
-- Deleting PVC/PV records retained or released state; it cannot claim that CBS was destroyed without an explicit Tencent return result.
+- At unpaid expiry compute is stopped and access is denied. CBS is retained;
+  expiry, release, QA, and rollback never delete it.
+- Workspace file bodies live only on CBS. OPL PostgreSQL and Ledger never store
+  them, and OPL provides no backup/recovery/sync/transfer guarantee for deleted
+  or corrupted CBS data.
 
 ## Workspace Access And Secrets
 
@@ -108,49 +153,55 @@ validate account and quote
 
 - Authentication, lazy-route loading, and account-state loading have distinct timeout, error, and retry states.
 - Public and login routes render immediately; a session check may enrich or redirect them but never gates their first interactive screen.
-- The first authenticated screen answers current balance, Workspace usability, active compute and storage, expiry, current-period fixed charges, AI actual spend, and actionable failures.
+- The first authenticated screen answers live wallet status, Workspace
+  usability, current server-projected price/period, AI actual spend, receipts,
+  and actionable failures.
 - Billing history is a tenant-scoped projection of Ledger receipts. Gateway request history and totals are tenant-scoped projections of live Sub2API usage APIs. Neither projection persists a second copy of the facts.
 - Balance, entitlements, billing receipts, and Gateway usage load independently. One unavailable source cannot hold the whole Console in a spinner or erase facts from another source.
-- The primary flow is one recoverable Workspace launch guide covering plan, storage, total price, debit, PREPAID resources, Gateway Secret, Runtime, and URL.
+- The primary flow is one recoverable Workspace launch covering package,
+  server-projected total price, debit, PREPAID resources, Gateway Secret,
+  Runtime, and URL. Compute/storage are Workspace details, not separate buys.
 - Workspace status polls every 10 seconds for at most 30 attempts, stops on ready or terminal state, and offers manual retry after a real error or timeout.
 - Gateway fetches only when its page is opened, masks the Key by default, supports explicit reveal/copy, and clears sensitive response state on route leave or logout.
 - Desktop and mobile QA must prove responsive layout, keyboard access, error recovery, and no sensitive-information overlap or leakage.
 
 ## Verification Slot
 
-`verification-slot-01` is the only real-resource launch verification slot:
+Provider Acceptance owns two retained non-customer slots:
 
-| Property | Frozen value |
-| --- | --- |
-| CVM | `SA5.MEDIUM4` (`2c4g`) |
-| CBS | `10GB` minimum prepaid volume |
-| Provider billing | `PREPAID`, one month |
-| Renewal | `NOTIFY_AND_MANUAL_RENEW` |
-| Customer product | No |
-| Concurrency | One verification run |
-| Lifetime | Retain and reuse for the full paid period |
+| Slot | Package | CVM | CBS | Provider billing |
+| --- | --- | --- | ---: | --- |
+| `verification-slot-basic-01` | Basic | `SA5.MEDIUM4` (`2c4g`) | 10GB | `PREPAID`, one month, manual renew |
+| `verification-slot-pro-01` | Pro | `SA5.2XLARGE16` (`8c16g`) | 100GB | `PREPAID`, one month, manual renew |
 
-- The lifetime purchase budget is one. Read-only inventory must first prove there is no reusable compliant slot; multiple or ambiguous candidates stop without purchase.
-- Ordinary CI and commercial E2E use fake Sub2API and fake provider mutations.
-- Runtime QA reuses the Slot, authenticates to the candidate image, proves WebSocket behavior, makes one real model request with a dedicated test Key, and removes only temporary workload and test data.
-- A run never purchases, renews, or deletes Tencent CVM, CBS, node-pool, or PV resources.
-- Slot renewal is a future separate manual decision, never an automatic action.
-- Production smoke is read-only. The legacy paid verifier is blocked until replaced.
+- Lifetime purchase budget is one per slot. Read-only inventory runs first;
+  multiple or ambiguous candidates stop without purchase.
+- Provider Acceptance is a separate manually approved workflow and has not been
+  run for the current candidate.
+- Ordinary deployment requires both slots but performs no purchase, renewal, or
+  deletion. Release live QA uses one Basic reserved account, one dedicated Key,
+  and one model request for the entire release.
+- Live QA must prove exact-one Usage (`keyId`, `requestId`, model, endpoint,
+  Tokens, `actualCostUsdMicros`), an equal wallet balance delta, the same Ledger
+  Receipt/CVM/CBS/RuntimeOperation facts, Ready Pod `imageID`, login/WebSocket,
+  and zero Tencent mutation.
+- This verification chain is code-complete and fake-tested, not
+  production-proven. Real execution requires explicit approval.
 
 ## Launch Stages
 
 | Stage | Business | Owners | Current state | Required output and evidence |
 | --- | --- | --- | --- | --- |
-| 1. Offer and identity | Show mapped customers Basic and Pro without the verification SKU. | Console, Gateway | Manual mapping and operator password reset are CI-verified; self-registration and SSO are outside the Pilot, while Pro and deployed evidence remain incomplete. | Product contract, tenant tests, deployed account readback. |
-| 2. Wallet and quote | Show live balance and exact compute plus storage quote before side effects. | Console, Gateway | Integer Workspace compute-plus-storage quote is CI-verified; deployed presentation and live Sub2API evidence remain incomplete. | Balance/quote tests, failure UI, period and retention disclosure. |
-| 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, total balance preflight, debit-first child operations, restart recovery, and replay are CI-verified; deployed browser and live Sub2API evidence remain pending. | Deterministic debit, balance check, replay/concurrency evidence. |
-| 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request and readback are CI-verified; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
-| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, manual-review resolution, and server-computed read-only reconciliation with a blocking guard are CI-verified; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
-| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, non-secret status, owner-only password reveal/rotation, credential rollout, and redacted reset receipts are CI-verified; Runtime SSO is outside the Pilot, while browser, WebSocket, live model, and deployed rotation evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision and digest readback. |
-| 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Balance, Key summary, request-level usage, aggregate stats, and customer-safe integer-cost projections are CI-verified; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
-| 8. Renewal and recovery | Renew customer and Tencent periods once with deterministic recovery. | All four lanes | Entitlement worker exists; provider PREPAID renewal does not. | Renewal replay, deadline readback, refund/review receipts. |
-| 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Legacy verifier violates this rule. | Retained Slot, fake commercial chain, real Workspace/Gateway proof. |
-| 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | CI/rollout exist; remaining production evidence is incomplete. | CI, grouped rollback, read-only smoke, fixed-Slot receipt. |
+| 1. Offer and identity | Show invited mapped owners Basic and Pro without the Acceptance SKUs. | Console, Gateway | One-to-one identity convergence and Sub2API password authority are code-complete with Memory and isolated PostgreSQL tests; deployment cutover and authenticated runtime evidence are pending. | Product contract, tenant tests, deployed account readback. |
+| 2. Wallet and quote | Show live wallet and exact Workspace quote before side effects. | Console, Gateway | Granular Wallet/Key/Usage/Stats/history DTOs and fixed USD Basic/Pro quotes are code-complete; UI integration and live authenticated Sub2API evidence are pending. | Source-contract tests, quote tests, unavailable-state UI tests. |
+| 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, debit-first recovery, and replay are code-complete; deployed browser and live Sub2API evidence are pending. | Deterministic debit, balance check, replay/concurrency evidence. |
+| 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request and readback are code-complete and locally tested; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
+| 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Claim, confirmed-absence refund, manual-review resolution, and server-computed read-only reconciliation are code-complete and locally tested; live reconciliation evidence is pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
+| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | Attachment, Secret, readiness, non-secret status, owner-only password reveal/rotation, credential rollout, and redacted receipts are code-complete and locally tested; browser, WebSocket, live model, and deployed rotation evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision and digest readback. |
+| 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
+| 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
+| 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Dual Acceptance and one-request Basic live-QA workflows are code-complete and fake-tested; neither Acceptance nor live QA has run for the candidate. | Two retained slots, stable resource facts, exact-one Usage and wallet delta. |
+| 10. Production release | Declare ready from immutable artifacts, rollout, rollback, and real evidence. | All four lanes | Security, immutable imageID checks, grouped rollback, and release tooling are code-complete; Task 12 UI, Task 13A gates, deployment cutover, and runtime evidence remain pending. | Full local gates, immutable digests, rollout, rollback, source-truth QA, approved real evidence. |
 
 ## Delivery Phases
 

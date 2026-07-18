@@ -13,14 +13,16 @@ Each contract should declare:
 
 ## Lifecycle
 
-- `current`: active contract for current implementation.
+- `current`: active contract for current implementation or Pilot operations.
 - `migration`: temporary migration contract with a removal condition.
-- `retired`: historical path kept only in history, not here.
+- `superseded`: historical shape retained in place for audit context; it is not
+  an implementation or UI authority and must name its replacement.
 
 ## Rules
 
 1. Contracts preserve product and safety boundaries, not old process.
-2. Compatibility aliases do not belong in current contracts.
+2. Compatibility aliases do not belong in current contracts. Internal
+   one-to-one persistence records must be labeled as compatibility-only.
 3. Tests should read contracts where possible instead of scanning source prose.
 4. Deployment workflow and image checks belong in `opl-cloud-deployment-contract.json`.
 5. Package import and service boundary checks belong in `opl-cloud-package-boundary-contract.json`.
