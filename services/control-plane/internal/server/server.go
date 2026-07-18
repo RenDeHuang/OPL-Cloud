@@ -41,6 +41,10 @@ func (h *controlPlaneHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	if retiredConsoleAPI(r.Method, r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
 	h.next.ServeHTTP(w, r)
 }
 
@@ -74,10 +78,37 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	registerAdminRoutes(mux, app, service)
 	registerProviderAcceptanceRoutes(mux, app, service)
 	registerExecutionRoutes(mux, app, service)
-	registerSyncRoutes(mux, app)
-	registerTransferRoutes(mux, app, service)
-	registerRecoveryRoutes(mux, app, service)
 	return &controlPlaneHTTPHandler{app: app, next: mux}, nil
+}
+
+func retiredConsoleAPI(method, path string) bool {
+	if method == http.MethodPost {
+		switch path {
+		case "/api/compute-allocations", "/api/storage-volumes", "/api/storage-attachments", "/api/workspaces":
+			return true
+		}
+	}
+	switch path {
+	case "/api/me", "/api/overview", "/api/gateway/summary", "/api/billing/summary":
+		return true
+	}
+	if path == "/api/workspace-backups" || strings.HasPrefix(path, "/api/workspace-backups/") || strings.HasPrefix(path, "/api/payment") || strings.HasPrefix(path, "/api/orders") ||
+		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" {
+		return true
+	}
+	if !strings.HasPrefix(path, "/api/workspaces/") {
+		return false
+	}
+	for _, segment := range strings.Split(strings.Trim(path, "/"), "/")[3:] {
+		switch segment {
+		case "backups", "recovery", "sync", "transfers", "transfer", "contents":
+			return true
+		}
+	}
+	return false
 }
 
 func (app *controlPlaneServer) consoleStatic(w http.ResponseWriter, r *http.Request) {
@@ -775,31 +806,55 @@ func reconciliationResponse(result clients.ReconciliationResult) map[string]any 
 	}
 }
 
-func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime) map[string]any {
-	ready := runtime.Ready
-	checks := runtime.Checks
-	if len(checks) == 0 {
-		checks = []any{map[string]any{"name": "fabric_runtime_running", "ok": ready}}
+func workspaceRuntimeStatusResponse(runtime clients.WorkspaceRuntime, workspaceID string) (map[string]any, bool) {
+	if runtime.WorkspaceID != workspaceID || runtime.Status == "" || runtime.Checks == nil {
+		return nil, false
+	}
+	switch runtime.Status {
+	case "running", "unready":
+		if runtime.ID == "" || runtime.URL == "" || runtime.ServiceName == "" {
+			return nil, false
+		}
+	case "not_found", "destroyed":
+	default:
+		return nil, false
+	}
+	checks := make([]any, 0, len(runtime.Checks))
+	for _, raw := range runtime.Checks {
+		check, ok := raw.(map[string]any)
+		name, nameOK := check["name"].(string)
+		ready, readyOK := check["ok"].(bool)
+		if !ok || !nameOK || strings.TrimSpace(name) == "" || !readyOK {
+			return nil, false
+		}
+		checks = append(checks, map[string]any{"name": name, "ok": ready})
 	}
 	body := map[string]any{
-		"provider":    "tencent-tke",
-		"workspaceId": runtime.WorkspaceID,
-		"runtimeId":   runtime.ID,
-		"url":         runtime.URL,
-		"serviceName": runtime.ServiceName,
-		"status":      runtime.Status,
-		"ready":       ready,
-		"checks":      checks,
+		"workspaceId": runtime.WorkspaceID, "status": runtime.Status, "ready": runtime.Ready, "checks": checks,
+	}
+	if runtime.ID != "" {
+		body["runtimeId"] = runtime.ID
+	}
+	if runtime.URL != "" {
+		body["url"] = runtime.URL
+	}
+	if runtime.ServiceName != "" {
+		body["serviceName"] = runtime.ServiceName
 	}
 	if runtime.Access.Username != "" || runtime.Access.CredentialStatus != "" || runtime.Access.CredentialVersion != "" {
-		body["access"] = map[string]any{
-			"account":           runtime.Access.Username,
-			"username":          runtime.Access.Username,
-			"credentialStatus":  runtime.Access.CredentialStatus,
-			"credentialVersion": runtime.Access.CredentialVersion,
+		access := map[string]any{}
+		if runtime.Access.Username != "" {
+			access["username"] = runtime.Access.Username
 		}
+		if runtime.Access.CredentialStatus != "" {
+			access["credentialStatus"] = runtime.Access.CredentialStatus
+		}
+		if runtime.Access.CredentialVersion != "" {
+			access["credentialVersion"] = runtime.Access.CredentialVersion
+		}
+		body["access"] = access
 	}
-	return body
+	return body, true
 }
 
 func workspaceRuntimeCredentialResponse(runtime clients.WorkspaceRuntime) map[string]any {

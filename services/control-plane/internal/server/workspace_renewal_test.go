@@ -34,10 +34,11 @@ func newWorkspaceRenewalAPIFixtureWithStore(t *testing.T, store StateStore) work
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler := server.(*controlPlaneHTTPHandler)
 	owner := tenantOwnerSessionForTest(t, server)
-	attachment := createWorkspaceAttachmentForTest(t, server, owner, "workspace-renewal-api")
-	workspace := createResourceWithMutationKeyForTest(t, server, owner, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`, "workspace-renewal-api-workspace")
-	return workspaceRenewalAPIFixture{server: server, app: server.(*controlPlaneHTTPHandler).app, owner: owner, workspace: workspace}
+	attachment := createWorkspaceAttachmentForTest(t, handler.next, owner, "workspace-renewal-api")
+	workspace := createResourceWithMutationKeyForTest(t, handler.next, owner, http.MethodPost, "/api/workspaces", `{"attachmentId":"`+stringValue(attachment["id"])+`"}`, "workspace-renewal-api-workspace")
+	return workspaceRenewalAPIFixture{server: server, app: handler.app, owner: owner, workspace: workspace}
 }
 
 func (f workspaceRenewalAPIFixture) request(t *testing.T, body, key string) *httptest.ResponseRecorder {
@@ -77,15 +78,52 @@ func attachWorkspaceRenewalIntentAuditForTest(intent *workspaceRenewalIntentCAS,
 	intent.AuditEvent = bindWorkspaceAutoRenewAudit(intent.CommandOperation, event)
 }
 
-func TestWorkspaceAutoRenewOwnerEnablesCanonicalWorkspace(t *testing.T) {
-	fixture := newWorkspaceRenewalAPIFixture(t)
-	body := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-api-enable"))
-	if body["autoRenew"] != true || stringValue(body["effectiveAfter"]) != stringValue(body["nextRenewalAt"]) || body["renewalStatus"] != "scheduled" {
-		t.Fatalf("auto-renew response=%#v", body)
+func enableWorkspaceAutoRenewForTest(t *testing.T, fixture workspaceRenewalAPIFixture) map[string]any {
+	t.Helper()
+	workspace, ok := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	if !ok {
+		t.Fatal("workspace missing")
 	}
+	operations, err := fixture.app.tables.ListRuntimeOperations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerID := sessionUserIDForTest(t, fixture.server, fixture.owner)
+	update, _, err := planWorkspaceRenewalIntent(workspace, map[string]any{"id": ownerID, "role": "owner"}, operations, true, "internal-test-enable", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachWorkspaceRenewalIntentAuditForTest(&update, workspace)
+	mustStore(t, fixture.app.tables.ApplyWorkspaceRenewalIntent(context.Background(), update))
+	workspace, _ = fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
+	return workspace
+}
+
+func TestWorkspaceAutoRenewRejectsEnableWithoutMutation(t *testing.T) {
+	fixture := newWorkspaceRenewalAPIFixture(t)
+	workspaceID := stringValue(fixture.workspace["id"])
+	before, _ := fixture.app.getWorkspace(workspaceID)
+	operationsBefore, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
+	auditsBefore, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
+
+	response := fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-enable-forbidden")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "autoRenew_unavailable") {
+		t.Fatalf("enable status=%d body=%s", response.Code, response.Body.String())
+	}
+	after, _ := fixture.app.getWorkspace(workspaceID)
+	operationsAfter, _ := fixture.app.tables.ListRuntimeOperations(context.Background())
+	auditsAfter, _ := fixture.app.tables.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
+	if string(mustJSON(before)) != string(mustJSON(after)) || len(operationsAfter) != len(operationsBefore) || len(auditsAfter) != len(auditsBefore) {
+		t.Fatalf("rejected enable mutated state: before=%#v after=%#v operations=%d/%d audits=%d/%d", before, after, len(operationsBefore), len(operationsAfter), len(auditsBefore), len(auditsAfter))
+	}
+}
+
+func TestWorkspaceAutoRenewAllowsDisable(t *testing.T) {
+	fixture := newWorkspaceRenewalAPIFixture(t)
+	body := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":false}`, "workspace-renewal-disable"))
 	stored, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
-	if stored["autoRenew"] != true || stringValue(stored["authorizedBy"]) == "" || stringValue(stored["authorizedAt"]) == "" {
-		t.Fatalf("stored auto-renew intent=%#v", stored)
+	if body["autoRenew"] != false || stored["autoRenew"] != false {
+		t.Fatalf("disable response=%#v stored=%#v", body, stored)
 	}
 }
 
@@ -99,10 +137,11 @@ func TestWorkspaceAutoRenewAuditIsBoundToOriginalCommandAndRequest(t *testing.T)
 	} {
 		t.Run(storeCase.name, func(t *testing.T) {
 			fixture := newWorkspaceRenewalAPIFixtureWithStore(t, storeCase.new(t))
+			seeded := enableWorkspaceAutoRenewForTest(t, fixture)
 			workspaceID := stringValue(fixture.workspace["id"])
 			path := "/api/workspaces/" + workspaceID + "/auto-renew"
 			request := func(remoteAddr, userAgent string) *httptest.ResponseRecorder {
-				req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{"autoRenew":true}`))
+				req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(`{"autoRenew":false}`))
 				req.RemoteAddr = remoteAddr
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Idempotency-Key", "stable-request-audit")
@@ -137,13 +176,8 @@ func TestWorkspaceAutoRenewAuditIsBoundToOriginalCommandAndRequest(t *testing.T)
 				audit["actorAccountId"] != fixture.workspace["accountId"] || audit["ipAddress"] != "198.51.100.23" || audit["userAgent"] != "opl-original-client/1.0" {
 				t.Fatalf("audit request identity=%#v command=%#v", audit, command)
 			}
-			wantBefore := map[string]any{"autoRenew": false, "authorizedBy": "", "authorizedAt": ""}
-			workspaces, err := fixture.app.tables.ListWorkspaces(context.Background(), stringValue(fixture.workspace["accountId"]))
-			if err != nil {
-				t.Fatal(err)
-			}
-			storedWorkspace := recordByID(workspaces, workspaceID)
-			wantAfter := map[string]any{"autoRenew": true, "authorizedBy": ownerID, "authorizedAt": storedWorkspace["authorizedAt"]}
+			wantBefore := map[string]any{"autoRenew": true, "authorizedBy": ownerID, "authorizedAt": seeded["authorizedAt"]}
+			wantAfter := map[string]any{"autoRenew": false, "authorizedBy": "", "authorizedAt": ""}
 			if string(mustJSON(mapField(audit, "before"))) != string(mustJSON(wantBefore)) || string(mustJSON(mapField(audit, "after"))) != string(mustJSON(wantAfter)) {
 				t.Fatalf("audit intent snapshots before=%#v after=%#v", audit["before"], audit["after"])
 			}
@@ -158,96 +192,6 @@ func TestWorkspaceAutoRenewAuditIsBoundToOriginalCommandAndRequest(t *testing.T)
 				t.Fatalf("replay changed original audit: before=%s after=%#v", originalAudit, got)
 			}
 		})
-	}
-}
-
-type interleavingWorkspaceRenewalIntentStore struct {
-	*memoryTableStore
-	enableApplied chan struct{}
-	releaseEnable chan struct{}
-	once          sync.Once
-}
-
-func (s *interleavingWorkspaceRenewalIntentStore) ApplyWorkspaceRenewalIntent(ctx context.Context, update workspaceRenewalIntentCAS) error {
-	if err := s.memoryTableStore.ApplyWorkspaceRenewalIntent(ctx, update); err != nil {
-		return err
-	}
-	if update.WorkspacePatch.AutoRenew {
-		s.once.Do(func() {
-			close(s.enableApplied)
-			<-s.releaseEnable
-		})
-	}
-	return nil
-}
-
-func TestWorkspaceAutoRenewInterleavedAuditsMatchEachCommand(t *testing.T) {
-	fixture := newWorkspaceRenewalAPIFixture(t)
-	store := &interleavingWorkspaceRenewalIntentStore{
-		memoryTableStore: fixture.app.tables.(*memoryTableStore),
-		enableApplied:    make(chan struct{}),
-		releaseEnable:    make(chan struct{}),
-	}
-	fixture.app.tables = store
-
-	enableResult := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		enableResult <- fixture.request(t, `{"autoRenew":true}`, "interleaved-enable")
-	}()
-	select {
-	case <-store.enableApplied:
-	case <-time.After(5 * time.Second):
-		t.Fatal("enable request did not reach renewal intent commit")
-	}
-	disable := fixture.request(t, `{"autoRenew":false}`, "interleaved-disable")
-	close(store.releaseEnable)
-	var enable *httptest.ResponseRecorder
-	select {
-	case enable = <-enableResult:
-	case <-time.After(5 * time.Second):
-		t.Fatal("enable request did not finish")
-	}
-	decodeWorkspaceAutoRenewResponse(t, enable)
-	decodeWorkspaceAutoRenewResponse(t, disable)
-
-	operations, err := store.ListRuntimeOperations(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	audits, err := store.ListAuditEvents(context.Background(), stringValue(fixture.workspace["accountId"]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	renewalAudits := make([]map[string]any, 0, 2)
-	for _, audit := range audits {
-		if stringValue(audit["action"]) == "workspace.auto_renew" {
-			renewalAudits = append(renewalAudits, audit)
-		}
-	}
-	commands := 0
-	for _, operation := range operations {
-		if stringValue(operation["action"]) != "workspace.auto_renew" {
-			continue
-		}
-		commands++
-		result, err := decodeWorkspaceAutoRenewCommand(operation)
-		if err != nil {
-			t.Fatal(err)
-		}
-		auditID := "audit-" + stableID("workspace.auto_renew", stringValue(operation["id"]))[:12]
-		var audit map[string]any
-		for _, candidate := range renewalAudits {
-			if stringValue(candidate["id"]) == auditID {
-				audit = candidate
-				break
-			}
-		}
-		if audit == nil || mapField(audit, "after")["autoRenew"] != result.Response["autoRenew"] {
-			t.Fatalf("command %s response=%#v audit=%#v renewalAudits=%#v", operation["id"], result.Response, audit, renewalAudits)
-		}
-	}
-	if commands != 2 || len(renewalAudits) != 2 {
-		t.Fatalf("interleaved commands=%d audits=%d operations=%#v auditRows=%#v", commands, len(renewalAudits), operations, renewalAudits)
 	}
 }
 
@@ -282,7 +226,7 @@ func TestWorkspaceAutoRenewDeniesCrossTenantWorkspace(t *testing.T) {
 	other := cloneMap(fixture.workspace)
 	other["id"], other["accountId"] = "workspace-other-tenant", "acct-other"
 	mustStore(t, fixture.app.tables.SaveWorkspace(context.Background(), other))
-	response := requestWithMutationKeyForTest(t, fixture.server, fixture.owner, http.MethodPost, "/api/workspaces/workspace-other-tenant/auto-renew", `{"autoRenew":true}`, "workspace-renewal-cross-tenant")
+	response := requestWithMutationKeyForTest(t, fixture.server, fixture.owner, http.MethodPost, "/api/workspaces/workspace-other-tenant/auto-renew", `{"autoRenew":false}`, "workspace-renewal-cross-tenant")
 	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "account_scope_forbidden") {
 		t.Fatalf("cross-tenant status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -291,7 +235,7 @@ func TestWorkspaceAutoRenewDeniesCrossTenantWorkspace(t *testing.T) {
 func TestWorkspaceAutoRenewDisableBeforeAndAfterClaim(t *testing.T) {
 	t.Run("before claim cancels current renewal", func(t *testing.T) {
 		fixture := newWorkspaceRenewalAPIFixture(t)
-		decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-enable-before-disable"))
+		enableWorkspaceAutoRenewForTest(t, fixture)
 		body := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":false}`, "workspace-renewal-disable-before-claim"))
 		if body["autoRenew"] != false || body["renewalStatus"] != "cancelled" || body["effectiveAfter"] != body["paidThrough"] {
 			t.Fatalf("before-claim disable=%#v", body)
@@ -300,7 +244,7 @@ func TestWorkspaceAutoRenewDisableBeforeAndAfterClaim(t *testing.T) {
 
 	t.Run("after claim applies to following period", func(t *testing.T) {
 		fixture := newWorkspaceRenewalAPIFixture(t)
-		decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-enable-before-claim"))
+		enableWorkspaceAutoRenewForTest(t, fixture)
 		workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
 		paidThrough, err := time.Parse(time.RFC3339, stringValue(workspace["paidThrough"]))
 		if err != nil {
@@ -317,40 +261,6 @@ func TestWorkspaceAutoRenewDisableBeforeAndAfterClaim(t *testing.T) {
 		wantEffective := nextBillingMonth(paidThrough, anchor).UTC().Format(time.RFC3339Nano)
 		if body["autoRenew"] != false || body["renewalStatus"] != "claimed" || body["effectiveAfter"] != wantEffective {
 			t.Fatalf("after-claim disable=%#v want effectiveAfter=%s", body, wantEffective)
-		}
-	})
-}
-
-func TestWorkspaceAutoRenewAllowsLateEnableButRejectsExpiredWorkspace(t *testing.T) {
-	t.Run("late enable", func(t *testing.T) {
-		fixture := newWorkspaceRenewalAPIFixture(t)
-		workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
-		paidThrough := time.Now().UTC().Add(12 * time.Hour)
-		workspace["periodStart"] = paidThrough.AddDate(0, -1, 0).Format(time.RFC3339Nano)
-		workspace["paidThrough"] = paidThrough.Format(time.RFC3339Nano)
-		workspace["nextRenewalAt"] = paidThrough.Add(-24 * time.Hour).Format(time.RFC3339Nano)
-		workspace["billingAnchorDay"] = int64(paidThrough.Day())
-		workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
-		mustStore(t, fixture.app.tables.SaveWorkspace(context.Background(), workspace))
-		body := decodeWorkspaceAutoRenewResponse(t, fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-late-enable"))
-		if body["autoRenew"] != true || body["renewalStatus"] != "scheduled" {
-			t.Fatalf("late enable=%#v", body)
-		}
-	})
-
-	t.Run("expired", func(t *testing.T) {
-		fixture := newWorkspaceRenewalAPIFixture(t)
-		workspace, _ := fixture.app.getWorkspace(stringValue(fixture.workspace["id"]))
-		paidThrough := time.Now().UTC().Add(-time.Minute)
-		workspace["periodStart"] = paidThrough.AddDate(0, -1, 0).Format(time.RFC3339Nano)
-		workspace["paidThrough"] = paidThrough.Format(time.RFC3339Nano)
-		workspace["nextRenewalAt"] = paidThrough.Add(-24 * time.Hour).Format(time.RFC3339Nano)
-		workspace["billingAnchorDay"] = int64(paidThrough.Day())
-		workspace["autoRenew"], workspace["authorizedBy"], workspace["authorizedAt"] = false, "", ""
-		mustStore(t, fixture.app.tables.SaveWorkspace(context.Background(), workspace))
-		response := fixture.request(t, `{"autoRenew":true}`, "workspace-renewal-expired-enable")
-		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_reactivation_required") {
-			t.Fatalf("expired enable status=%d body=%s", response.Code, response.Body.String())
 		}
 	})
 }

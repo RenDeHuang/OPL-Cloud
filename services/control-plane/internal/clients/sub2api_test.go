@@ -128,6 +128,90 @@ func TestSub2APIClientReloginsOnceWhenAccessOnlyTokenExpires(t *testing.T) {
 	}
 }
 
+func TestSub2APIClientBalanceAcceptsDisabledAndRejectsUnknownStatus(t *testing.T) {
+	status := "disabled"
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41":
+			writeSub2APISuccess(t, w, map[string]any{"id": 41, "balance": 0, "status": status})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+
+	balance, err := client.Balance(context.Background(), 41)
+	if err != nil || balance.Status != "disabled" || balance.USDMicros != 0 {
+		t.Fatalf("disabled zero balance = %#v, err=%v", balance, err)
+	}
+	status = "unknown"
+	if _, err := client.Balance(context.Background(), 41); err == nil {
+		t.Fatal("unknown user status was accepted")
+	}
+}
+
+func TestSub2APIClientListsStrictMappedUserKeys(t *testing.T) {
+	lastUsedAt := "2026-07-18T01:02:03Z"
+	keyStatus := "active"
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41/api-keys":
+			writeSub2APISuccess(t, w, map[string]any{
+				"items": []any{
+					map[string]any{"id": 8, "user_id": 41, "name": "retired", "key": "", "status": "disabled", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0},
+					map[string]any{"id": 9, "user_id": 41, "name": "opl-workspace", "key": "workspace-secret", "status": keyStatus, "quota": 10.000001, "quota_used": 2.000002, "usage_5h": 1, "usage_1d": 2, "usage_7d": 3, "last_used_at": lastUsedAt},
+				},
+				"total": 2, "page": 1, "page_size": 1000, "pages": 1,
+			})
+		default:
+			t.Fatalf("unexpected Sub2API route %s %s", r.Method, r.URL.Path)
+		}
+	}, time.Second)
+
+	keyClient, ok := any(client).(interface {
+		Keys(context.Context, int64) ([]Sub2APIWorkspaceKey, error)
+	})
+	if !ok {
+		t.Fatal("Sub2API client does not expose strict key listing")
+	}
+	keys, err := keyClient.Keys(context.Background(), 41)
+	if err != nil {
+		t.Fatalf("list keys: %v", err)
+	}
+	if len(keys) != 2 || keys[0].ID != 8 || keys[0].Status != "disabled" || keys[1].ID != 9 || keys[1].UserID != 41 {
+		t.Fatalf("keys = %#v", keys)
+	}
+	if keys[1].QuotaUSDMicros != 10_000_001 || keys[1].QuotaUsedUSDMicros != 2_000_002 || keys[1].LastUsedAt == nil || keys[1].LastUsedAt.Format(time.RFC3339) != lastUsedAt {
+		t.Fatalf("strict key fields = %#v", keys[1])
+	}
+	keyStatus = "unknown"
+	if _, err := keyClient.Keys(context.Background(), 41); err == nil {
+		t.Fatal("unknown key status was accepted")
+	}
+}
+
+func TestSub2APIClientWorkspaceKeyRequiresSelectedSecret(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+		case "/api/v1/admin/users/41/api-keys":
+			writeSub2APISuccess(t, w, map[string]any{"items": []any{map[string]any{
+				"id": 9, "user_id": 41, "name": "opl-workspace", "key": "", "status": "active",
+				"quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0,
+			}}, "total": 1, "page": 1, "page_size": 1000, "pages": 1})
+		default:
+			t.Fatalf("unexpected route %s", r.URL.Path)
+		}
+	}, time.Second)
+	if _, err := client.WorkspaceKey(context.Background(), 41); err == nil {
+		t.Fatal("active Workspace key without secret was accepted")
+	}
+}
+
 func TestSub2APIClientSelectsOneActiveWorkspaceKeyAcrossPages(t *testing.T) {
 	pages := []string{}
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +229,7 @@ func TestSub2APIClientSelectsOneActiveWorkspaceKeyAcrossPages(t *testing.T) {
 			if page == "1" {
 				items := make([]any, 0, 1000)
 				for id := int64(1); id <= 1000; id++ {
-					items = append(items, map[string]any{"id": id, "user_id": 41, "name": "other", "key": "other-key", "status": "active"})
+					items = append(items, map[string]any{"id": id, "user_id": 41, "name": "other", "key": "other-key", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0})
 				}
 				writeSub2APISuccess(t, w, map[string]any{
 					"items": items, "total": 1001, "page": 1, "page_size": 1000, "pages": 2,
@@ -187,7 +271,7 @@ func TestSub2APIClientWorkspaceKeyRejectsIncoherentFullPagination(t *testing.T) 
 	items := func(start, count int64) []any {
 		result := make([]any, 0, count)
 		for id := start; id < start+count; id++ {
-			result = append(result, map[string]any{"id": id, "user_id": 41, "name": "other", "key": "other-key", "status": "active"})
+			result = append(result, map[string]any{"id": id, "user_id": 41, "name": "other", "key": "other-key", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0})
 		}
 		return result
 	}
@@ -288,7 +372,7 @@ func TestSub2APIClientWorkspaceKeyCardinalityFailsClosed(t *testing.T) {
 		want  error
 	}{
 		"empty":   {want: ErrSub2APIWorkspaceKeyMissing},
-		"missing": {items: []map[string]any{{"id": 1, "user_id": 41, "name": "other", "key": "other-key", "status": "active"}}, want: ErrSub2APIWorkspaceKeyMissing},
+		"missing": {items: []map[string]any{{"id": 1, "user_id": 41, "name": "other", "key": "other-key", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0}}, want: ErrSub2APIWorkspaceKeyMissing},
 		"ambiguous": {items: []map[string]any{
 			{"id": 1, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-one", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0},
 			{"id": 2, "user_id": 41, "name": "opl-workspace", "key": "workspace-key-two", "status": "active", "quota": 0, "quota_used": 0, "usage_5h": 0, "usage_1d": 0, "usage_7d": 0},
@@ -830,6 +914,54 @@ func TestSub2APIUsageListRejectsCrossIdentity(t *testing.T) {
 			}, time.Second)
 			if _, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50}); err == nil || !strings.Contains(err.Error(), "identity mismatch") {
 				t.Fatalf("cross-%s usage error = %v", name, err)
+			}
+		})
+	}
+}
+
+func TestSub2APIUsageListRequiresCoherentPagination(t *testing.T) {
+	rows := func(count int) []map[string]any {
+		items := make([]map[string]any, count)
+		for index := range items {
+			items[index] = map[string]any{
+				"user_id": 41, "api_key_id": 9, "request_id": fmt.Sprintf("req-%d", index), "created_at": "2026-07-16T00:00:00Z",
+				"model": "gpt-5", "inbound_endpoint": "/v1/responses", "request_type": "sync",
+				"input_tokens": 0, "output_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0, "actual_cost": 0,
+			}
+		}
+		return items
+	}
+	for _, tc := range []struct {
+		name               string
+		page, total, pages int
+		items              []map[string]any
+		wantErr            bool
+	}{
+		{name: "reported total without items", page: 1, total: 1, pages: 1, items: rows(0), wantErr: true},
+		{name: "wrong total pages", page: 1, total: 51, pages: 1, items: rows(50), wantErr: true},
+		{name: "short non-final page", page: 1, total: 51, pages: 2, items: rows(1), wantErr: true},
+		{name: "short final page", page: 2, total: 51, pages: 2, items: rows(0), wantErr: true},
+		{name: "empty", page: 1, total: 0, pages: 0, items: rows(0)},
+		{name: "full non-final page", page: 1, total: 51, pages: 2, items: rows(50)},
+		{name: "final remainder", page: 2, total: 51, pages: 2, items: rows(1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/auth/login":
+					writeSub2APISuccess(t, w, map[string]any{"access_token": "access", "refresh_token": "refresh"})
+				case "/api/v1/admin/usage":
+					writeSub2APISuccess(t, w, map[string]any{"items": tc.items, "total": tc.total, "page": tc.page, "page_size": 50, "pages": tc.pages})
+				default:
+					t.Fatalf("unexpected route %s", r.URL.Path)
+				}
+			}, time.Second)
+			page, err := client.Usage(context.Background(), Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: tc.page, PageSize: 50})
+			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "invalid sub2api usage pagination")) {
+				t.Fatalf("pagination error = %v page=%#v", err, page)
+			}
+			if !tc.wantErr && (err != nil || len(page.Items) != len(tc.items) || page.Total != int64(tc.total) || page.Pages != tc.pages) {
+				t.Fatalf("usage page = %#v err=%v", page, err)
 			}
 		})
 	}

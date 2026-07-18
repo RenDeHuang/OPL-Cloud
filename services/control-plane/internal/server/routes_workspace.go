@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -11,16 +13,45 @@ import (
 
 func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
 	mux.HandleFunc("GET /api/workspaces", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		accountID, ok := app.scopedAccountID(w, r, nil)
+		user, ok := app.sessionUserContext(r)
 		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}
-		writeJSON(w, http.StatusOK, app.state(accountID, nil)["workspaces"])
+		rows, err := app.tables.ListWorkspaces(r.Context(), stringValue(user["accountId"]))
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "control-plane", "unavailable", nil)
+			return
+		}
+		items := make([]any, 0, len(rows))
+		for _, row := range rows {
+			item, ok := workspaceSourceProjection(row)
+			if !ok {
+				writeSourceEnvelope(w, http.StatusInternalServerError, "control-plane", "unavailable", nil)
+				return
+			}
+			items = append(items, item)
+		}
+		status := "available"
+		if len(items) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "control-plane", status, map[string]any{"items": items, "total": len(items)})
 	}))
 	mux.HandleFunc("POST /api/workspaces/runtime-status", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		workspaceID := stringField(input, "workspaceId", "")
-		workspace, ok := app.getWorkspace(workspaceID)
+		user, ok := app.sessionUserContext(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
+			return
+		}
+		accountID := stringValue(user["accountId"])
+		workspace, ok, err := app.workspaceForSource(r.Context(), accountID, workspaceID)
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "fabric", "unavailable", nil)
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusNotFound, "workspace_not_found")
 			return
@@ -38,7 +69,11 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 			firstNonEmpty(stringValue(workspace["currentAttachmentId"]), stringValue(workspace["attachmentId"])),
 		)
 		defer unlock()
-		workspace, ok = app.getWorkspace(workspaceID)
+		workspace, ok, err = app.workspaceForSource(r.Context(), accountID, workspaceID)
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "fabric", "unavailable", nil)
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusNotFound, "workspace_not_found")
 			return
@@ -60,45 +95,16 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		runtime, err := service.WorkspaceRuntimeStatus(r.Context(), workspaceID)
 		if err != nil {
-			writeUpstreamError(w)
+			writeSourceEnvelope(w, http.StatusBadGateway, "fabric", "unavailable", nil)
 			return
 		}
-		status := runtime.Status
-		if !runtime.Ready && (status == "" || status == "running") {
-			status = "unready"
-		} else if runtime.Ready && status == "" {
-			status = "running"
-		}
-		workspace["state"], workspace["status"] = status, status
-		workspace["url"] = firstNonEmpty(runtime.URL, stringValue(workspace["url"]))
-		workspace["runtimeId"] = firstNonEmpty(runtime.ID, stringValue(workspace["runtimeId"]))
-		runtimeProjection := cloneMap(mapField(workspace, "runtime"))
-		runtimeProjection["serviceName"] = firstNonEmpty(runtime.ServiceName, stringValue(runtimeProjection["serviceName"]))
-		runtimeProjection["status"], runtimeProjection["ready"] = status, runtime.Ready
-		workspace["runtime"] = runtimeProjection
-		access := cloneMap(mapField(workspace, "access"))
-		delete(access, "password")
-		delete(access, "tokenStatus")
-		delete(access, "requiresLogin")
-		if runtime.Access.Username != "" {
-			access["account"], access["username"] = runtime.Access.Username, runtime.Access.Username
-		}
-		if runtime.Access.CredentialStatus != "" {
-			access["credentialStatus"] = runtime.Access.CredentialStatus
-		}
-		if runtime.Access.CredentialVersion != "" {
-			access["credentialVersion"] = runtime.Access.CredentialVersion
-		}
-		if runtime.Access.SecretRef != "" {
-			access["secretRef"] = runtime.Access.SecretRef
-		}
-		workspace["access"] = access
-		if err := app.tables.SaveWorkspace(r.Context(), workspace); err != nil {
-			writeError(w, http.StatusInternalServerError, "state_persist_failed")
+		body, ok := workspaceRuntimeStatusResponse(runtime, workspaceID)
+		if !ok {
+			writeSourceEnvelope(w, http.StatusBadGateway, "fabric", "unavailable", nil)
 			return
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
-		writeJSON(w, http.StatusOK, workspaceRuntimeStatusResponse(runtime))
+		writeSourceEnvelope(w, http.StatusOK, "fabric", "available", body)
 	}))
 	mux.HandleFunc("POST /api/workspaces/{workspaceId}/runtime-credentials/reveal", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := r.PathValue("workspaceId")
@@ -254,6 +260,10 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		autoRenew, ok := input["autoRenew"].(bool)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "autoRenew_required")
+			return
+		}
+		if autoRenew {
+			writeError(w, http.StatusConflict, "autoRenew_unavailable")
 			return
 		}
 		workspaceID := r.PathValue("workspaceId")
@@ -725,6 +735,81 @@ func registerWorkspaceRoutes(mux *http.ServeMux, app *controlPlaneServer, servic
 		}
 		writeJSON(w, http.StatusCreated, body)
 	}))
+}
+
+func (app *controlPlaneServer) workspaceForSource(ctx context.Context, accountID, workspaceID string) (map[string]any, bool, error) {
+	rows, err := app.tables.ListWorkspaces(ctx, accountID)
+	if err != nil {
+		return nil, false, err
+	}
+	workspace := findRecord(rows, workspaceID)
+	return workspace, workspace != nil, nil
+}
+
+func workspaceSourceProjection(row map[string]any) (map[string]any, bool) {
+	item := map[string]any{}
+	for _, key := range []string{"id", "ownerAccountId", "ownerUserId", "state", "createdAt", "updatedAt"} {
+		value := stringValue(row[key])
+		if value == "" {
+			return nil, false
+		}
+		item[key] = value
+	}
+	if _, err := time.Parse(time.RFC3339, stringValue(item["createdAt"])); err != nil {
+		return nil, false
+	}
+	if _, err := time.Parse(time.RFC3339, stringValue(item["updatedAt"])); err != nil {
+		return nil, false
+	}
+	for _, key := range []string{"name", "url", "storageId", "currentComputeAllocationId", "currentAttachmentId", "runtimeId"} {
+		if value := stringValue(row[key]); value != "" {
+			item[key] = value
+		}
+	}
+	for _, key := range []string{"packageId", "priceVersion", "currency", "renewalStatus"} {
+		if raw, exists := row[key]; exists {
+			value, ok := raw.(string)
+			if !ok || strings.TrimSpace(value) == "" {
+				return nil, false
+			}
+			item[key] = value
+		}
+	}
+	if packageID := stringValue(item["packageId"]); packageID != "" && packageID != "basic" && packageID != "pro" {
+		return nil, false
+	}
+	if currency := stringValue(item["currency"]); currency != "" && currency != "USD" {
+		return nil, false
+	}
+	for _, key := range []string{"storageGb", "totalUsdMicros"} {
+		if _, exists := row[key]; exists {
+			value, ok := requiredNonNegativeInteger(row, key)
+			if !ok || (key == "storageGb" && value == 0) {
+				return nil, false
+			}
+			item[key] = value
+		}
+	}
+	if raw, exists := row["autoRenew"]; exists {
+		value, ok := raw.(bool)
+		if !ok {
+			return nil, false
+		}
+		item["autoRenew"] = value
+	}
+	for _, key := range []string{"periodStart", "paidThrough"} {
+		if raw, exists := row[key]; exists {
+			value, ok := raw.(string)
+			if !ok {
+				return nil, false
+			}
+			if _, err := time.Parse(time.RFC3339, value); err != nil {
+				return nil, false
+			}
+			item[key] = value
+		}
+	}
+	return item, true
 }
 
 func workspaceCreateProjectionCompatible(existing map[string]any, projection domain.WorkspaceProjection, acceptedBillingState map[string]any, allowClaim bool) bool {

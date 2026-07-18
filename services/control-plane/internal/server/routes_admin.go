@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -12,6 +15,19 @@ import (
 var billingReviewEvidenceRefPattern = regexp.MustCompile(`^case-[0-9]{8}-[a-z0-9]{3,16}$`)
 
 func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
+	mux.HandleFunc("GET /api/operator/accounts", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		items, err := app.operatorAccountMappings(r.Context(), service)
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusBadGateway, "control-plane+sub2api", "unavailable", nil)
+			return
+		}
+		status := "available"
+		if len(items) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "control-plane+sub2api", status, map[string]any{"items": items, "total": len(items)})
+	}))
 	mux.HandleFunc("POST /api/users", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
 		body, err := app.createUser(r.Context(), service, input)
@@ -124,6 +140,42 @@ func registerAdminRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, result)
 	}))
+}
+
+func (app *controlPlaneServer) operatorAccountMappings(ctx context.Context, service *controlplane.Service) ([]any, error) {
+	accounts, err := app.tables.ListAccounts(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	users, err := app.tables.ListUsers(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(accounts, func(i, j int) bool { return stringValue(accounts[i]["id"]) < stringValue(accounts[j]["id"]) })
+	items := make([]any, 0, len(accounts))
+	for _, account := range accounts {
+		accountID := stringValue(account["id"])
+		if accountID == "acct-admin" {
+			continue
+		}
+		remoteID, ok := positiveIntegerField(account, "sub2apiUserId")
+		owner := findRecord(users, stringValue(account["ownerUserId"]))
+		if !ok || owner == nil || stringValue(owner["accountId"]) != accountID || stringValue(owner["role"]) != "owner" {
+			return nil, errAccountIdentityConflict
+		}
+		identity, err := service.Sub2APIUser(ctx, remoteID)
+		if err != nil {
+			return nil, err
+		}
+		if normalizeEmail(stringValue(owner["email"])) != identity.Email {
+			return nil, errAccountIdentityConflict
+		}
+		items = append(items, map[string]any{
+			"accountId": accountID, "consoleUserId": stringValue(owner["id"]), "role": stringValue(owner["role"]),
+			"sub2apiUserId": strconv.FormatInt(identity.ID, 10), "email": identity.Email, "status": identity.Status,
+		})
+	}
+	return items, nil
 }
 
 func billingReviewRequestShapeValid(input map[string]any) bool {

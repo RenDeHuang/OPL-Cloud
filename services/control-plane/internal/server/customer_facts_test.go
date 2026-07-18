@@ -69,10 +69,8 @@ func (l *customerFactsLedger) ListReceipts(_ context.Context, query clients.Rece
 	return l.page, l.listErr
 }
 
-func (l *customerFactsLedger) Receipt(_ context.Context, receiptID string) (clients.Receipt, error) {
-	result := l.receipt
-	result.ReceiptID = receiptID
-	return result, l.receiptErr
+func (l *customerFactsLedger) Receipt(_ context.Context, _ string) (clients.Receipt, error) {
+	return l.receipt, l.receiptErr
 }
 
 func (l *customerFactsLedger) RecordReceipt(ctx context.Context, input clients.ReceiptInput, key string) (clients.Receipt, error) {
@@ -102,10 +100,7 @@ func (f *customerFactsFabric) ListOperations(_ context.Context) ([]clients.Fabri
 func TestBillingReceiptListTenantProjection(t *testing.T) {
 	billing := customerBillingReceipt()
 	ledger := &customerFactsLedger{page: clients.ReceiptPage{
-		Receipts: []clients.Receipt{
-			billing,
-			{ReceiptInput: clients.ReceiptInput{Type: "execution.receipt.v1", AccountID: "acct-alpha"}, ReceiptID: "receipt-not-billing"},
-		},
+		Receipts:   []clients.Receipt{billing},
 		NextCursor: "next-page",
 		HasMore:    true,
 	}}
@@ -123,6 +118,10 @@ func TestBillingReceiptListTenantProjection(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
+	if page["source"] != "ledger" || page["status"] != "available" {
+		t.Fatalf("source envelope = %#v", page)
+	}
+	page = mapField(page, "data")
 	items, _ := page["receipts"].([]any)
 	if len(items) != 1 || page["nextCursor"] != "next-page" || page["hasMore"] != true {
 		t.Fatalf("projected page = %#v", page)
@@ -137,7 +136,7 @@ func TestBillingReceiptListRejectsTenantMismatch(t *testing.T) {
 	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
 
 	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts", "")
-	assertErrorResponse(t, response.Code, response.Body.String(), http.StatusBadGateway, "billing_receipt_identity_mismatch")
+	assertUnavailableWorkspaceEnvelope(t, response, http.StatusBadGateway, "ledger")
 }
 
 func TestBillingReceiptDetailProjection(t *testing.T) {
@@ -154,7 +153,7 @@ func TestBillingReceiptDetailProjection(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&projected); err != nil {
 		t.Fatalf("decode detail: %v", err)
 	}
-	assertCustomerBillingReceipt(t, projected)
+	assertCustomerBillingReceipt(t, mapField(projected, "data"))
 }
 
 func TestBillingReceiptProjectionRejectsMalformedMoney(t *testing.T) {
@@ -164,7 +163,7 @@ func TestBillingReceiptProjectionRejectsMalformedMoney(t *testing.T) {
 	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
 
 	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/billing/receipts", "")
-	assertErrorResponse(t, response.Code, response.Body.String(), http.StatusBadGateway, "billing_receipt_source_unavailable")
+	assertUnavailableWorkspaceEnvelope(t, response, http.StatusBadGateway, "ledger")
 }
 
 func TestBillingReceiptProjectionRejectsMalformedPricingIdentity(t *testing.T) {
@@ -172,14 +171,15 @@ func TestBillingReceiptProjectionRejectsMalformedPricingIdentity(t *testing.T) {
 		name   string
 		mutate func(map[string]any)
 	}{
-		{name: "canonical missing currency", mutate: func(cost map[string]any) { cost["priceVersion"] = "pricing-v1" }},
+		{name: "canonical missing currency", mutate: func(cost map[string]any) { delete(cost, "currency") }},
 		{name: "canonical non USD currency", mutate: func(cost map[string]any) { cost["priceVersion"], cost["currency"] = "pricing-v1", "CNY" }},
 		{name: "canonical wrong currency type", mutate: func(cost map[string]any) { cost["priceVersion"], cost["currency"] = "pricing-v1", 42 }},
-		{name: "canonical legacy version mismatch", mutate: func(cost map[string]any) { cost["priceVersion"], cost["currency"] = "pricing-v2", "USD" }},
-		{name: "legacy missing CNY", mutate: func(cost map[string]any) { delete(cost, "monthlyPriceCnyCents") }},
-		{name: "legacy fractional CNY", mutate: func(cost map[string]any) { cost["monthlyPriceCnyCents"] = 1.5 }},
-		{name: "legacy zero CNY", mutate: func(cost map[string]any) { cost["monthlyPriceCnyCents"] = int64(0) }},
-		{name: "legacy negative CNY", mutate: func(cost map[string]any) { cost["monthlyPriceCnyCents"] = int64(-1) }},
+		{name: "canonical legacy version mismatch", mutate: func(cost map[string]any) { cost["pricingVersion"] = "pricing-v2" }},
+		{name: "legacy CNY fallback", mutate: func(cost map[string]any) {
+			delete(cost, "priceVersion")
+			delete(cost, "currency")
+			cost["pricingVersion"], cost["monthlyPriceCnyCents"] = "pricing-v1", int64(35000)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			receipt := customerBillingReceipt()
@@ -190,24 +190,20 @@ func TestBillingReceiptProjectionRejectsMalformedPricingIdentity(t *testing.T) {
 			for name, path := range map[string]string{"list": "/api/billing/receipts", "detail": "/api/billing/receipts/receipt-1"} {
 				t.Run(name, func(t *testing.T) {
 					response := requestWithSession(t, server, session, http.MethodGet, path, "")
-					assertErrorResponse(t, response.Code, response.Body.String(), http.StatusBadGateway, "billing_receipt_source_unavailable")
+					assertUnavailableWorkspaceEnvelope(t, response, http.StatusBadGateway, "ledger")
 				})
 			}
 		})
 	}
 }
 
-func TestBillingReceiptListUnavailableDoesNotAffectSummary(t *testing.T) {
+func TestBillingReceiptListUnavailableIsStrictEnvelope(t *testing.T) {
 	ledger := &customerFactsLedger{listErr: errors.New("Ledger unavailable")}
 	server := NewServer(newTestService(ledger, &fakeFabricClient{}))
 	session := tenantAdminSessionForTest(t, server)
 
 	list := requestWithSession(t, server, session, http.MethodGet, "/api/billing/receipts", "")
-	assertErrorResponse(t, list.Code, list.Body.String(), http.StatusBadGateway, "upstream_unavailable")
-	summary := requestWithSession(t, server, session, http.MethodGet, "/api/billing/summary", "")
-	if summary.Code != http.StatusOK {
-		t.Fatalf("summary status after Ledger failure = %d: %s", summary.Code, summary.Body.String())
-	}
+	assertUnavailableWorkspaceEnvelope(t, list, http.StatusBadGateway, "ledger")
 }
 
 func TestGatewayUsageAndStatsUseMappedWorkspaceKey(t *testing.T) {
@@ -232,17 +228,18 @@ func TestGatewayUsageAndStatsUseMappedWorkspaceKey(t *testing.T) {
 	if sub2API.usageQuery != (clients.Sub2APIUsageQuery{UserID: 41, APIKeyID: 9, Page: 1, PageSize: 50}) {
 		t.Fatalf("usage query = %#v", sub2API.usageQuery)
 	}
-	var page map[string]any
-	if err := json.NewDecoder(usage.Body).Decode(&page); err != nil {
+	var envelope map[string]any
+	if err := json.NewDecoder(usage.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)
 	}
+	page := mapField(envelope, "data")
 	items, _ := page["items"].([]any)
-	if len(page) != 5 || len(items) != 1 || numberField(page, "total", 0) != 1 || numberField(page, "page", 0) != 1 || numberField(page, "pageSize", 0) != 50 || numberField(page, "pages", 0) != 1 {
-		t.Fatalf("usage page = %#v", page)
+	if envelope["source"] != "sub2api" || envelope["status"] != "available" || envelope["available"] != true || len(page) != 5 || len(items) != 1 || numberField(page, "total", 0) != 1 || numberField(page, "page", 0) != 1 || numberField(page, "pageSize", 0) != 50 || numberField(page, "pages", 0) != 1 {
+		t.Fatalf("usage envelope = %#v", envelope)
 	}
 	row := items[0].(map[string]any)
-	allowed := map[string]bool{"requestId": true, "createdAt": true, "model": true, "inboundEndpoint": true, "requestType": true, "inputTokens": true, "outputTokens": true, "cacheCreationTokens": true, "cacheReadTokens": true, "actualCostUsdMicros": true}
-	if len(row) != len(allowed) || row["requestId"] != "req-1" || numberField(row, "actualCostUsdMicros", 0) != 1234 {
+	allowed := map[string]bool{"apiKeyId": true, "requestId": true, "createdAt": true, "model": true, "inboundEndpoint": true, "requestType": true, "inputTokens": true, "outputTokens": true, "cacheCreationTokens": true, "cacheReadTokens": true, "actualCostUsdMicros": true}
+	if len(row) != len(allowed) || row["apiKeyId"] != "9" || row["requestId"] != "req-1" || numberField(row, "actualCostUsdMicros", 0) != 1234 {
 		t.Fatalf("usage row = %#v", row)
 	}
 	for key := range row {
@@ -257,12 +254,12 @@ func TestGatewayUsageAndStatsUseMappedWorkspaceKey(t *testing.T) {
 	if sub2API.statsQuery != (clients.Sub2APIUsageStatsQuery{UserID: 41, APIKeyID: 9, Period: "month"}) {
 		t.Fatalf("stats query = %#v", sub2API.statsQuery)
 	}
-	var totals map[string]any
-	if err := json.NewDecoder(stats.Body).Decode(&totals); err != nil {
+	if err := json.NewDecoder(stats.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)
 	}
+	totals := mapField(envelope, "data")
 	if len(totals) != 5 || numberField(totals, "totalRequests", 0) != 1 || numberField(totals, "totalActualCostUsdMicros", 0) != 1234 {
-		t.Fatalf("usage stats = %#v", totals)
+		t.Fatalf("usage stats = %#v", envelope)
 	}
 }
 
@@ -272,29 +269,28 @@ func TestGatewayUsageAndStatsFailClosedWithoutFacts(t *testing.T) {
 			name       string
 			client     clients.Sub2APIClient
 			wantStatus int
-			wantCode   string
 		}{
 			{
-				name: "missing key", wantStatus: http.StatusConflict, wantCode: "gateway_key_missing",
+				name: "missing key", wantStatus: http.StatusConflict,
 				client: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}, workspaceKeyErr: clients.ErrSub2APIWorkspaceKeyMissing}},
 			},
 			{
-				name: "ambiguous key", wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous",
+				name: "ambiguous key", wantStatus: http.StatusConflict,
 				client: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}, workspaceKeyErr: clients.ErrSub2APIWorkspaceKeyAmbiguous}},
 			},
 			{
-				name: "missing usage capability", wantStatus: http.StatusBadGateway, wantCode: "sub2api_usage_unavailable",
+				name: "missing usage capability", wantStatus: http.StatusBadGateway,
 				client: &testSub2APIClient{charges: map[string]int64{}},
 			},
 			{
-				name: "upstream unavailable", wantStatus: http.StatusBadGateway, wantCode: "sub2api_usage_unavailable",
+				name: "upstream unavailable", wantStatus: http.StatusBadGateway,
 				client: &customerFactsSub2API{testSub2APIClient: &testSub2APIClient{charges: map[string]int64{}}, usageErr: errors.New("usage unavailable"), statsErr: errors.New("stats unavailable")},
 			},
 		} {
 			t.Run(path+" "+tc.name, func(t *testing.T) {
 				server, session := newGatewayOwnerTestServer(t, tc.client, nil)
 				response := requestWithSession(t, server, session, http.MethodGet, path, "")
-				assertErrorResponse(t, response.Code, response.Body.String(), tc.wantStatus, tc.wantCode)
+				assertUnavailableSourceEnvelope(t, response, tc.wantStatus)
 				if strings.Contains(response.Body.String(), `:0`) {
 					t.Fatalf("unavailable response substituted zero: %s", response.Body.String())
 				}
@@ -473,7 +469,7 @@ func TestBillingReconciliationMismatchBlocksPurchasesWithoutMutation(t *testing.
 			assertReconciliationReport(t, body, "mismatch", 2, 1, 1)
 			assertReconciliationException(t, body["report"].(map[string]any), "compute", "compute-reconcile", tc.code)
 
-			blocked := requestWithMutationKeyForTest(t, fixture.server, fixture.member, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`, "blocked-after-reconciliation")
+			blocked := requestWithMutationKeyForTest(t, fixture.server, fixture.member, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "blocked-after-reconciliation")
 			assertErrorResponse(t, blocked.Code, blocked.Body.String(), http.StatusConflict, "billing_reconciliation_blocked")
 			assertReconciliationReadOnly(t, fixture)
 		})
@@ -667,9 +663,9 @@ func customerBillingReceipt() clients.Receipt {
 			Environment: map[string]any{"credential": "runtime-secret"},
 			InputRefs:   map[string]any{"sub2apiResponse": "sub2api-secret"},
 			Cost: map[string]any{
-				"resourceType": "compute", "resourceId": "compute-alpha", "pricingVersion": "pricing-v1",
-				"monthlyPriceCnyCents": int64(35000), "chargeUsdMicros": int64(50_000_000),
-				"periodStart": "2026-07-16T00:00:00Z", "paidThrough": "2026-08-16T00:00:00Z",
+				"resourceType": "compute", "resourceId": "compute-alpha", "priceVersion": "pricing-v1", "currency": "USD",
+				"chargeUsdMicros": int64(50_000_000),
+				"periodStart":     "2026-07-16T00:00:00Z", "paidThrough": "2026-08-16T00:00:00Z",
 				"sub2apiRedeemCode": "redeem-secret", "rawProviderPayload": "provider-secret",
 			},
 			Owner: map[string]any{"credential": "owner-secret"},

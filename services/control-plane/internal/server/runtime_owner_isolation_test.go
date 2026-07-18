@@ -42,7 +42,8 @@ func seedRuntimeAccessWorkspaceForTest(t *testing.T, store controlPlaneTableStor
 func TestRuntimeStatusNeverReturnsCredential(t *testing.T) {
 	store := newMemoryTableStore()
 	fabric := &fakeFabricClient{runtimeStatus: clients.WorkspaceRuntime{
-		ID: "runtime-alpha", WorkspaceID: "ws-alpha", Status: "running", Ready: true,
+		ID: "runtime-alpha", WorkspaceID: "ws-alpha", URL: "https://workspace.medopl.cn/w/ws-alpha/", ServiceName: "opl-compute-alpha", Status: "running", Ready: true,
+		Checks: []any{map[string]any{"name": "service_endpoints_ready", "ok": true}},
 		Access: clients.WorkspaceRuntimeAccess{
 			Username: "opl", Password: "runtime-password-alpha", CredentialStatus: "configured",
 			CredentialVersion: "v1", SecretRef: "runtime-secret-alpha",

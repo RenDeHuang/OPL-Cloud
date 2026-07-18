@@ -1195,6 +1195,11 @@ func TestMonthlyEntitlementRejectsInactiveOrExpiredResources(t *testing.T) {
 	}
 }
 
+func historicalCustomerWriteHandler(t *testing.T, server http.Handler) http.Handler {
+	t.Helper()
+	return server.(*controlPlaneHTTPHandler).next
+}
+
 func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 	t.Setenv("OPL_TENCENT_ZONE", "ap-shanghai-2")
 	events := &[]string{}
@@ -1208,7 +1213,7 @@ func TestMonthlyPurchaseRouteUsesSub2APIAndPersistsReceipt(t *testing.T) {
 		t.Fatalf("new monthly server: %v", err)
 	}
 	session := tenantAdminSessionForTest(t, server)
-	rec := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute","zone":"ap-guangzhou-3"}`)
+	rec := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/compute-allocations", `{"packageId":"basic","name":"Monthly Compute","zone":"ap-guangzhou-3"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("purchase status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1246,11 +1251,11 @@ func TestStoragePurchaseUsesOwnedComputeZone(t *testing.T) {
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 
-	missing := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10}`)
+	missing := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10}`)
 	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "compute_allocation_required") || len(*events) != 0 {
 		t.Fatalf("missing compute response=%d %s events=%#v", missing.Code, missing.Body.String(), *events)
 	}
-	created := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha","workspaceId":"workspace-alpha"}`)
+	created := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha","workspaceId":"workspace-alpha"}`)
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("storage purchase status=%d body=%s", created.Code, created.Body.String())
 	}
@@ -1282,7 +1287,7 @@ func TestStoragePurchaseRejectsPackageMismatchBeforeExternalCalls(t *testing.T) 
 				t.Fatal(err)
 			}
 			session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-			response := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha"`+tc.requestPackage+`}`)
+			response := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"sizeGb":10,"computeAllocationId":"compute-alpha"`+tc.requestPackage+`}`)
 			if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "compute_storage_package_mismatch") {
 				t.Fatalf("mismatch response=%d %s", response.Code, response.Body.String())
 			}
@@ -1314,7 +1319,7 @@ func TestPaidResourceRoutesRejectCallerSelectedNewResourceIDsBeforeExternalCalls
 		{path: "/api/compute-allocations", body: `{`},
 		{path: "/api/storage-volumes", body: `{`},
 	} {
-		rec := requestWithSession(t, server, session, http.MethodPost, tc.path, tc.body)
+		rec := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, tc.path, tc.body)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("caller-selected id on %s status=%d body=%s", tc.path, rec.Code, rec.Body.String())
 		}
@@ -1345,7 +1350,7 @@ func TestStorageRouteAllowsOnlyOwnedRetainedVolumeReactivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	rec := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", `{"id":"storage-retained","sizeGb":10,"computeAllocationId":"compute-retained"}`)
+	rec := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", `{"id":"storage-retained","sizeGb":10,"computeAllocationId":"compute-retained"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("retained reactivation status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1389,60 +1394,6 @@ func TestSub2APIUserMappingRejectsNumbersJSONCannotRepresentExactly(t *testing.T
 	}
 }
 
-func TestStateRouteUsesOnlyLiveSub2APIBalance(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{123_456_789, 123_456_789}}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := requestWithSession(t, server, tenantAdminSessionForTest(t, server), http.MethodGet, "/api/state", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("state status = %d: %s", response.Code, response.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := state["wallet"]; exists {
-		t.Fatalf("state retains wallet: %#v", state["wallet"])
-	}
-	balance, _ := state["balance"].(map[string]any)
-	if balance["source"] != "sub2api" || balance["currency"] != "USD" || balance["status"] != "available" || balance["available"] != true || int64(numberField(balance, "userId", 0)) != 41 || int64(numberField(balance, "usdMicros", 0)) != 123_456_789 {
-		t.Fatalf("state balance = %#v", balance)
-	}
-}
-
-func TestStateRouteDegradesWhenSub2APIBalanceIsUnavailable(t *testing.T) {
-	events := &[]string{}
-	sub2API := &monthlySub2API{events: events, balances: []int64{0}}
-	store := newMemoryTableStore()
-	seedTenantMember(t, store, "acct-alpha", "org-alpha", "usr-alpha", "alpha@example.com")
-	server, err := NewPersistentServer(controlplane.NewService(&monthlyLedger{events: events}, &monthlyFabric{events: events}, sub2API), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	session := tenantAdminSessionForTest(t, server)
-	sub2API.balanceErr = errors.New("sub2api unavailable")
-	response := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
-	if response.Code != http.StatusOK {
-		t.Fatalf("state status=%d body=%s", response.Code, response.Body.String())
-	}
-	var state map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
-		t.Fatal(err)
-	}
-	balance, _ := state["balance"].(map[string]any)
-	if balance["source"] != "sub2api" || balance["currency"] != "USD" || balance["status"] != "unavailable" || balance["available"] != false {
-		t.Fatalf("degraded balance=%#v", balance)
-	}
-	if _, exists := balance["usdMicros"]; exists {
-		t.Fatalf("degraded balance must not look like zero: %#v", balance)
-	}
-}
-
 func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
 	events := &[]string{}
 	sub2API := &monthlySub2API{events: events, balances: []int64{100_000_000, 50_000_000, 100_000_000, 50_000_000}}
@@ -1455,8 +1406,8 @@ func TestPaidResourceIdempotencyKeysAreScopedToTheSessionAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alpha := requestWithSession(t, server, loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
-	beta := requestWithSession(t, server, loginForTest(t, server, "beta@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	alpha := requestWithSession(t, historicalCustomerWriteHandler(t, server), loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
+	beta := requestWithSession(t, historicalCustomerWriteHandler(t, server), loginForTest(t, server, "beta@example.com", "CorrectHorseBatteryStaple!"), http.MethodPost, "/api/compute-allocations", `{"packageId":"basic"}`)
 	if alpha.Code != http.StatusAccepted || beta.Code != http.StatusAccepted {
 		t.Fatalf("same-key purchases: alpha=%d %s beta=%d %s", alpha.Code, alpha.Body.String(), beta.Code, beta.Body.String())
 	}
@@ -1486,8 +1437,8 @@ func TestVerificationSlotUsesNormalIdempotentCommercialPurchase(t *testing.T) {
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
 
 	computeBody := `{"packageId":"basic","name":"verification-slot-01"}`
-	compute := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", computeBody)
-	computeReplay := requestWithSession(t, server, session, http.MethodPost, "/api/compute-allocations", computeBody)
+	compute := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/compute-allocations", computeBody)
+	computeReplay := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/compute-allocations", computeBody)
 	if compute.Code != http.StatusAccepted || computeReplay.Code != http.StatusAccepted {
 		t.Fatalf("compute=%d %s replay=%d %s", compute.Code, compute.Body.String(), computeReplay.Code, computeReplay.Body.String())
 	}
@@ -1499,8 +1450,8 @@ func TestVerificationSlotUsesNormalIdempotentCommercialPurchase(t *testing.T) {
 		t.Fatal(err)
 	}
 	storageBody := `{"packageId":"basic","sizeGb":10,"name":"verification-slot-01","computeAllocationId":"` + stringValue(computeResult["id"]) + `"}`
-	storage := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", storageBody)
-	storageReplay := requestWithSession(t, server, session, http.MethodPost, "/api/storage-volumes", storageBody)
+	storage := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", storageBody)
+	storageReplay := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-volumes", storageBody)
 	if storage.Code != http.StatusAccepted || storageReplay.Code != http.StatusAccepted {
 		t.Fatalf("storage=%d %s replay=%d %s", storage.Code, storage.Body.String(), storageReplay.Code, storageReplay.Body.String())
 	}
@@ -1556,7 +1507,7 @@ func TestMonthlyReadinessRoutesResumePersistedPurchase(t *testing.T) {
 				t.Fatal(err)
 			}
 			session := tenantAdminSessionForTest(t, server)
-			created := requestWithSession(t, server, session, http.MethodPost, tc.createPath, tc.createBody)
+			created := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, tc.createPath, tc.createBody)
 			if created.Code != http.StatusAccepted {
 				t.Fatalf("create status=%d body=%s events=%#v", created.Code, created.Body.String(), *events)
 			}
@@ -1607,7 +1558,7 @@ func TestMonthlyRoutesRejectInactiveEntitlementsBeforeFabric(t *testing.T) {
 		t.Fatalf("new monthly server: %v", err)
 	}
 	session := tenantOwnerSessionForTest(t, server)
-	attachment := requestWithSession(t, server, session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"workspace-monthly","computeAllocationId":"compute-inactive","storageId":"storage-active"}`)
+	attachment := requestWithSession(t, historicalCustomerWriteHandler(t, server), session, http.MethodPost, "/api/storage-attachments", `{"workspaceId":"workspace-monthly","computeAllocationId":"compute-inactive","storageId":"storage-active"}`)
 	if attachment.Code != http.StatusConflict || !strings.Contains(attachment.Body.String(), "monthly_entitlement_inactive") {
 		t.Fatalf("attachment status = %d: %s", attachment.Code, attachment.Body.String())
 	}
@@ -1626,7 +1577,7 @@ func TestMonthlyRoutesRejectInactiveEntitlementsBeforeFabric(t *testing.T) {
 	workspaceReq.Header.Set("Idempotency-Key", "workspace-expired")
 	addAuth(workspaceReq, session)
 	workspaceRec := httptest.NewRecorder()
-	server.ServeHTTP(workspaceRec, workspaceReq)
+	historicalCustomerWriteHandler(t, server).ServeHTTP(workspaceRec, workspaceReq)
 	if workspaceRec.Code != http.StatusConflict || !strings.Contains(workspaceRec.Body.String(), "monthly_entitlement_inactive") {
 		t.Fatalf("workspace status = %d: %s", workspaceRec.Code, workspaceRec.Body.String())
 	}

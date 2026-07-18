@@ -1104,6 +1104,28 @@ func (s *Service) WorkspaceRuntimeStatus(ctx context.Context, workspaceID string
 	if err != nil {
 		return runtime, err
 	}
+	if runtime.ID != "" || (runtime.Status != "running" && runtime.Status != "unready") {
+		return runtime, nil
+	}
+	operations, err := s.operations.List(ctx)
+	if err != nil {
+		return runtime, err
+	}
+	var latest FabricOperation
+	found := false
+	for _, operation := range operations {
+		if operation.Action != "create_workspace_runtime" || operation.ResourceKind != "workspace_runtime" || operation.Status != "succeeded" || operation.WorkspaceID != workspaceID || operation.ResourceID != workspaceID {
+			continue
+		}
+		if !found || operation.CreatedAt.After(latest.CreatedAt) || (operation.CreatedAt.Equal(latest.CreatedAt) && operation.ID > latest.ID) {
+			latest, found = operation, true
+		}
+	}
+	var created WorkspaceRuntime
+	if runtime.WorkspaceID != workspaceID || !found || latest.ID == "" || latest.CreatedAt.IsZero() || !decodeOperationResource(latest, &created) || created.WorkspaceID != workspaceID || strings.TrimSpace(created.ID) == "" {
+		return runtime, fmt.Errorf("workspace_runtime_identity_unavailable")
+	}
+	runtime.ID = created.ID
 	return runtime, nil
 }
 

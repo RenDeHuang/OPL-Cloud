@@ -6,27 +6,20 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("GET /api/billing/summary", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		accountID, ok := app.scopedAccountID(w, r, nil)
-		if !ok {
-			return
-		}
-		balance, ok := app.liveBalance(w, r, service, accountID, false)
-		if ok {
-			writeJSON(w, http.StatusOK, balance)
-		}
-	}))
 	mux.HandleFunc("GET /api/billing/receipts", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		accountID, ok := app.scopedAccountID(w, r, nil)
+		user, ok := app.sessionUserContext(r)
 		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}
+		accountID := stringValue(user["accountId"])
 		limit := 50
 		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 			parsed, err := strconv.Atoi(raw)
@@ -38,13 +31,13 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		}
 		page, err := service.BillingReceipts(r.Context(), clients.ReceiptQuery{AccountID: accountID, Cursor: r.URL.Query().Get("cursor"), Limit: limit})
 		if err != nil {
-			writeUpstreamError(w, err)
+			writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 			return
 		}
 		receipts := make([]any, 0, len(page.Receipts))
 		for _, receipt := range page.Receipts {
 			if receipt.AccountID != accountID {
-				writeError(w, http.StatusBadGateway, "billing_receipt_identity_mismatch")
+				writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 				return
 			}
 			if !strings.HasPrefix(receipt.Type, "billing.") {
@@ -52,21 +45,32 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			}
 			projected, ok := projectCustomerBillingReceipt(receipt)
 			if !ok {
-				writeError(w, http.StatusBadGateway, "billing_receipt_source_unavailable")
+				writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 				return
 			}
 			receipts = append(receipts, projected)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"receipts": receipts, "nextCursor": page.NextCursor, "hasMore": page.HasMore})
+		status := "available"
+		if len(receipts) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "ledger", status, map[string]any{"receipts": receipts, "nextCursor": page.NextCursor, "hasMore": page.HasMore})
 	}))
 	mux.HandleFunc("GET /api/billing/receipts/{id}", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		accountID, ok := app.scopedAccountID(w, r, nil)
+		user, ok := app.sessionUserContext(r)
 		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}
-		receipt, err := service.BillingReceipt(r.Context(), strings.TrimSpace(r.PathValue("id")))
+		accountID := stringValue(user["accountId"])
+		receiptID := strings.TrimSpace(r.PathValue("id"))
+		receipt, err := service.BillingReceipt(r.Context(), receiptID)
 		if err != nil {
-			writeUpstreamError(w, err)
+			writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
+			return
+		}
+		if receipt.ReceiptID != receiptID {
+			writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 			return
 		}
 		if receipt.AccountID != accountID || !strings.HasPrefix(receipt.Type, "billing.") {
@@ -75,10 +79,10 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 		}
 		projected, ok := projectCustomerBillingReceipt(receipt)
 		if !ok {
-			writeError(w, http.StatusBadGateway, "billing_receipt_source_unavailable")
+			writeSourceEnvelope(w, http.StatusBadGateway, "ledger", "unavailable", nil)
 			return
 		}
-		writeJSON(w, http.StatusOK, projected)
+		writeSourceEnvelope(w, http.StatusOK, "ledger", "available", projected)
 	}))
 	mux.HandleFunc("POST /api/billing/reconciliation", app.protected(true, func(w http.ResponseWriter, r *http.Request) {
 		input := decodeJSON(r)
@@ -118,42 +122,54 @@ func registerBillingRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 }
 
 func projectCustomerBillingReceipt(receipt clients.Receipt) (map[string]any, bool) {
-	canonicalVersion, canonical := receipt.Cost["priceVersion"]
-	currencyValue, currencyPresent := receipt.Cost["currency"]
-	currency, validCurrency := currencyValue.(string)
-	var priceVersion string
-	if canonical {
-		var validVersion bool
-		priceVersion, validVersion = canonicalVersion.(string)
-		if !validVersion || strings.TrimSpace(priceVersion) == "" || !validCurrency || currency != pricingCurrency {
-			return nil, false
-		}
-		if legacyVersion, present := receipt.Cost["pricingVersion"]; present && legacyVersion != priceVersion {
-			return nil, false
-		}
-	} else {
-		var validVersion bool
-		priceVersion, validVersion = receipt.Cost["pricingVersion"].(string)
-		legacyCNYCents, validLegacyCNY := requiredNonNegativeInteger(receipt.Cost, "monthlyPriceCnyCents")
-		if !validVersion || strings.TrimSpace(priceVersion) == "" || !validLegacyCNY || legacyCNYCents <= 0 {
-			return nil, false
-		}
-		if currencyPresent && (!validCurrency || currency != pricingCurrency) {
-			return nil, false
-		}
-		currency = pricingCurrency
-	}
-	chargeUSDMicros, ok := requiredNonNegativeInteger(receipt.Cost, "chargeUsdMicros")
-	if !ok {
+	priceVersion, validVersion := receipt.Cost["priceVersion"].(string)
+	currency, validCurrency := receipt.Cost["currency"].(string)
+	resourceType := stringValue(receipt.Cost["resourceType"])
+	resourceID := stringValue(receipt.Cost["resourceId"])
+	periodStart := stringValue(receipt.Cost["periodStart"])
+	paidThrough := stringValue(receipt.Cost["paidThrough"])
+	if strings.TrimSpace(receipt.ReceiptID) == "" || strings.TrimSpace(receipt.Status) == "" || strings.TrimSpace(receipt.WorkspaceID) == "" || strings.TrimSpace(resourceType) == "" || strings.TrimSpace(resourceID) == "" || !validVersion || strings.TrimSpace(priceVersion) == "" || !validCurrency || currency != pricingCurrency {
 		return nil, false
 	}
-	return map[string]any{
+	for _, timestamp := range []string{receipt.CreatedAt, periodStart, paidThrough} {
+		if _, err := time.Parse(time.RFC3339, timestamp); err != nil {
+			return nil, false
+		}
+	}
+	if legacyVersion, present := receipt.Cost["pricingVersion"]; present && legacyVersion != priceVersion {
+		return nil, false
+	}
+	body := map[string]any{
 		"receiptId": receipt.ReceiptID, "type": receipt.Type, "status": receipt.Status,
 		"workspaceId": receipt.WorkspaceID, "createdAt": receipt.CreatedAt,
-		"resourceType": stringValue(receipt.Cost["resourceType"]), "resourceId": stringValue(receipt.Cost["resourceId"]),
+		"resourceType": resourceType, "resourceId": resourceID,
 		"priceVersion": priceVersion, "currency": currency,
-		"chargeUsdMicros": chargeUSDMicros, "periodStart": stringValue(receipt.Cost["periodStart"]), "paidThrough": stringValue(receipt.Cost["paidThrough"]),
-	}, true
+		"periodStart": periodStart, "paidThrough": paidThrough,
+	}
+	switch receipt.Type {
+	case "billing.workspace_renewed.v1", "billing.workspace_expired.v1", "billing.workspace_refunded.v1":
+		total, ok := requiredNonNegativeInteger(receipt.Cost, "totalUsdMicros")
+		if !ok || total == 0 || body["resourceType"] != "workspace" || body["resourceId"] != receipt.WorkspaceID {
+			return nil, false
+		}
+		body["totalUsdMicros"] = total
+		if receipt.Type == "billing.workspace_refunded.v1" {
+			refund, ok := requiredNonNegativeInteger(receipt.Cost, "refundUsdMicros")
+			if !ok || refund != total {
+				return nil, false
+			}
+			body["refundUsdMicros"] = refund
+		}
+	case "billing.resource_purchased.v1", "billing.resource_renewed.v1", "billing.resource_expired.v1", "billing.resource_refunded.v1", "billing.charge_review_required.v1", "billing.reconciliation.v1":
+		charge, ok := requiredNonNegativeInteger(receipt.Cost, "chargeUsdMicros")
+		if !ok {
+			return nil, false
+		}
+		body["chargeUsdMicros"] = charge
+	default:
+		return nil, false
+	}
+	return body, true
 }
 
 func requiredNonNegativeInteger(input map[string]any, key string) (int64, bool) {

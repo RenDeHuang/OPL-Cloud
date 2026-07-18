@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/domain"
@@ -203,6 +204,30 @@ func (s *Service) Sub2APIWorkspaceKey(ctx context.Context, userID int64) (client
 		return clients.Sub2APIWorkspaceKey{}, errors.New("sub2api_workspace_key_unavailable")
 	}
 	return client.WorkspaceKey(ctx, userID)
+}
+
+func (s *Service) GatewayKeys(ctx context.Context, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIKeyListClient)
+	if !ok {
+		return nil, errors.New("sub2api_key_list_unavailable")
+	}
+	return client.Keys(ctx, userID)
+}
+
+func (s *Service) Sub2APIUser(ctx context.Context, userID int64) (clients.Sub2APIIdentity, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserReadClient)
+	if !ok {
+		return clients.Sub2APIIdentity{}, errors.New("sub2api_user_read_unavailable")
+	}
+	identity, err := client.User(ctx, userID)
+	if err != nil {
+		return clients.Sub2APIIdentity{}, err
+	}
+	identity.Email = strings.ToLower(strings.TrimSpace(identity.Email))
+	if identity.ID != userID || identity.Email == "" || (identity.Status != "active" && identity.Status != "disabled") {
+		return clients.Sub2APIIdentity{}, errors.New("sub2api_user_read_invalid")
+	}
+	return identity, nil
 }
 
 func (s *Service) ResolveOrCreateSub2APIUser(ctx context.Context, email, password string) (clients.Sub2APIIdentity, error) {

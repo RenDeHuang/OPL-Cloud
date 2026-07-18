@@ -46,6 +46,10 @@ func registerWorkspaceLaunchRoutes(mux *http.ServeMux, app *controlPlaneServer, 
 			writeError(w, http.StatusBadRequest, "autoRenew_required")
 			return
 		}
+		if autoRenew {
+			writeError(w, http.StatusConflict, "autoRenew_unavailable")
+			return
+		}
 		quote, err := app.pricingPreviewResponse(r.Context(), map[string]any{"resourceType": "workspace", "packageId": packageID, "sizeGb": storageGB})
 		if err != nil {
 			writePricingError(w, err)

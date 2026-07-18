@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
@@ -37,12 +38,35 @@ func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneServer, service *co
 		writeJSON(w, http.StatusOK, payload)
 	})
 	mux.HandleFunc("GET /api/auth/me", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		payload, ok := app.session(r)
+		w.Header().Set("Cache-Control", "private, no-store")
+		user, ok := app.sessionUserContext(r)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "not_authenticated")
 			return
 		}
-		writeJSON(w, http.StatusOK, payload)
+		userID, err := app.sub2APIUserID(r.Context(), stringValue(user["accountId"]))
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "sub2api", "unavailable", nil)
+			return
+		}
+		identity, err := service.Sub2APIUser(r.Context(), userID)
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusBadGateway, "sub2api", "unavailable", nil)
+			return
+		}
+		mappedUser, err := app.findUserByID(r.Context(), stringValue(user["id"]))
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "sub2api", "unavailable", nil)
+			return
+		}
+		if mappedUser == nil || stringValue(mappedUser["accountId"]) != stringValue(user["accountId"]) || normalizeEmail(stringValue(mappedUser["email"])) != identity.Email {
+			writeSourceEnvelope(w, http.StatusBadGateway, "sub2api", "unavailable", nil)
+			return
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{
+			"consoleUserId": stringValue(user["id"]), "accountId": stringValue(user["accountId"]), "role": stringValue(user["role"]),
+			"sub2apiUserId": strconv.FormatInt(identity.ID, 10), "email": identity.Email, "status": identity.Status,
+		})
 	}))
 	mux.HandleFunc("POST /api/auth/logout", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		if err := app.logout(r); err != nil {
@@ -51,13 +75,5 @@ func registerAuthRoutes(mux *http.ServeMux, app *controlPlaneServer, service *co
 		}
 		http.SetCookie(w, sessionCookie("", -1))
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-	mux.HandleFunc("GET /api/me", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		payload, ok := app.session(r)
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "not_authenticated")
-			return
-		}
-		writeJSON(w, http.StatusOK, payload["user"])
 	}))
 }

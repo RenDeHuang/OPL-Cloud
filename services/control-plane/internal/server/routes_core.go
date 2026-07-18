@@ -30,8 +30,5 @@ func registerCoreRoutes(mux *http.ServeMux, app *controlPlaneServer, service *co
 		readiness["checks"] = []any{}
 		writeJSON(w, http.StatusOK, readiness)
 	})
-	mux.HandleFunc("GET /api/overview", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"service": "control-plane", "workspaces": 0})
-	}))
 	mux.HandleFunc("/", app.consoleStatic)
 }

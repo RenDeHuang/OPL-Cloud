@@ -162,6 +162,22 @@ func TestWorkspaceLaunchRequiresCompleteBodyBeforeExternalCalls(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLaunchRejectsAutoRenewBeforeExternalCalls(t *testing.T) {
+	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
+	response := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":true}`, "launch-auto-renew")
+	operations, _ := fixture.store.ListRuntimeOperations(context.Background())
+	workspaces, _ := fixture.store.ListWorkspaces(context.Background(), "acct-alpha")
+	computes, _ := fixture.store.ListComputes(context.Background(), "acct-alpha")
+	storages, _ := fixture.store.ListStorages(context.Background(), "acct-alpha")
+	attachments, _ := fixture.store.ListAttachments(context.Background(), "acct-alpha")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "autoRenew_unavailable") {
+		t.Fatalf("auto-renew launch status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(*fixture.events) != 0 || len(operations) != 0 || len(workspaces) != 0 || len(computes) != 0 || len(storages) != 0 || len(attachments) != 0 || len(fixture.sub2API.charges) != 0 || len(fixture.sub2API.refunds) != 0 || len(fixture.fabric.computeIDs) != 0 || len(fixture.fabric.storageIDs) != 0 {
+		t.Fatalf("auto-renew launch caused side effects: events=%#v operations=%#v workspaces=%#v computes=%#v storages=%#v attachments=%#v charges=%#v refunds=%#v", *fixture.events, operations, workspaces, computes, storages, attachments, fixture.sub2API.charges, fixture.sub2API.refunds)
+	}
+}
+
 func TestWorkspaceLaunchRejectsUnknownAndCrossPackageStorageBeforeExternalCalls(t *testing.T) {
 	for _, body := range []string{
 		`{"name":"Alpha","packageId":"basic","sizeGb":100,"autoRenew":false}`,
@@ -244,7 +260,6 @@ func TestWorkspaceLaunchReplayAndFingerprintConflictAvoidExternalSideEffects(t *
 	for _, changed := range []string{
 		`{"name":"Beta","packageId":"basic","sizeGb":10,"autoRenew":false}`,
 		`{"name":"Alpha","packageId":"pro","sizeGb":100,"autoRenew":false}`,
-		`{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":true}`,
 	} {
 		conflict := fixture.launch(t, changed, "launch-alpha")
 		if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), errIdempotencyConflict.Error()) {
@@ -326,7 +341,7 @@ func TestWorkspaceLaunchRequiresOwnerBeforeExternalCalls(t *testing.T) {
 
 func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 	fixture := newWorkspaceLaunchHTTPFixture(t, 1_000_000_000)
-	created := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":true}`, "launch-alpha")
+	created := fixture.launch(t, `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`, "launch-alpha")
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
 	}
@@ -334,17 +349,17 @@ func TestWorkspaceLaunchListAndDetailAreTenantScoped(t *testing.T) {
 	if err := json.NewDecoder(created.Body).Decode(&launch); err != nil {
 		t.Fatal(err)
 	}
-	if launch["autoRenew"] != true || launch["priceVersion"] != pilotPriceVersion || launch["totalChargeUsdMicros"] != float64(52_580_000) || strings.Contains(created.Body.String(), "pricingVersion") || strings.Contains(created.Body.String(), "totalMonthlyPriceCnyCents") {
+	if launch["autoRenew"] != false || launch["priceVersion"] != pilotPriceVersion || launch["totalChargeUsdMicros"] != float64(52_580_000) || strings.Contains(created.Body.String(), "pricingVersion") || strings.Contains(created.Body.String(), "totalMonthlyPriceCnyCents") {
 		t.Fatalf("created launch projection = %#v", launch)
 	}
 	operationID := stringValue(launch["operationId"])
 
 	alphaList := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches", "")
-	if alphaList.Code != http.StatusOK || !strings.Contains(alphaList.Body.String(), operationID) || !strings.Contains(alphaList.Body.String(), `"autoRenew":true`) || !strings.Contains(alphaList.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaList.Body.String(), "usr-alpha") || strings.Contains(alphaList.Body.String(), "pricingVersion") {
+	if alphaList.Code != http.StatusOK || !strings.Contains(alphaList.Body.String(), operationID) || !strings.Contains(alphaList.Body.String(), `"autoRenew":false`) || !strings.Contains(alphaList.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaList.Body.String(), "usr-alpha") || strings.Contains(alphaList.Body.String(), "pricingVersion") {
 		t.Fatalf("alpha launch list status=%d body=%s", alphaList.Code, alphaList.Body.String())
 	}
 	alphaDetail := requestWithSession(t, fixture.server, fixture.session, http.MethodGet, "/api/workspace-launches/"+operationID, "")
-	if alphaDetail.Code != http.StatusOK || !strings.Contains(alphaDetail.Body.String(), operationID) || !strings.Contains(alphaDetail.Body.String(), `"autoRenew":true`) || !strings.Contains(alphaDetail.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaDetail.Body.String(), "pricingVersion") {
+	if alphaDetail.Code != http.StatusOK || !strings.Contains(alphaDetail.Body.String(), operationID) || !strings.Contains(alphaDetail.Body.String(), `"autoRenew":false`) || !strings.Contains(alphaDetail.Body.String(), `"priceVersion":"pilot-usd-2026-07-v1"`) || strings.Contains(alphaDetail.Body.String(), "pricingVersion") {
 		t.Fatalf("alpha launch detail status=%d body=%s", alphaDetail.Code, alphaDetail.Body.String())
 	}
 
@@ -456,7 +471,7 @@ func newWorkspaceLaunchWorkerFixtureForPlan(t *testing.T, balances []int64, char
 		t.Fatal(err)
 	}
 	session := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", fmt.Sprintf(`{"name":"Alpha","packageId":%q,"sizeGb":%d,"autoRenew":%t}`, packageID, storageGB, autoRenew), "launch-alpha")
+	created := requestWithMutationKeyForTest(t, server, session, http.MethodPost, "/api/workspace-launches", fmt.Sprintf(`{"name":"Alpha","packageId":%q,"sizeGb":%d,"autoRenew":false}`, packageID, storageGB), "launch-alpha")
 	if created.Code != http.StatusAccepted {
 		t.Fatalf("launch status = %d: %s", created.Code, created.Body.String())
 	}
@@ -464,13 +479,27 @@ func newWorkspaceLaunchWorkerFixtureForPlan(t *testing.T, balances []int64, char
 	if err := json.NewDecoder(created.Body).Decode(&response); err != nil {
 		t.Fatal(err)
 	}
+	operationID := stringValue(response["operationId"])
+	if autoRenew {
+		operations, err := store.ListRuntimeOperations(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		operation, err := decodeWorkspaceLaunchOperation(recordByID(operations, operationID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		operation.AutoRenew = true
+		operation.RequestHash = newWorkspaceLaunchOperation(operation.AccountID, operation.OwnerUserID, operation.Name, operation.PackageID, operation.StorageGB, true, operation.PriceVersion, operation.TotalChargeUSDMicros, "launch-alpha").RequestHash
+		mustStore(t, store.memoryTableStore.SaveRuntimeOperation(context.Background(), workspaceLaunchOperationRow(operation)))
+	}
 	app, err := newControlPlaneAppWithStore(store)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return workspaceLaunchWorkerFixture{
 		app: app, service: service, server: server, operator: reservedOperatorSessionForTest(t, server), store: store, events: &events, sub2API: sub2API, fabric: fabric, ledger: ledger,
-		operationID: stringValue(response["operationId"]),
+		operationID: operationID,
 	}
 }
 

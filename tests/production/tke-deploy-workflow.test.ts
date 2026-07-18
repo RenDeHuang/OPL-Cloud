@@ -478,6 +478,20 @@ test("deployment inputs contain monthly and Sub2API config without retired billi
   assert.doesNotMatch(joined, /OPL_COMPUTE_LAUNCH_ZONE/);
 });
 
+test("production deployment surfaces do not configure a Workspace VolumeSnapshotClass", async () => {
+  const paths = [
+    ".github/workflows/deploy-tke-production.yml",
+    "deploy/tke/opl-cloud.k8s.json",
+    "deploy/tke/opl-cloud-production.env.example",
+    "tools/render-tke-manifest.ts",
+    "packages/contracts/opl-cloud-deployment-contract.json"
+  ];
+  for (const path of paths) {
+    const source = await readFile(repoFile(path), "utf8");
+    assert.doesNotMatch(source, /OPL_WORKSPACE_VOLUME_SNAPSHOT_CLASS/, path);
+  }
+});
+
 test("TKE manifest renderer replaces current values and never renders secrets", async () => {
   const { manifest, values } = await manifestFixture();
   const rendered = renderTkeManifest({ manifest, values });

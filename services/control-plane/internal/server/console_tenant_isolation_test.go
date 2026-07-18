@@ -37,15 +37,12 @@ func newGatewayOwnerTestServer(t *testing.T, sub2API clients.Sub2APIClient, stor
 	return server, loginForTest(t, server, "gateway-owner@example.com", "CorrectHorseBatteryStaple!")
 }
 
-func TestGatewaySummaryIsAlwaysMaskedAndOwnerRevealIsAudited(t *testing.T) {
-	lastUsedAt := time.Date(2026, 7, 16, 8, 9, 10, 0, time.UTC)
+func TestGatewayOwnerRevealIsAudited(t *testing.T) {
 	sub2API := &testSub2APIClient{
 		balance: 123,
 		charges: map[string]int64{},
 		workspaceKey: clients.Sub2APIWorkspaceKey{
 			ID: 9, UserID: 41, Name: "opl-workspace", Key: "workspace-key-secret", Status: "active",
-			QuotaUSDMicros: 50_000_000, QuotaUsedUSDMicros: 7_000_000, Usage5hUSDMicros: 1_000_000,
-			Usage1dUSDMicros: 2_000_000, Usage7dUSDMicros: 3_000_000, LastUsedAt: &lastUsedAt,
 		},
 	}
 	server, session := newGatewayOwnerTestServer(t, sub2API, nil)
@@ -53,52 +50,6 @@ func TestGatewaySummaryIsAlwaysMaskedAndOwnerRevealIsAudited(t *testing.T) {
 	previousLogOutput := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
-
-	masked := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?sub2apiUserId=999", "")
-	if masked.Code != http.StatusOK {
-		t.Fatalf("masked Gateway summary status = %d, want 200: %s", masked.Code, masked.Body.String())
-	}
-	if got := masked.Header().Get("Cache-Control"); got != "private, no-store" {
-		t.Fatalf("masked Gateway Cache-Control = %q", got)
-	}
-	var summary map[string]any
-	if err := json.NewDecoder(masked.Body).Decode(&summary); err != nil {
-		t.Fatal(err)
-	}
-	account, balance := mapField(summary, "account"), mapField(summary, "balance")
-	key, usage := mapField(summary, "apiKey"), mapField(summary, "usage")
-	if numberField(account, "sub2apiUserId", 0) != 41 || stringValue(account["status"]) != "active" {
-		t.Fatalf("Gateway account = %#v", account)
-	}
-	if stringValue(balance["source"]) != "sub2api" || stringValue(balance["status"]) != "available" || balance["available"] != true || numberField(balance, "usdMicros", 0) != 123 {
-		t.Fatalf("Gateway balance = %#v", balance)
-	}
-	if numberField(key, "id", 0) != 9 || stringValue(key["maskedValue"]) != "work...cret" || key["revealed"] != false {
-		t.Fatalf("masked Gateway key = %#v", key)
-	}
-	if _, ok := key["value"]; ok || strings.Contains(masked.Body.String(), "workspace-key-secret") {
-		t.Fatalf("masked Gateway response leaked Key: %s", masked.Body.String())
-	}
-	if numberField(usage, "quotaUsdMicros", 0) != 50_000_000 || numberField(usage, "quotaUsedUsdMicros", 0) != 7_000_000 ||
-		numberField(usage, "usage5hUsdMicros", 0) != 1_000_000 || numberField(usage, "usage1dUsdMicros", 0) != 2_000_000 ||
-		numberField(usage, "usage7dUsdMicros", 0) != 3_000_000 || stringValue(usage["lastUsedAt"]) != lastUsedAt.Format(time.RFC3339) {
-		t.Fatalf("Gateway usage = %#v", usage)
-	}
-
-	ignoredReveal := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?reveal=true&sub2apiUserId=999", "")
-	if ignoredReveal.Code != http.StatusOK || ignoredReveal.Header().Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("masked reveal query response = %d Cache-Control %q: %s", ignoredReveal.Code, ignoredReveal.Header().Get("Cache-Control"), ignoredReveal.Body.String())
-	}
-	if err := json.NewDecoder(ignoredReveal.Body).Decode(&summary); err != nil {
-		t.Fatal(err)
-	}
-	key = mapField(summary, "apiKey")
-	if key["revealed"] != false || stringValue(key["value"]) != "" {
-		t.Fatalf("GET reveal query exposed Gateway key = %#v", key)
-	}
-	if encoded, _ := json.Marshal(summary); strings.Contains(string(encoded), "workspace-key-secret") {
-		t.Fatalf("GET reveal query leaked Gateway key: %s", encoded)
-	}
 
 	revealed := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
 	if revealed.Code != http.StatusOK || revealed.Header().Get("Cache-Control") != "private, no-store" {
@@ -108,15 +59,11 @@ func TestGatewaySummaryIsAlwaysMaskedAndOwnerRevealIsAudited(t *testing.T) {
 	if err := json.NewDecoder(revealed.Body).Decode(&revealBody); err != nil {
 		t.Fatal(err)
 	}
-	revealedKey := mapField(revealBody, "apiKey")
-	if numberField(revealedKey, "id", 0) != 9 || stringValue(revealedKey["name"]) != "opl-workspace" || stringValue(revealedKey["status"]) != "active" || stringValue(revealedKey["value"]) != "workspace-key-secret" {
+	revealedKey := mapField(revealBody, "data")
+	if stringValue(revealedKey["id"]) != "9" || stringValue(revealedKey["name"]) != "opl-workspace" || stringValue(revealedKey["status"]) != "active" || stringValue(revealedKey["value"]) != "workspace-key-secret" {
 		t.Fatalf("revealed Gateway key = %#v", revealedKey)
 	}
 
-	crossAccount := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary?accountId=acct-other", "")
-	if crossAccount.Code != http.StatusForbidden || !strings.Contains(crossAccount.Body.String(), "account_scope_forbidden") {
-		t.Fatalf("cross-account Gateway status = %d, want 403: %s", crossAccount.Code, crossAccount.Body.String())
-	}
 	state := requestWithSession(t, server, session, http.MethodGet, "/api/state", "")
 	if state.Code != http.StatusOK {
 		t.Fatalf("state status = %d: %s", state.Code, state.Body.String())
@@ -135,7 +82,7 @@ func TestGatewaySummaryIsAlwaysMaskedAndOwnerRevealIsAudited(t *testing.T) {
 	if strings.Contains(string(auditJSON), "workspace-key-secret") || strings.Contains(string(auditJSON), "work...cret") || strings.Contains(logs.String(), "workspace-key-secret") {
 		t.Fatalf("Gateway reveal leaked Key outside response: audit=%s logs=%s", auditJSON, logs.String())
 	}
-	if len(sub2API.workspaceKeyUserIDs) != 3 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) {
+	if len(sub2API.workspaceKeyUserIDs) != 1 || slices.ContainsFunc(sub2API.workspaceKeyUserIDs, func(id int64) bool { return id != 41 }) {
 		t.Fatalf("Gateway used caller-supplied Sub2API identity: %#v", sub2API.workspaceKeyUserIDs)
 	}
 }
@@ -169,7 +116,6 @@ func TestGatewayRevealRejectsUnauthorizedWithoutFetchingKey(t *testing.T) {
 		csrf bool
 		code string
 	}{
-		{name: "cross account", path: "/api/gateway/keys/opl-workspace/reveal?accountId=acct-other", csrf: true, code: "account_scope_forbidden"},
 		{name: "missing csrf", path: "/api/gateway/keys/opl-workspace/reveal", code: "csrf_token_invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -215,52 +161,18 @@ func TestGatewayRevealFailsClosed(t *testing.T) {
 		name       string
 		err        error
 		wantStatus int
-		wantCode   string
 	}{
-		{name: "missing Key", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict, wantCode: "gateway_key_missing"},
-		{name: "ambiguous Key", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous"},
-		{name: "upstream unavailable", err: errors.New("Sub2API unavailable"), wantStatus: http.StatusBadGateway, wantCode: "upstream_unavailable"},
+		{name: "missing Key", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict},
+		{name: "ambiguous Key", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict},
+		{name: "upstream unavailable", err: errors.New("Sub2API unavailable"), wantStatus: http.StatusBadGateway},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}, workspaceKeyErr: tc.err}
 			server, session := newGatewayOwnerTestServer(t, sub2API, nil)
 			rec := requestWithSession(t, server, session, http.MethodPost, "/api/gateway/keys/opl-workspace/reveal", "{}")
-			if rec.Code != tc.wantStatus || !strings.Contains(rec.Body.String(), tc.wantCode) || strings.Contains(rec.Body.String(), "workspace-key-secret") || len(sub2API.workspaceKeyUserIDs) != 1 {
-				t.Fatalf("Gateway reveal error = %d calls=%#v, want %d %s: %s", rec.Code, sub2API.workspaceKeyUserIDs, tc.wantStatus, tc.wantCode, rec.Body.String())
-			}
-		})
-	}
-}
-
-func TestGatewaySummaryFailsClosed(t *testing.T) {
-	tests := []struct {
-		name       string
-		err        error
-		unmapped   bool
-		wantStatus int
-		wantCode   string
-	}{
-		{name: "unmapped account", unmapped: true, wantStatus: http.StatusConflict, wantCode: "sub2api_account_mapping_required"},
-		{name: "missing Key", err: clients.ErrSub2APIWorkspaceKeyMissing, wantStatus: http.StatusConflict, wantCode: "gateway_key_missing"},
-		{name: "ambiguous Key", err: clients.ErrSub2APIWorkspaceKeyAmbiguous, wantStatus: http.StatusConflict, wantCode: "gateway_key_ambiguous"},
-		{name: "upstream unavailable", err: fmt.Errorf("Sub2API unavailable"), wantStatus: http.StatusBadGateway, wantCode: "upstream_unavailable"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sub2API := &testSub2APIClient{balance: 123, charges: map[string]int64{}, workspaceKeyErr: tt.err}
-			store := newMemoryTableStore()
-			server, session := newGatewayOwnerTestServer(t, sub2API, store)
-			if tt.unmapped {
-				store.mu.Lock()
-				store.accounts["acct-gateway"]["sub2apiUserId"] = int64(0)
-				store.mu.Unlock()
-			}
-			rec := requestWithSession(t, server, session, http.MethodGet, "/api/gateway/summary", "")
-			if rec.Code != tt.wantStatus || !strings.Contains(rec.Body.String(), tt.wantCode) {
-				t.Fatalf("Gateway error response = %d, want %d %s: %s", rec.Code, tt.wantStatus, tt.wantCode, rec.Body.String())
-			}
-			if rec.Header().Get("Cache-Control") != "private, no-store" {
-				t.Fatalf("Gateway error Cache-Control = %q", rec.Header().Get("Cache-Control"))
+			assertUnavailableSourceEnvelope(t, rec, tc.wantStatus)
+			if strings.Contains(rec.Body.String(), "workspace-key-secret") || len(sub2API.workspaceKeyUserIDs) != 1 {
+				t.Fatalf("Gateway reveal error = %d calls=%#v, want %d: %s", rec.Code, sub2API.workspaceKeyUserIDs, tc.wantStatus, rec.Body.String())
 			}
 		})
 	}
@@ -382,8 +294,8 @@ func TestCustomerStateContainsOnlySessionTenant(t *testing.T) {
 			t.Fatalf("state leaked %q: %s", secret, rec.Body.String())
 		}
 	}
-	if !strings.Contains(rec.Body.String(), "alpha@example.com") {
-		t.Fatalf("state omitted current user: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), "alpha@example.com") {
+		t.Fatalf("state leaked current user: %s", rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "billingReconciliation") || strings.Contains(rec.Body.String(), "global-secret") {
 		t.Fatalf("state leaked global reconciliation: %s", rec.Body.String())
@@ -429,18 +341,13 @@ func TestReconciliationBlockedCustomerMutationsDoNotLeakGlobalProjection(t *test
 		t.Fatal(err)
 	}
 	member := loginForTest(t, server, "alpha@example.com", "CorrectHorseBatteryStaple!")
-	for _, tc := range []struct{ path, body string }{
-		{"/api/compute-allocations", `{"packageId":"basic"}`},
-		{"/api/storage-volumes", `{"sizeGb":10}`},
-	} {
-		rec := requestWithSession(t, server, member, http.MethodPost, tc.path, tc.body)
-		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"error":"billing_reconciliation_blocked"`) {
-			t.Fatalf("blocked %s status=%d body=%s", tc.path, rec.Code, rec.Body.String())
-		}
-		for _, secret := range []string{"billingReconciliation", "private-operator-reason", "operator-secret", "cross-tenant-private-report", "messageText", "messageAuthor"} {
-			if strings.Contains(rec.Body.String(), secret) {
-				t.Fatalf("blocked %s leaked %q: %s", tc.path, secret, rec.Body.String())
-			}
+	rec := requestWithSession(t, server, member, http.MethodPost, "/api/workspace-launches", `{"name":"Alpha","packageId":"basic","sizeGb":10,"autoRenew":false}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"error":"billing_reconciliation_blocked"`) {
+		t.Fatalf("blocked launch status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	for _, secret := range []string{"billingReconciliation", "private-operator-reason", "operator-secret", "cross-tenant-private-report", "messageText", "messageAuthor"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Fatalf("blocked launch leaked %q: %s", secret, rec.Body.String())
 		}
 	}
 }
@@ -484,8 +391,9 @@ func TestCloudAdminSessionReportsAuthority(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["isOperator"] != true {
-		t.Fatalf("operator isOperator = %#v, want true", payload["isOperator"])
+	data := mapField(payload, "data")
+	if payload["source"] != "sub2api" || data["consoleUserId"] != "usr-admin" || data["accountId"] != "acct-admin" || data["role"] != "admin" || data["sub2apiUserId"] != "1" {
+		t.Fatalf("operator auth source = %#v", payload)
 	}
 }
 

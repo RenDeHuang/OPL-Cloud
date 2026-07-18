@@ -973,6 +973,61 @@ func TestWorkspaceRuntimeCreationDoesNotReturnCredential(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRuntimeStatusBackfillsCreatedRuntimeIdentity(t *testing.T) {
+	provider := liveRuntimeWithoutIDProvider{runtimeIDs: map[string]string{"runtime-status-identity": "runtime-stable"}}
+	service := runtimeTestService(provider, NewMemoryOperationStore())
+	created, err := service.CreateWorkspaceRuntime(context.Background(), runtimeTestInput("runtime-status-identity"))
+	if err != nil || created.ID != "runtime-stable" {
+		t.Fatalf("created runtime=%#v err=%v", created, err)
+	}
+
+	live, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
+	if err != nil {
+		t.Fatalf("runtime status: %v", err)
+	}
+	if live.ID != created.ID || live.Status != "running" || !live.Ready || live.URL != "https://workspace.medopl.cn/w/workspace-alpha/" || live.ServiceName != "runtime-live" || !reflect.DeepEqual(live.Checks, []Check{{Name: "deployment_ready", OK: true}}) {
+		t.Fatalf("live runtime=%#v created=%#v", live, created)
+	}
+}
+
+func TestWorkspaceRuntimeStatusBackfillsLatestCreatedIdentityWithoutListOrder(t *testing.T) {
+	provider := liveRuntimeWithoutIDProvider{runtimeIDs: map[string]string{"runtime-status-old": "runtime-old", "runtime-status-new": "runtime-new"}}
+	store := NewMemoryOperationStore()
+	service := runtimeTestService(provider, store)
+	now := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	if _, err := service.CreateWorkspaceRuntime(context.Background(), runtimeTestInput("runtime-status-old")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := service.CreateWorkspaceRuntime(context.Background(), runtimeTestInput("runtime-status-new")); err != nil {
+		t.Fatal(err)
+	}
+	store.operation[0], store.operation[1] = store.operation[1], store.operation[0]
+
+	live, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha")
+	if err != nil || live.ID != "runtime-new" {
+		t.Fatalf("live runtime=%#v err=%v", live, err)
+	}
+}
+
+func TestWorkspaceRuntimeStatusFailsClosedWithoutCreatedIdentityEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store OperationStore
+	}{
+		{name: "missing", store: NewMemoryOperationStore()},
+		{name: "store unavailable", store: failingListOperationStore{OperationStore: NewMemoryOperationStore()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service := runtimeTestService(liveRuntimeWithoutIDProvider{}, tc.store)
+			if runtime, err := service.WorkspaceRuntimeStatus(context.Background(), "workspace-alpha"); err == nil {
+				t.Fatalf("runtime=%#v err=nil", runtime)
+			}
+		})
+	}
+}
+
 func TestWorkspaceRuntimeRequiresOwnedGatewaySecretReference(t *testing.T) {
 	provider := &countingRuntimeProvider{}
 	service := NewServiceWithOperationStore(provider, NewMemoryOperationStore())
@@ -1990,6 +2045,25 @@ func TestComputeAsyncDestroyReturnsBeforeProviderCleanupAndReplays(t *testing.T)
 }
 
 type testProvider struct{}
+
+type liveRuntimeWithoutIDProvider struct {
+	testProvider
+	runtimeIDs map[string]string
+}
+
+type failingListOperationStore struct{ OperationStore }
+
+func (failingListOperationStore) List(context.Context) ([]FabricOperation, error) {
+	return nil, errors.New("operation store unavailable")
+}
+
+func (p liveRuntimeWithoutIDProvider) CreateWorkspaceRuntime(_ context.Context, input WorkspaceRuntimeInput, _ ComputeAllocation, _ StorageVolume) (WorkspaceRuntime, error) {
+	return WorkspaceRuntime{ID: p.runtimeIDs[input.IdempotencyKey], WorkspaceID: input.WorkspaceID, URL: "https://stale.invalid", Status: "unready", ServiceName: "runtime-created", Checks: []Check{{Name: "deployment_ready", OK: false}}}, nil
+}
+
+func (liveRuntimeWithoutIDProvider) WorkspaceRuntimeStatus(_ context.Context, workspaceID string) (WorkspaceRuntime, error) {
+	return WorkspaceRuntime{WorkspaceID: workspaceID, URL: "https://workspace.medopl.cn/w/workspace-alpha/", Status: "running", ServiceName: "runtime-live", Ready: true, Checks: []Check{{Name: "deployment_ready", OK: true}}}, nil
+}
 
 type countingRuntimeProvider struct {
 	testProvider

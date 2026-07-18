@@ -5,18 +5,60 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"opl-cloud/services/control-plane/internal/clients"
 	"opl-cloud/services/control-plane/internal/controlplane"
 )
 
 func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service *controlplane.Service) {
-	mux.HandleFunc("GET /api/gateway/usage", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/gateway/wallet", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
-		accountID, ok := app.scopedAccountID(w, r, nil)
+		userID, ok := app.gatewaySub2APIUserID(w, r)
 		if !ok {
 			return
 		}
+		balance, err := service.Sub2APIBalance(r.Context(), userID)
+		if err != nil {
+			writeGatewaySourceError(w, err)
+			return
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{
+			"userId": strconv.FormatInt(balance.UserID, 10), "currency": "USD", "usdMicros": balance.USDMicros, "status": balance.Status,
+		})
+	}))
+	mux.HandleFunc("GET /api/gateway/keys", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
+		userID, ok := app.gatewaySub2APIUserID(w, r)
+		if !ok {
+			return
+		}
+		keys, err := service.GatewayKeys(r.Context(), userID)
+		if err != nil {
+			writeGatewaySourceError(w, err)
+			return
+		}
+		items := make([]any, 0, len(keys))
+		for _, key := range keys {
+			var lastUsedAt any
+			if key.LastUsedAt != nil {
+				lastUsedAt = key.LastUsedAt.UTC().Format(time.RFC3339Nano)
+			}
+			items = append(items, map[string]any{
+				"id": strconv.FormatInt(key.ID, 10), "name": key.Name, "status": key.Status,
+				"quotaUsdMicros": key.QuotaUSDMicros, "quotaUsedUsdMicros": key.QuotaUsedUSDMicros,
+				"usage5hUsdMicros": key.Usage5hUSDMicros, "usage1dUsdMicros": key.Usage1dUSDMicros,
+				"usage7dUsdMicros": key.Usage7dUSDMicros, "lastUsedAt": lastUsedAt,
+			})
+		}
+		status := "available"
+		if len(items) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": len(items)})
+	}))
+	mux.HandleFunc("GET /api/gateway/usage", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, no-store")
 		page, pageSize := 1, 50
 		if raw := strings.TrimSpace(r.URL.Query().Get("page")); raw != "" {
 			value, err := strconv.Atoi(raw)
@@ -34,33 +76,33 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			}
 			pageSize = value
 		}
-		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		userID, ok := app.gatewaySub2APIUserID(w, r)
 		if !ok {
 			return
 		}
 		usage, err := service.GatewayUsage(r.Context(), userID, page, pageSize)
 		if err != nil {
-			writeGatewayUsageError(w, err)
+			writeGatewaySourceError(w, err)
 			return
 		}
 		items := make([]any, 0, len(usage.Items))
 		for _, item := range usage.Items {
 			items = append(items, map[string]any{
-				"requestId": item.RequestID, "createdAt": item.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+				"apiKeyId": strconv.FormatInt(item.APIKeyID, 10), "requestId": item.RequestID, "createdAt": item.CreatedAt.UTC().Format(time.RFC3339Nano),
 				"model": item.Model, "inboundEndpoint": item.InboundEndpoint, "requestType": item.RequestType,
 				"inputTokens": item.InputTokens, "outputTokens": item.OutputTokens,
 				"cacheCreationTokens": item.CacheCreationTokens, "cacheReadTokens": item.CacheReadTokens,
 				"actualCostUsdMicros": item.ActualCostUSDMicros,
 			})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": usage.Total, "page": usage.Page, "pageSize": usage.PageSize, "pages": usage.Pages})
+		status := "available"
+		if len(items) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": usage.Total, "page": usage.Page, "pageSize": usage.PageSize, "pages": usage.Pages})
 	}))
 	mux.HandleFunc("GET /api/gateway/usage/stats", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
-		accountID, ok := app.scopedAccountID(w, r, nil)
-		if !ok {
-			return
-		}
 		period := strings.TrimSpace(r.URL.Query().Get("period"))
 		if period == "" {
 			period = "month"
@@ -69,72 +111,72 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeError(w, http.StatusBadRequest, "invalid_gateway_usage_period")
 			return
 		}
-		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
+		userID, ok := app.gatewaySub2APIUserID(w, r)
 		if !ok {
 			return
 		}
 		stats, err := service.GatewayUsageStats(r.Context(), userID, period)
 		if err != nil {
-			writeGatewayUsageError(w, err)
+			writeGatewaySourceError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{
 			"totalRequests": stats.TotalRequests, "totalInputTokens": stats.TotalInputTokens,
 			"totalOutputTokens": stats.TotalOutputTokens, "totalTokens": stats.TotalTokens,
 			"totalActualCostUsdMicros": stats.TotalActualCostUSDMicros,
 		})
 	}))
-	mux.HandleFunc("GET /api/gateway/summary", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/gateway/balance-history", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, no-store")
-		accountID, ok := app.scopedAccountID(w, r, nil)
+		userID, ok := app.gatewaySub2APIUserID(w, r)
 		if !ok {
 			return
 		}
-		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
-		if !ok {
-			return
-		}
-		summary, err := service.GatewaySummary(r.Context(), userID)
+		history, err := service.Sub2APIBalanceHistory(r.Context(), userID)
 		if err != nil {
-			writeGatewayKeyError(w, err)
+			writeGatewaySourceError(w, err)
 			return
 		}
-		apiKey := map[string]any{
-			"id": summary.Key.ID, "name": summary.Key.Name, "status": summary.Key.Status,
-			"maskedValue": maskedGatewayKey(summary.Key.Key), "revealed": false,
+		items := make([]any, 0, len(history))
+		for _, entry := range history {
+			var usedAt any
+			if entry.UsedAt != nil {
+				usedAt = entry.UsedAt.UTC().Format(time.RFC3339Nano)
+			}
+			items = append(items, map[string]any{
+				"type": entry.Type, "valueUsdMicros": entry.ValueUSDMicros, "status": entry.Status,
+				"usedAt": usedAt, "createdAt": entry.CreatedAt.UTC().Format(time.RFC3339Nano),
+			})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"account": map[string]any{"sub2apiUserId": userID, "status": summary.Balance.Status},
-			"balance": map[string]any{
-				"source": "sub2api", "currency": "USD", "status": "available", "available": true,
-				"userId": summary.Balance.UserID, "usdMicros": summary.Balance.USDMicros,
-			},
-			"apiKey": apiKey,
-			"usage": map[string]any{
-				"quotaUsdMicros": summary.Key.QuotaUSDMicros, "quotaUsedUsdMicros": summary.Key.QuotaUsedUSDMicros,
-				"usage5hUsdMicros": summary.Key.Usage5hUSDMicros, "usage1dUsdMicros": summary.Key.Usage1dUSDMicros,
-				"usage7dUsdMicros": summary.Key.Usage7dUSDMicros, "lastUsedAt": summary.Key.LastUsedAt,
-			},
-		})
+		status := "available"
+		if len(items) == 0 {
+			status = "empty"
+		}
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", status, map[string]any{"items": items, "total": len(items)})
 	}))
 	mux.HandleFunc("POST /api/gateway/keys/opl-workspace/reveal", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "private, no-store")
-		user, _ := app.sessionUserContext(r)
+		user, ok := app.sessionUserContext(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "not_authenticated")
+			return
+		}
 		if stringValue(user["role"]) != "owner" {
 			writeError(w, http.StatusForbidden, "gateway_key_reveal_forbidden")
 			return
 		}
-		accountID, ok := app.scopedAccountID(w, r, nil)
-		if !ok {
-			return
-		}
-		userID, ok := app.mappedSub2APIUserID(w, r, accountID)
-		if !ok {
+		accountID := stringValue(user["accountId"])
+		userID, err := app.sub2APIUserID(r.Context(), accountID)
+		if err != nil {
+			writeSourceEnvelope(w, http.StatusInternalServerError, "sub2api", "unavailable", nil)
 			return
 		}
 		key, err := service.Sub2APIWorkspaceKey(r.Context(), userID)
 		if err != nil {
-			writeGatewayKeyError(w, err)
+			writeGatewaySourceError(w, err)
+			return
+		}
+		if key.ID <= 0 || key.UserID != userID || key.Name != "opl-workspace" || key.Status != "active" || key.Key == "" {
+			writeSourceEnvelope(w, http.StatusBadGateway, "sub2api", "unavailable", nil)
 			return
 		}
 		if err := app.appendAuditEvent(r, "gateway.key_reveal", "gateway_key", strconv.FormatInt(key.ID, 10), accountID, nil, map[string]any{
@@ -143,9 +185,9 @@ func registerGatewayRoutes(mux *http.ServeMux, app *controlPlaneServer, service 
 			writeError(w, http.StatusInternalServerError, "state_persist_failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"apiKey": map[string]any{
-			"id": key.ID, "name": key.Name, "status": key.Status, "value": key.Key,
-		}})
+		writeSourceEnvelope(w, http.StatusOK, "sub2api", "available", map[string]any{
+			"id": strconv.FormatInt(key.ID, 10), "name": key.Name, "status": key.Status, "value": key.Key,
+		})
 	}))
 }
 
@@ -160,15 +202,26 @@ func writeGatewayKeyError(w http.ResponseWriter, err error) {
 	}
 }
 
-func writeGatewayUsageError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing):
-		writeError(w, http.StatusConflict, "gateway_key_missing")
-	case errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous):
-		writeError(w, http.StatusConflict, "gateway_key_ambiguous")
-	default:
-		writeError(w, http.StatusBadGateway, "sub2api_usage_unavailable")
+func writeGatewaySourceError(w http.ResponseWriter, err error) {
+	status := http.StatusBadGateway
+	if errors.Is(err, clients.ErrSub2APIWorkspaceKeyMissing) || errors.Is(err, clients.ErrSub2APIWorkspaceKeyAmbiguous) {
+		status = http.StatusConflict
 	}
+	writeSourceEnvelope(w, status, "sub2api", "unavailable", nil)
+}
+
+func (app *controlPlaneServer) gatewaySub2APIUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	user, ok := app.sessionUserContext(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not_authenticated")
+		return 0, false
+	}
+	userID, err := app.sub2APIUserID(r.Context(), stringValue(user["accountId"]))
+	if err != nil {
+		writeSourceEnvelope(w, http.StatusInternalServerError, "sub2api", "unavailable", nil)
+		return 0, false
+	}
+	return userID, true
 }
 
 func (app *controlPlaneServer) mappedSub2APIUserID(w http.ResponseWriter, r *http.Request, accountID string) (int64, bool) {
@@ -182,12 +235,4 @@ func (app *controlPlaneServer) mappedSub2APIUserID(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "state_read_failed")
 	}
 	return 0, false
-}
-
-func maskedGatewayKey(value string) string {
-	runes := []rune(value)
-	if len(runes) <= 8 {
-		return "****"
-	}
-	return string(runes[:4]) + "..." + string(runes[len(runes)-4:])
 }

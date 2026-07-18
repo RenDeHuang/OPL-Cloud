@@ -16,19 +16,11 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		if !app.syncRuntimeOperations(w, r, service) {
 			return
 		}
-		balance, ok := app.liveBalance(w, r, service, accountID, true)
-		if !ok {
-			return
-		}
 		computePools, ok := fabricComputePools(w, r, service)
 		if !ok {
 			return
 		}
 		state := app.state(accountID, computePools)
-		state["balance"] = balance
-		if user, ok := app.sessionUserContext(r); ok {
-			state["user"] = sanitizeUser(user)
-		}
 		writeJSON(w, http.StatusOK, state)
 	}))
 	mux.HandleFunc("GET /api/pricing/catalog", app.protected(false, func(w http.ResponseWriter, r *http.Request) {
@@ -75,23 +67,6 @@ func registerStateRoutes(mux *http.ServeMux, app *controlPlaneServer, service *c
 		}
 		writeJSON(w, http.StatusOK, app.operatorSummary())
 	}))
-}
-
-func (app *controlPlaneServer) liveBalance(w http.ResponseWriter, r *http.Request, service *controlplane.Service, accountID string, allowUnavailable bool) (map[string]any, bool) {
-	userID, err := app.sub2APIUserID(r.Context(), accountID)
-	if err != nil {
-		writeError(w, http.StatusConflict, errMonthlyAccountUnmapped.Error())
-		return nil, false
-	}
-	balance, err := service.Sub2APIBalance(r.Context(), userID)
-	if err != nil {
-		if allowUnavailable {
-			return map[string]any{"source": "sub2api", "currency": "USD", "status": "unavailable", "available": false}, true
-		}
-		writeUpstreamError(w, err)
-		return nil, false
-	}
-	return map[string]any{"source": "sub2api", "currency": "USD", "status": "available", "available": true, "userId": balance.UserID, "usdMicros": balance.USDMicros}, true
 }
 
 func writePricingError(w http.ResponseWriter, err error) {

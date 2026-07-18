@@ -50,6 +50,10 @@ type Sub2APIWorkspaceKeyClient interface {
 	WorkspaceKey(context.Context, int64) (Sub2APIWorkspaceKey, error)
 }
 
+type Sub2APIKeyListClient interface {
+	Keys(context.Context, int64) ([]Sub2APIWorkspaceKey, error)
+}
+
 type Sub2APIRefundClient interface {
 	Refund(context.Context, Sub2APIRefundInput) (Sub2APIRefund, error)
 }
@@ -64,6 +68,10 @@ type Sub2APIIdentityClient interface {
 	ResolveOrCreateUser(context.Context, string, string) (Sub2APIIdentity, error)
 	AuthenticateUser(context.Context, string, string) (Sub2APIIdentity, error)
 	UserIdentity(context.Context, int64, string) (Sub2APIIdentity, error)
+}
+
+type Sub2APIUserReadClient interface {
+	User(context.Context, int64) (Sub2APIIdentity, error)
 }
 
 type Sub2APIAdminIdentityClient interface {
@@ -269,6 +277,9 @@ func (c *Sub2APIHTTPClient) Balance(ctx context.Context, userID int64) (Sub2APIB
 	if data.ID != userID {
 		return Sub2APIBalance{}, errors.New("sub2api user identity mismatch")
 	}
+	if data.Status != "active" && data.Status != "disabled" {
+		return Sub2APIBalance{}, errors.New("invalid sub2api user status")
+	}
 	micros, err := decimalUSDMicros(data.Balance)
 	if err != nil {
 		return Sub2APIBalance{}, fmt.Errorf("invalid sub2api balance: %w", err)
@@ -366,6 +377,20 @@ func (c *Sub2APIHTTPClient) UserIdentity(ctx context.Context, userID int64, emai
 	if userID <= 0 || email == "" {
 		return Sub2APIIdentity{}, ErrSub2APIIdentityUnknown
 	}
+	identity, err := c.User(ctx, userID)
+	if err != nil {
+		return Sub2APIIdentity{}, err
+	}
+	if identity.Email != email || identity.Status != "active" {
+		return Sub2APIIdentity{}, ErrSub2APIIdentityConflict
+	}
+	return identity, nil
+}
+
+func (c *Sub2APIHTTPClient) User(ctx context.Context, userID int64) (Sub2APIIdentity, error) {
+	if userID <= 0 {
+		return Sub2APIIdentity{}, ErrSub2APIIdentityUnknown
+	}
 	body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10), nil, "")
 	if err != nil {
 		return Sub2APIIdentity{}, err
@@ -375,7 +400,7 @@ func (c *Sub2APIHTTPClient) UserIdentity(ctx context.Context, userID int64, emai
 		return Sub2APIIdentity{}, err
 	}
 	identity.Email = normalizeSub2APIEmail(identity.Email)
-	if identity.ID != userID || identity.ID <= 0 || identity.Email != email || identity.Status != "active" {
+	if identity.ID != userID || identity.ID <= 0 || identity.Email == "" || (identity.Status != "active" && identity.Status != "disabled") {
 		return Sub2APIIdentity{}, ErrSub2APIIdentityConflict
 	}
 	return identity, nil
@@ -459,18 +484,18 @@ func normalizeSub2APIEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub2APIWorkspaceKey, error) {
+func (c *Sub2APIHTTPClient) Keys(ctx context.Context, userID int64) ([]Sub2APIWorkspaceKey, error) {
 	if userID <= 0 {
-		return Sub2APIWorkspaceKey{}, errors.New("sub2api user ID must be positive")
+		return nil, errors.New("sub2api user ID must be positive")
 	}
-	matches := make([]Sub2APIWorkspaceKey, 0, 1)
+	keys := make([]Sub2APIWorkspaceKey, 0)
 	seenIDs := make(map[int64]struct{})
 	total, pages, collected := -1, -1, 0
 	for page := 1; page <= maxSub2APIKeyPages; page++ {
 		query := url.Values{"page": {strconv.Itoa(page)}, "page_size": {strconv.Itoa(sub2APIKeyPageSize)}}
 		body, err := c.doAuthenticated(ctx, http.MethodGet, "/api/v1/admin/users/"+strconv.FormatInt(userID, 10)+"/api-keys?"+query.Encode(), nil, "")
 		if err != nil {
-			return Sub2APIWorkspaceKey{}, err
+			return nil, err
 		}
 		var data struct {
 			Items []struct {
@@ -492,49 +517,46 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 			Total    int `json:"total"`
 		}
 		if err := decodeSub2APIEnvelope(body, &data); err != nil {
-			return Sub2APIWorkspaceKey{}, err
+			return nil, err
 		}
 		if data.Total < 0 || data.Total > maxSub2APIKeys {
-			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+			return nil, errors.New("invalid sub2api api key pagination")
 		}
 		expectedPages := (data.Total + sub2APIKeyPageSize - 1) / sub2APIKeyPageSize
 		if data.Page != page || data.PageSize != sub2APIKeyPageSize || data.Pages != expectedPages || data.Pages > maxSub2APIKeyPages || len(data.Items) > sub2APIKeyPageSize {
-			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+			return nil, errors.New("invalid sub2api api key pagination")
 		}
 		if page == 1 {
 			total, pages = data.Total, data.Pages
 		} else if data.Total != total || data.Pages != pages || data.PageSize != sub2APIKeyPageSize {
-			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+			return nil, errors.New("invalid sub2api api key pagination")
 		}
 		for _, item := range data.Items {
 			if item.UserID != userID {
-				return Sub2APIWorkspaceKey{}, errors.New("sub2api user identity mismatch")
+				return nil, errors.New("sub2api user identity mismatch")
 			}
 			if item.ID <= 0 {
-				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+				return nil, errors.New("invalid sub2api api key pagination")
+			}
+			if strings.TrimSpace(item.Name) == "" || (item.Status != "active" && item.Status != "disabled") {
+				return nil, errors.New("invalid sub2api api key")
 			}
 			if _, exists := seenIDs[item.ID]; exists {
-				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+				return nil, errors.New("invalid sub2api api key pagination")
 			}
 			seenIDs[item.ID] = struct{}{}
-			if item.Name != "opl-workspace" || item.Status != "active" {
-				continue
-			}
-			if item.Key == "" {
-				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key")
-			}
 			values := []*json.Number{item.Quota, item.QuotaUsed, item.Usage5h, item.Usage1d, item.Usage7d}
 			micros := make([]int64, len(values))
 			for i, value := range values {
 				if value == nil {
-					return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
+					return nil, errors.New("invalid sub2api workspace key usage")
 				}
 				micros[i], err = decimalUSDMicros(*value)
-				if err != nil {
-					return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key usage")
+				if err != nil || micros[i] < 0 {
+					return nil, errors.New("invalid sub2api workspace key usage")
 				}
 			}
-			matches = append(matches, Sub2APIWorkspaceKey{
+			keys = append(keys, Sub2APIWorkspaceKey{
 				ID: item.ID, UserID: item.UserID, Name: item.Name, Key: item.Key, Status: item.Status,
 				QuotaUSDMicros: micros[0], QuotaUsedUSDMicros: micros[1], Usage5hUSDMicros: micros[2],
 				Usage1dUSDMicros: micros[3], Usage7dUSDMicros: micros[4], LastUsedAt: item.LastUsedAt,
@@ -542,16 +564,30 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 		}
 		collected += len(data.Items)
 		if collected > total || (len(data.Items) == 0 && collected < total) {
-			return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+			return nil, errors.New("invalid sub2api api key pagination")
 		}
 		if pages == 0 {
 			break
 		}
 		if page == pages {
 			if collected != total {
-				return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api api key pagination")
+				return nil, errors.New("invalid sub2api api key pagination")
 			}
 			break
+		}
+	}
+	return keys, nil
+}
+
+func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub2APIWorkspaceKey, error) {
+	keys, err := c.Keys(ctx, userID)
+	if err != nil {
+		return Sub2APIWorkspaceKey{}, err
+	}
+	matches := make([]Sub2APIWorkspaceKey, 0, 1)
+	for _, key := range keys {
+		if key.Name == "opl-workspace" && key.Status == "active" {
+			matches = append(matches, key)
 		}
 	}
 	if len(matches) == 0 {
@@ -559,6 +595,9 @@ func (c *Sub2APIHTTPClient) WorkspaceKey(ctx context.Context, userID int64) (Sub
 	}
 	if len(matches) != 1 {
 		return Sub2APIWorkspaceKey{}, ErrSub2APIWorkspaceKeyAmbiguous
+	}
+	if matches[0].Key == "" {
+		return Sub2APIWorkspaceKey{}, errors.New("invalid sub2api workspace key")
 	}
 	return matches[0], nil
 }
@@ -603,7 +642,19 @@ func (c *Sub2APIHTTPClient) Usage(ctx context.Context, query Sub2APIUsageQuery) 
 	if err := decodeSub2APIEnvelope(body, &data); err != nil {
 		return Sub2APIUsagePage{}, err
 	}
-	if data.Total < 0 || data.Page != query.Page || data.PageSize != query.PageSize || data.Pages < data.Page || data.Pages < 1 || len(data.Items) > query.PageSize {
+	var expectedPages int64
+	expectedItems := 0
+	if data.Total > 0 {
+		expectedPages = (data.Total-1)/int64(query.PageSize) + 1
+		if int64(query.Page) <= expectedPages {
+			remaining := data.Total - int64(query.Page-1)*int64(query.PageSize)
+			expectedItems = query.PageSize
+			if remaining < int64(expectedItems) {
+				expectedItems = int(remaining)
+			}
+		}
+	}
+	if data.Total < 0 || expectedPages > maxSub2APIUsagePage || data.Page != query.Page || data.PageSize != query.PageSize || int64(data.Pages) != expectedPages || data.Total == 0 && query.Page != 1 || data.Total > 0 && int64(query.Page) > expectedPages || len(data.Items) != expectedItems {
 		return Sub2APIUsagePage{}, errors.New("invalid sub2api usage pagination")
 	}
 	items := make([]Sub2APIUsageRecord, 0, len(data.Items))

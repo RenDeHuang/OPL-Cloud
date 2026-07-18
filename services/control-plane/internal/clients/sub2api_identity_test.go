@@ -392,6 +392,35 @@ func TestSub2APIIdentityReadbackRequiresExactActiveIdentity(t *testing.T) {
 	}
 }
 
+func TestSub2APIIdentityGenericReadbackAllowsDisabledAndRejectsUnknown(t *testing.T) {
+	status := "disabled"
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/admin/users/42":
+			writeSub2APISuccess(t, w, map[string]any{"id": 42, "email": " Remote@Example.com ", "status": status, "balance": 999, "raw_admin": "drop"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	identityClient, ok := any(client).(interface {
+		User(context.Context, int64) (Sub2APIIdentity, error)
+	})
+	if !ok {
+		t.Fatal("Sub2API client does not expose generic user readback")
+	}
+	identity, err := identityClient.User(context.Background(), 42)
+	if err != nil || identity != (Sub2APIIdentity{ID: 42, Email: "remote@example.com", Status: "disabled"}) {
+		t.Fatalf("disabled identity = %#v, err=%v", identity, err)
+	}
+	status = "unknown"
+	if _, err := identityClient.User(context.Background(), 42); err == nil {
+		t.Fatal("unknown identity status was accepted")
+	}
+}
+
 func TestSub2APIIdentityReadbackAcceptsAccessOnlyAdminToken(t *testing.T) {
 	loginCalls, readbackCalls := 0, 0
 	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -200,7 +200,6 @@ func (app *controlPlaneServer) state(accountID string, computePools []any) map[s
 		"product":                map[string]any{"name": "OPL Cloud", "console": "OPL Console", "workspace": "OPL Workspace"},
 		"packages":               packageList(computePools),
 		"computePools":           computePools,
-		"user":                   nil,
 		"workspaces":             workspaces,
 		"computeAllocations":     rowsAsAnyFromMaps(app.listComputes(accountID)),
 		"storageVolumes":         rowsAsAnyFromMaps(app.listStorages(accountID)),
