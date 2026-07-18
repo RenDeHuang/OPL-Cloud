@@ -887,6 +887,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 			"containerStatuses": []any{map[string]any{"name": "workspace", "ready": true, "restartCount": 0, "state": map[string]any{"running": map[string]any{}}}},
 		},
 	}
+	pods := []any{pod}
 	provider.kubectl = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if len(args) == 6 && args[0] == "get" && args[1] == "deployment,service,networkpolicy" && args[2] == "-l" && args[3] == "oplcloud.cn/workspace-id=ws-alpha" {
 			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service}}), nil
@@ -895,7 +896,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 			return mustJSON(map[string]any{"kind": "List", "items": networkPolicies}), nil
 		}
 		if slices.Equal(args, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
-			return mustJSON(map[string]any{"kind": "List", "items": []any{pod}}), nil
+			return mustJSON(map[string]any{"kind": "List", "items": pods}), nil
 		}
 		want := []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}
 		if !slices.Equal(args, want) {
@@ -970,8 +971,33 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 	assertUnready("additional NetworkPolicy selects only the actual Pod")
 	networkPolicies = networkPolicies[:1]
 	delete(podLabels, "oplcloud.cn/runtime-marker")
+	podSpec := pod["spec"].(map[string]any)
+	podContainers := podSpec["containers"].([]any)
+	podSpec["containers"] = append(podContainers, map[string]any{
+		"name": "debug", "image": "debug:test", "securityContext": map[string]any{"privileged": true},
+	})
+	assertUnready("Ready Pod privileged sidecar")
+	podSpec["containers"] = podContainers
+	podSpec["initContainers"] = []any{map[string]any{
+		"name": "bootstrap", "image": "bootstrap:test", "securityContext": map[string]any{"privileged": true},
+	}}
+	assertUnready("Ready Pod privileged initContainer")
+	delete(podSpec, "initContainers")
+	pods = append(pods, map[string]any{
+		"kind": "Pod",
+		"metadata": map[string]any{"name": "opl-compute-alpha-old", "labels": map[string]any{
+			"app.kubernetes.io/name": "opl-compute-allocation", "app.kubernetes.io/instance": "opl-compute-alpha", "oplcloud.cn/compute-allocation-id": "compute-alpha", "oplcloud.cn/workspace-id": "ws-alpha",
+		}},
+		"spec": map[string]any{
+			"automountServiceAccountToken": false, "dnsPolicy": "ClusterFirst", "securityContext": map[string]any{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001, "seccompProfile": map[string]any{"type": "RuntimeDefault"}},
+			"containers": []any{map[string]any{"name": "workspace", "image": "workspace-image:test", "securityContext": map[string]any{"privileged": true, "allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}}}},
+		},
+		"status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "False"}}},
+	})
+	assertUnready("additional Running NotReady Workspace Pod")
+	pods = pods[:1]
 	deploymentContainer := deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
-	podContainer := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	podContainer := podSpec["containers"].([]any)[0].(map[string]any)
 	delete(deploymentContainer, "volumeMounts")
 	assertUnready("deployment mounts missing")
 	deploymentContainer["volumeMounts"] = workspaceDataMounts()

@@ -1570,46 +1570,47 @@ func workspaceRuntimeIsolationReady(deployment map[string]any, pods []any) bool 
 		return false
 	}
 	readyPods := 0
+	activePods := 0
 	for _, item := range pods {
 		pod, _ := item.(map[string]any)
-		if conditionStatuses(nested(pod, "status", "conditions"))["Ready"] != "True" {
+		phase := stringValue(nested(pod, "status", "phase"))
+		if phase == "Succeeded" || phase == "Failed" {
 			continue
 		}
-		readyPods++
+		activePods++
 		spec, _ := pod["spec"].(map[string]any)
 		image, isolated := workspaceRuntimeSpecImage(spec)
 		if !isolated || image != templateImage {
 			return false
 		}
+		if conditionStatuses(nested(pod, "status", "conditions"))["Ready"] == "True" {
+			readyPods++
+		}
 	}
-	return number(readyPods) == desiredReplicas
+	return number(activePods) == desiredReplicas && number(readyPods) == desiredReplicas
 }
 
 func workspaceRuntimeSpecImage(spec map[string]any) (string, bool) {
-	if len(spec) == 0 || spec["hostNetwork"] == true || stringValue(spec["dnsPolicy"]) != "ClusterFirst" || spec["automountServiceAccountToken"] != false ||
+	initContainers, _ := spec["initContainers"].([]any)
+	if len(spec) == 0 || len(initContainers) != 0 || spec["hostNetwork"] == true || stringValue(spec["dnsPolicy"]) != "ClusterFirst" || spec["automountServiceAccountToken"] != false ||
 		nested(spec, "securityContext", "runAsNonRoot") != true || number(nested(spec, "securityContext", "runAsUser")) != 10001 ||
 		number(nested(spec, "securityContext", "runAsGroup")) != 10001 || number(nested(spec, "securityContext", "fsGroup")) != 10001 ||
 		stringValue(nested(spec, "securityContext", "seccompProfile", "type")) != "RuntimeDefault" {
 		return "", false
 	}
 	containers, _ := spec["containers"].([]any)
-	workspaceContainers := 0
-	workspaceImage := ""
-	for _, item := range containers {
-		container, _ := item.(map[string]any)
-		if stringValue(container["name"]) != "workspace" {
-			continue
-		}
-		workspaceContainers++
-		workspaceImage = stringValue(container["image"])
-		security, _ := container["securityContext"].(map[string]any)
-		capabilities, _ := security["capabilities"].(map[string]any)
-		containerSeccomp := stringValue(nested(security, "seccompProfile", "type"))
-		if security["allowPrivilegeEscalation"] != false || security["privileged"] == true || len(capabilities) != 1 || !reflect.DeepEqual(capabilities["drop"], []any{"ALL"}) || (containerSeccomp != "" && containerSeccomp != "RuntimeDefault") {
-			return "", false
-		}
+	if len(containers) != 1 {
+		return "", false
 	}
-	return workspaceImage, workspaceContainers == 1 && workspaceImage != ""
+	container, _ := containers[0].(map[string]any)
+	workspaceImage := stringValue(container["image"])
+	security, _ := container["securityContext"].(map[string]any)
+	capabilities, _ := security["capabilities"].(map[string]any)
+	containerSeccomp := stringValue(nested(security, "seccompProfile", "type"))
+	if stringValue(container["name"]) != "workspace" || workspaceImage == "" || security["allowPrivilegeEscalation"] != false || security["privileged"] == true || len(capabilities) != 1 || !reflect.DeepEqual(capabilities["drop"], []any{"ALL"}) || (containerSeccomp != "" && containerSeccomp != "RuntimeDefault") {
+		return "", false
+	}
+	return workspaceImage, true
 }
 
 func endpointReadyAddresses(endpoints map[string]any) int {
