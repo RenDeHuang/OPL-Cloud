@@ -5,14 +5,13 @@ import {
   ArrowUpRight,
   CalendarDays,
   Check,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Copy,
   Database,
   Eye,
   EyeOff,
-  HardDrive,
-  KeyRound,
   LayoutDashboard,
   Link2,
   LogOut,
@@ -37,9 +36,13 @@ import {
   getBillingReceipts,
   getConsoleState,
   getGatewaySummary,
+  getGatewayUsage,
+  getGatewayUsageStats,
   getManagementState,
   getOperatorSummary,
   getPricingCatalog,
+  getProductionReadiness,
+  getRuntimeReadiness,
   previewPricing
 } from "./api/console-read-api.ts";
 import { attachStorage, createComputeAllocation, createStorageVolume } from "./api/resources-api.ts";
@@ -49,15 +52,22 @@ import {
   launchWorkspaceResource
 } from "./api/workspaces-api.ts";
 import {
+  adminMenu,
   customerBillingStatusLabel,
   customerMenu,
+  defaultAuthenticatedRoute,
   fixedMonthlySpend,
   formatAvailableBalance,
+  formatCount,
   formatDate,
   formatUsdMicros,
   gatewayCanCall,
+  gatewayMenu,
+  gatewayPage,
   maskGatewaySummary,
   needsSession,
+  operatorAttentionItems,
+  readinessRows,
   resourceOrderStage,
   resourceNeedsAttention,
   resourceStatusLabel,
@@ -69,11 +79,7 @@ import {
 
 type AnyRecord = Record<string, any>;
 
-const menuIcons: Record<string, any> = { LayoutDashboard, MonitorCog, Database, Network, ReceiptText };
-const adminMenu = [
-  { label: "管理概览", path: "/admin/overview", icon: LayoutDashboard },
-  { label: "用户", path: "/admin/users", icon: UsersRound }
-];
+const menuIcons: Record<string, any> = { Activity, CircleDollarSign, LayoutDashboard, MonitorCog, Database, Network, ReceiptText, UsersRound };
 const orderStages = ["已受理", "订单已确认", "云端开通中", "可用"];
 
 const path = ref(window.location.pathname);
@@ -88,10 +94,15 @@ const catalog = ref<AnyRecord | null>(null);
 const storageQuotes = ref<AnyRecord>({});
 const management = ref<AnyRecord | null>(null);
 const operatorSummary = ref<AnyRecord | null>(null);
-const errors = reactive({ state: "", gateway: "", receipts: "", catalog: "", admin: "" });
-const loading = reactive({ state: false, gateway: false, receipts: false, catalog: false, admin: false });
+const runtimeReadiness = ref<AnyRecord | null>(null);
+const productionReadiness = ref<AnyRecord | null>(null);
+const gatewayRequests = ref<AnyRecord[]>([]);
+const gatewayStats = ref<AnyRecord | null>(null);
+const gatewayRequestPage = reactive({ page: 1, pageSize: 20, total: 0, pages: 0 });
+const gatewayPeriod = ref("month");
+const errors = reactive({ state: "", gateway: "", gatewayUsage: "", gatewayStats: "", receipts: "", catalog: "", admin: "", readiness: "" });
+const loading = reactive({ state: false, gateway: false, gatewayUsage: false, gatewayStats: false, receipts: false, catalog: false, admin: false, readiness: false });
 const sidebarOpen = ref(false);
-const gatewayTab = ref("overview");
 const gatewayBusy = ref(false);
 const mutationBusy = ref(false);
 const modal = ref("");
@@ -129,6 +140,15 @@ const balance = computed(() => gateway.value?.balance || state.value?.balance ||
 const gatewayUsage = computed(() => gateway.value?.usage || {});
 const gatewayKey = computed(() => gateway.value?.apiKey || {});
 const gatewayHealthy = computed(() => gatewayCanCall(gateway.value || {}));
+const activeGatewayPage = computed(() => gatewayPage(path.value));
+const billingReviewItems = computed(() => [
+  ...(management.value?.computeAllocations || []).map((item) => ({ ...item, kind: "计算", resourceType: "compute" })),
+  ...(management.value?.storageVolumes || []).map((item) => ({ ...item, kind: "存储", resourceType: "storage" }))
+].filter((item) => item.billingStatus === "manual_review"));
+const adminAttentionItems = computed(() => operatorAttentionItems(management.value || {}, operatorSummary.value || {}));
+const serviceChecks = computed(() => readinessRows(runtimeReadiness.value, productionReadiness.value));
+const failedOperations = computed(() => operatorSummary.value?.failedOperations || []);
+const resourceAnomalies = computed(() => operatorSummary.value?.resourceAnomalies || []);
 const hasPendingResources = computed(() => allBillableResources.value.some((item) =>
   ["provisioning", "attaching", "destroying", "detaching"].includes(item.status)
   || ["preparing", "charge_pending", "provider_pending"].includes(item.billingStatus)
@@ -152,7 +172,9 @@ const pageTitle = computed(() => {
   if (path.value.startsWith("/console/gateway")) return "Gateway";
   if (path.value.startsWith("/console/billing")) return "账单";
   if (path.value.startsWith("/admin/users")) return "用户";
-  if (isAdminRoute.value) return "管理概览";
+  if (path.value.startsWith("/admin/billing")) return "计费复核";
+  if (path.value.startsWith("/admin/runtime")) return "系统状态";
+  if (isAdminRoute.value) return "运维概览";
   return "概览";
 });
 
@@ -203,6 +225,7 @@ async function loadState() {
 }
 
 async function loadGateway() {
+  hideGatewayKey();
   loading.gateway = true;
   errors.gateway = "";
   try {
@@ -212,6 +235,45 @@ async function loadGateway() {
   } finally {
     loading.gateway = false;
   }
+}
+
+async function loadGatewayRequests(page = gatewayRequestPage.page) {
+  loading.gatewayUsage = true;
+  errors.gatewayUsage = "";
+  try {
+    const result = await getGatewayUsage(page, gatewayRequestPage.pageSize);
+    gatewayRequests.value = result.items || [];
+    gatewayRequestPage.page = result.page || page;
+    gatewayRequestPage.total = result.total || 0;
+    gatewayRequestPage.pages = result.pages || 0;
+  } catch (error) {
+    errors.gatewayUsage = friendlyError(error);
+  } finally {
+    loading.gatewayUsage = false;
+  }
+}
+
+async function loadGatewayStats() {
+  loading.gatewayStats = true;
+  errors.gatewayStats = "";
+  try {
+    gatewayStats.value = await getGatewayUsageStats(gatewayPeriod.value);
+  } catch (error) {
+    errors.gatewayStats = friendlyError(error);
+  } finally {
+    loading.gatewayStats = false;
+  }
+}
+
+function selectGatewayPeriod(period: string) {
+  if (gatewayPeriod.value === period) return;
+  gatewayPeriod.value = period;
+  void loadGatewayStats();
+}
+
+function changeGatewayPage(page: number) {
+  if (page < 1 || (gatewayRequestPage.pages > 0 && page > gatewayRequestPage.pages)) return;
+  void loadGatewayRequests(page);
 }
 
 async function loadReceipts(reset = true) {
@@ -256,16 +318,25 @@ async function loadConsole() {
 
 async function loadAdmin() {
   loading.admin = true;
+  loading.readiness = true;
   errors.admin = "";
-  try {
-    const [managementState, summary] = await Promise.all([getManagementState(), getOperatorSummary()]);
-    management.value = managementState;
-    operatorSummary.value = summary;
-  } catch (error) {
-    errors.admin = friendlyError(error);
-  } finally {
-    loading.admin = false;
-  }
+  errors.readiness = "";
+  const [managementResult, summaryResult, runtimeResult, productionResult] = await Promise.allSettled([
+    getManagementState(),
+    getOperatorSummary(),
+    getRuntimeReadiness(),
+    getProductionReadiness()
+  ]);
+  if (managementResult.status === "fulfilled") management.value = managementResult.value;
+  if (summaryResult.status === "fulfilled") operatorSummary.value = summaryResult.value;
+  if (runtimeResult.status === "fulfilled") runtimeReadiness.value = runtimeResult.value;
+  if (productionResult.status === "fulfilled") productionReadiness.value = productionResult.value;
+  const adminFailure = [managementResult, summaryResult].find((result) => result.status === "rejected");
+  const readinessFailure = [runtimeResult, productionResult].find((result) => result.status === "rejected");
+  if (adminFailure?.status === "rejected") errors.admin = friendlyError(adminFailure.reason);
+  if (readinessFailure?.status === "rejected") errors.readiness = friendlyError(readinessFailure.reason);
+  loading.admin = false;
+  loading.readiness = false;
 }
 
 async function ensureSession() {
@@ -305,8 +376,13 @@ async function handleRoute() {
   authStatus.value = "ready";
   if (isAdminRoute.value) {
     if (!management.value) await loadAdmin();
-  } else if (!state.value) {
-    await loadConsole();
+  } else {
+    if (!state.value) await loadConsole();
+    if (path.value.startsWith("/console/gateway/usage")) {
+      await Promise.all([loadGatewayRequests(), loadGatewayStats()]);
+    } else if (path.value.startsWith("/console/gateway") && !gateway.value) {
+      await loadGateway();
+    }
   }
 }
 
@@ -318,7 +394,7 @@ async function submitLogin() {
     session.value = payload;
     authStatus.value = "ready";
     const requested = new URLSearchParams(window.location.search).get("redirect");
-    const target = requested?.startsWith("/") ? requested : payload.isOperator === true ? "/admin/overview" : "/console/overview";
+    const target = requested?.startsWith("/") ? requested : defaultAuthenticatedRoute();
     navigate(target);
   } catch (error) {
     loginError.value = friendlyError(error);
@@ -334,7 +410,12 @@ async function signOut() {
       session.value = null;
       state.value = null;
       gateway.value = null;
+      gatewayRequests.value = [];
+      gatewayStats.value = null;
       management.value = null;
+      operatorSummary.value = null;
+      runtimeReadiness.value = null;
+      productionReadiness.value = null;
     }, () => navigate("/"));
   } catch {
     // Local logout already completed.
@@ -473,6 +554,7 @@ async function mountStorage(storage: AnyRecord) {
 }
 
 async function revealGatewayKey() {
+  hideGatewayKey();
   gatewayBusy.value = true;
   errors.gateway = "";
   try {
@@ -538,13 +620,35 @@ function resourceTypeLabel(value: any) {
   return String(value || "").includes("storage") ? "存储" : String(value || "").includes("compute") ? "计算" : "资源";
 }
 
+function adminUserEmail(accountId: string) {
+  return (management.value?.users || []).find((user) => user.accountId === accountId)?.email || "-";
+}
+
+function adminWorkspaceName(workspaceId: string) {
+  const item = (management.value?.workspaces || []).find((workspace) => workspace.id === workspaceId);
+  return item?.name || workspaceId || "-";
+}
+
+function attentionStatusLabel(item: AnyRecord) {
+  return item.billingStatus ? customerBillingStatusLabel(item.billingStatus) : item.status || "-";
+}
+
+function refreshCurrentPage() {
+  if (isAdminRoute.value) return void loadAdmin();
+  if (activeGatewayPage.value === "usage") {
+    void Promise.all([loadGateway(), loadGatewayRequests(), loadGatewayStats()]);
+    return;
+  }
+  void loadConsole();
+}
+
 watch(hasPendingResources, (pending) => {
   if (pollTimer) window.clearInterval(pollTimer);
   pollTimer = pending ? window.setInterval(() => { void loadState(); }, 10_000) : undefined;
 }, { immediate: true });
 
 watch(path, (next, previous) => {
-  if (previous.startsWith("/console/gateway") && !next.startsWith("/console/gateway")) hideGatewayKey();
+  if (previous === "/console/gateway/keys" && next !== previous) hideGatewayKey();
 });
 
 onMounted(() => {
@@ -627,23 +731,31 @@ onBeforeUnmount(() => {
     <button class="mobile-menu" type="button" aria-label="打开导航" @click="sidebarOpen = true"><Menu /></button>
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-head">
-        <a href="/console/overview" class="brand" @click.prevent="navigate(isOperator && isAdminRoute ? '/admin/overview' : '/console/overview')">
+        <a href="/console/overview" class="brand" @click.prevent="navigate('/console/overview')">
           <img src="/opl-app-icon.png" alt="" />
           <strong>OPL Console</strong>
         </a>
         <button class="sidebar-close" type="button" aria-label="关闭导航" @click="sidebarOpen = false"><X /></button>
       </div>
       <nav class="side-nav" aria-label="主导航">
-        <template v-if="isAdminRoute">
-          <a v-for="item in adminMenu" :key="item.path" :href="item.path" :class="{ active: path === item.path || (item.path.endsWith('overview') && path === '/admin') }" @click.prevent="navigate(item.path)">
-            <component :is="item.icon" :size="19" />{{ item.label }}
-          </a>
-        </template>
-        <template v-else>
-          <a v-for="item in customerMenu" :key="item.path" :href="item.path" :class="{ active: path.startsWith(item.path.replace('/overview', '')) && (item.id !== 'overview' || path.endsWith('/overview')) }" @click.prevent="navigate(item.path)">
+        <template v-for="item in customerMenu" :key="item.path">
+          <a :href="item.path" :class="{ active: item.id === 'gateway' ? path.startsWith('/console/gateway') : item.id === 'overview' ? path === '/console' || path === item.path : path.startsWith(item.path) }" @click.prevent="navigate(item.path)">
             <component :is="menuIcons[item.icon]" :size="19" />{{ item.label }}
           </a>
+          <div v-if="item.id === 'gateway' && path.startsWith('/console/gateway')" class="side-subnav">
+            <a v-for="child in gatewayMenu" :key="child.path" :href="child.path" :class="{ active: activeGatewayPage === child.id }" @click.prevent="navigate(child.path)">{{ child.label }}</a>
+          </div>
         </template>
+        <div v-if="isOperator" class="operator-nav">
+          <a href="/admin/overview" class="operator-root" :class="{ active: isAdminRoute }" @click.prevent="navigate('/admin/overview')">
+            <ShieldCheck :size="19" />运维管理<ChevronRight :size="15" />
+          </a>
+          <div v-if="isAdminRoute" class="side-subnav">
+            <a v-for="item in adminMenu" :key="item.path" :href="item.path" :class="{ active: path === item.path || (item.id === 'overview' && path === '/admin') }" @click.prevent="navigate(item.path)">
+              <component :is="menuIcons[item.icon]" :size="16" />{{ item.label }}
+            </a>
+          </div>
+        </div>
       </nav>
       <div class="sidebar-account">
         <UserRound :size="18" />
@@ -654,24 +766,39 @@ onBeforeUnmount(() => {
     <button v-if="sidebarOpen" class="sidebar-scrim" type="button" aria-label="关闭导航" @click="sidebarOpen = false" />
 
     <section class="main-column">
-      <header class="topbar"><h1>{{ pageTitle }}</h1><button class="icon-button" type="button" title="刷新" aria-label="刷新" @click="isAdminRoute ? loadAdmin() : loadConsole()"><RefreshCw :size="17" /></button></header>
+      <header class="topbar"><h1>{{ pageTitle }}</h1><button class="icon-button" type="button" title="刷新" aria-label="刷新" @click="refreshCurrentPage"><RefreshCw :size="17" /></button></header>
 
       <div v-if="isAdminRoute" class="page-content">
         <div v-if="loading.admin && !management" class="loading-panel"><span class="spinner" />正在加载管理数据...</div>
         <div v-else-if="errors.admin && !management" class="empty-panel"><AlertCircle /><p>{{ errors.admin }}</p><button class="button secondary" @click="loadAdmin">重试</button></div>
         <template v-else>
-          <section v-if="path !== '/admin/users'" class="admin-dashboard">
+          <div v-if="errors.admin && management" class="inline-error"><AlertCircle :size="17" />{{ errors.admin }}<button type="button" @click="loadAdmin">重试</button></div>
+          <section v-if="path === '/admin' || path === '/admin/overview'" class="admin-dashboard">
             <div class="metric-row">
-              <article><UsersRound /><span>用户<strong>{{ management?.users?.length || 0 }}</strong></span></article>
-              <article><Server /><span>计算资源<strong>{{ management?.computeAllocations?.length || 0 }}</strong></span></article>
-              <article><HardDrive /><span>存储资源<strong>{{ management?.storageVolumes?.length || 0 }}</strong></span></article>
-              <article><Activity /><span>运行状态<strong>{{ operatorSummary?.runtimeReadiness?.ready === false ? "需处理" : "正常" }}</strong></span></article>
+              <article><ShieldCheck /><span>运行依赖<strong :class="{ positive: serviceChecks[0].status === '正常' }">{{ serviceChecks[0].status }}</strong></span></article>
+              <article><CircleDollarSign /><span>待复核计费<strong>{{ formatCount(billingReviewItems.length) }}</strong></span></article>
+              <article><AlertCircle /><span>失败操作<strong>{{ formatCount(failedOperations.length) }}</strong></span></article>
+              <article><Activity /><span>资源异常<strong>{{ formatCount(resourceAnomalies.length) }}</strong></span></article>
             </div>
-            <section class="panel"><div class="panel-title"><h2>最近 Workspace</h2></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>账号</th><th>状态</th><th>创建时间</th></tr></thead><tbody><tr v-for="item in (management?.workspaces || []).slice(0, 10)" :key="item.id"><td>{{ item.name || "未命名" }}</td><td>{{ item.accountId }}</td><td><span class="status-pill">{{ item.openable ? "可用" : item.status || item.state }}</span></td><td>{{ formatDate(item.createdAt, true) }}</td></tr><tr v-if="!(management?.workspaces || []).length"><td colspan="4" class="empty-cell">暂无 Workspace</td></tr></tbody></table></div></section>
+            <div class="admin-overview-grid">
+              <section class="panel"><div class="panel-title"><h2>待处理事项</h2></div><div class="table-wrap"><table><thead><tr><th>类型</th><th>用户</th><th>Workspace</th><th>资源</th><th>状态</th><th>最近更新</th><th>操作</th></tr></thead><tbody><tr v-for="item in adminAttentionItems.slice(0, 10)" :key="`${item.kind}-${item.id}`"><td>{{ item.kind }}</td><td>{{ adminUserEmail(item.accountId) }}</td><td>{{ adminWorkspaceName(item.workspaceId) }}</td><td>{{ item.name || "未命名资源" }}</td><td><span class="status-pill">{{ attentionStatusLabel(item) }}</span></td><td>{{ formatDate(item.updatedAt || item.createdAt, true) }}</td><td><button class="text-button" type="button" @click="navigate(item.resourceType ? '/admin/billing' : '/admin/runtime')">查看</button></td></tr><tr v-if="!adminAttentionItems.length"><td colspan="7" class="empty-cell">暂无待处理事项</td></tr></tbody></table></div></section>
+              <section class="panel resource-summary"><div class="panel-title"><h2>资源运行概况</h2></div><dl class="data-list"><div><dt>Workspace</dt><dd>{{ formatCount(management?.workspaces?.length) }}</dd></div><div><dt>计算</dt><dd>{{ formatCount(management?.computeAllocations?.length) }}</dd></div><div><dt>存储</dt><dd>{{ formatCount(management?.storageVolumes?.length) }}</dd></div><div><dt>挂载</dt><dd>{{ formatCount(management?.storageAttachments?.length) }}</dd></div></dl></section>
+            </div>
+            <section class="panel"><div class="panel-title"><h2>服务状态</h2><button class="icon-button" type="button" title="刷新服务状态" aria-label="刷新服务状态" @click="loadAdmin"><RefreshCw :size="16" /></button></div><div v-if="errors.readiness" class="inline-error readiness-error"><AlertCircle :size="17" />{{ errors.readiness }}</div><div class="table-wrap"><table><thead><tr><th>检查</th><th>状态</th><th>更新时间</th></tr></thead><tbody><tr v-for="item in serviceChecks" :key="item.label"><td>{{ item.label }}</td><td><span class="status-pill" :class="{ good: item.status === '正常' }">{{ item.status }}</span></td><td>{{ formatDate(item.updatedAt, true) }}</td></tr></tbody></table></div></section>
+            <section class="panel"><div class="panel-title"><h2>最近失败操作</h2></div><div class="table-wrap"><table><thead><tr><th>类型</th><th>用户</th><th>Workspace</th><th>资源</th><th>失败原因</th><th>失败时间</th></tr></thead><tbody><tr v-for="item in failedOperations.slice(0, 10)" :key="item.id || item.operationId"><td>{{ item.operationType || item.action || "-" }}</td><td>{{ adminUserEmail(item.accountId) }}</td><td>{{ adminWorkspaceName(item.workspaceId) }}</td><td>{{ item.resourceId || "-" }}</td><td>{{ item.errorCode || item.status || "-" }}</td><td>{{ formatDate(item.updatedAt || item.createdAt, true) }}</td></tr><tr v-if="!failedOperations.length"><td colspan="6" class="empty-cell">暂无失败操作</td></tr></tbody></table></div></section>
           </section>
-          <section v-else class="panel">
+          <section v-else-if="path.startsWith('/admin/users')" class="panel">
             <div class="panel-title"><h2>用户</h2><button class="button primary" type="button" @click="modal = 'admin-user'"><Plus :size="16" />新建用户</button></div>
             <div class="table-wrap"><table><thead><tr><th>邮箱</th><th>账号</th><th>角色</th><th>状态</th></tr></thead><tbody><tr v-for="user in management?.users || []" :key="user.id"><td>{{ user.email }}</td><td>{{ user.accountId }}</td><td>{{ user.email?.toLowerCase() === 'admin@medopl.cn' ? "管理员" : "用户" }}</td><td><span class="status-pill" :class="{ good: user.status === 'active' }">{{ user.status === "active" ? "正常" : user.status }}</span></td></tr></tbody></table></div>
+          </section>
+          <section v-else-if="path.startsWith('/admin/billing')" class="admin-dashboard">
+            <div class="metric-row"><article><CircleDollarSign /><span>待复核计费<strong>{{ formatCount(billingReviewItems.length) }}</strong></span></article><article><AlertCircle /><span>计费提醒<strong>{{ formatCount(operatorSummary?.notifications?.total) }}</strong></span></article><article><UsersRound /><span>用户<strong>{{ formatCount(management?.users?.length) }}</strong></span></article><article><Server /><span>资源<strong>{{ formatCount((management?.computeAllocations?.length || 0) + (management?.storageVolumes?.length || 0)) }}</strong></span></article></div>
+            <section class="panel"><div class="panel-title"><h2>计费复核</h2></div><div class="table-wrap"><table><thead><tr><th>用户</th><th>Workspace</th><th>资源</th><th>金额</th><th>原因</th><th>更新时间</th><th>状态</th></tr></thead><tbody><tr v-for="item in billingReviewItems" :key="`${item.resourceType}-${item.id}`"><td>{{ adminUserEmail(item.accountId) }}</td><td>{{ adminWorkspaceName(item.workspaceId) }}</td><td>{{ item.kind }} · {{ item.name || "未命名资源" }}</td><td>{{ formatUsdMicros(item.chargeUsdMicros) }}</td><td>{{ item.manualReviewReason || item.lastBillingError || "-" }}</td><td>{{ formatDate(item.updatedAt, true) }}</td><td><span class="status-pill">需要人工处理</span></td></tr><tr v-if="!billingReviewItems.length"><td colspan="7" class="empty-cell">暂无待复核计费</td></tr></tbody></table></div></section>
+          </section>
+          <section v-else class="admin-dashboard">
+            <section class="panel"><div class="panel-title"><h2>系统状态</h2><button class="icon-button" type="button" title="刷新系统状态" aria-label="刷新系统状态" @click="loadAdmin"><RefreshCw :size="16" /></button></div><div v-if="errors.readiness" class="inline-error readiness-error"><AlertCircle :size="17" />{{ errors.readiness }}</div><div class="table-wrap"><table><thead><tr><th>检查</th><th>状态</th><th>更新时间</th></tr></thead><tbody><tr v-for="item in serviceChecks" :key="item.label"><td>{{ item.label }}</td><td><span class="status-pill" :class="{ good: item.status === '正常' }">{{ item.status }}</span></td><td>{{ formatDate(item.updatedAt, true) }}</td></tr></tbody></table></div></section>
+            <section class="panel"><div class="panel-title"><h2>资源异常</h2></div><div class="table-wrap"><table><thead><tr><th>状态</th><th>Workspace</th><th>资源</th><th>更新时间</th></tr></thead><tbody><tr v-for="item in resourceAnomalies" :key="item.id || `${item.workspaceId}-${item.status}`"><td>{{ item.status || "-" }}</td><td>{{ adminWorkspaceName(item.workspaceId) }}</td><td>{{ item.resourceId || item.id || "-" }}</td><td>{{ formatDate(item.updatedAt || item.createdAt, true) }}</td></tr><tr v-if="!resourceAnomalies.length"><td colspan="4" class="empty-cell">暂无资源异常</td></tr></tbody></table></div></section>
+            <section class="panel"><div class="panel-title"><h2>失败操作</h2></div><div class="table-wrap"><table><thead><tr><th>类型</th><th>用户</th><th>Workspace</th><th>资源</th><th>失败原因</th><th>失败时间</th></tr></thead><tbody><tr v-for="item in failedOperations" :key="item.id || item.operationId"><td>{{ item.operationType || item.action || "-" }}</td><td>{{ adminUserEmail(item.accountId) }}</td><td>{{ adminWorkspaceName(item.workspaceId) }}</td><td>{{ item.resourceId || "-" }}</td><td>{{ item.errorCode || item.status || "-" }}</td><td>{{ formatDate(item.updatedAt || item.createdAt, true) }}</td></tr><tr v-if="!failedOperations.length"><td colspan="6" class="empty-cell">暂无失败操作</td></tr></tbody></table></div></section>
           </section>
         </template>
       </div>
@@ -681,7 +808,7 @@ onBeforeUnmount(() => {
         <div v-else-if="errors.state && !state" class="empty-panel"><AlertCircle /><p>{{ errors.state }}</p><button class="button secondary" @click="loadState">重试</button></div>
 
         <template v-else-if="state">
-          <section v-if="path === '/console' || path.endsWith('/overview')" class="overview-layout">
+          <section v-if="path === '/console' || path === '/console/overview'" class="overview-layout">
             <div class="overview-main">
               <section class="panel workspace-panel">
                 <div v-if="workspace" class="workspace-heading">
@@ -721,7 +848,7 @@ onBeforeUnmount(() => {
               <div><WalletCards /><span>可用余额<strong>{{ formatAvailableBalance(balance) }}</strong></span></div>
               <div><Activity /><span>近 7 天 AI 用量<strong>{{ errors.gateway ? "暂不可用" : formatUsdMicros(gatewayUsage.usage7dUsdMicros) }}</strong></span></div>
               <div><ShieldCheck /><span>API 调用<strong :class="gatewayHealthy ? 'positive' : ''">{{ errors.gateway ? "暂不可用" : gatewayHealthy ? "正常" : "需要处理" }}</strong></span></div>
-              <button type="button" @click="navigate('/console/gateway')"><Network /><span>管理 Gateway</span><ChevronRight /></button>
+              <button type="button" @click="navigate('/console/gateway/overview')"><Network /><span>管理 Gateway</span><ChevronRight /></button>
             </aside>
           </section>
 
@@ -738,15 +865,37 @@ onBeforeUnmount(() => {
           </section>
 
           <section v-else-if="path.startsWith('/console/gateway')" class="gateway-page">
-            <section class="gateway-summary panel"><div><WalletCards /><span>可用余额<strong>{{ formatAvailableBalance(balance) }}</strong></span></div><div><ShieldCheck /><span>API 调用<strong :class="gatewayHealthy ? 'positive' : ''">{{ errors.gateway ? "暂不可用" : gatewayHealthy ? "正常" : "需要处理" }}</strong></span></div><div><CalendarDays /><span>最近使用<strong>{{ formatDate(gatewayUsage.lastUsedAt, true) }}</strong></span></div></section>
-            <div v-if="errors.gateway" class="inline-error"><AlertCircle :size="17" />{{ errors.gateway }}<button type="button" @click="loadGateway">重试</button></div>
-            <section class="panel gateway-detail">
-              <div class="tabs" role="tablist"><button v-for="tab in [{id:'overview',label:'概览'},{id:'usage',label:'用量'},{id:'key',label:'API Key'}]" :key="tab.id" type="button" role="tab" :aria-selected="gatewayTab === tab.id" :class="{ active: gatewayTab === tab.id }" @click="gatewayTab = tab.id">{{ tab.label }}</button></div>
-              <div v-if="gatewayTab === 'overview' || gatewayTab === 'usage'" class="data-section"><h2>用量</h2><dl class="data-list"><div><dt>近 5 小时</dt><dd>{{ formatUsdMicros(gatewayUsage.usage5hUsdMicros) }}</dd></div><div><dt>近 1 天</dt><dd>{{ formatUsdMicros(gatewayUsage.usage1dUsdMicros) }}</dd></div><div><dt>近 7 天</dt><dd>{{ formatUsdMicros(gatewayUsage.usage7dUsdMicros) }}</dd></div><div><dt>累计已用</dt><dd>{{ formatUsdMicros(gatewayUsage.quotaUsedUsdMicros) }}</dd></div><div><dt>最近使用</dt><dd>{{ formatDate(gatewayUsage.lastUsedAt, true) }}</dd></div></dl></div>
-              <div v-if="gateway && (gatewayTab === 'overview' || gatewayTab === 'key')" class="data-section"><h2>API Key</h2><div class="key-row"><span><KeyRound :size="17" />{{ gatewayKey.name }}</span><code>{{ gatewayKey.revealed ? gatewayKey.value : gatewayKey.maskedValue }}</code><span class="status-pill" :class="{ good: gatewayHealthy }">{{ gatewayHealthy ? "可用" : "需要处理" }}</span><div class="key-actions"><button v-if="!gatewayKey.revealed" class="text-button" type="button" :disabled="gatewayBusy" @click="revealGatewayKey"><Eye :size="15" />显示</button><button v-else class="text-button" type="button" @click="hideGatewayKey"><EyeOff :size="15" />隐藏</button><button class="text-button" type="button" :disabled="!gatewayKey.value" @click="copyGatewayKey"><Copy :size="15" />复制</button></div></div></div>
-              <div v-else-if="gatewayTab === 'overview' || gatewayTab === 'key'" class="data-section"><h2>API Key</h2><p class="empty-copy">暂不可用</p></div>
-              <div v-if="gatewayTab === 'overview'" class="data-section"><h2>相关资源</h2><dl class="data-list"><div><dt>Workspace</dt><dd>{{ workspace?.name || "-" }}</dd></div><div><dt>计算</dt><dd>{{ currentCompute?.name || "-" }}<template v-if="currentCompute"> · {{ planFor(currentCompute)?.name || "-" }}</template></dd></div><div><dt>存储</dt><dd>{{ currentStorage?.name || "-" }}<template v-if="currentStorage"> · {{ currentStorage.sizeGb }}GB</template></dd></div><div><dt>挂载</dt><dd>{{ currentAttachment ? `${currentAttachment.mountPath || "-"} · 已挂载` : "-" }}</dd></div></dl></div>
-            </section>
+            <nav class="gateway-tabs" aria-label="Gateway 导航"><a v-for="item in gatewayMenu" :key="item.path" :href="item.path" :class="{ active: activeGatewayPage === item.id }" @click.prevent="navigate(item.path)">{{ item.label }}</a></nav>
+            <div v-if="errors.gateway && activeGatewayPage !== 'usage'" class="inline-error"><AlertCircle :size="17" />{{ errors.gateway }}<button type="button" @click="loadGateway">重试</button></div>
+
+            <template v-if="activeGatewayPage === 'usage'">
+              <div class="metric-row gateway-usage-metrics">
+                <article><WalletCards /><span>可用余额<strong>{{ formatAvailableBalance(balance) }}</strong></span></article>
+                <article><CircleDollarSign /><span>本月费用<strong>{{ errors.gatewayStats ? "暂不可用" : formatUsdMicros(gatewayStats?.totalActualCostUsdMicros) }}</strong></span></article>
+                <article><Activity /><span>请求次数<strong>{{ errors.gatewayStats ? "暂不可用" : formatCount(gatewayStats?.totalRequests) }}</strong></span></article>
+                <article><Server /><span>Token 总量<strong>{{ errors.gatewayStats ? "暂不可用" : formatCount(gatewayStats?.totalTokens) }}</strong></span></article>
+              </div>
+              <div class="gateway-usage-toolbar"><div class="segmented-control" aria-label="用量周期"><button v-for="item in [{id:'today',label:'今日'},{id:'week',label:'本周'},{id:'month',label:'本月'}]" :key="item.id" type="button" :class="{ active: gatewayPeriod === item.id }" @click="selectGatewayPeriod(item.id)">{{ item.label }}</button></div></div>
+              <div v-if="errors.gatewayStats" class="inline-error"><AlertCircle :size="17" />{{ errors.gatewayStats }}<button type="button" @click="loadGatewayStats">重试统计</button></div>
+              <section class="panel usage-table-panel">
+                <div v-if="errors.gatewayUsage" class="inline-error usage-error"><AlertCircle :size="17" />{{ errors.gatewayUsage }}<button type="button" @click="loadGatewayRequests()">重试列表</button></div>
+                <div class="table-wrap"><table class="gateway-usage-table"><thead><tr><th>时间</th><th>模型</th><th>API 端点</th><th>输入 Token</th><th>输出 Token</th><th>缓存 Token</th><th>实际金额</th><th>请求 ID</th></tr></thead><tbody><tr v-for="item in gatewayRequests" :key="item.requestId"><td>{{ formatDate(item.createdAt, true) }}</td><td>{{ item.model || "-" }}</td><td>{{ item.inboundEndpoint || "-" }}</td><td>{{ formatCount(item.inputTokens) }}</td><td>{{ formatCount(item.outputTokens) }}</td><td>{{ formatCount(item.cacheCreationTokens + item.cacheReadTokens) }}</td><td>{{ formatUsdMicros(item.actualCostUsdMicros) }}</td><td><code>{{ item.requestId || "-" }}</code></td></tr><tr v-if="!gatewayRequests.length && !loading.gatewayUsage"><td colspan="8" class="empty-cell usage-empty">暂无请求记录</td></tr><tr v-if="loading.gatewayUsage"><td colspan="8" class="empty-cell">正在加载...</td></tr></tbody></table></div>
+              </section>
+              <div class="pagination"><button class="icon-button" type="button" aria-label="上一页" :disabled="gatewayRequestPage.page <= 1 || loading.gatewayUsage" @click="changeGatewayPage(gatewayRequestPage.page - 1)"><ChevronLeft :size="16" /></button><span>{{ gatewayRequestPage.page }}</span><button class="icon-button" type="button" aria-label="下一页" :disabled="gatewayRequestPage.pages === 0 || gatewayRequestPage.page >= gatewayRequestPage.pages || loading.gatewayUsage" @click="changeGatewayPage(gatewayRequestPage.page + 1)"><ChevronRight :size="16" /></button><small>{{ gatewayRequestPage.pageSize }} 条/页</small></div>
+            </template>
+
+            <template v-else>
+              <section class="gateway-summary panel"><div><WalletCards /><span>可用余额<strong>{{ formatAvailableBalance(balance) }}</strong></span></div><div><ShieldCheck /><span>API 调用<strong :class="gatewayHealthy ? 'positive' : ''">{{ errors.gateway ? "暂不可用" : gatewayHealthy ? "正常" : "需要处理" }}</strong></span></div><div><CalendarDays /><span>最近使用<strong>{{ formatDate(gatewayUsage.lastUsedAt, true) }}</strong></span></div></section>
+              <template v-if="activeGatewayPage === 'keys'">
+                <section class="panel gateway-keys-panel"><div class="panel-title"><h2>API Keys</h2></div><div class="table-wrap"><table><thead><tr><th>名称</th><th>API Key</th><th>状态</th><th>额度</th><th>已用</th><th>最近使用</th><th>操作</th></tr></thead><tbody><tr v-if="gateway"><td>{{ gatewayKey.name || "-" }}</td><td><code>{{ gatewayKey.revealed ? gatewayKey.value : gatewayKey.maskedValue }}</code></td><td><span class="status-pill" :class="{ good: gatewayHealthy }">{{ gatewayHealthy ? "可用" : "需要处理" }}</span></td><td>{{ formatUsdMicros(gatewayUsage.quotaUsdMicros) }}</td><td>{{ formatUsdMicros(gatewayUsage.quotaUsedUsdMicros) }}</td><td>{{ formatDate(gatewayUsage.lastUsedAt, true) }}</td><td><div v-if="session?.user?.role === 'owner'" class="key-actions"><button v-if="!gatewayKey.revealed" class="text-button" type="button" :disabled="gatewayBusy" @click="revealGatewayKey"><Eye :size="15" />显示</button><button v-else class="text-button" type="button" @click="hideGatewayKey"><EyeOff :size="15" />隐藏</button><button class="text-button" type="button" :disabled="!gatewayKey.value" @click="copyGatewayKey"><Copy :size="15" />复制</button></div><span v-else>-</span></td></tr><tr v-else><td colspan="7" class="empty-cell">API Key 暂不可用</td></tr></tbody></table></div></section>
+              </template>
+              <template v-else>
+                <div class="gateway-overview-grid">
+                  <section class="panel"><div class="panel-title"><h2>最近用量</h2></div><dl class="data-list"><div><dt>近 5 小时</dt><dd>{{ formatUsdMicros(gatewayUsage.usage5hUsdMicros) }}</dd></div><div><dt>近 1 天</dt><dd>{{ formatUsdMicros(gatewayUsage.usage1dUsdMicros) }}</dd></div><div><dt>近 7 天</dt><dd>{{ formatUsdMicros(gatewayUsage.usage7dUsdMicros) }}</dd></div><div><dt>累计已用</dt><dd>{{ formatUsdMicros(gatewayUsage.quotaUsedUsdMicros) }}</dd></div></dl></section>
+                  <section class="panel"><div class="panel-title"><h2>相关资源</h2></div><dl class="data-list"><div><dt>Workspace</dt><dd>{{ workspace?.name || "-" }}</dd></div><div><dt>计算</dt><dd>{{ currentCompute?.name || "-" }}<template v-if="currentCompute"> · {{ planFor(currentCompute)?.name || "-" }}</template></dd></div><div><dt>存储</dt><dd>{{ currentStorage?.name || "-" }}<template v-if="currentStorage"> · {{ currentStorage.sizeGb }}GB</template></dd></div><div><dt>挂载</dt><dd>{{ currentAttachment ? `${currentAttachment.mountPath || "-"} · 已挂载` : "-" }}</dd></div></dl></section>
+                </div>
+              </template>
+            </template>
           </section>
 
           <section v-else-if="path.startsWith('/console/billing')" class="billing-page">

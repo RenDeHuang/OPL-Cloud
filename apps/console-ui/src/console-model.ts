@@ -4,9 +4,32 @@ export const customerMenu = Object.freeze([
   { id: "overview", label: "概览", path: "/console/overview", icon: "LayoutDashboard" },
   { id: "compute", label: "计算", path: "/console/compute", icon: "MonitorCog" },
   { id: "storage", label: "存储", path: "/console/storage", icon: "Database" },
-  { id: "gateway", label: "Gateway", path: "/console/gateway", icon: "Network" },
+  { id: "gateway", label: "Gateway", path: "/console/gateway/overview", icon: "Network" },
   { id: "billing", label: "账单", path: "/console/billing", icon: "ReceiptText" }
 ]);
+
+export const gatewayMenu = Object.freeze([
+  { id: "overview", label: "概览", path: "/console/gateway/overview" },
+  { id: "usage", label: "Usage", path: "/console/gateway/usage" },
+  { id: "keys", label: "API Keys", path: "/console/gateway/keys" }
+]);
+
+export const adminMenu = Object.freeze([
+  { id: "overview", label: "运维概览", path: "/admin/overview", icon: "LayoutDashboard" },
+  { id: "users", label: "用户", path: "/admin/users", icon: "UsersRound" },
+  { id: "billing", label: "计费复核", path: "/admin/billing", icon: "CircleDollarSign" },
+  { id: "runtime", label: "系统状态", path: "/admin/runtime", icon: "Activity" }
+]);
+
+export function defaultAuthenticatedRoute() {
+  return "/console/overview";
+}
+
+export function gatewayPage(pathname = "") {
+  if (pathname.endsWith("/usage")) return "usage";
+  if (pathname.endsWith("/keys")) return "keys";
+  return "overview";
+}
 
 export function needsSession(pathname = "") {
   return pathname === "/admin" || pathname.startsWith("/admin/") || pathname.startsWith("/console");
@@ -15,6 +38,12 @@ export function needsSession(pathname = "") {
 export function formatUsdMicros(value: unknown) {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) return "-";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value / 1_000_000);
+}
+
+export function formatCount(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? new Intl.NumberFormat("zh-CN").format(value)
+    : "-";
 }
 
 export function formatAvailableBalance(balance: RecordLike = {}) {
@@ -112,6 +141,35 @@ export function resourceNeedsAttention(resource: RecordLike = {}) {
   const needsAttention = ["failed", "unknown", "manual_review", "past_due", "refunded"];
   return needsAttention.includes(String(resource.status || ""))
     || needsAttention.includes(String(resource.billingStatus || ""));
+}
+
+export function operatorAttentionItems(management: RecordLike = {}, summary: RecordLike = {}) {
+  const resources = [
+    ...(management.computeAllocations || []).map((item) => ({ ...item, kind: "计算", resourceType: "compute", status: item.billingStatus || item.status })),
+    ...(management.storageVolumes || []).map((item) => ({ ...item, kind: "存储", resourceType: "storage", status: item.billingStatus || item.status }))
+  ].filter((item) => ["manual_review", "past_due"].includes(String(item.billingStatus || "")));
+  const failed = (summary.failedOperations || []).map((item) => ({
+    ...item,
+    id: item.id || item.operationId,
+    kind: "失败操作",
+    status: item.status || "failed"
+  }));
+  const anomalies = (summary.resourceAnomalies || []).map((item) => ({
+    ...item,
+    id: item.id || item.resourceId || item.workspaceId,
+    kind: "资源异常",
+    status: item.status
+  }));
+  return [...resources, ...failed, ...anomalies];
+}
+
+export function readinessRows(runtime: RecordLike | null, production: RecordLike | null) {
+  const row = (label: string, value: RecordLike | null) => ({
+    label,
+    status: value?.ready === true ? "正常" : value?.ready === false ? "需处理" : "-",
+    updatedAt: value?.generatedAt || value?.updatedAt || "-"
+  });
+  return [row("运行依赖", runtime), row("生产依赖", production)];
 }
 
 export function customerBillingStatusLabel(status: unknown) {

@@ -2,11 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  adminMenu,
   customerMenu,
+  defaultAuthenticatedRoute,
   fixedMonthlySpend,
+  formatCount,
   formatUsdMicros,
+  gatewayMenu,
+  gatewayPage,
   gatewayCanCall,
   needsSession,
+  operatorAttentionItems,
+  readinessRows,
   resourceOrderStage,
   resourceNeedsAttention,
   resourceStatusLabel,
@@ -16,14 +23,32 @@ import {
   workspaceProgress
 } from "../../apps/console-ui/src/console-model.ts";
 
-test("customer navigation is the five product views", () => {
+test("customer navigation stays visible and Gateway has three real routes", () => {
   assert.deepEqual(customerMenu.map(({ label, path }) => ({ label, path })), [
     { label: "概览", path: "/console/overview" },
     { label: "计算", path: "/console/compute" },
     { label: "存储", path: "/console/storage" },
-    { label: "Gateway", path: "/console/gateway" },
+    { label: "Gateway", path: "/console/gateway/overview" },
     { label: "账单", path: "/console/billing" }
   ]);
+  assert.deepEqual(gatewayMenu.map(({ label, path }) => ({ label, path })), [
+    { label: "概览", path: "/console/gateway/overview" },
+    { label: "Usage", path: "/console/gateway/usage" },
+    { label: "API Keys", path: "/console/gateway/keys" }
+  ]);
+  assert.equal(gatewayPage("/console/gateway"), "overview");
+  assert.equal(gatewayPage("/console/gateway/usage"), "usage");
+  assert.equal(gatewayPage("/console/gateway/keys"), "keys");
+});
+
+test("the unique operator gets additive operations navigation without a separate landing page", () => {
+  assert.deepEqual(adminMenu.map(({ label, path }) => ({ label, path })), [
+    { label: "运维概览", path: "/admin/overview" },
+    { label: "用户", path: "/admin/users" },
+    { label: "计费复核", path: "/admin/billing" },
+    { label: "系统状态", path: "/admin/runtime" }
+  ]);
+  assert.equal(defaultAuthenticatedRoute(), "/console/overview");
 });
 
 test("public and login routes render without waiting for session recovery", () => {
@@ -80,6 +105,43 @@ test("USD values are formatted from integer micros", () => {
   assert.equal(formatUsdMicros(undefined), "-");
   assert.equal(formatUsdMicros(null), "-");
   assert.equal(formatUsdMicros("83200000"), "-");
+});
+
+test("counts stay unavailable until an integer fact exists", () => {
+  assert.equal(formatCount(12), "12");
+  assert.equal(formatCount(undefined), "-");
+  assert.equal(formatCount("12"), "-");
+});
+
+test("operator attention is projected only from real resource and operation facts", () => {
+  const items = operatorAttentionItems({
+    computeAllocations: [
+      { id: "compute-review", accountId: "acct-1", workspaceId: "ws-1", billingStatus: "manual_review", updatedAt: "2026-07-17T01:00:00Z" },
+      { id: "compute-ok", accountId: "acct-1", billingStatus: "active" }
+    ],
+    storageVolumes: [{ id: "storage-due", accountId: "acct-2", billingStatus: "past_due" }]
+  }, {
+    failedOperations: [{ id: "op-failed", accountId: "acct-3", workspaceId: "ws-3", status: "failed" }],
+    resourceAnomalies: [{ id: "anomaly-1", workspaceId: "ws-4", status: "missing_storage" }]
+  });
+
+  assert.deepEqual(items.map((item) => [item.kind, item.id, item.status]), [
+    ["计算", "compute-review", "manual_review"],
+    ["存储", "storage-due", "past_due"],
+    ["失败操作", "op-failed", "failed"],
+    ["资源异常", "anomaly-1", "missing_storage"]
+  ]);
+});
+
+test("readiness never invents a healthy state", () => {
+  assert.deepEqual(readinessRows(null, null), [
+    { label: "运行依赖", status: "-", updatedAt: "-" },
+    { label: "生产依赖", status: "-", updatedAt: "-" }
+  ]);
+  assert.deepEqual(readinessRows({ ready: true, generatedAt: "runtime-time" }, { ready: false, generatedAt: "production-time" }), [
+    { label: "运行依赖", status: "正常", updatedAt: "runtime-time" },
+    { label: "生产依赖", status: "需处理", updatedAt: "production-time" }
+  ]);
 });
 
 test("Gateway usability requires a live Key and positive spendable balance", () => {

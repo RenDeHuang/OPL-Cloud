@@ -35,6 +35,16 @@ export function getGatewaySummary(reveal = false, signal?: AbortSignal) {
   return getJson(`/api/gateway/summary${reveal ? "?reveal=true" : ""}`, { signal });
 }
 
+export function getGatewayUsage(page = 1, pageSize = 20, signal?: AbortSignal) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return getJson(`/api/gateway/usage?${params}`, { signal });
+}
+
+export function getGatewayUsageStats(period = "month", signal?: AbortSignal) {
+  const params = new URLSearchParams({ period });
+  return getJson(`/api/gateway/usage/stats?${params}`, { signal });
+}
+
 export function getBillingReceipts(cursor = "", limit = 20, signal?: AbortSignal) {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
