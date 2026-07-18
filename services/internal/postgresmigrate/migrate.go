@@ -26,36 +26,56 @@ type Migration struct {
 }
 
 func ValidateTLS(databaseURL string) error {
-	mode, err := postgresSSLMode(strings.TrimSpace(databaseURL))
-	if err != nil || mode != "verify-full" {
-		return errors.New("PostgreSQL DATABASE_URL must set sslmode=verify-full")
+	mode, host, err := postgresTLSSettings(strings.TrimSpace(databaseURL))
+	if err != nil || mode != "verify-full" || !postgresTCPHost(host) {
+		return errors.New("PostgreSQL DATABASE_URL must set sslmode=verify-full and an explicit TCP host")
 	}
 	return nil
 }
 
-func postgresSSLMode(databaseURL string) (string, error) {
+func postgresTLSSettings(databaseURL string) (string, string, error) {
 	if databaseURL == "" {
-		return "", errors.New("empty PostgreSQL DSN")
+		return "", "", errors.New("empty PostgreSQL DSN")
 	}
 	parsed, err := url.Parse(databaseURL)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if parsed.Scheme != "" {
 		if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
-			return "", errors.New("invalid PostgreSQL URL scheme")
+			return "", "", errors.New("invalid PostgreSQL URL scheme")
 		}
 		query, err := url.ParseQuery(parsed.RawQuery)
 		if err != nil || len(query["sslmode"]) != 1 {
-			return "", errors.New("PostgreSQL URL requires one sslmode")
+			return "", "", errors.New("PostgreSQL URL requires one sslmode")
 		}
-		return query["sslmode"][0], nil
+		host := parsed.Hostname()
+		if queryHosts, ok := query["host"]; ok {
+			if len(queryHosts) != 1 {
+				return "", "", errors.New("PostgreSQL URL allows one host setting")
+			}
+			host = queryHosts[0]
+		}
+		return query["sslmode"][0], host, nil
 	}
 	values, err := parseKeywordDSN(databaseURL)
 	if err != nil || len(values["sslmode"]) != 1 {
-		return "", errors.New("PostgreSQL DSN requires one sslmode")
+		return "", "", errors.New("PostgreSQL DSN requires one sslmode")
 	}
-	return values["sslmode"][0], nil
+	if len(values["host"]) != 1 {
+		return "", "", errors.New("PostgreSQL DSN requires one host setting")
+	}
+	return values["sslmode"][0], values["host"][0], nil
+}
+
+func postgresTCPHost(value string) bool {
+	for _, host := range strings.Split(value, ",") {
+		host = strings.TrimSpace(host)
+		if host == "" || strings.ContainsAny(host, "/@") {
+			return false
+		}
+	}
+	return true
 }
 
 func parseKeywordDSN(databaseURL string) (map[string][]string, error) {

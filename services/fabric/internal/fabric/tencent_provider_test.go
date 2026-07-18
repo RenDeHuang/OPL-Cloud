@@ -867,6 +867,7 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 			"egress": workspaceEgressFixture(),
 		},
 	}
+	networkPolicies := []any{networkPolicy}
 	pod := map[string]any{
 		"kind": "Pod",
 		"metadata": map[string]any{"name": "opl-compute-alpha-7d6c", "labels": map[string]any{
@@ -890,10 +891,13 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 		if len(args) == 6 && args[0] == "get" && args[1] == "deployment,service,networkpolicy" && args[2] == "-l" && args[3] == "oplcloud.cn/workspace-id=ws-alpha" {
 			return mustJSON(map[string]any{"kind": "List", "items": []any{deployment, service}}), nil
 		}
+		if slices.Equal(args, []string{"get", "networkpolicy", "-o", "json"}) {
+			return mustJSON(map[string]any{"kind": "List", "items": networkPolicies}), nil
+		}
 		if slices.Equal(args, []string{"get", "pod", "-l", "oplcloud.cn/workspace-id=ws-alpha", "-o", "json"}) {
 			return mustJSON(map[string]any{"kind": "List", "items": []any{pod}}), nil
 		}
-		want := []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "networkpolicy/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}
+		want := []string{"get", "deployment/opl-compute-alpha", "pvc/opl-storage-alpha-data", "service/opl-compute-alpha", "ingress/opl-cloud", "endpoints/opl-compute-alpha", "secret/opl-compute-alpha-env", "--ignore-not-found", "-o", "json"}
 		if !slices.Equal(args, want) {
 			t.Fatalf("kubectl args = %#v, want %#v", args, want)
 		}
@@ -935,6 +939,20 @@ func TestRuntimeStatusVerifiesFinalMountAfterPreRuntimeAttachment(t *testing.T) 
 			t.Fatalf("%s runtime status=%#v err=%v", name, status, err)
 		}
 	}
+	networkPolicies = append(networkPolicies, map[string]any{
+		"kind":     "NetworkPolicy",
+		"metadata": map[string]any{"name": "workspace-egress-open"},
+		"spec": map[string]any{
+			"podSelector": map[string]any{"matchExpressions": []any{
+				map[string]any{"key": "app.kubernetes.io/name", "operator": "In", "values": []any{"opl-compute-allocation"}},
+				map[string]any{"key": "oplcloud.cn/compute-allocation-id", "operator": "Exists"},
+			}},
+			"policyTypes": []any{"Egress"},
+			"egress":      []any{map[string]any{}},
+		},
+	})
+	assertUnready("additional NetworkPolicy allows unrestricted egress")
+	networkPolicies = networkPolicies[:1]
 	deploymentContainer := deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
 	podContainer := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
 	delete(deploymentContainer, "volumeMounts")

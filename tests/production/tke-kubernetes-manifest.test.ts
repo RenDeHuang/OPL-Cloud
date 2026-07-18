@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 test("OPL Cloud TKE manifest declares three decoupled services and monthly Sub2API config", async () => {
@@ -135,4 +135,16 @@ test("production env examples use the launch zone and pinned images", async () =
     await readFile(".env.example", "utf8"),
     /^OPL_WORKSPACE_IMAGE=ghcr\.io\/gaofeng21cn\/one-person-lab-webui@sha256:9d867fe0fc9db48b6efa27371d77770e46fc8cd97d26ef85a81fbdac7e96ca76$/m
   );
+});
+
+test("production automation does not retain the legacy operator cleanup path", async () => {
+  const workflowDirectory = ".github/workflows";
+  const workflowNames = (await readdir(workflowDirectory)).filter((name) => /\.ya?ml$/.test(name));
+  for (const name of workflowNames) {
+    const source = await readFile(`${workflowDirectory}/${name}`, "utf8");
+    assert.equal(source.includes("/api/auth/operator-login"), false, `${name} invokes the legacy operator login`);
+    assert.equal(source.includes("OPL_OPERATOR_SUMMARY_TOKEN"), false, `${name} uses the legacy operator token`);
+  }
+  assert.equal(workflowNames.includes("cleanup-console-resource-residual.yml"), false);
+  assert.doesNotMatch(await readFile(".env.example", "utf8"), /^OPL_OPERATOR_SUMMARY_TOKEN=/m);
 });

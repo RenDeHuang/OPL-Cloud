@@ -3,12 +3,16 @@ package main
 import (
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestHTTPServerHasFiniteTimeouts(t *testing.T) {
 	server := newHTTPServer(":8082", http.NotFoundHandler())
 	if server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.WriteTimeout <= 0 || server.IdleTimeout <= 0 {
 		t.Fatalf("HTTP timeouts must all be finite: %#v", server)
+	}
+	if server.WriteTimeout < 10*time.Minute {
+		t.Fatalf("HTTP write timeout = %s, want at least 10m", server.WriteTimeout)
 	}
 }
 

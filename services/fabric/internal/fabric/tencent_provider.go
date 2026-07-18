@@ -19,6 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8slabels "k8s.io/apimachinery/pkg/labels"
 )
 
 const (
@@ -747,15 +750,19 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "not_found", Ready: false, Checks: []Check{{Name: "workspace_resources_found", OK: false}}}, nil
 	}
 	secretRef := serviceName + "-env"
-	raw, err := p.kubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "service/" + serviceName, "networkpolicy/" + serviceName, "ingress/opl-cloud", "endpoints/" + serviceName, "secret/" + secretRef, "--ignore-not-found", "-o", "json"}, nil)
+	raw, err := p.kubectl(ctx, []string{"get", "deployment/" + serviceName, "pvc/" + pvcName, "service/" + serviceName, "ingress/opl-cloud", "endpoints/" + serviceName, "secret/" + secretRef, "--ignore-not-found", "-o", "json"}, nil)
+	if err != nil {
+		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "unready", ServiceName: serviceName, Ready: false, Checks: []Check{{Name: "kubectl_get", OK: false}}}, nil
+	}
+	policyRaw, err := p.kubectl(ctx, []string{"get", "networkpolicy", "-o", "json"}, nil)
 	if err != nil {
 		return WorkspaceRuntime{WorkspaceID: workspaceID, Status: "unready", ServiceName: serviceName, Ready: false, Checks: []Check{{Name: "kubectl_get", OK: false}}}, nil
 	}
 	items := kubectlItems(raw)
+	networkPolicies := kubectlItems(policyRaw)
 	deployment := findK8s(items, "Deployment", serviceName)
 	pvc := findK8s(items, "PersistentVolumeClaim", pvcName)
 	service := findK8s(items, "Service", serviceName)
-	networkPolicy := findK8s(items, "NetworkPolicy", serviceName)
 	ingress := findK8s(items, "Ingress", "opl-cloud")
 	endpoints := findK8s(items, "Endpoints", serviceName)
 	access, credentialCheck := runtimeAccessFromSecret(findK8s(items, "Secret", secretRef), secretRef)
@@ -781,7 +788,7 @@ func (p *TencentProvider) WorkspaceRuntimeStatus(ctx context.Context, workspaceI
 		{Name: "deployment_uses_retained_pvc", OK: workloadUsesPVC(deployment, pvcName)},
 		{Name: "ready_pod_uses_retained_pvc", OK: readyPodUsesPVC, Details: podDetails},
 		{Name: "service_targets_workspace", OK: selectorMatches(service, deployment)},
-		{Name: "workspace_network_policy", OK: workspaceNetworkPolicyReady(networkPolicy, deployment)},
+		{Name: "workspace_network_policy", OK: workspaceNetworkPoliciesReady(networkPolicies, deployment)},
 		{Name: "workspace_runtime_isolation", OK: workspaceRuntimeIsolationReady(deployment, pods)},
 		{Name: "service_endpoints_ready", OK: readyAddresses > 0, Details: mergeDetails(map[string]any{"readyAddresses": readyAddresses}, podDetails)},
 		{Name: "ingress_routes_workspace_gateway", OK: ingressRoutesGateway(ingress)},
@@ -1469,6 +1476,55 @@ func workspaceNetworkPolicyReady(policy map[string]any, deployment map[string]an
 	}
 	port, _ := ports[0].(map[string]any)
 	return len(port) == 2 && stringValue(port["protocol"]) == "TCP" && number(port["port"]) == 3000
+}
+
+func workspaceNetworkPoliciesReady(policies []any, deployment map[string]any) bool {
+	deploymentName := stringValue(nested(deployment, "metadata", "name"))
+	if !workspaceNetworkPolicyReady(findK8s(policies, "NetworkPolicy", deploymentName), deployment) {
+		return false
+	}
+	podLabelValues, _ := nested(deployment, "spec", "template", "metadata", "labels").(map[string]any)
+	podLabels := k8slabels.Set{}
+	for key, value := range podLabelValues {
+		text, ok := value.(string)
+		if !ok {
+			return false
+		}
+		podLabels[key] = text
+	}
+	for _, item := range policies {
+		policy, ok := item.(map[string]any)
+		if !ok || stringValue(policy["kind"]) != "NetworkPolicy" {
+			continue
+		}
+		hasEgress := false
+		policyTypes, _ := nested(policy, "spec", "policyTypes").([]any)
+		for _, policyType := range policyTypes {
+			hasEgress = hasEgress || stringValue(policyType) == "Egress"
+		}
+		if !hasEgress {
+			continue
+		}
+		rawSelector, err := json.Marshal(nested(policy, "spec", "podSelector"))
+		if err != nil {
+			return false
+		}
+		var labelSelector metav1.LabelSelector
+		if err := json.Unmarshal(rawSelector, &labelSelector); err != nil {
+			return false
+		}
+		selector, err := metav1.LabelSelectorAsSelector(&labelSelector)
+		if err != nil {
+			return false
+		}
+		if selector.Matches(podLabels) {
+			egress, _ := nested(policy, "spec", "egress").([]any)
+			if !bytes.Equal(mustJSON(egress), mustJSON(workspaceEgressRules())) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func workspaceRuntimeIsolationReady(deployment map[string]any, pods []any) bool {

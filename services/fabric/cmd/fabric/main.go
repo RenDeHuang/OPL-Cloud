@@ -45,7 +45,7 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr: addr, Handler: handler,
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 2 * time.Minute, IdleTimeout: 2 * time.Minute,
+		WriteTimeout: 10 * time.Minute, IdleTimeout: 2 * time.Minute,
 	}
 }
 
