@@ -43,6 +43,9 @@ func TestAuthMeUsesOnlySessionIdentityAndLiveSub2APIUser(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("auth me = %d: %s", response.Code, response.Body.String())
 	}
+	if got, want := response.Header().Get("x-opl-csrf-token"), session.Header().Get("x-opl-csrf-token"); got == "" || got != want {
+		t.Fatalf("auth me csrf recovery header = %q, want login token", got)
+	}
 	var envelope map[string]any
 	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
 		t.Fatal(err)

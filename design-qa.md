@@ -1,5 +1,16 @@
 # OPL Console Design QA
 
+> Historical/superseded checkpoint: the evidence below describes UI product commit
+> `5fc1f7ab364d8e34b851d9c5c467ddcda88d9352`. It is not current Task 12 product truth.
+> Task 13 replaces the final evidence with screenshots of the integrated implementation.
+
+## Task 12 Visual Freeze
+
+- `output/imagegen/task12-freeze-v2/customer-workspace-overview-v2.png`
+- `output/imagegen/task12-freeze-v2/customer-api-service-v2.png`
+- `output/imagegen/task12-freeze-v2/admin-accounts-resources.png`
+- These images freeze visual hierarchy only. Their example values are not data, price, or status authority.
+
 ## Comparison Target
 
 - Product checkpoint: `5fc1f7ab364d8e34b851d9c5c467ddcda88d9352`.

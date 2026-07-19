@@ -1,84 +1,119 @@
-import { getJson, postJson } from "./console-api.ts";
+import { decodeDto, decodeSource } from "./dtos.ts";
+import type {
+  BalanceHistoryData,
+  BillingReceiptPage,
+  CreateCustomerUserRequest,
+  GatewayKeyReveal,
+  GatewayKeysData,
+  GatewayUsageData,
+  GatewayUsageStats,
+  GatewayWallet,
+  ManagementState,
+  OperatorAccountsData,
+  OperatorSummary,
+  PricingCatalogResponse,
+  PricingPreviewRequest,
+  PricingPreviewResponse,
+  ReadinessFact,
+  SourceEnvelope
+} from "./dtos.ts";
+import { getJson, postJson, type ApiError } from "./console-api.ts";
 
-export function getConsoleState(accountId = "") {
-  const params = new URLSearchParams();
-  if (accountId) params.set("accountId", accountId);
-  const query = params.toString();
-  return getJson(`/api/state${query ? `?${query}` : ""}`);
+async function sourceGet<T>(path: string, signal?: AbortSignal): Promise<SourceEnvelope<T>> {
+  try {
+    return decodeSource<T>(await getJson<unknown>(path, { signal }));
+  } catch (error) {
+    const payload = (error as ApiError).payload;
+    if (payload !== undefined) {
+      try {
+        return decodeSource<T>(payload);
+      } catch {
+        // Preserve the transport error when the server did not return a source envelope.
+      }
+    }
+    throw error;
+  }
 }
 
-export function getOperatorSummary() {
-  return getJson("/api/operator/summary");
+async function sourcePost<T>(path: string, body: unknown, csrfToken: string): Promise<SourceEnvelope<T>> {
+  try {
+    return decodeSource<T>(await postJson<unknown>(path, body, csrfToken));
+  } catch (error) {
+    const payload = (error as ApiError).payload;
+    if (payload !== undefined) {
+      try {
+        return decodeSource<T>(payload);
+      } catch {
+        // Preserve the transport error when the server did not return a source envelope.
+      }
+    }
+    throw error;
+  }
 }
 
-export function getArchiveState() {
-  return getJson("/api/operator/archive");
+export function getConsoleState(): Promise<unknown> {
+  return getJson<unknown>("/api/state");
 }
 
-export function getRuntimeReadiness() {
-  return getJson("/api/runtime/readiness");
+export function getGatewayWallet(signal?: AbortSignal): Promise<SourceEnvelope<GatewayWallet>> {
+  return sourceGet<GatewayWallet>("/api/gateway/wallet", signal);
 }
 
-export function getProductionReadiness() {
-  return getJson("/api/production/readiness");
+export function getGatewayKeys(signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeysData>> {
+  return sourceGet<GatewayKeysData>("/api/gateway/keys", signal);
 }
 
-export function getPricingCatalog() {
-  return getJson("/api/pricing/catalog");
-}
-
-export function previewPricing(input, csrfToken) {
-  return postJson("/api/pricing/preview", input, csrfToken);
-}
-
-export function getGatewaySummary(reveal = false, signal?: AbortSignal) {
-  return getJson(`/api/gateway/summary${reveal ? "?reveal=true" : ""}`, { signal });
-}
-
-export function getGatewayUsage(page = 1, pageSize = 20, signal?: AbortSignal) {
+export function getGatewayUsage(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<GatewayUsageData>> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  return getJson(`/api/gateway/usage?${params}`, { signal });
+  return sourceGet<GatewayUsageData>(`/api/gateway/usage?${params}`, signal);
 }
 
-export function getGatewayUsageStats(period = "month", signal?: AbortSignal) {
-  const params = new URLSearchParams({ period });
-  return getJson(`/api/gateway/usage/stats?${params}`, { signal });
+export function getGatewayUsageStats(period = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayUsageStats>> {
+  return sourceGet<GatewayUsageStats>(`/api/gateway/usage/stats?${new URLSearchParams({ period })}`, signal);
 }
 
-export function getBillingReceipts(cursor = "", limit = 20, signal?: AbortSignal) {
+export function getGatewayBalanceHistory(signal?: AbortSignal): Promise<SourceEnvelope<BalanceHistoryData>> {
+  return sourceGet<BalanceHistoryData>("/api/gateway/balance-history", signal);
+}
+
+export function revealGatewayKey(csrfToken: string): Promise<SourceEnvelope<GatewayKeyReveal>> {
+  return sourcePost<GatewayKeyReveal>("/api/gateway/keys/opl-workspace/reveal", {}, csrfToken);
+}
+
+export function getBillingReceipts(cursor = "", limit = 20, signal?: AbortSignal): Promise<SourceEnvelope<BillingReceiptPage>> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
-  return getJson(`/api/billing/receipts?${params}`, { signal });
+  return sourceGet<BillingReceiptPage>(`/api/billing/receipts?${params}`, signal);
 }
 
-export function getManagementState(organizationId = "", includeDeleted = false) {
-  const params = new URLSearchParams();
-  if (organizationId) params.set("organizationId", organizationId);
-  if (includeDeleted) params.set("includeDeleted", "true");
-  const query = params.toString();
-  return getJson(`/api/management/state${query ? `?${query}` : ""}`);
+export function getPricingCatalog(): Promise<PricingCatalogResponse> {
+  return getJson<unknown>("/api/pricing/catalog").then(decodeDto<PricingCatalogResponse>);
 }
 
-export function createUser(input, csrfToken) {
-  return postJson("/api/users", input, csrfToken);
+export function previewPricing(input: PricingPreviewRequest, csrfToken: string): Promise<PricingPreviewResponse> {
+  return postJson<unknown>("/api/pricing/preview", input, csrfToken).then(decodeDto<PricingPreviewResponse>);
 }
 
-export function createOrganization(input, csrfToken) {
-  return postJson("/api/organizations", input, csrfToken);
+export function getOperatorAccounts(): Promise<SourceEnvelope<OperatorAccountsData>> {
+  return sourceGet<OperatorAccountsData>("/api/operator/accounts");
 }
 
-export function addOrganizationMember(input, csrfToken) {
-  return postJson("/api/organizations/members", input, csrfToken);
+export function getManagementState(): Promise<ManagementState> {
+  return getJson<unknown>("/api/management/state").then(decodeDto<ManagementState>);
 }
 
-export function disableUser(input, csrfToken) {
-  return postJson("/api/users/disable", input, csrfToken);
+export function getOperatorSummary(): Promise<OperatorSummary> {
+  return getJson<unknown>("/api/operator/summary").then(decodeDto<OperatorSummary>);
 }
 
-export function deleteUser(input, csrfToken) {
-  return postJson("/api/users/delete", input, csrfToken);
+export function getRuntimeReadiness(): Promise<ReadinessFact> {
+  return getJson<unknown>("/api/runtime/readiness").then(decodeDto<ReadinessFact>);
 }
 
-export function archiveTerminalResources(input, csrfToken) {
-  return postJson("/api/operator/archive-terminal-resources", input, csrfToken);
+export function getProductionReadiness(): Promise<ReadinessFact> {
+  return getJson<unknown>("/api/production/readiness").then(decodeDto<ReadinessFact>);
+}
+
+export function createUser(input: CreateCustomerUserRequest, csrfToken: string): Promise<unknown> {
+  return postJson<unknown>("/api/users", input, csrfToken);
 }

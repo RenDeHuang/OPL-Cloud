@@ -1,204 +1,111 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { afterEach, test } from "node:test";
 
-import { attachStorage, createComputeAllocation, createStorageVolume, reactivateStorageVolume, setResourceAutoRenew } from "../../apps/console-ui/src/api/resources-api.ts";
 import * as workspaceApi from "../../apps/console-ui/src/api/workspaces-api.ts";
 
-test("paid resource retries send the caller's stable idempotency key", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: RequestInit[] = [];
-  globalThis.fetch = async (_input, init = {}) => {
-    requests.push(init);
-    return new Response(JSON.stringify({ id: "resource-alpha", status: "submitted" }), {
-      status: 202,
-      headers: { "content-type": "application/json" }
-    });
-  };
-  try {
-    await createComputeAllocation({ packageId: "basic" }, "csrf-alpha", "purchase-once");
-    await createComputeAllocation({ packageId: "basic" }, "csrf-alpha", "purchase-once");
-    await createStorageVolume({ packageId: "basic", sizeGb: 10 }, "csrf-alpha", "storage-once");
-    await reactivateStorageVolume({ id: "storage-retained", packageId: "basic", sizeGb: 10 }, "csrf-alpha", "reactivate-once");
-    await setResourceAutoRenew({ resourceId: "resource-alpha", autoRenew: false }, "csrf-alpha", "renew-setting-once");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+const originalFetch = globalThis.fetch;
+const appSource = () => readFile(new URL("../../apps/console-ui/src/App.vue", import.meta.url), "utf8");
 
-  assert.deepEqual(requests.map((request) => new Headers(request.headers).get("Idempotency-Key")), [
-    "purchase-once",
-    "purchase-once",
-    "storage-once",
-    "reactivate-once",
-    "renew-setting-once"
-  ]);
-  assert.deepEqual(JSON.parse(String(requests[3].body)), {
-    id: "storage-retained",
-    packageId: "basic",
-    sizeGb: 10
-  });
-});
+afterEach(() => { globalThis.fetch = originalFetch; });
 
-test("Workspace create retries reconcile one intent with the same request and key", async () => {
-  assert.equal(typeof workspaceApi.createWorkspaceIntent, "function");
+function response(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+}
 
-  const originalFetch = globalThis.fetch;
-  const requests: RequestInit[] = [];
-  let attempt = 0;
-  globalThis.fetch = async (_input, init = {}) => {
-    requests.push(init);
-    attempt += 1;
-    if (attempt === 1) throw new DOMException("timed out", "TimeoutError");
-    return new Response(JSON.stringify({ id: "workspace-alpha", status: "submitted" }), {
-      status: 201,
-      headers: { "content-type": "application/json" }
-    });
+test("Workspace launch uses one durable request and caller idempotency key", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    return response({
+      operationId: "launch-alpha", status: "preparing", phase: "compute", accountId: "acct-alpha",
+      name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: false,
+      priceVersion: "pilot-usd-2026-07-v1", currency: "USD", totalChargeUsdMicros: 52_580_000
+    }, 202);
   };
 
-  try {
-    const input = { workspaceName: "Alpha", attachmentId: "attachment-alpha" };
-    const intent = workspaceApi.createWorkspaceIntent(input);
-    let error: any;
-    try {
-      await workspaceApi.createWorkspace(intent, "csrf-alpha");
-    } catch (caught) {
-      error = caught;
-    }
-    assert.equal(error?.payload?.status, "unknown");
-    assert.equal(error?.payload?.retryable, true);
+  const input = { name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: false } as const;
+  await workspaceApi.launchWorkspace(input, "csrf-alpha", "launch-once");
+  await workspaceApi.launchWorkspace(input, "csrf-alpha", "launch-once");
 
-    const retried = workspaceApi.createWorkspaceIntent({ ...input }, intent);
-    assert.strictEqual(retried, intent);
-    const result = await workspaceApi.createWorkspace(retried, "csrf-alpha");
-    assert.equal(result.resourceId, "workspace-alpha");
-
-    const keys = requests.map((request) => new Headers(request.headers).get("Idempotency-Key"));
-    assert.ok(keys[0]);
-    assert.deepEqual(keys, [keys[0], keys[0]]);
-    assert.deepEqual(requests.map((request) => JSON.parse(String(request.body))), [input, input]);
-
-    const changedDuringReconciliation = workspaceApi.createWorkspaceIntent({ ...input, workspaceName: "Beta" }, intent);
-    assert.strictEqual(changedDuringReconciliation, intent);
-    const nextIntent = workspaceApi.createWorkspaceIntent({ ...input, workspaceName: "Beta" });
-    assert.notStrictEqual(nextIntent, intent);
-    assert.notEqual(nextIntent.idempotencyKey, intent.idempotencyKey);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.deepEqual(requests.map(({ url }) => url), ["/api/workspace-launches", "/api/workspace-launches"]);
+  assert.deepEqual(requests.map(({ init }) => new Headers(init?.headers).get("Idempotency-Key")), ["launch-once", "launch-once"]);
+  assert.deepEqual(requests.map(({ init }) => JSON.parse(String(init?.body))), [input, input]);
 });
 
-test("Workspace launch retries every existing mutation with one stable intent", async () => {
-  assert.equal(typeof workspaceApi.createWorkspaceLaunchIntent, "function");
-
-  const input = { workspaceName: "Alpha", packageId: "basic", sizeGb: 10 };
-  const intent = workspaceApi.createWorkspaceLaunchIntent(input);
-  const retried = workspaceApi.createWorkspaceLaunchIntent({ ...input }, intent);
-
-  assert.strictEqual(retried, intent);
-  assert.deepEqual(Object.keys(intent.idempotencyKeys).sort(), ["attachment", "compute", "storage", "workspace"]);
-  assert.equal(new Set(Object.values(intent.idempotencyKeys)).size, 4);
-  assert.ok(Object.values(intent.idempotencyKeys).every((key) => String(key).startsWith(`workspace-launch:${intent.id}:`)));
-});
-
-test("Workspace launch rebuilds the same primary intent after a remount", () => {
-  const input = { workspaceName: "Alpha", packageId: "basic", sizeGb: 10 };
-  const firstMount = workspaceApi.createWorkspaceLaunchIntent(input, null, "acct-alpha");
-  const secondMount = workspaceApi.createWorkspaceLaunchIntent(input, null, "acct-alpha");
-  const otherAccount = workspaceApi.createWorkspaceLaunchIntent(input, null, "acct-beta");
-
-  assert.notStrictEqual(secondMount, firstMount);
-  assert.deepEqual(secondMount.idempotencyKeys, firstMount.idempotencyKeys);
-  assert.notDeepEqual(otherAccount.idempotencyKeys, firstMount.idempotencyKeys);
-  assert.ok(Object.values(firstMount.idempotencyKeys).every((key) => String(key).startsWith("workspace-launch:primary:acct-alpha:")));
-});
-
-test("Workspace launch replays the current non-terminal resource with the original key", async () => {
-  assert.equal(typeof workspaceApi.launchWorkspaceResource, "function");
-
-  const intent = workspaceApi.createWorkspaceLaunchIntent({ workspaceName: "Alpha", packageId: "basic", sizeGb: 10 });
-  for (const current of [
-    { step: "compute", pending: { id: "compute-alpha", billingStatus: "preparing", status: "provisioning" }, ready: { id: "compute-alpha", billingStatus: "active", status: "running" } },
-    { step: "storage", pending: { id: "storage-alpha", billingStatus: "preparing", status: "provisioning" }, ready: { id: "storage-alpha", billingStatus: "active", status: "available" } }
-  ]) {
-    const keys: string[] = [];
-    const replay = async () => {
-      keys.push(intent.idempotencyKeys[current.step]);
-      return keys.length === 1 ? current.pending : current.ready;
-    };
-    const isReady = (resource) => resource?.billingStatus === "active" && ["running", "available"].includes(resource.status);
-
-    const first = await workspaceApi.launchWorkspaceResource(null, replay, isReady);
-    assert.equal(first.ready, false);
-    assert.strictEqual(first.resource, current.pending);
-
-    const second = await workspaceApi.launchWorkspaceResource(first.resource, replay, isReady);
-    assert.equal(second.ready, true);
-    assert.strictEqual(second.resource, current.ready);
-    assert.deepEqual(keys, [intent.idempotencyKeys[current.step], intent.idempotencyKeys[current.step]]);
-  }
-});
-
-test("only an unprepared provisioning Workspace is a launch placeholder", () => {
-  assert.equal(typeof workspaceApi.isWorkspaceLaunchPlaceholder, "function");
-  assert.equal(workspaceApi.isWorkspaceLaunchPlaceholder({ id: "workspace-alpha", state: "provisioning" }), true);
-  assert.equal(workspaceApi.isWorkspaceLaunchPlaceholder({ id: "workspace-alpha", state: "provisioning", runtimeServiceName: "opl-runtime-alpha" }), false);
-  assert.equal(workspaceApi.isWorkspaceLaunchPlaceholder({ id: "workspace-alpha", state: "running" }), false);
-});
-
-test("Workspace launch mutations mark transport failures unknown and keep caller keys", async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: RequestInit[] = [];
-  globalThis.fetch = async (_input, init = {}) => {
-    requests.push(init);
+test("Workspace launch transport failure remains unknown for safe replay", async () => {
+  let request: RequestInit | undefined;
+  globalThis.fetch = async (_input, init) => {
+    request = init;
     throw new DOMException("timed out", "TimeoutError");
   };
 
-  try {
-    for (const action of [
-      () => createComputeAllocation({ packageId: "basic" }, "csrf-alpha", "compute-once"),
-      () => createStorageVolume({ packageId: "basic", sizeGb: 10, computeAllocationId: "compute-alpha" }, "csrf-alpha", "storage-once"),
-      () => attachStorage({ computeAllocationId: "compute-alpha", storageId: "storage-alpha" }, "csrf-alpha", "attachment-once")
-    ]) {
-      await assert.rejects(action, (error: any) => error?.payload?.status === "unknown" && error?.payload?.retryable === true);
-    }
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-
-  assert.deepEqual(requests.map((request) => new Headers(request.headers).get("Idempotency-Key")), [
-    "compute-once",
-    "storage-once",
-    "attachment-once"
-  ]);
+  await assert.rejects(
+    workspaceApi.launchWorkspace({ name: "Alpha", packageId: "basic", sizeGb: 10, autoRenew: false }, "csrf-alpha", "launch-once"),
+    (error: any) => error?.payload?.status === "unknown" && error?.payload?.retryable === true
+  );
+  assert.equal(new Headers(request?.headers).get("Idempotency-Key"), "launch-once");
 });
 
-test("Workspace Gateway Secret rotation returns metadata only", async () => {
-  const originalFetch = globalThis.fetch;
-  let requestUrl = "";
-  let request: RequestInit = {};
-  globalThis.fetch = async (input, init = {}) => {
-    requestUrl = String(input);
-    request = init;
-    return new Response(JSON.stringify({
-      operationId: "rotate-alpha",
-      workspaceId: "workspace-alpha",
-      status: "succeeded",
-      secretRef: "opl-gateway-acct-alpha",
-      fingerprint: "sha256:fingerprint",
-      value: "raw-key-must-not-cross-the-client-boundary"
-    }), { status: 200, headers: { "content-type": "application/json" } });
+test("Workspace launch polling addresses the exact operation", async () => {
+  let url = "";
+  globalThis.fetch = async (input) => {
+    url = String(input);
+    return response({ operationId: "launch-alpha", status: "succeeded", phase: "completed" });
+  };
+  const result = await workspaceApi.getWorkspaceLaunch("launch-alpha");
+  assert.equal(url, "/api/workspace-launches/launch-alpha");
+  assert.equal(result.status, "succeeded");
+  assert.equal(workspaceApi.isTerminalWorkspaceLaunch(result.status), true);
+});
+
+test("Workspace launch recovery lists the current account operations", async () => {
+  let url = "";
+  globalThis.fetch = async (input) => {
+    url = String(input);
+    return response([{ operationId: "launch-alpha", status: "preparing", phase: "compute" }]);
   };
 
-  try {
-    const result = await workspaceApi.rotateWorkspaceGatewaySecret(
-      { workspaceId: "workspace-alpha", reason: "owner-request" },
-      "csrf-alpha",
-      "rotate-once"
-    );
-    assert.deepEqual(result, { status: "succeeded", fingerprint: "sha256:fingerprint" });
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  const launches = await workspaceApi.getWorkspaceLaunches();
+  assert.equal(url, "/api/workspace-launches");
+  assert.equal(launches[0]?.operationId, "launch-alpha");
+});
 
-  assert.equal(requestUrl, "/api/workspaces/workspace-alpha/gateway-secret/rotate");
-  assert.equal(new Headers(request.headers).get("Idempotency-Key"), "rotate-once");
+test("Workspace launch keeps one submission intent and exposes bounded polling recovery", async () => {
+  const app = await appSource();
+  assert.match(app, /let workspaceLaunchIntent:/);
+  assert.match(app, /launchWorkspace\(input,[^,]+, workspaceLaunchIntent\.idempotencyKey\)/);
+  assert.match(app, /getWorkspaceLaunches\(\)/);
+  assert.match(app, /const workspaceLaunchPollIntervalMs = 10_000/);
+  assert.match(app, /const workspaceLaunchPollAttempts = 30/);
+  assert.match(app, /retryWorkspaceLaunchPoll/);
+});
+
+test("Workspace credential rotation reuses its intent key until a confirmed success", async () => {
+  const app = await appSource();
+  assert.match(app, /let runtimeRotationIntent:/);
+  assert.match(app, /rotateWorkspaceCredentials\([^,]+,[^,]+, runtimeRotationIntent\.idempotencyKey\)/);
+  assert.match(app, /runtimeRotationIntent = null;\s*if \(!secretResponseStillCurrent/);
+});
+
+test("Workspace credential and renewal commands use explicit routes and mutation keys", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init });
+    if (String(input).endsWith("/auto-renew")) {
+      return response({ autoRenew: false, effectiveAfter: "2026-08-01T00:00:00Z", nextRenewalAt: "2026-07-31T00:00:00Z", paidThrough: "2026-08-01T00:00:00Z", renewalStatus: "cancelled" });
+    }
+    return response({ workspaceId: "workspace-alpha", access: { account: "owner", username: "owner", password: "secret", credentialStatus: "active", credentialVersion: "v2" } });
+  };
+
+  await workspaceApi.revealWorkspaceCredentials("workspace-alpha", "csrf-alpha");
+  await workspaceApi.rotateWorkspaceCredentials("workspace-alpha", "csrf-alpha", "rotate-once");
+  await workspaceApi.updateWorkspaceRenewal("workspace-alpha", { autoRenew: false }, "csrf-alpha", "renew-once");
+
+  assert.deepEqual(requests.map(({ url }) => url), [
+    "/api/workspaces/workspace-alpha/runtime-credentials/reveal",
+    "/api/workspaces/workspace-alpha/runtime-credentials/rotate",
+    "/api/workspaces/workspace-alpha/auto-renew"
+  ]);
+  assert.deepEqual(requests.map(({ init }) => new Headers(init?.headers).get("Idempotency-Key")), [null, "rotate-once", "renew-once"]);
 });

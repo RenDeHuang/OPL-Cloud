@@ -651,6 +651,10 @@ select:focus {
 }
 
 .inline-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin: 18px 0 0;
   border-left: 3px solid var(--blue);
   background: #f2f7ff;
@@ -841,6 +845,9 @@ tbody tr:last-child td {
 .resource-page,
 .billing-page,
 .gateway-page,
+.api-page,
+.api-overview,
+.workspace-page,
 .admin-dashboard {
   display: grid;
   gap: 18px;
@@ -1140,7 +1147,7 @@ tbody tr:last-child td {
 .key-row {
   display: grid;
   min-height: 62px;
-  grid-template-columns: 190px minmax(160px, 1fr) 90px auto;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
   align-items: center;
   gap: 18px;
   padding: 8px 18px;
@@ -1155,6 +1162,57 @@ tbody tr:last-child td {
 .key-row code {
   overflow-wrap: anywhere;
   color: #22324b;
+}
+
+.workspace-details {
+  padding: 8px 20px 22px;
+}
+
+.workspace-details .data-list {
+  border: 1px solid #e0e6ee;
+  border-radius: 6px;
+}
+
+.workspace-details .data-list a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--blue);
+}
+
+.credential-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.secret-panel {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid #d8e0eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 13px 16px;
+}
+
+.secret-panel span,
+.source-note {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.secret-panel code {
+  overflow-wrap: anywhere;
+  color: #172741;
+}
+
+.source-note {
+  margin: 0;
+  padding: 16px 20px;
 }
 
 .key-actions {

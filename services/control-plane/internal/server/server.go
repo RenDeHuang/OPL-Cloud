@@ -238,6 +238,9 @@ func (app *controlPlaneServer) protected(requiresAdmin bool, next http.HandlerFu
 				return
 			}
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/auth/me" {
+			w.Header().Set("x-opl-csrf-token", stringValue(payload["csrfToken"]))
+		}
 		user, _ := payload["user"].(map[string]any)
 		if requiresAdmin && !isOperatorUser(user) {
 			writeError(w, http.StatusForbidden, "admin_required")

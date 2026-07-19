@@ -1,63 +1,113 @@
-import { operationEnvelope, postJson } from "./console-api.ts";
+import { decodeDto, decodeSource } from "./dtos.ts";
+import type {
+  RuntimeCredentialResponse,
+  SourceEnvelope,
+  WorkspaceLaunchRequest,
+  WorkspaceLaunchListResponse,
+  WorkspaceLaunchResponse,
+  WorkspaceListData,
+  WorkspaceRenewalRequest,
+  WorkspaceRenewalResponse,
+  WorkspaceRuntimeRequest,
+  WorkspaceRuntimeStatus
+} from "./dtos.ts";
+import { postJson, getJson, type ApiError } from "./console-api.ts";
 
-const unknownCreateResult = "Workspace 创建结果未知，请重试以确认同一请求；不会重复创建。";
+const terminalLaunchStatuses = new Set(["succeeded", "failed", "refunded"]);
 
-export function createWorkspaceIntent(input, previous: any = null) {
-  if (previous) return previous;
-  return { input: { ...input }, idempotencyKey: crypto.randomUUID() };
-}
-
-export function createWorkspaceLaunchIntent(input, previous: any = null, primaryScope = "") {
-  if (previous) return previous;
-  const id = primaryScope ? `primary:${encodeURIComponent(primaryScope)}` : crypto.randomUUID();
-  return {
-    id,
-    input: { ...input },
-    idempotencyKeys: Object.fromEntries(
-      ["compute", "storage", "attachment", "workspace"].map((step) => [step, `workspace-launch:${id}:${step}`])
-    )
-  };
-}
-
-export async function launchWorkspaceResource(current, replay, isReady) {
-  const resource = isReady(current) ? current : await replay();
-  return { resource, ready: isReady(resource) };
-}
-
-export function isWorkspaceLaunchPlaceholder(workspace) {
-  return (workspace?.state || workspace?.status) === "provisioning"
-    && !workspace?.runtimeId
-    && !workspace?.runtimeServiceName
-    && !workspace?.runtime?.serviceName
-    && !workspace?.receiptId;
-}
-
-export async function createWorkspace(intent, csrfToken) {
-  if (!intent?.idempotencyKey || !intent?.input) throw new Error("workspace_create_intent_required");
+async function sourceRequest<T>(request: () => Promise<unknown>): Promise<SourceEnvelope<T>> {
   try {
-    const payload = await postJson("/api/workspaces", intent.input, csrfToken, intent.idempotencyKey);
-    return operationEnvelope(payload, { next: { detailRouteId: "workspace.detail" } });
-  } catch (error: any) {
-    if (error?.payload) throw error;
-    const unknown: any = new Error(unknownCreateResult, { cause: error });
-    unknown.payload = { status: "unknown", retryable: true, failureReason: unknownCreateResult };
+    return decodeSource<T>(await request());
+  } catch (error) {
+    const payload = (error as ApiError).payload;
+    if (payload !== undefined) {
+      try {
+        return decodeSource<T>(payload);
+      } catch {
+        // Preserve the original error when no valid source envelope was returned.
+      }
+    }
+    throw error;
+  }
+}
+
+export function isTerminalWorkspaceLaunch(status: string): boolean {
+  return terminalLaunchStatuses.has(status);
+}
+
+export function workspaceLaunchIdempotencyKey(): string {
+  return `workspace-launch:${crypto.randomUUID()}`;
+}
+
+export async function launchWorkspace(
+  input: WorkspaceLaunchRequest,
+  csrfToken: string,
+  idempotencyKey: string
+): Promise<WorkspaceLaunchResponse> {
+  try {
+    return decodeDto<WorkspaceLaunchResponse>(await postJson<unknown>("/api/workspace-launches", input, csrfToken, idempotencyKey));
+  } catch (error) {
+    const apiError = error as ApiError;
+    if (apiError.payload !== undefined) throw error;
+    const unknown: ApiError = new Error("workspace_launch_unknown", { cause: error });
+    unknown.payload = { status: "unknown", retryable: true };
     throw unknown;
   }
 }
 
-export function getWorkspaceRuntimeStatus(input, csrfToken) {
-  return postJson("/api/workspaces/runtime-status", input, csrfToken);
+export function getWorkspaceLaunch(operationId: string): Promise<WorkspaceLaunchResponse> {
+  return getJson<unknown>(`/api/workspace-launches/${encodeURIComponent(operationId)}`).then(decodeDto<WorkspaceLaunchResponse>);
 }
 
-export async function rotateWorkspaceGatewaySecret(input, csrfToken, idempotencyKey) {
-  const payload = await postJson(
-    `/api/workspaces/${encodeURIComponent(input.workspaceId)}/gateway-secret/rotate`,
-    { reason: input.reason || "owner-request" },
+export function getWorkspaceLaunches(): Promise<WorkspaceLaunchListResponse> {
+  return getJson<unknown>("/api/workspace-launches").then((value) => {
+    if (!Array.isArray(value)) throw new Error("invalid_workspace_launch_list");
+    return value.map(decodeDto<WorkspaceLaunchResponse>);
+  });
+}
+
+export function getWorkspaces(): Promise<SourceEnvelope<WorkspaceListData>> {
+  return sourceRequest<WorkspaceListData>(() => getJson<unknown>("/api/workspaces"));
+}
+
+export function getWorkspaceRuntimeStatus(
+  input: WorkspaceRuntimeRequest,
+  csrfToken: string
+): Promise<SourceEnvelope<WorkspaceRuntimeStatus>> {
+  return sourceRequest<WorkspaceRuntimeStatus>(() => postJson<unknown>("/api/workspaces/runtime-status", input, csrfToken));
+}
+
+export function revealWorkspaceCredentials(workspaceId: string, csrfToken: string): Promise<RuntimeCredentialResponse> {
+  return postJson<unknown>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-credentials/reveal`,
+    {},
+    csrfToken
+  ).then(decodeDto<RuntimeCredentialResponse>);
+}
+
+export function rotateWorkspaceCredentials(
+  workspaceId: string,
+  csrfToken: string,
+  idempotencyKey: string
+): Promise<RuntimeCredentialResponse> {
+  return postJson<unknown>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/runtime-credentials/rotate`,
+    {},
     csrfToken,
     idempotencyKey
-  );
-  return {
-    status: payload.status || "unknown",
-    fingerprint: payload.fingerprint || ""
-  };
+  ).then(decodeDto<RuntimeCredentialResponse>);
+}
+
+export function updateWorkspaceRenewal(
+  workspaceId: string,
+  input: WorkspaceRenewalRequest,
+  csrfToken: string,
+  idempotencyKey = `workspace-renewal:${crypto.randomUUID()}`
+): Promise<WorkspaceRenewalResponse> {
+  return postJson<unknown>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/auto-renew`,
+    input,
+    csrfToken,
+    idempotencyKey
+  ).then(decodeDto<WorkspaceRenewalResponse>);
 }

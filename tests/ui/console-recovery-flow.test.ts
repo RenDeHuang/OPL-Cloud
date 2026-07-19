@@ -48,3 +48,25 @@ test("only Workspace readiness errors use the Docker distribution message", () =
   assert.equal(customerSafeMessage({ error: "workspace_runtime_not_ready" }), "正在分发 Docker，预计 3-5 分钟，请稍后再打开 URL。");
   assert.equal(customerSafeMessage({ error: "gateway_upstream_unavailable" }), "gateway_upstream_unavailable");
 });
+
+test("session recovery restores the mutation CSRF token from the response header", async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    source: "sub2api",
+    status: "available",
+    available: true,
+    fetchedAt: "2026-07-19T00:00:00Z",
+    data: {
+      consoleUserId: "usr-alpha",
+      accountId: "acct-alpha",
+      role: "owner",
+      sub2apiUserId: "41",
+      email: "owner@example.com",
+      status: "active"
+    }
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json", "x-opl-csrf-token": "csrf-recovered" }
+  });
+
+  assert.equal((await currentSession())?.csrfToken, "csrf-recovered");
+});

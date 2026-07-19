@@ -7,12 +7,9 @@ const source = (path: string) => readFile(new URL(path, root), "utf8");
 
 test("Console runtime is Vue without React or Ant Design", async () => {
   const [packageSource, viteSource, entrySource] = await Promise.all([
-    source("package.json"),
-    source("vite.config.ts"),
-    source("apps/console-ui/src/main.ts")
+    source("package.json"), source("vite.config.ts"), source("apps/console-ui/src/main.ts")
   ]);
   const packageJson = JSON.parse(packageSource);
-
   assert.ok(packageJson.dependencies.vue);
   assert.ok(packageJson.dependencies["@lucide/vue"]);
   for (const dependency of ["react", "react-dom", "lucide-react", "antd", "@ant-design/pro-components", "@vitejs/plugin-react"]) {
@@ -22,72 +19,62 @@ test("Console runtime is Vue without React or Ant Design", async () => {
   assert.match(entrySource, /createApp\(App\)/);
 });
 
-test("customer views read only from the approved projections", async () => {
-  const [appSource, readApiSource] = await Promise.all([
+test("customer views use granular source projections and the one Workspace launch", async () => {
+  const [app, readApi, workspaceApi] = await Promise.all([
     source("apps/console-ui/src/App.vue"),
-    source("apps/console-ui/src/api/console-read-api.ts")
+    source("apps/console-ui/src/api/console-read-api.ts"),
+    source("apps/console-ui/src/api/workspaces-api.ts")
   ]);
-
-  assert.match(readApiSource, /\/api\/state/);
-  assert.match(readApiSource, /\/api\/gateway\/summary/);
-  assert.match(readApiSource, /\/api\/gateway\/usage\?/);
-  assert.match(readApiSource, /\/api\/gateway\/usage\/stats\?/);
-  assert.match(readApiSource, /\/api\/billing\/receipts/);
-  assert.match(readApiSource, /\/api\/runtime\/readiness/);
-  assert.match(readApiSource, /\/api\/production\/readiness/);
-  for (const client of ["getConsoleState", "getGatewaySummary", "getGatewayUsage", "getGatewayUsageStats", "getBillingReceipts", "getPricingCatalog"]) {
-    assert.match(appSource, new RegExp(client));
-  }
-  assert.doesNotMatch(appSource, /Sub2API 余额|gflabtoken\.cn|钱包扣款|月度权益|PREPAID|账号映射|最终结果以后端确认为准|登录身份、权限范围和余额/);
-  assert.doesNotMatch(appSource, /逐请求|Token 明细|请求金额/);
-  assert.doesNotMatch(appSource, /gatewayKey\.name \|\| "opl-workspace"/);
-  assert.doesNotMatch(appSource, /gatewayHealthy[^}\n]*gatewayKey\.status/);
-  for (const label of ["Usage", "API Keys", "输入 Token", "输出 Token", "实际金额", "请求 ID", "运维管理", "待处理事项", "系统状态"]) {
-    assert.match(appSource, new RegExp(label));
-  }
-  assert.match(appSource, /previous === "\/console\/gateway\/keys" && next !== previous/);
-  assert.match(appSource, /errors\.gateway && activeGatewayPage !== 'usage'/);
-  assert.doesNotMatch(appSource, /折线图|趋势图|重新生成 Key|Prompt|Response 内容/);
-});
-
-test("resource purchase forms require customer names and use existing mutation clients", async () => {
-  const appSource = await source("apps/console-ui/src/App.vue");
-
-  for (const field of ["workspaceName", "computeName", "storageName"]) assert.match(appSource, new RegExp(field));
-  for (const client of ["createComputeAllocation", "createStorageVolume", "attachStorage", "createWorkspace"]) {
-    assert.match(appSource, new RegExp(client));
+  const template = app.slice(app.indexOf("<template>"));
+  for (const route of [
+    "/api/gateway/wallet", "/api/gateway/keys", "/api/gateway/usage?",
+    "/api/gateway/usage/stats?", "/api/gateway/balance-history", "/api/billing/receipts?"
+  ]) assert.match(readApi, new RegExp(route.replace(/[?]/g, "\\?")));
+  assert.match(workspaceApi, /\/api\/workspace-launches/);
+  assert.match(workspaceApi, /\/api\/workspaces\/runtime-status/);
+  assert.doesNotMatch(readApi, /\/api\/gateway\/summary|reveal=true/);
+  assert.doesNotMatch(app, /createComputeAllocation|createStorageVolume|attachStorage|buyCompute|buyStorage|mountStorage/);
+  assert.doesNotMatch(template, /Sub2API|Gateway|Fabric|Ledger|Runtime|CVM|CBS|ComputeAllocation|StorageVolume|StorageAttachment|Mount/);
+  for (const label of ["概览", "Workspace", "API 服务", "账单", "模型", "Token", "请求编号", "暂不可用"]) {
+    assert.match(template, new RegExp(label));
   }
 });
 
-test("admin creates a regular account owner rather than another Cloud administrator", async () => {
-  const appSource = await source("apps/console-ui/src/App.vue");
-  assert.match(appSource, /createUser\(\{[\s\S]*role:\s*"owner"/);
-  assert.doesNotMatch(appSource, /role:\s*"pi"/);
+test("customer financial facts are direct server fields", async () => {
+  const [app, model] = await Promise.all([
+    source("apps/console-ui/src/App.vue"), source("apps/console-ui/src/console-model.ts")
+  ]);
+  assert.match(app, /workspace\.totalUsdMicros/);
+  assert.match(app, /stats\.totalActualCostUsdMicros/);
+  assert.doesNotMatch(app, /state\.value\?\.balance|fixedMonthlySpend|workspaceMonthlyPrice|renewalSummary/);
+  assert.doesNotMatch(model, /fixedMonthlySpend|workspaceMonthlyPrice|renewalSummary|storageMonthlyPrice/);
+  assert.doesNotMatch(app, /receipt\.status\s*\|\|\s*["']/);
 });
 
-test("wide resource tables cannot widen the mobile page", async () => {
+test("administrator invite omits remote identity input and shows billing account mapping", async () => {
+  const [app, readApi] = await Promise.all([
+    source("apps/console-ui/src/App.vue"), source("apps/console-ui/src/api/console-read-api.ts")
+  ]);
+  const template = app.slice(app.indexOf("<template>"));
+  assert.match(readApi, /\/api\/operator\/accounts/);
+  assert.match(app, /createUser\(\{ \.\.\.adminUserForm, role: "owner" \}/);
+  assert.doesNotMatch(app, /adminUserForm\.sub2apiUserId|sub2apiUserId:\s*Number/);
+  assert.match(template, /计费账户编号/);
+});
+
+test("revealed secrets are cleared on navigation, refresh, and logout", async () => {
+  const app = await source("apps/console-ui/src/App.vue");
+  assert.match(app, /function clearSecrets\(\)/);
+  assert.match(app, /previous\?\.startsWith\("\/console\/api"\)/);
+  assert.match(app, /previous\?\.startsWith\("\/console\/workspace"\)/);
+  assert.match(app, /async function signOut\(\)[\s\S]*clearSecrets\(\)/);
+  assert.match(app, /function refreshCurrentPage\(\) \{\s*clearSecrets\(\);/);
+});
+
+test("responsive tables and secret controls stay inside the mobile page", async () => {
   const styles = await source("apps/console-ui/src/styles.css");
   assert.match(styles, /\.panel,\s*\.spend-strip[^{]*\{[^}]*min-width:\s*0/);
   assert.match(styles, /\.table-wrap\s*\{[^}]*width:\s*100%/);
-});
-
-test("Gateway usage metrics use one grouped summary surface", async () => {
-  const styles = await source("apps/console-ui/src/styles.css");
-  assert.match(styles, /\.gateway-usage-metrics\s*\{[^}]*gap:\s*0[^}]*border:\s*1px solid/);
-  assert.match(styles, /\.gateway-usage-metrics article\s*\{[^}]*border:\s*0[^}]*border-radius:\s*0/);
-  assert.match(styles, /\.gateway-usage-toolbar\s*\{[^}]*justify-content:\s*flex-start/);
-});
-
-test("Gateway Key requests clear any previously revealed value before network access", async () => {
-  const appSource = await source("apps/console-ui/src/App.vue");
-  assert.match(appSource, /async function loadGateway\(\) \{\s*hideGatewayKey\(\);/);
-  assert.match(appSource, /async function revealGatewayKey\(\) \{\s*hideGatewayKey\(\);/);
-});
-
-test("customer resource rows do not invent success or expose fallback internal ids", async () => {
-  const appSource = await source("apps/console-ui/src/App.vue");
-  assert.doesNotMatch(appSource, /class="dot good"/);
-  assert.doesNotMatch(appSource, /item\.name\s*\|\|\s*item\.id/);
-  assert.doesNotMatch(appSource, /latestOrder\.name\s*\|\|\s*latestOrder\.id/);
-  assert.doesNotMatch(appSource, /\?\s*"已挂载"\s*:\s*item\.status/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*\.key-row\s*\{[^}]*grid-template-columns:\s*1fr/);
+  assert.match(styles, /\.credential-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
