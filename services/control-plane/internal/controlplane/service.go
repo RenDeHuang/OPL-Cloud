@@ -214,6 +214,46 @@ func (s *Service) GatewayKeys(ctx context.Context, userID int64) ([]clients.Sub2
 	return client.Keys(ctx, userID)
 }
 
+func (s *Service) GatewayUserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserKeyReadClient)
+	if !ok {
+		return nil, errors.New("sub2api_user_key_unavailable")
+	}
+	return client.UserKeys(ctx, credential, userID)
+}
+
+func (s *Service) GatewayUserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserKeyReadClient)
+	if !ok {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("sub2api_user_key_unavailable")
+	}
+	return client.UserKey(ctx, credential, userID, keyID)
+}
+
+func (s *Service) CreateGatewayUserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64, input clients.Sub2APICreateKeyInput, idempotencyKey string) (clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserKeyMutationClient)
+	if !ok {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("sub2api_user_key_unavailable")
+	}
+	return client.CreateUserKey(ctx, credential, userID, input, idempotencyKey)
+}
+
+func (s *Service) UpdateGatewayUserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, input clients.Sub2APIUpdateKeyInput) (clients.Sub2APIWorkspaceKey, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUserKeyMutationClient)
+	if !ok {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("sub2api_user_key_unavailable")
+	}
+	return client.UpdateUserKey(ctx, credential, userID, keyID, input)
+}
+
+func (s *Service) DeleteGatewayUserKey(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) error {
+	client, ok := s.sub2API.(clients.Sub2APIUserKeyMutationClient)
+	if !ok {
+		return errors.New("sub2api_user_key_unavailable")
+	}
+	return client.DeleteUserKey(ctx, credential, userID, keyID)
+}
+
 func (s *Service) Sub2APIUser(ctx context.Context, userID int64) (clients.Sub2APIIdentity, error) {
 	client, ok := s.sub2API.(clients.Sub2APIUserReadClient)
 	if !ok {
@@ -285,6 +325,36 @@ func (s *Service) GatewayUsageStats(ctx context.Context, userID int64, period st
 		return clients.Sub2APIUsageStats{}, errors.New("sub2api_usage_unavailable")
 	}
 	return client.UsageStats(ctx, clients.Sub2APIUsageStatsQuery{UserID: userID, APIKeyID: key.ID, Period: period})
+}
+
+func (s *Service) GatewayKeyUsage(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, page, pageSize int) (clients.Sub2APIUsagePage, error) {
+	if _, err := s.GatewayUserKey(ctx, credential, userID, keyID); err != nil {
+		return clients.Sub2APIUsagePage{}, err
+	}
+	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+	if !ok {
+		return clients.Sub2APIUsagePage{}, errors.New("sub2api_usage_unavailable")
+	}
+	return client.Usage(ctx, clients.Sub2APIUsageQuery{UserID: userID, APIKeyID: keyID, Page: page, PageSize: pageSize})
+}
+
+func (s *Service) GatewayKeyUsageStats(ctx context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64, period string) (clients.Sub2APIUsageStats, error) {
+	if _, err := s.GatewayUserKey(ctx, credential, userID, keyID); err != nil {
+		return clients.Sub2APIUsageStats{}, err
+	}
+	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+	if !ok {
+		return clients.Sub2APIUsageStats{}, errors.New("sub2api_usage_unavailable")
+	}
+	return client.UsageStats(ctx, clients.Sub2APIUsageStatsQuery{UserID: userID, APIKeyID: keyID, Period: period})
+}
+
+func (s *Service) GatewayAccountUsageStats(ctx context.Context, userID int64, period string) (clients.Sub2APIUsageStats, error) {
+	client, ok := s.sub2API.(clients.Sub2APIUsageClient)
+	if !ok {
+		return clients.Sub2APIUsageStats{}, errors.New("sub2api_usage_unavailable")
+	}
+	return client.UsageStats(ctx, clients.Sub2APIUsageStatsQuery{UserID: userID, Period: period})
 }
 
 func (s *Service) Sub2APIBalanceHistory(ctx context.Context, userID int64) ([]clients.Sub2APIBalanceHistoryEntry, error) {

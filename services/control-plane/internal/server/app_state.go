@@ -26,6 +26,7 @@ type controlPlaneServer struct {
 	store                  StateStore
 	tables                 controlPlaneTableStore
 	sessionCredentials     *SessionCredentialVault
+	gatewayPublicBaseURL   string
 	// ponytail: per-process limiter; move to Redis when login traffic spans multiple replicas.
 	loginRateLimits map[string]loginFailure
 }

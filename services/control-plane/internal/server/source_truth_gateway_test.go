@@ -33,6 +33,25 @@ func (c *sourceTruthGatewayClient) Keys(_ context.Context, userID int64) ([]clie
 	return append([]clients.Sub2APIWorkspaceKey(nil), c.keys...), c.keysErr
 }
 
+func (c *sourceTruthGatewayClient) UserKeys(ctx context.Context, credential clients.SessionDelegatedCredential, userID int64) ([]clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" {
+		return nil, errors.New("wrong delegated credential")
+	}
+	return c.Keys(ctx, userID)
+}
+
+func (c *sourceTruthGatewayClient) UserKey(_ context.Context, credential clients.SessionDelegatedCredential, userID, keyID int64) (clients.Sub2APIWorkspaceKey, error) {
+	if credential.Bearer != "test-user-delegated-token" {
+		return clients.Sub2APIWorkspaceKey{}, errors.New("wrong delegated credential")
+	}
+	for _, key := range c.keys {
+		if key.ID == keyID && key.UserID == userID {
+			return key, nil
+		}
+	}
+	return clients.Sub2APIWorkspaceKey{}, clients.ErrSub2APIKeyNotFound
+}
+
 func decodeSourceEnvelope(t *testing.T, response *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var envelope map[string]any
@@ -120,7 +139,8 @@ func TestGatewaySourceTruthRoutesUseSessionIdentityAndStrictEnvelopes(t *testing
 		t.Fatalf("keys envelope = %#v", keysEnvelope)
 	}
 	activeKey := keyItems[1].(map[string]any)
-	if len(activeKey) != 9 || activeKey["id"] != "9" || activeKey["status"] != "active" || activeKey["quotaUsdMicros"] != float64(10) {
+	if len(activeKey) != 13 || activeKey["id"] != "9" || activeKey["status"] != "active" || activeKey["quotaUsdMicros"] != float64(10) ||
+		activeKey["kind"] != "workspace" || activeKey["manageable"] != false || activeKey["deletable"] != false || activeKey["expiresAt"] != nil {
 		t.Fatalf("active key = %#v", activeKey)
 	}
 

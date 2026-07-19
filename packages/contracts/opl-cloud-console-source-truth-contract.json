@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -25,6 +25,10 @@
       "authentication": [401, 403],
       "unavailableBody": "strict_unavailable_envelope"
     }
+  },
+  "implementationEvidence": {
+    "gatewayEndpointAndGeneralKeys": "code_complete_local_focused_tests",
+    "browserAndProduction": "pending"
   },
   "sources": {
     "gateway": {

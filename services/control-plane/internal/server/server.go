@@ -49,6 +49,10 @@ func (h *controlPlaneHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 }
 
 func NewPersistentServer(service *controlplane.Service, store StateStore) (http.Handler, error) {
+	return NewPersistentServerWithGatewayPublicBaseURL(service, store, "")
+}
+
+func NewPersistentServerWithGatewayPublicBaseURL(service *controlplane.Service, store StateStore, gatewayPublicBaseURL string) (http.Handler, error) {
 	app, err := newControlPlaneAppWithStore(store)
 	if err != nil {
 		return nil, err
@@ -56,6 +60,7 @@ func NewPersistentServer(service *controlplane.Service, store StateStore) (http.
 	if err := app.ensureBootstrapAdmin(context.Background(), service); err != nil {
 		return nil, err
 	}
+	app.gatewayPublicBaseURL = gatewayPublicBaseURL
 	if monthlyBillingWorkerEnabled() {
 		app.startMonthlyBillingWorker(context.Background(), service, monthlyBillingWorkerInterval())
 	}
@@ -96,7 +101,7 @@ func retiredConsoleAPI(method, path string) bool {
 		strings.HasPrefix(path, "/api/api-keys") || strings.HasPrefix(path, "/api/keys") {
 		return true
 	}
-	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" {
+	if strings.HasPrefix(path, "/api/gateway/keys/") && path != "/api/gateway/keys/opl-workspace/reveal" && !currentGatewayKeyAPI(method, path) {
 		return true
 	}
 	if !strings.HasPrefix(path, "/api/workspaces/") {
@@ -109,6 +114,24 @@ func retiredConsoleAPI(method, path string) bool {
 		}
 	}
 	return false
+}
+
+func currentGatewayKeyAPI(method, path string) bool {
+	segments := strings.Split(strings.TrimPrefix(path, "/api/gateway/keys/"), "/")
+	if len(segments) < 1 {
+		return false
+	}
+	keyID, err := strconv.ParseInt(segments[0], 10, 64)
+	if err != nil || keyID <= 0 || strconv.FormatInt(keyID, 10) != segments[0] {
+		return false
+	}
+	if len(segments) == 1 {
+		return method == http.MethodGet || method == http.MethodPatch || method == http.MethodDelete
+	}
+	if len(segments) != 2 {
+		return false
+	}
+	return method == http.MethodPost && segments[1] == "reveal" || method == http.MethodGet && (segments[1] == "usage" || segments[1] == "usage-summary")
 }
 
 func (app *controlPlaneServer) consoleStatic(w http.ResponseWriter, r *http.Request) {

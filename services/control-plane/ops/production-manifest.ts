@@ -6,6 +6,7 @@ const REQUIRED_COMMON_ENV = [
   "DATABASE_URL",
   "OPL_INTERNAL_SERVICE_TOKEN",
   "OPL_PROVIDER_ACCEPTANCE_TOKEN",
+  "OPL_GATEWAY_PUBLIC_BASE_URL",
   "OPL_WORKSPACE_DOMAIN",
   "OPL_WORKSPACE_IMAGE"
 ];
@@ -76,6 +77,18 @@ function looksLikeProductionDomain(domain) {
   return Boolean(domain && domain.includes(".") && !domain.includes("localhost") && !domain.startsWith("127."));
 }
 
+function looksLikeGatewayPublicBaseURL(value, internalValue) {
+  try {
+    const parsed = new URL(String(value || ""));
+    const internal = URL.canParse(String(internalValue || "")) ? new URL(String(internalValue)) : null;
+    const hostname = parsed.hostname.toLowerCase();
+    return parsed.protocol === "https:" && !parsed.username && !parsed.password && !parsed.search && !parsed.hash &&
+      hostname !== "gflabtoken.cn" && !hostname.endsWith(".gflabtoken.cn") && (!internal || hostname !== internal.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export function productionManifestRequiredEnv() {
   return [...new Set([
     ...REQUIRED_COMMON_ENV,
@@ -101,6 +114,7 @@ export function validateProductionManifest({ env = {} } = {}) {
     check("required_env", missingEnv.length === 0, "Every production launch variable must be declared"),
     check("secret_refs", inlineSecretEnv.length === 0, "Sensitive production values must use secretRef"),
     check("runtime_provider", provider === PROVIDERS.TENCENT_TKE, "OPL_RUNTIME_PROVIDER must be tencent-tke"),
+    check("gateway_public_base_url", looksLikeGatewayPublicBaseURL(values.OPL_GATEWAY_PUBLIC_BASE_URL, values.OPL_SUB2API_BASE_URL), "OPL_GATEWAY_PUBLIC_BASE_URL must be an independent HTTPS URL"),
     check(
       "registry_images",
       looksLikeRegistryImage({ image: values.OPL_CLOUD_IMAGE, registry: values.TENCENT_TCR_REGISTRY }) &&

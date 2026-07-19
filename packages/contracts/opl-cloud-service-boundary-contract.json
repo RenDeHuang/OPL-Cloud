@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -118,7 +118,8 @@
         "create and redeem adjustment",
         "mutate owned general keys with delegated user credentials"
       ],
-      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy"
+      "customerProjection": "strict_allowlist_with_integer_usd_micros_and_no_local_usage_copy",
+      "currentImplementation": "delegated_user_key_crud_owned_readback_reveal_and_scoped_usage_code_complete_local_only"
     }
   },
   "browserBoundary": {

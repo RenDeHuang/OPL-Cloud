@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -242,7 +242,7 @@
     "keyDTOUsageSource": ["quota_used", "usage_5h", "usage_1d", "usage_7d", "last_used_at"],
     "keyPersistence": "Kubernetes Secret only",
     "ownerOnlyReveal": true,
-    "currentImplementation": "Control Plane capability calls no longer gate on the reported Sub2API version. Granular Wallet and Key sources, coherent Key/balance-history pagination, audited POST-only owner reveal, Key-before-balance paid-launch preflight, exact-history adjustment replay, scoped Usage/Stats, and integer actual_cost projection are code-complete and locally tested; a real model request and production readback remain pending."
+    "currentImplementation": "The independent public endpoint, Session-delegated general Key create/update/delete/read/reveal, exact expiresInDays create input, authoritative expiresAt readback, per-Key Usage, and upstream account aggregate are code-complete and locally focused-tested without Key/Usage persistence; browser integration, a real model request, and production readback remain pending."
   },
   "consoleFinancialProjection": {
     "mode": "read_only_projection",

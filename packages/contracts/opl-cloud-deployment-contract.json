@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, and production-verification safety.",
   "state": "current",
@@ -25,6 +25,14 @@
     "persistence": "none",
     "restartBehavior": "reauthentication_required",
     "horizontalScaling": "blocked_pending_secure_shared_vault"
+  },
+  "gatewayPublicEndpoint": {
+    "configEnv": "OPL_GATEWAY_PUBLIC_BASE_URL",
+    "workflowRequired": true,
+    "productionValidation": "absolute_https_not_internal_gateway",
+    "missingBehavior": "product_source_unavailable",
+    "localEvidence": "focused_config_and_manifest_tests_passed",
+    "productionEvidence": "pending"
   },
   "runner": [
     "self-hosted",
@@ -70,6 +78,7 @@
       "OPL_CODEX_MODEL",
       "OPL_CODEX_REASONING_EFFORT",
       "OPL_CODEX_BASE_URL",
+      "OPL_GATEWAY_PUBLIC_BASE_URL",
       "OPL_SUB2API_BASE_URL",
       "OPL_SUB2API_REQUEST_TIMEOUT_MS",
       "OPL_SUB2API_ADMIN_EMAIL",

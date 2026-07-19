@@ -4,14 +4,13 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"opl-cloud/services/control-plane/internal/clients"
 )
 
 var errInvalidSessionCredential = errors.New("invalid_session_credential")
 
-type SessionDelegatedCredential struct {
-	Bearer    string
-	ExpiresAt time.Time
-}
+type SessionDelegatedCredential = clients.SessionDelegatedCredential
 
 type SessionCredentialVault struct {
 	mu          sync.Mutex

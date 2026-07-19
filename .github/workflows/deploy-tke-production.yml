@@ -69,6 +69,7 @@ jobs:
       OPL_CODEX_MODEL: ${{ vars.OPL_CODEX_MODEL || 'gpt-5.5' }}
       OPL_CODEX_REASONING_EFFORT: ${{ vars.OPL_CODEX_REASONING_EFFORT || 'xhigh' }}
       OPL_CODEX_BASE_URL: ${{ vars.OPL_CODEX_BASE_URL || 'https://gflabtoken.cn/v1' }}
+      OPL_GATEWAY_PUBLIC_BASE_URL: ${{ vars.OPL_GATEWAY_PUBLIC_BASE_URL }}
       OPL_SUB2API_BASE_URL: ${{ vars.OPL_SUB2API_BASE_URL || 'https://gflabtoken.cn' }}
       OPL_SUB2API_REQUEST_TIMEOUT_MS: ${{ vars.OPL_SUB2API_REQUEST_TIMEOUT_MS || '5000' }}
       TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_MUTATION_SECRET_ID }}
@@ -153,6 +154,7 @@ jobs:
             OPL_WORKSPACE_IMAGE
             OPL_OPERATOR_CIDRS
             OPL_TRUSTED_PROXY_CIDRS
+            OPL_GATEWAY_PUBLIC_BASE_URL
             DATABASE_URL
             OPL_PROVIDER_ACCEPTANCE_TOKEN
             OPL_SUB2API_ADMIN_EMAIL

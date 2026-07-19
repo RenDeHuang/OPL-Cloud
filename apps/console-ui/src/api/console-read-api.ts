@@ -2,22 +2,30 @@ import { decodeDto, decodeSource } from "./dtos.ts";
 import type {
   BalanceHistoryData,
   BillingReceiptPage,
+  CreateGatewayKeyRequest,
   CreateCustomerUserRequest,
+  GatewayAccountUsageSummaryDTO,
+  GatewayEndpointDTO,
+  GatewayKeyPageDTO,
   GatewayKeyReveal,
-  GatewayKeysData,
+  GatewayKeySummaryDTO,
+  GatewayKeyUsagePageDTO,
   GatewayUsageData,
   GatewayUsageStats,
+  GatewayUsageSummaryDTO,
   GatewayWallet,
   ManagementState,
   OperatorAccountsData,
+  OperationStatusDTO,
   OperatorSummary,
   PricingCatalogResponse,
   PricingPreviewRequest,
   PricingPreviewResponse,
   ReadinessFact,
-  SourceEnvelope
+  SourceEnvelope,
+  UpdateGatewayKeyRequest
 } from "./dtos.ts";
-import { getJson, postJson, type ApiError } from "./console-api.ts";
+import { deleteJson, getJson, patchJson, postJson, type ApiError } from "./console-api.ts";
 
 async function sourceGet<T>(path: string, signal?: AbortSignal): Promise<SourceEnvelope<T>> {
   try {
@@ -35,9 +43,9 @@ async function sourceGet<T>(path: string, signal?: AbortSignal): Promise<SourceE
   }
 }
 
-async function sourcePost<T>(path: string, body: unknown, csrfToken: string): Promise<SourceEnvelope<T>> {
+async function sourceWrite<T>(request: () => Promise<unknown>): Promise<SourceEnvelope<T>> {
   try {
-    return decodeSource<T>(await postJson<unknown>(path, body, csrfToken));
+    return decodeSource<T>(await request());
   } catch (error) {
     const payload = (error as ApiError).payload;
     if (payload !== undefined) {
@@ -51,6 +59,18 @@ async function sourcePost<T>(path: string, body: unknown, csrfToken: string): Pr
   }
 }
 
+function sourcePost<T>(path: string, body: unknown, csrfToken: string, idempotencyKey = ""): Promise<SourceEnvelope<T>> {
+  return sourceWrite<T>(() => postJson<unknown>(path, body, csrfToken, idempotencyKey));
+}
+
+function sourcePatch<T>(path: string, body: unknown, csrfToken: string, idempotencyKey: string): Promise<SourceEnvelope<T>> {
+  return sourceWrite<T>(() => patchJson<unknown>(path, body, csrfToken, idempotencyKey));
+}
+
+function sourceDelete<T>(path: string, csrfToken: string, idempotencyKey: string): Promise<SourceEnvelope<T>> {
+  return sourceWrite<T>(() => deleteJson<unknown>(path, csrfToken, idempotencyKey));
+}
+
 export function getConsoleState(): Promise<unknown> {
   return getJson<unknown>("/api/state");
 }
@@ -59,8 +79,28 @@ export function getGatewayWallet(signal?: AbortSignal): Promise<SourceEnvelope<G
   return sourceGet<GatewayWallet>("/api/gateway/wallet", signal);
 }
 
-export function getGatewayKeys(signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeysData>> {
-  return sourceGet<GatewayKeysData>("/api/gateway/keys", signal);
+export function getGatewayEndpoint(signal?: AbortSignal): Promise<SourceEnvelope<GatewayEndpointDTO>> {
+  return sourceGet<GatewayEndpointDTO>("/api/gateway/endpoint", signal);
+}
+
+export function getGatewayKeys(signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyPageDTO>> {
+  return sourceGet<GatewayKeyPageDTO>("/api/gateway/keys", signal);
+}
+
+export function getGatewayKey(keyId: string, signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeySummaryDTO>> {
+  return sourceGet<GatewayKeySummaryDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}`, signal);
+}
+
+export function createGatewayKey(input: CreateGatewayKeyRequest, csrfToken: string, idempotencyKey: string): Promise<SourceEnvelope<GatewayKeySummaryDTO>> {
+  return sourcePost<GatewayKeySummaryDTO>("/api/gateway/keys", input, csrfToken, idempotencyKey);
+}
+
+export function updateGatewayKey(keyId: string, input: UpdateGatewayKeyRequest, csrfToken: string, idempotencyKey: string): Promise<SourceEnvelope<GatewayKeySummaryDTO>> {
+  return sourcePatch<GatewayKeySummaryDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}`, input, csrfToken, idempotencyKey);
+}
+
+export function deleteGatewayKey(keyId: string, csrfToken: string, idempotencyKey: string): Promise<SourceEnvelope<OperationStatusDTO>> {
+  return sourceDelete<OperationStatusDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}`, csrfToken, idempotencyKey);
 }
 
 export function getGatewayUsage(page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<GatewayUsageData>> {
@@ -76,8 +116,22 @@ export function getGatewayBalanceHistory(signal?: AbortSignal): Promise<SourceEn
   return sourceGet<BalanceHistoryData>("/api/gateway/balance-history", signal);
 }
 
-export function revealGatewayKey(csrfToken: string): Promise<SourceEnvelope<GatewayKeyReveal>> {
-  return sourcePost<GatewayKeyReveal>("/api/gateway/keys/opl-workspace/reveal", {}, csrfToken);
+export function revealGatewayKey(keyIdOrCsrf: string, csrfToken?: string): Promise<SourceEnvelope<GatewayKeyReveal>> {
+  const legacy = csrfToken === undefined;
+  return sourcePost<GatewayKeyReveal>(legacy ? "/api/gateway/keys/opl-workspace/reveal" : `/api/gateway/keys/${encodeURIComponent(keyIdOrCsrf)}/reveal`, {}, legacy ? keyIdOrCsrf : csrfToken);
+}
+
+export function getGatewayKeyUsage(keyId: string, page = 1, pageSize = 20, signal?: AbortSignal): Promise<SourceEnvelope<GatewayKeyUsagePageDTO>> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return sourceGet<GatewayKeyUsagePageDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage?${params}`, signal);
+}
+
+export function getGatewayKeyUsageSummary(keyId: string, period = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayUsageSummaryDTO>> {
+  return sourceGet<GatewayUsageSummaryDTO>(`/api/gateway/keys/${encodeURIComponent(keyId)}/usage-summary?${new URLSearchParams({ period })}`, signal);
+}
+
+export function getGatewayAccountUsageSummary(period = "month", signal?: AbortSignal): Promise<SourceEnvelope<GatewayAccountUsageSummaryDTO>> {
+  return sourceGet<GatewayAccountUsageSummaryDTO>(`/api/gateway/usage-summary?${new URLSearchParams({ period })}`, signal);
 }
 
 export function getBillingReceipts(cursor = "", limit = 20, signal?: AbortSignal): Promise<SourceEnvelope<BillingReceiptPage>> {

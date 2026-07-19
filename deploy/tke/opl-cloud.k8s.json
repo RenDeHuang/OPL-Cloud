@@ -70,6 +70,7 @@
         "OPL_CODEX_MODEL": "gpt-5.5",
         "OPL_CODEX_REASONING_EFFORT": "xhigh",
         "OPL_CODEX_BASE_URL": "https://gflabtoken.cn/v1",
+        "OPL_GATEWAY_PUBLIC_BASE_URL": "https://api.medopl.cn/v1",
         "OPL_SUB2API_BASE_URL": "https://gflabtoken.cn",
         "OPL_SUB2API_REQUEST_TIMEOUT_MS": "5000",
         "OPL_TENCENT_PROVISIONER_BIN": "/usr/local/bin/opl-tencent-provisioner",

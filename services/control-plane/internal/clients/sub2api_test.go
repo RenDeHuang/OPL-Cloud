@@ -39,6 +39,139 @@ func writeSub2APISuccess(t *testing.T, w http.ResponseWriter, data any) {
 	}
 }
 
+func userKeyFixture(id int64, status string) map[string]any {
+	return map[string]any{
+		"id": id, "user_id": 41, "key": "sk-user-secret", "name": "general-key", "status": status,
+		"quota": 12.345678, "quota_used": 1.25, "usage_5h": 0.1, "usage_1d": 0.2, "usage_7d": 0.3,
+		"last_used_at": "2026-07-18T01:02:03Z", "expires_at": "2026-08-18T01:02:03Z",
+	}
+}
+
+func TestUserKeyCreateIdempotent(t *testing.T) {
+	calls := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/keys" || r.Header.Get("Authorization") != "Bearer delegated-user-token" || r.Header.Get("Idempotency-Key") != "key-create-once" {
+			t.Fatalf("unexpected delegated create: %s %s auth=%q idempotency=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Idempotency-Key"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 2 || input["name"] != "general-key" || input["quota"] != 12.345678 {
+			t.Fatalf("create input = %#v", input)
+		}
+		writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
+	}, time.Second)
+
+	key, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
+		Name: "general-key", QuotaUSDMicros: 12_345_678,
+	}, "key-create-once")
+	if err != nil || key.ID != 17 || key.UserID != 41 || key.Key != "sk-user-secret" || key.Status != "active" {
+		t.Fatalf("created key = %#v err=%v", key, err)
+	}
+	if calls != 1 {
+		t.Fatalf("create calls = %d, want 1", calls)
+	}
+}
+
+func TestUserKeyCreateExpiresInDays(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 3 || input["expires_in_days"] != float64(30) {
+			t.Fatalf("create expiry input = %#v", input)
+		}
+		if _, exists := input["expires_at"]; exists {
+			t.Fatalf("create must not simulate exact expiry: %#v", input)
+		}
+		writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
+	}, time.Second)
+
+	days := 30
+	key, err := client.CreateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, Sub2APICreateKeyInput{
+		Name: "general-key", QuotaUSDMicros: 12_345_678, ExpiresInDays: &days,
+	}, "key-create-expiry")
+	if err != nil || key.ExpiresAt == nil || key.ExpiresAt.Format(time.RFC3339) != "2026-08-18T01:02:03Z" {
+		t.Fatalf("created expiry = %#v err=%v", key.ExpiresAt, err)
+	}
+}
+
+func TestUserKeyUpdate(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/keys/17" || r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+			t.Fatalf("unexpected delegated update: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 3 || input["name"] != "renamed" || input["quota"] != 2.5 || input["status"] != "inactive" {
+			t.Fatalf("update input = %#v", input)
+		}
+		fixture := userKeyFixture(17, "inactive")
+		fixture["name"], fixture["quota"] = "renamed", 2.5
+		writeSub2APISuccess(t, w, fixture)
+	}, time.Second)
+
+	name, quota, enabled := "renamed", int64(2_500_000), false
+	key, err := client.UpdateUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17, Sub2APIUpdateKeyInput{
+		Name: &name, QuotaUSDMicros: &quota, Enabled: &enabled,
+	})
+	if err != nil || key.Name != name || key.QuotaUSDMicros != quota || key.Status != "disabled" {
+		t.Fatalf("updated key = %#v err=%v", key, err)
+	}
+}
+
+func TestUserKeyDelete(t *testing.T) {
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/keys/17" || r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+			t.Fatalf("unexpected delegated delete: %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}, time.Second)
+	if err := client.DeleteUserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17); err != nil {
+		t.Fatalf("delete key: %v", err)
+	}
+}
+
+func TestUserKeyUsage(t *testing.T) {
+	requests := 0
+	client := newSub2APITestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Path {
+		case "/api/v1/auth/login":
+			writeSub2APISuccess(t, w, map[string]any{"access_token": "admin-access", "refresh_token": "admin-refresh"})
+		case "/api/v1/keys/17":
+			if r.Header.Get("Authorization") != "Bearer delegated-user-token" {
+				t.Fatalf("key read used wrong authorization: %q", r.Header.Get("Authorization"))
+			}
+			writeSub2APISuccess(t, w, userKeyFixture(17, "active"))
+		case "/api/v1/admin/usage/stats":
+			if r.URL.Query().Get("user_id") != "41" || r.URL.Query().Has("api_key_id") || r.URL.Query().Get("period") != "month" {
+				t.Fatalf("account usage query = %q", r.URL.RawQuery)
+			}
+			writeSub2APISuccess(t, w, map[string]any{"total_requests": 2, "total_input_tokens": 3, "total_output_tokens": 4, "total_tokens": 7, "total_actual_cost": 0.000005})
+		default:
+			t.Fatalf("unexpected route %s %s", r.Method, r.URL.String())
+		}
+	}, time.Second)
+
+	key, err := client.UserKey(context.Background(), SessionDelegatedCredential{Bearer: "delegated-user-token"}, 41, 17)
+	if err != nil || key.ID != 17 || key.UserID != 41 {
+		t.Fatalf("owned key = %#v err=%v", key, err)
+	}
+	stats, err := client.UsageStats(context.Background(), Sub2APIUsageStatsQuery{UserID: 41, Period: "month"})
+	if err != nil || stats.TotalRequests != 2 || stats.TotalActualCostUSDMicros != 5 {
+		t.Fatalf("account stats = %#v err=%v", stats, err)
+	}
+	if requests != 3 { // Account stats authenticates once with the admin credential.
+		t.Fatalf("requests = %d, want key read + admin login + stats", requests)
+	}
+}
+
 func rejectForbiddenSub2APIRoute(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
 	t.Helper()
 	for _, forbidden := range []string{"/balance", "/usage"} {

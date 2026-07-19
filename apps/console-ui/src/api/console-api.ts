@@ -25,12 +25,12 @@ function throwApiError(payload: unknown): never {
   throw error;
 }
 
-export async function postJson<T>(path: string, body: unknown = {}, csrfToken = "", idempotencyKey = ""): Promise<T> {
+async function writeJson<T>(method: "POST" | "PATCH" | "DELETE", path: string, body: unknown, csrfToken: string, idempotencyKey: string): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrfToken) headers["x-opl-csrf"] = csrfToken;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const response = await fetch(path, {
-    method: "POST",
+    method,
     headers,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000)
@@ -38,6 +38,18 @@ export async function postJson<T>(path: string, body: unknown = {}, csrfToken = 
   const payload = await responsePayload(response);
   if (!response.ok || asObject(payload).ok === false) throwApiError(payload);
   return payload as T;
+}
+
+export function postJson<T>(path: string, body: unknown = {}, csrfToken = "", idempotencyKey = ""): Promise<T> {
+  return writeJson<T>("POST", path, body, csrfToken, idempotencyKey);
+}
+
+export function patchJson<T>(path: string, body: unknown, csrfToken = "", idempotencyKey = ""): Promise<T> {
+  return writeJson<T>("PATCH", path, body, csrfToken, idempotencyKey);
+}
+
+export function deleteJson<T>(path: string, csrfToken = "", idempotencyKey = ""): Promise<T> {
+  return writeJson<T>("DELETE", path, {}, csrfToken, idempotencyKey);
 }
 
 export const api = postJson;
