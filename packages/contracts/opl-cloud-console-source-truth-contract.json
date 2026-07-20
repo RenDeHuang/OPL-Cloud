@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "owner": "OPL Console Control Plane",
   "purpose": "Strict source envelopes and customer-safe live projections for Console source-of-truth APIs.",
   "state": "current",
@@ -28,7 +28,7 @@
   },
   "implementationEvidence": {
     "gatewayEndpointAndGeneralKeys": "code_complete_local_focused_tests",
-    "operatorProjection": "code_complete_local_focused_tests",
+    "operatorProjection": "base_projection_local_tests_workspace_launch_recovery_fields_pending_integration",
     "workspaceBillingReceipts": "purchased_components_and_fulfillment_projection_code_complete_local_tests",
     "browserAndProduction": "pending"
   },
@@ -250,6 +250,19 @@
         "ledgerCalls": "detail_only_authoritative_receipt_readback",
         "readReplica": false,
         "sourceUpdatedAt": "authoritative_owner_timestamp_only_never_local_fetch_time"
+      },
+      "workspaceLaunchReconciliation": {
+        "route": "GET /api/operator/reconciliation",
+        "action": "workspace.launch.v2",
+        "requiredItemFields": ["accountId", "billingOperationId", "phase", "errorCode", "allowedActions"],
+        "billingOperationIdentity": "billingOperationId_equals_workspace_launch_operation_id",
+        "allowedActions": {
+          "manual_review": ["recover_workspace_launch"],
+          "allOtherStatuses": []
+        },
+        "recoveryRoute": "POST /api/operator/workspace-launches/{operationId}/recover",
+        "recoveryRequestFields": ["accountId", "billingOperationId", "evidenceRef"],
+        "implementation": "pending_integrated_local_verification"
       },
       "resources": {
         "route": "GET /api/operator/workspaces/{workspaceId}",

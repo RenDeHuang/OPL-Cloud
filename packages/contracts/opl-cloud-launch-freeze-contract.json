@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -117,9 +117,16 @@
     "confirmedNoResourceAfterDebit": "idempotent_refund",
     "partialOrUnknownProviderResult": "manual_review_without_refund",
     "ledgerFailureAfterActivation": "retry_receipt_only",
+    "walletMutationSerializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
+    "exactBalanceEvidence": {
+      "precondition": "preBalanceUsdMicros > totalChargeUsdMicros",
+      "postcondition": "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
+      "mismatchStatus": "manual_review",
+      "fabricWriteCountOnMismatch": 0
+    },
     "retryRule": "Debit, refund, provider mutation, claim, activation, renewal, Secret write, and receipt use stable operation-scoped idempotency identities.",
     "doubleDebitForbidden": true,
-    "currentImplementation": "The durable V2 Workspace launch is code-complete in local tests from one authoritative total debit through pure Fabric fulfillment, claim, activation, and exactly one purchased or refunded Workspace receipt. No real Sub2API, Tencent, Runtime, browser, or production evidence is claimed; S9 remains blocked on the external Runtime metadata/statfs API and new immutable image."
+    "currentImplementation": "The non-review workspace.launch.v2 path has local focused evidence through debit, pure Fabric fulfillment, activation, confirmed-absence refund, and receipt-only retry. Dedicated manual-review recovery and its reconciliation DTO are pending integrated verification. No real Sub2API, Tencent, Runtime, browser, or production evidence is claimed."
   },
   "workspaceLaunch": {
     "quoteApi": "POST /api/pricing/preview with resourceType=workspace",
@@ -143,22 +150,37 @@
     },
     "customerResponsePricingFields": ["priceVersion", "currency", "totalChargeUsdMicros"],
     "manualReviewRecovery": {
-      "stillInReview": "visible_no_side_effects",
-      "resolvedActive": "resume_same_child_phase_receipt_only_safe",
-      "resolvedRefunded": "parent_refunded_terminal",
-      "resolvedFailed": "parent_failed_terminal",
-      "nonChildReview": "quiescent_operator_only"
+      "route": "POST /api/operator/workspace-launches/{operationId}/recover",
+      "requestFields": ["accountId", "billingOperationId", "evidenceRef"],
+      "eligibleStatus": "manual_review",
+      "allowedAction": "recover_workspace_launch",
+      "nonEligibleStatuses": "no_allowed_actions",
+      "providerTruthContract": "opl-cloud-service-boundary-contract.json#services.fabric.workspaceLaunchManualReviewProviderTruth",
+      "matrix": {
+        "computeReadyStorageAbsent": "resume_storage_fulfilling_with_original_operation_identity",
+        "computeReadyStorageReady": "resume_attaching_with_original_operation_identity",
+        "computeAbsentStorageAbsent": "one_idempotent_workspace_refund",
+        "computeAbsentStorageReady": "remain_manual_review",
+        "providerUnknown": "remain_manual_review",
+        "receiptPending": "retry_purchase_receipt_only",
+        "refundConfirmedReceiptPending": "retry_refund_receipt_only"
+      },
+      "implementation": "pending_integrated_local_verification"
     },
     "persistence": "control_plane_runtime_operations with action=workspace.launch.v2 and result.schemaVersion=2",
-    "codeCompleteThroughPhase": "succeeded",
     "legacyNonTerminalPolicy": "clear_or_manual_handle_before_cutover_never_resume_in_v2_worker",
     "submissionOrder": ["workspace_quote", "compute_read_only_preflight", "storage_read_only_preflight", "workspace_key_preflight", "sub2api_total_balance_preflight", "persist_launch"],
+    "providerPreflightRecovery": {
+      "timing": "before_first_charge_attempt",
+      "runWhen": "ChargeAttempted=false_and_ChargeConfirmation_absent",
+      "skipOnRecoveryWhenAnyPresent": ["ChargeAttempted", "ChargeConfirmation"],
+      "writes": "none"
+    },
     "totalBalanceSemantics": "read_only_preflight_not_hold_or_reservation",
     "customerDebitCardinality": 1,
     "fulfillmentResources": ["compute", "storage", "attachment", "gateway_secret", "runtime"],
-    "backgroundProgression": "stable_fulfillment_and_receipt_recovery_code_complete_local_only",
-    "nextBlockedStage": "S9_external_runtime_metadata_api_and_image_pending",
-    "currentImplementation": "Exact fixed-USD quote composition, one-submit V2 persistence, CAS/lease recovery, one total debit, pure Fabric compute/storage fulfillment, attachment, Gateway Secret, Runtime readiness, activation, confirmed-absence refund, manual review, and receipt-only retry are code-complete in local tests. No real Sub2API, Tencent, Runtime, browser, or production evidence is claimed."
+    "backgroundProgression": "non_review_fulfillment_and_receipt_recovery_locally_tested_manual_review_recovery_pending_integration",
+    "currentImplementation": "Exact fixed-USD quote composition, one-submit V2 persistence, CAS/lease recovery, strict one-debit balance proof, pure Fabric fulfillment, attachment, Gateway Secret, Runtime readiness, activation, confirmed-absence refund, and receipt-only retry have local focused evidence on non-review paths. Dedicated workspace.launch.v2 manual-review recovery and reconciliation fields are pending integrated verification; no real environment evidence is claimed."
   },
   "providerProcurement": {
     "provider": "Tencent Cloud",
@@ -169,6 +191,14 @@
     "forbiddenChargeTypes": ["POSTPAID_BY_HOUR"],
     "capacityCheck": "Read-only PREPAID inventory, compatibility, quota, and price check before debit; it must not create or reserve a resource.",
     "claimReadback": ["provider resource ID", "charge type", "period or deadline", "renew flag", "zone", "size or SKU", "ownership tags"],
+    "activationReadback": {
+      "apis": ["SyncMonthlyCompute", "SyncMonthlyStorage"],
+      "timing": "immediately_before_workspace_activation",
+      "sharedRequiredFacts": ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
+      "computeRequiredFacts": ["sku"],
+      "storageRequiredFacts": ["capacity"],
+      "mismatch": "manual_review_without_activation"
+    },
     "renewalOrder": ["capacity_preflight", "debit", "provider_renew", "claim", "extend_entitlement", "record_receipt"],
     "automaticRenewal": false,
     "currentImplementation": "One-month PREPAID CVM/CBS requests, stable operations, provider readback, and pure-fulfillment wiring behind the single Workspace debit are code-complete in local tests; live Tencent evidence remains pending."
@@ -339,7 +369,7 @@
       "id": "offer_identity",
       "business": "A mapped customer signs in and sees Basic and Pro with separate compute and storage prices; the internal verification slot never appears.",
       "owners": ["console", "gateway"],
-      "currentState": "Control Plane atomic mapped-owner provisioning, strict one-to-one customer identity, Sub2API password authority, and retirement of the deployment-time local user seed are code-complete and locally tested; authenticated production runtime evidence remains pending, while self-registration and SSO are outside the Pilot.",
+      "currentState": "Canonical POST /api/operator/accounts provisioning and the strict one-to-one mapped-owner graph are pending integrated local verification; authenticated production runtime evidence remains pending, while self-registration and SSO are outside the Pilot.",
       "requiredDeliverables": ["account mapping", "Basic and Pro definitions", "tenant isolation"],
       "completionEvidence": ["contract tests", "tenant tests", "deployed mapped-account readback"]
     },
@@ -371,7 +401,7 @@
       "id": "claim_and_activate",
       "business": "Entitlements activate only after all billable provider resources are identified and assigned.",
       "owners": ["fabric", "console", "gateway", "ledger"],
-      "currentState": "V2 claim, confirmed-absence one-refund convergence, partial/unknown manual review, Workspace activation, and one purchased-or-refunded Receipt are code-complete in local tests; live reconciliation and provider evidence are pending.",
+      "currentState": "The non-review V2 claim, confirmed-absence one-refund convergence, Workspace activation, and purchased-or-refunded Receipt paths have local focused evidence. Dedicated workspace.launch.v2 manual-review recovery and reconciliation DTO are pending integrated verification; live evidence is pending.",
       "requiredDeliverables": ["resource claim", "confirmed-absence refund", "manual-review state", "purchase receipt"],
       "completionEvidence": ["claim identity test", "refund replay test", "partial-result manual-review test"]
     },
@@ -379,7 +409,7 @@
       "id": "workspace_access",
       "business": "The customer authenticates to a ready Workspace backed by owned compute, CBS, and an account-scoped Gateway Secret.",
       "owners": ["console", "fabric", "ledger"],
-      "currentState": "V2 attachment, account Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows are code-complete in local tests; S9 external Runtime metadata/statfs API, new immutable image, browser, WebSocket, live model, and deployed evidence remain pending.",
+      "currentState": "V2 attachment, account Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows have local focused evidence on the non-review path; external Runtime metadata/statfs API, new immutable image, browser, WebSocket, live model, and deployed evidence remain pending.",
       "requiredDeliverables": ["runtime readiness", "password login", "owner-only Runtime credential reveal and rotation", "static CBS mounts", "secret rotation", "immutable image"],
       "completionEvidence": ["owner isolation tests", "post-login assertion", "WebSocket 101", "Secret fingerprint", "credential revision readback", "image digest readback"]
     },

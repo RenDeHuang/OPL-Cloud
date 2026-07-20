@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 13,
+  "schemaVersion": 14,
   "owner": "OPL Console",
   "purpose": "Console customer identity, strict owner graph, Sub2API authentication authority, lifecycle, and management API contract.",
   "state": "current",
@@ -105,8 +105,15 @@
     "personalWorkspace": "ownerAccountId identifies the Console owner and its Sub2API mapping."
   },
   "identityProvisioning": {
-    "onlyMutation": "POST /api/operator/accounts/invitations",
-    "atomicInvite": "After Sub2API resolves or creates and re-reads the remote identity, one transaction commits the mapped Account and normalized owner User plus internal one-to-one Organization/Membership compatibility rows.",
+    "onlyMutation": "POST /api/operator/accounts",
+    "requestType": "ProvisionAccountRequest",
+    "semantics": {
+      "command": "provision",
+      "operatorLanguage": "open",
+      "auditAction": "account.provision",
+      "operationIdPrefix": "account-provision"
+    },
+    "atomicProvision": "After Sub2API resolves or creates and re-reads the remote identity, one transaction commits the mapped Account and normalized owner User plus internal one-to-one Organization/Membership compatibility rows.",
     "atomicFacts": ["account", "user", "organization", "membership"],
     "callerSuppliedSub2apiUserId": "forbidden",
     "partialFailure": "rollback_all_four_facts",
@@ -114,10 +121,10 @@
     "mismatch": "fail_closed_without_mutation"
   },
   "identitySecurity": {
-    "email": "Create and bootstrap normalize email with lower(trim(email)); normalized email is unique in PostgreSQL and legacy blank or colliding values fail migration closed.",
+    "email": "Provision and bootstrap normalize email with lower(trim(email)); normalized email is unique in PostgreSQL and legacy blank or colliding values fail migration closed.",
     "plaintextPasswordMinimumCharacters": 12,
     "passwordAuthority": "sub2api",
-    "invitePasswordHandling": "forward_to_sub2api_only_never_persist",
+    "provisionPasswordHandling": "forward_to_sub2api_only_never_persist",
     "localPasswordHash": {
       "column": "control_plane_users.password_hash",
       "requiredValue": "",
@@ -139,8 +146,8 @@
     "legacyLocalUsersEnv": "retired_nonempty_value_fails_startup"
   },
   "identityDelivery": {
-    "controlPlane": "code_complete_local_verification",
-    "deploymentCutover": "code_complete_local_verification",
+    "controlPlane": "canonical_provisioning_pending_integrated_local_verification",
+    "deploymentCutover": "canonical_route_pending_integrated_local_verification",
     "authenticatedRuntimeEvidence": "pending"
   },
   "userLifecycle": {
@@ -148,10 +155,10 @@
     "ownerRenewalPolicy": "Disabling or deleting an owner turns off the Workspace autoRenew intent without deleting provider resources."
   },
   "api": {
-    "createAccount": "POST /api/operator/accounts/invitations (atomic owner invite only)",
+    "createAccount": "POST /api/operator/accounts (canonical owner provision only)",
     "operatorAccounts": {
       "list": "GET /api/operator/accounts",
-      "invite": "POST /api/operator/accounts/invitations",
+      "provision": "POST /api/operator/accounts",
       "disable": "POST /api/operator/accounts/{accountId}/disable",
       "delete": false
     },
@@ -196,6 +203,7 @@
     },
     "kinds": ["recharge", "debit", "business_refund"],
     "balanceAuthority": "sub2api",
+    "serializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
     "operationIdentity": "stable_from_account_id_and_idempotency_key",
     "authoritativeReadback": [
       "sub2api_balance_history_exact_code_user_type_signed_amount_used",

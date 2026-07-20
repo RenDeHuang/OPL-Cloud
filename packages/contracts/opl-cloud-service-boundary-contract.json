@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "owner": "OPL Platform Architecture",
   "purpose": "Current ownership contract for Console UI, Control Plane, Ledger, Fabric, and external Sub2API.",
   "state": "current",
@@ -59,6 +59,14 @@
         "missingOwnerFact": "source_unavailable_without_zero_or_fallback",
         "readReplica": false
       },
+      "walletMutationSerialization": {
+        "deployment": "single_control_plane_replica",
+        "scope": "process_local",
+        "primitive": "lockResource(\"sub2api-wallet\", accountId)",
+        "operations": ["operator_wallet_adjustment", "workspace.launch.v2_debit", "workspace.launch.v2_refund", "workspace_renewal_debit", "workspace_renewal_refund"],
+        "additionalLockService": false,
+        "multiReplicaPolicy": "forbidden_until_approved_distributed_serialization"
+      },
       "forbiddenPersistence": ["gatewayCredentials", "apiKeys", "apiUsage", "walletBalances", "runtimeFileMetadata"]
     },
     "ledger": {
@@ -100,7 +108,20 @@
       "cloudSdks": [
         "tencentcloud-sdk-go",
         "kubernetes-client-go"
-      ]
+      ],
+      "workspaceLaunchManualReviewProviderTruth": {
+        "endpoint": "GET /fabric/monthly-provider-truth?computeAllocationId=<id>&storageVolumeId=<id>",
+        "scope": "workspace.launch.v2_manual_review_recovery_only",
+        "providerAction": "provider_truth",
+        "providerAuthority": "existing_tencent_provisioner_describe_only",
+        "localIdentityInputs": ["computeAllocationId", "storageVolumeId"],
+        "outcomes": ["present", "absent", "unknown"],
+        "exactVerificationFacts": ["provider_identity", "sku", "zone", "ownership", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
+        "unknownWhen": "either_local_identity_missing_or_any_exact_fact_unverifiable",
+        "unknownPolicy": "remain_manual_review_never_absent_never_refund",
+        "absentRequires": "both_local_identities_and_exact_provider_describe_absence",
+        "forbiddenSideEffects": ["sync", "tag", "kubectl_apply", "delete", "label", "purchase", "renew", "destroy"]
+      }
     }
   },
   "externalServices": {

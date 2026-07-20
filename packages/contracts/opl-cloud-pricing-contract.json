@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "owner": "OPL Control Plane",
   "purpose": "Versioned fixed USD monthly prices for the paid OPL Workspace Pilot.",
   "state": "current",
@@ -44,12 +44,10 @@
   },
   "workspaceCharge": {
     "launchOperationAction": "workspace.launch.v2",
-    "codeCompleteThroughPhase": "succeeded",
     "customerDebitCardinalityPerPeriod": 1,
     "totalAuthority": "server_price_snapshot",
     "components": "explanatory_fulfillment_only",
-    "implementation": "launch_terminal_code_complete_local_tests_only",
-    "nextBlockedStage": "S9_external_runtime_metadata_api_and_image_pending"
+    "implementation": "non_review_price_and_charge_contract_local_tests_manual_review_recovery_pending_integration"
   },
   "internalProviderCostEvidence": {
     "currency": "CNY",

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "owner": "OPL Control Plane",
   "purpose": "One-charge Workspace purchase and renewal, fulfillment, entitlement, receipt, wallet-adjustment reference, and reconciliation ownership contract.",
   "state": "current",
@@ -27,6 +27,19 @@
     "unit": "usd_micros",
     "writeType": "negative_redeem_code",
     "idempotencyIdentity": "opl:<environment>:<billing-operation-id>:charge:v1",
+    "walletMutationSerializationContract": "opl-cloud-service-boundary-contract.json#services.controlPlane.walletMutationSerialization",
+    "exactBalanceEvidence": {
+      "precondition": "preBalanceUsdMicros > totalChargeUsdMicros",
+      "postcondition": "postBalanceUsdMicros == preBalanceUsdMicros - totalChargeUsdMicros",
+      "mismatchStatus": "manual_review",
+      "fabricWriteCountOnMismatch": 0
+    },
+    "providerPreflight": {
+      "timing": "before_first_charge_attempt",
+      "runWhen": "ChargeAttempted=false_and_ChargeConfirmation_absent",
+      "skipOnRecoveryWhenAnyPresent": ["ChargeAttempted", "ChargeConfirmation"],
+      "writes": "none"
+    },
     "activationRule": "Grant or extend entitlement only after the redeem record, post-charge balance, provider resources, attachment, Secret, and Runtime readiness are confirmed.",
     "ambiguousResult": "manual_review",
     "automaticPositiveAdjustment": false
@@ -40,7 +53,16 @@
     "confirmedNoResource": "one_idempotent_workspace_refund",
     "partialOrUnknownResource": "manual_review_without_refund",
     "ledgerFailureAfterActivation": "retry_receipt_only",
-    "implementation": "code_complete_local_tests_only",
+    "activationReadback": {
+      "apis": ["SyncMonthlyCompute", "SyncMonthlyStorage"],
+      "timing": "immediately_before_workspace_activation",
+      "sharedRequiredFacts": ["resource_identity", "account_identity", "workspace_identity", "zone", "chargeType=PREPAID", "renewFlag=NOTIFY_AND_MANUAL_RENEW", "deadline"],
+      "computeRequiredFacts": ["sku"],
+      "storageRequiredFacts": ["capacity"],
+      "mismatch": "manual_review_without_activation"
+    },
+    "manualReviewRecoveryContract": "opl-cloud-launch-freeze-contract.json#workspaceLaunch.manualReviewRecovery",
+    "implementation": "non_review_path_local_tests_manual_review_recovery_pending_integration_verification",
     "realEnvironmentEvidence": "pending_owner_approved_acceptance"
   },
   "walletAdjustmentEvidence": {
