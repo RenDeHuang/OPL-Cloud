@@ -938,6 +938,10 @@ cd ../ledger && go test ./... -count=1
 
 ### Slice 9：Runtime `/projects` 文件元数据与真实挂载空间用量
 
+**2026-07-20 状态：暂停，不进入本次发布。** 以下内容仅保留为未来独立跨仓工作记录；
+本轮不实现 Runtime API、不接入 Cloud route、不展示 Console 文件/容量。发布持久化仅通过
+Runtime Pod 直接写入 `/data`、`/projects` 的 SHA256 标记验证，不生成 metadata/statfs evidence。
+
 **业务结果：** 用户可只读浏览当前目录并看到已挂载文件系统总量/已用/可用；CBS 只继续回答
 分配容量和挂载事实，不再被误当作文件来源。
 

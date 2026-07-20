@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "owner": "OPL Cloud",
   "purpose": "Product layer, Workspace mapping, access, package, Fabric catalog, and production handoff contract.",
   "state": "current",
@@ -52,9 +52,13 @@
     "workspaceQuestions": ["url", "username", "passwordRevealCopy", "workspaceKeyRevealCopy"]
   },
   "workspaceRuntimeFacts": {
+    "launchStatus": "paused_not_in_release",
     "fileMetadataAuthority": "workspace_runtime_projects_mount",
     "filesystemUsageAuthority": "workspace_runtime_statfs",
-    "persistence": "none"
+    "apiRoutes": [],
+    "consolePresentation": "absent",
+    "persistence": "none",
+    "releaseValidation": "direct_runtime_pod_sha256_markers_only"
   },
   "defaultPackages": [
     {

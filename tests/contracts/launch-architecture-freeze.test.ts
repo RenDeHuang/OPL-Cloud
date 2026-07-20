@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const root = new URL("../../", import.meta.url);
-const candidateShellSha = "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb";
+const candidateAppSha = "6b334ef7f239eb01c40578159e6df9ed2e7f97dc";
+const candidateShellSha = "dbd9d68115604673df85033d7a0ab323d65a79a2";
+const candidateFrameworkSha = "51d16f0e93aebf3fd5ccf96082490395fcbb8711";
 
 async function text(path) {
   return readFile(new URL(path, root), "utf8");
@@ -121,8 +123,10 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
   assert.deepEqual(freeze.workspaceRuntime.sourceImage, {
     appRepository: "https://github.com/gaofeng21cn/one-person-lab-app.git",
     activeShellRepository: "https://github.com/gaofeng21cn/opl-aion-shell.git",
-    candidateAppMainSha: null,
+    frameworkRepository: "https://github.com/gaofeng21cn/one-person-lab.git",
+    candidateAppMainSha: candidateAppSha,
     candidateActiveShellMainSha: candidateShellSha,
+    candidateFrameworkMainSha: candidateFrameworkSha,
     candidateRequirements: ["40_character_git_sha", "merged_into_repository_main"]
   });
   assert.deepEqual(freeze.workspaceRuntime.releaseEvidence, {
@@ -130,6 +134,15 @@ test("launch freeze fixes the V2 products, owner lanes, settlement, and verifica
     immutableTcrDigestStatus: "pending_publication_readback",
     readyPodImageId: null,
     readyPodImageIdStatus: "pending_deployment_readback"
+  });
+  assert.deepEqual(freeze.workspaceRuntime.projectFacts, {
+    launchStatus: "paused_not_in_release",
+    authority: "workspace_runtime_projects_mount_and_statfs",
+    apiRoutes: [],
+    consolePresentation: "absent",
+    persistence: "none",
+    releaseValidation: "direct_runtime_pod_sha256_markers_only",
+    correspondingEvidence: "not_claimed"
   });
   assert.equal(freeze.workspaceRuntime.primaryWorkspacePerAccount, 1);
   assert.equal(freeze.workspaceRuntime.statusContainsPassword, false);
@@ -222,6 +235,9 @@ test("human launch contract pins the approved architecture authority revision", 
   ]);
 
   assert.match(invariants, new RegExp(freeze.architectureAuthority.reviewedRevision));
+  for (const sha of [candidateAppSha, candidateShellSha, candidateFrameworkSha]) assert.match(invariants, new RegExp(sha));
+  assert.doesNotMatch(invariants, /13ae5d1410e1a4349c14dc76e7c3446ff200cfdb/);
+  assert.match(invariants, /metadata\/statfs API and Console presentation are paused/i);
 });
 
 test("public Workspace contract permits one primary Workspace only", async () => {
@@ -306,8 +322,9 @@ test("read-only fixed-slot verification replaces the legacy paid release gate", 
   assert.equal(deployment.productionLiveQaJob.modelRequestCount, 1);
   assert.equal(deployment.productionLiveQaJob.providerMutationCount, 0);
   assert.doesNotMatch(JSON.stringify(deployment), /paid_confirmation|OPL_VERIFY_PAID_CONFIRMATION|OPL_VERIFY_MODEL_ACCESS_KEY/);
-  assert.equal(deployment.workspaceImage.candidateAppMainSha, null);
+  assert.equal(deployment.workspaceImage.candidateAppMainSha, candidateAppSha);
   assert.equal(deployment.workspaceImage.candidateActiveShellMainSha, candidateShellSha);
+  assert.equal(deployment.workspaceImage.candidateFrameworkMainSha, candidateFrameworkSha);
   assert.deepEqual(deployment.workspaceImage.candidateRequirements, ["40_character_git_sha", "merged_into_repository_main"]);
   assert.equal(deployment.workspaceImage.immutableTcrDigest, null);
   assert.equal(deployment.workspaceImage.immutableTcrDigestStatus, "pending_publication_readback");

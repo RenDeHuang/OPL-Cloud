@@ -17,7 +17,8 @@ const cloudCandidateSha = "c".repeat(40);
 const cloudMainSha = "d".repeat(40);
 const workspaceAppSha = "a".repeat(40);
 const workspaceShellSha = "b".repeat(40);
-const workspaceImageTag = `${workspaceAppSha.slice(0, 12)}-${workspaceShellSha.slice(0, 12)}`;
+const workspaceFrameworkSha = "e".repeat(40);
+const workspaceImageTag = `${workspaceAppSha.slice(0, 12)}-${workspaceShellSha.slice(0, 12)}-${workspaceFrameworkSha.slice(0, 12)}`;
 const workspaceDigest = `sha256:${"d".repeat(64)}`;
 const basicSlotDescriptor = {
   id: "verification-slot-basic-01",
@@ -70,7 +71,7 @@ function serializedRuns(currentJob) {
   return (currentJob.steps || []).map((step) => step.run || "").join("\n");
 }
 
-function runImageMetadata(step, appSha, shellSha) {
+function runImageMetadata(step, appSha, shellSha, frameworkSha) {
   return spawnSync("bash", ["-c", step.run], {
     cwd: fileURLToPath(repoFile(".")),
     encoding: "utf8",
@@ -83,6 +84,7 @@ function runImageMetadata(step, appSha, shellSha) {
       REQUESTED_IMAGE_TAG: "cloud-test",
       REQUESTED_WORKSPACE_APP_SHA: appSha,
       REQUESTED_WORKSPACE_SHELL_SHA: shellSha,
+      REQUESTED_WORKSPACE_FRAMEWORK_SHA: frameworkSha,
       PUBLISH_CLOUD_IMAGE: "false",
       PUBLISH_WORKSPACE_IMAGE: "true"
     }
@@ -99,9 +101,8 @@ git() {
   printf 'git %s\\n' "$*" >&2
   case "$*" in
     "rev-parse HEAD") printf '%s\\n' "$CLOUD_HEAD_SHA" ;;
-    "remote set-url origin https://github.com/gaofeng21cn/one-person-lab-cloud.git") ;;
-    "fetch --no-tags origin main:refs/remotes/origin/main") ;;
-    "rev-parse origin/main") printf '%s\\n' "$CLOUD_MAIN_SHA" ;;
+    "fetch --no-tags https://github.com/$OPL_CLOUD_SOURCE_REPOSITORY.git main:refs/remotes/release-source/main") ;;
+    "rev-parse refs/remotes/release-source/main") printf '%s\\n' "$CLOUD_MAIN_SHA" ;;
     "merge-base --is-ancestor $CLOUD_HEAD_SHA $CLOUD_MAIN_SHA") [ "$CLOUD_CANDIDATE_MERGED" = "true" ] ;;
     *) return 2 ;;
   esac
@@ -115,6 +116,7 @@ ${step.run}
       ...process.env,
       GITHUB_ENV: "/dev/null",
       REQUESTED_CLOUD_SHA: requestedSha,
+      OPL_CLOUD_SOURCE_REPOSITORY: "RenDeHuang/OPL-Cloud",
       CLOUD_HEAD_SHA: headSha,
       CLOUD_MAIN_SHA: mainSha,
       CLOUD_CANDIDATE_MERGED: merged ? "true" : "false"
@@ -162,6 +164,7 @@ ${step.run}
       OPL_WORKSPACE_IMAGE_REPOSITORY: "registry.example.test/opl/workspace",
       OPL_WORKSPACE_IMAGE_REF: `registry.example.test/opl/workspace:${workspaceImageTag}`,
       OPL_WORKSPACE_SOURCE_ROOT: "/tmp/one-person-lab-app",
+      OPL_WORKSPACE_FRAMEWORK_SHA: workspaceFrameworkSha,
       CLOUD_DIGEST: cloudDigest,
       WORKSPACE_DIGEST: workspaceDigest
     }
@@ -407,7 +410,7 @@ test("TKE bootstrap deploy is approved, read only, and cannot complete a release
   assert.match(rollbackRun, /inputs\.bootstrap_mode[\s\S]*restore_previous_bootstrap_images/);
 });
 
-test("image release accepts only a full Cloud commit contained in official origin main", async () => {
+test("image release accepts only a full Cloud commit contained in the workflow repository main", async () => {
   const [workflow, contract] = await Promise.all([
     readWorkflow(".github/workflows/release-opl-cloud-image.yml"),
     readJson(deploymentContractPath)
@@ -421,20 +424,21 @@ test("image release accepts only a full Cloud commit contained in official origi
   assert.ok(verify, "release workflow missing Verify Cloud source");
   assert.deepEqual(contract.imageReleaseWorkflow.cloudCandidate, {
     input: "ref",
-    officialRepository: "https://github.com/gaofeng21cn/one-person-lab-cloud.git",
-    requirements: ["40_character_git_sha", "checked_out_head_exact_match", "merged_into_official_origin_main"],
-    mainReadback: "origin/main"
+    repositoryAuthority: "github.repository",
+    requirements: ["40_character_git_sha", "checked_out_head_exact_match", "merged_into_workflow_repository_main"],
+    mainReadback: "refs/remotes/release-source/main"
   });
+  assert.equal(workflowJob(workflow, "build-push").env.OPL_CLOUD_SOURCE_REPOSITORY, "${{ github.repository }}");
   assert.match(verify.run, /\^\[0-9a-fA-F\]\{40\}\$/);
-  assert.match(verify.run, /remote set-url origin https:\/\/github\.com\/gaofeng21cn\/one-person-lab-cloud\.git/);
-  assert.match(verify.run, /fetch --no-tags origin main:refs\/remotes\/origin\/main/);
+  assert.doesNotMatch(verify.run, /remote set-url/);
+  assert.match(verify.run, /fetch --no-tags "https:\/\/github\.com\/\$\{OPL_CLOUD_SOURCE_REPOSITORY\}\.git" main:refs\/remotes\/release-source\/main/);
   assert.match(verify.run, /rev-parse HEAD/);
-  assert.match(verify.run, /rev-parse origin\/main/);
+  assert.match(verify.run, /rev-parse refs\/remotes\/release-source\/main/);
   assert.match(verify.run, /merge-base --is-ancestor "\$cloud_head_sha" "\$cloud_main_sha"/);
 
   const accepted = runCloudSourceGate(verify, cloudCandidateSha);
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stderr, /git fetch --no-tags origin main:refs\/remotes\/origin\/main/);
+  assert.match(accepted.stderr, /git fetch --no-tags https:\/\/github\.com\/RenDeHuang\/OPL-Cloud\.git main:refs\/remotes\/release-source\/main/);
   assert.match(accepted.stderr, /git merge-base --is-ancestor/);
 
   for (const invalidSha of ["main", "abcdef0", "g".repeat(40), "c".repeat(39), "c".repeat(41)]) {
@@ -445,7 +449,7 @@ test("image release accepts only a full Cloud commit contained in official origi
   assert.notEqual(runCloudSourceGate(verify, cloudCandidateSha, { merged: false }).status, 0);
 });
 
-test("image release builds Workspace from exact merged-main App and active-shell commits", async () => {
+test("image release builds Workspace from exact merged-main App, active-shell, and Framework commits", async () => {
   const workflow = await readWorkflow(".github/workflows/release-opl-cloud-image.yml");
   const currentJob = workflowJob(workflow, "build-push");
   const inputs = workflow.on.workflow_dispatch.inputs;
@@ -462,30 +466,37 @@ test("image release builds Workspace from exact merged-main App and active-shell
     "publish_cloud_image",
     "publish_workspace_image",
     "workspace_app_main_sha",
-    "workspace_shell_main_sha"
+    "workspace_shell_main_sha",
+    "workspace_framework_main_sha"
   ]);
   assert.equal(inputs.workspace_app_main_sha.required, true);
   assert.equal(inputs.workspace_shell_main_sha.required, true);
+  assert.equal(inputs.workspace_framework_main_sha.required, true);
   assert.doesNotMatch(metadata, /\$\{\{\s*inputs\./);
   assert.match(metadata, /\^\[0-9a-fA-F\]\{40\}\$/);
   assert.match(metadata, /tr '\[:upper:\]' '\[:lower:\]'/);
-  assert.match(metadata, /workspace_image_tag="\$\{workspace_app_sha:0:12\}-\$\{workspace_shell_sha:0:12\}"/);
+  assert.match(metadata, /workspace_image_tag="\$\{workspace_app_sha:0:12\}-\$\{workspace_shell_sha:0:12\}-\$\{workspace_framework_sha:0:12\}"/);
   assert.equal(setupNode?.uses, "actions/setup-node@v4");
   assert.equal(setupNode?.with?.["node-version"], "22");
   assert.match(String(setupNode?.if), /publish_workspace_image/);
   assert.match(prepare, /git clone --filter=blob:none --single-branch --branch main/);
   assert.match(prepare, /github\.com\/gaofeng21cn\/one-person-lab-app\.git/);
   assert.match(prepare, /github\.com\/gaofeng21cn\/opl-aion-shell\.git/);
+  assert.match(prepare, /github\.com\/gaofeng21cn\/one-person-lab\.git/);
   assert.match(prepare, /merge-base --is-ancestor "\$OPL_WORKSPACE_APP_SHA" origin\/main/);
   assert.match(prepare, /merge-base --is-ancestor "\$OPL_WORKSPACE_SHELL_SHA" origin\/main/);
+  assert.match(prepare, /merge-base --is-ancestor "\$OPL_WORKSPACE_FRAMEWORK_SHA" origin\/main/);
   assert.match(prepare, /checkout --detach "\$OPL_WORKSPACE_APP_SHA"/);
   assert.match(prepare, /checkout --detach "\$OPL_WORKSPACE_SHELL_SHA"/);
+  assert.match(prepare, /checkout --detach "\$OPL_WORKSPACE_FRAMEWORK_SHA"/);
   assert.match(prepare, /npm run ensure:shell/);
   assert.match(prepare, /git -C "\$workspace_root" rev-parse HEAD/);
   assert.match(prepare, /git -C "\$shell_root" rev-parse HEAD/);
+  assert.match(prepare, /git -C "\$framework_root" rev-parse HEAD/);
   assert.match(prepare, /grep -Fxq '\.git' "\$shell_root\/\.dockerignore"/);
   assert.match(runs, /docker buildx imagetools inspect/);
   assert.match(runs, /docker buildx build --push[\s\S]*shells\/aionui\/Dockerfile[\s\S]*shells\/aionui/);
+  assert.match(runs, /--build-arg OPL_FRAMEWORK_REF="\$OPL_WORKSPACE_FRAMEWORK_SHA"/);
   assert.match(runs, /sha256:\[0-9a-f\]\{64\}/);
   assert.match(runs, /OPL_CLOUD_IMAGE=.*@\$\{cloud_digest\}/);
   assert.match(runs, /OPL_WORKSPACE_IMAGE=.*@\$\{workspace_digest\}/);
@@ -518,8 +529,8 @@ test("image release switches isolate publication commands and leave skipped outp
   assert.equal(workspaceOnly.status, 0, workspaceOnly.stderr);
   assert.doesNotMatch(workspaceOnly.commands, /imagetools inspect registry\.example\.test\/opl\/cloud/);
   assert.match(workspaceOnly.commands, /docker buildx build --push -f \/tmp\/one-person-lab-app\/shells\/aionui\/Dockerfile/);
-  assert.match(workspaceOnly.commands, /-t registry\.example\.test\/opl\/workspace:aaaaaaaaaaaa-bbbbbbbbbbbb \/tmp\/one-person-lab-app\/shells\/aionui/);
-  assert.match(workspaceOnly.commands, /imagetools inspect registry\.example\.test\/opl\/workspace:aaaaaaaaaaaa-bbbbbbbbbbbb/);
+  assert.match(workspaceOnly.commands, /-t registry\.example\.test\/opl\/workspace:aaaaaaaaaaaa-bbbbbbbbbbbb-eeeeeeeeeeee \/tmp\/one-person-lab-app\/shells\/aionui/);
+  assert.match(workspaceOnly.commands, /imagetools inspect registry\.example\.test\/opl\/workspace:aaaaaaaaaaaa-bbbbbbbbbbbb-eeeeeeeeeeee/);
   assert.doesNotMatch(workspaceOnly.commands, /ghcr\.io|imagetools create|git ls-remote|curl /);
   assert.deepEqual(workspaceOnly.outputs, {
     cloud_image: "",
@@ -530,22 +541,24 @@ test("image release switches isolate publication commands and leave skipped outp
   assert.equal(currentJob.outputs.workspace_image, "${{ steps.images.outputs.workspace_image }}");
 });
 
-test("image release accepts only full App and active-shell commit SHAs", async () => {
+test("image release accepts only full App, active-shell, and Framework commit SHAs", async () => {
   const workflow = await readWorkflow(".github/workflows/release-opl-cloud-image.yml");
   const metadata = stepsByName(workflowJob(workflow, "build-push")).get("Image metadata");
 
-  for (const [appSha, shellSha] of [
-    [workspaceAppSha, workspaceShellSha],
-    [workspaceAppSha.toUpperCase(), workspaceShellSha.toUpperCase()]
+  for (const [appSha, shellSha, frameworkSha] of [
+    [workspaceAppSha, workspaceShellSha, workspaceFrameworkSha],
+    [workspaceAppSha.toUpperCase(), workspaceShellSha.toUpperCase(), workspaceFrameworkSha.toUpperCase()]
   ]) {
-    const result = runImageMetadata(metadata, appSha, shellSha);
+    const result = runImageMetadata(metadata, appSha, shellSha, frameworkSha);
     assert.equal(result.status, 0, result.stderr);
   }
   for (const invalidSha of ["main", "abcdef0", "g".repeat(40), "a".repeat(39), "a".repeat(41)]) {
-    const invalidApp = runImageMetadata(metadata, invalidSha, workspaceShellSha);
+    const invalidApp = runImageMetadata(metadata, invalidSha, workspaceShellSha, workspaceFrameworkSha);
     assert.notEqual(invalidApp.status, 0, `App SHA must reject ${invalidSha}`);
-    const invalidShell = runImageMetadata(metadata, workspaceAppSha, invalidSha);
+    const invalidShell = runImageMetadata(metadata, workspaceAppSha, invalidSha, workspaceFrameworkSha);
     assert.notEqual(invalidShell.status, 0, `active-shell SHA must reject ${invalidSha}`);
+    const invalidFramework = runImageMetadata(metadata, workspaceAppSha, workspaceShellSha, invalidSha);
+    assert.notEqual(invalidFramework.status, 0, `Framework SHA must reject ${invalidSha}`);
   }
 });
 
