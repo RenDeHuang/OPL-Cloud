@@ -191,24 +191,6 @@ test("Console source truth contract fixes strict envelopes and live Gateway proj
       writeBack: false,
       fetchedAt: "control_plane_response_fetch_completion_time",
       sourceUpdatedAt: "omit_unless_fabric_returns_source_timestamp"
-    },
-    files: {
-      route: "GET /api/workspaces/{workspaceId}/files",
-      source: "runtime",
-      authority: "workspace_runtime_projects_mount",
-      identity: "session_owned_workspace",
-      persistence: "none",
-      fetchedAt: "control_plane_response_fetch_completion_time",
-      sourceUpdatedAt: "only_when_runtime_returns_source_timestamp"
-    },
-    filesystemUsage: {
-      route: "GET /api/workspaces/{workspaceId}/filesystem-usage",
-      source: "runtime",
-      authority: "workspace_runtime_statfs",
-      identity: "session_owned_workspace",
-      persistence: "none",
-      fetchedAt: "control_plane_response_fetch_completion_time",
-      sourceUpdatedAt: "only_when_runtime_returns_measurement_timestamp"
     }
   });
   assert.deepEqual(contract.sources.ledger, {

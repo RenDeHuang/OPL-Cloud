@@ -191,23 +191,25 @@ validate account and quote
 - Runtime credential rotation reuses stable Fabric and Ledger idempotency identities. A credential revision changes the Runtime Secret and Pod template so Kubernetes rolls the Deployment without exposing the password or seed in metadata.
 - Pilot Runtime isolation means only the owner receives the Runtime password. SSO and binding each Runtime HTTP request to the Console identity are not Pilot claims.
 - Workspace access requires active compute and storage entitlements plus real runtime readiness.
-- A Workspace release candidate is exactly one `one-person-lab-app` commit and one
-  `opl-aion-shell` commit. Each input must be a full 40-character Git SHA already
+- A Workspace release candidate is exactly one `one-person-lab-app` commit, one
+  `opl-aion-shell` commit, and one `one-person-lab` Framework commit. Each input must be a full 40-character Git SHA already
   merged into its repository's `main`; branch names, short SHAs, and unmerged commits fail closed.
-- The active-shell candidate is `13ae5d1410e1a4349c14dc76e7c3446ff200cfdb`.
-  The App candidate remains unavailable pending its integration commit.
+- The fixed release candidates are App `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`,
+  active shell `dbd9d68115604673df85033d7a0ab323d65a79a2`, and Framework
+  `51d16f0e93aebf3fd5ccf96082490395fcbb8711`.
 - The Cloud release `ref` is a full 40-character commit SHA. Its checked-out HEAD
-  must match exactly and be an ancestor of the official Cloud `origin/main` readback.
+  must match exactly and be an ancestor of the workflow repository's `main` readback.
   Branch names, short SHAs, and unmerged Cloud commits fail before publication.
-- The release workflow checks out both candidates detached, runs the App's existing
+- The release workflow checks out all three candidates detached, runs the App's existing
   `ensure:shell`, and builds the active shell Docker context directly into TCR.
 - Production deploys only the TCR `repository@sha256` read back after publication;
   `latest` and tag-only production references are forbidden. The immutable TCR digest
   and Ready Pod `imageID` remain unavailable until their respective publication and
   deployment readbacks succeed; placeholders and local timestamps are not evidence.
 - CBS is mounted at `/data` and `/projects`.
-- Runtime is the only authority for `/projects` file metadata and mounted filesystem usage. These read-only facts
-  are streamed through Fabric and Control Plane and are never persisted in OPL PostgreSQL or Ledger.
+- Runtime remains the only possible authority for `/projects` file metadata and mounted filesystem usage, but those
+  product APIs and their Console presentation are paused outside this release. Release persistence checks write and
+  hash small markers directly in the Runtime Pod on `/data` and `/projects`; they do not claim metadata/statfs evidence.
 
 ## Console User Experience
 
@@ -273,7 +275,7 @@ Provider Acceptance owns two retained non-customer slots:
 | 3. Balance debit | Debit the exact monthly amount once before provider mutation. | Console, Gateway, Ledger | Durable one-submit launch, debit-first recovery, and replay are code-complete; deployed browser and live Sub2API evidence are pending. | Deterministic debit, balance check, replay/concurrency evidence. |
 | 4. Prepaid fulfillment | Open one-month PREPAID CVM/CBS after debit. | Fabric, Console | PREPAID CVM/CBS request/readback and pure-fulfillment recovery behind one Workspace debit are code-complete in local tests; live Tencent evidence is pending. | Request shapes, provider readback, duplicate-purchase guard. |
 | 5. Claim and activate | Activate only after every resource is owned and read back. | All four lanes | Non-review V2 claim, confirmed-absence one-refund convergence, activation, purchased/refunded Receipt paths, dedicated launch review recovery, and its reconciliation DTO have integrated local fake evidence; live evidence remains pending. | Claim identity, confirmed-absence refund, ambiguous-result review. |
-| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | V2 attachment, Secret, Runtime readiness gate, activation, receipt-only recovery, status, and credential flows have local focused evidence on the non-review path; external Runtime metadata/statfs API, new immutable image, browser, WebSocket, model, and deployed evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision and digest readback. |
+| 6. Workspace access | Authenticate to a ready, persistent, account-keyed Workspace. | Fabric, Console, Ledger | V2 attachment, Secret, Runtime readiness gate, activation, receipt-only recovery, status, and credential flows have local focused evidence on the non-review path. Runtime metadata/statfs API and Console presentation are paused; immutable image, browser, WebSocket, model, direct mount-marker persistence, and deployed evidence remain pending. | Owner isolation, login, WebSocket 101, Secret rotation, credential revision, digest readback, and direct `/data`/`/projects` marker retention. |
 | 7. Gateway usage | Reveal the owner Key, make a metered Workspace model request, and show its customer-safe cost and Token facts. | Gateway, Console, Ledger | Wallet, Key list, request Usage, Usage Stats, balance history, and integer-cost projections are code-complete and locally tested; a real model request and production readback remain pending. | Tenant isolation, model response, request usage and stats projection, integer `actual_cost`, no leakage. |
 | 8. Renewal and recovery | Renew one Workspace period with deterministic recovery. | All four lanes | Workspace-level claim, combined debit, same-ID provider renewal/readback, expiry, refund/review, and receipt recovery are code-complete; enabling auto-renew and real renewal evidence are pending. | Isolated PostgreSQL concurrency, renewal replay, deadline readback, real approved renewal. |
 | 9. Reusable verification | Prove releases without per-run Tencent purchase or deletion. | All four lanes | Dual Acceptance and one-request Basic live-QA workflows are code-complete and fake-tested; neither Acceptance nor live QA has run for the candidate. | Two retained slots, stable resource facts, exact-one Usage and wallet delta. |

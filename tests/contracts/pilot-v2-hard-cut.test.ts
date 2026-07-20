@@ -170,9 +170,13 @@ test("Pilot V2 contracts hard cut Workspace purchase, access, and Runtime facts"
   assert.deepEqual(sourceTruth.sources.ledger.billingReceipts.workspaceFulfillmentFields, ["computeAllocationId", "storageId", "attachmentId", "workspaceApiKeyId", "runtimeId"]);
   assert.equal(sourceTruth.sources.ledger.billingReceipts.rawProviderReadback, false);
   assert.deepEqual(product.workspaceRuntimeFacts, {
+    launchStatus: "paused_not_in_release",
     fileMetadataAuthority: "workspace_runtime_projects_mount",
     filesystemUsageAuthority: "workspace_runtime_statfs",
-    persistence: "none"
+    apiRoutes: [],
+    consolePresentation: "absent",
+    persistence: "none",
+    releaseValidation: "direct_runtime_pod_sha256_markers_only"
   });
 });
 

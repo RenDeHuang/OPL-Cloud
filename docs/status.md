@@ -26,8 +26,9 @@ Remaining blockers:
   evidence exists for this candidate;
 - no approved real renewal, production rollout, browser login/WebSocket, model
   request, exact-one Usage/wallet delta, or rollback evidence exists;
-- the external Runtime revision has no proven projects-entry or filesystem-usage
-  API, so those facts remain unavailable rather than fabricated;
+- Runtime projects-entry and filesystem-usage product APIs are paused outside this
+  release; Console does not display them and persistence is verified only with direct
+  SHA256 markers on the Runtime Pod mounts;
 - public registration, payment/order UI, backup/recovery/sync/transfer, HA, GPU,
   and multiple Workspaces are outside the Pilot.
 

@@ -23,7 +23,7 @@ outside this repository's mutation boundary.
 | Wallet, owned Keys, per-Key Usage, account aggregate, balance history | live Sub2API JSON APIs | granular `/api/gateway/*` source DTOs |
 | Workspace and renewal state | Control Plane Workspace row | `/api/workspaces` and launch/renewal DTOs |
 | Runtime readiness | live Fabric/Kubernetes readback | `/api/workspaces/{workspaceId}/runtime-status` |
-| `/projects` metadata and mounted usage | live Workspace Runtime readback | Workspace-scoped file/usage DTOs; never persisted |
+| `/data` and `/projects` release persistence | direct Runtime Pod SHA256 markers | rollout/rollback validation only; metadata/statfs product APIs are paused |
 | Billing receipts | live Ledger readback | `/api/billing/receipts` |
 
 Each source returns `source`, `status`, `available`, and `fetchedAt`. A successful
@@ -127,11 +127,11 @@ Kubernetes Secret and records only its ref, version, and fingerprint.
 Ordinary runtime status is non-secret. Dedicated owner-only POST commands reveal
 or rotate the password transiently; Control Plane never persists it, and Console
 retains it only in Workspace detail component memory. A Workspace image candidate
-combines an exact `one-person-lab-app` commit with an exact `opl-aion-shell` commit;
-both must be full 40-character SHAs already merged into their respective `main`.
-The active-shell candidate is
-`13ae5d1410e1a4349c14dc76e7c3446ff200cfdb`; the App candidate remains pending its
-integration commit. The release workflow checks out both detached, runs the existing
+combines exact `one-person-lab-app`, `opl-aion-shell`, and `one-person-lab` Framework
+commits; all must be full 40-character SHAs already merged into their respective `main`.
+The fixed candidates are App `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`, shell
+`dbd9d68115604673df85033d7a0ab323d65a79a2`, and Framework
+`51d16f0e93aebf3fd5ccf96082490395fcbb8711`. The release workflow checks out all three detached, runs the existing
 `ensure:shell`, builds the active shell context into TCR, and reads back the immutable
 digest. Production manifests accept only the resulting target `repository@sha256`.
 The immutable TCR digest and Ready-Pod `imageID` are both pending real readback; no
@@ -140,8 +140,8 @@ placeholder or local timestamp counts as publication or deployment evidence.
 This is a real exception to the Control Plane product-command boundary: it
 carries Workspace HTML, API, and WebSocket data-plane traffic. The available
 evidence does not prove an unauthenticated data disclosure; the inspected
-runtime source retains password authentication. Until the App candidate, published
-digest, and Ready-Pod `imageID` exist, that source finding cannot be extended to an
+runtime source retains password authentication. Until the published digest and
+Ready-Pod `imageID` exist, that source finding cannot be extended to an
 exact deployed revision.
 Control Plane availability is coupled to every Workspace connection, and a
 2xx/non-empty-page check can pass on the login page without proving an

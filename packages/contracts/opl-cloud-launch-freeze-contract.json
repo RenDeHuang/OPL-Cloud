@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "owner": "OPL Platform Architecture",
   "purpose": "Freeze the approved Pilot V2 products, delegated Gateway key lifecycle, one Workspace charge, prepaid Tencent fulfillment, Runtime facts, operator workflows, announcements, and evidence levels without claiming unfinished implementation or runtime evidence.",
   "state": "current",
@@ -208,8 +208,10 @@
     "sourceImage": {
       "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
       "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
-      "candidateAppMainSha": null,
-      "candidateActiveShellMainSha": "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb",
+      "frameworkRepository": "https://github.com/gaofeng21cn/one-person-lab.git",
+      "candidateAppMainSha": "6b334ef7f239eb01c40578159e6df9ed2e7f97dc",
+      "candidateActiveShellMainSha": "dbd9d68115604673df85033d7a0ab323d65a79a2",
+      "candidateFrameworkMainSha": "51d16f0e93aebf3fd5ccf96082490395fcbb8711",
       "candidateRequirements": ["40_character_git_sha", "merged_into_repository_main"]
     },
     "targetRepository": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app",
@@ -222,10 +224,13 @@
     "productionReference": "repository@sha256",
     "mounts": ["/data", "/projects"],
     "projectFacts": {
-      "entriesApi": "GET /api/workspaces/{workspaceId}/files",
-      "filesystemUsageApi": "GET /api/workspaces/{workspaceId}/filesystem-usage",
+      "launchStatus": "paused_not_in_release",
       "authority": "workspace_runtime_projects_mount_and_statfs",
-      "persistence": "none"
+      "apiRoutes": [],
+      "consolePresentation": "absent",
+      "persistence": "none",
+      "releaseValidation": "direct_runtime_pod_sha256_markers_only",
+      "correspondingEvidence": "not_claimed"
     },
     "gatewaySecret": "account-scoped Kubernetes Secret",
     "gatewaySecretPersistence": "Kubernetes Secret only",
@@ -417,7 +422,7 @@
       "id": "workspace_access",
       "business": "The customer authenticates to a ready Workspace backed by owned compute, CBS, and an account-scoped Gateway Secret.",
       "owners": ["console", "fabric", "ledger"],
-      "currentState": "V2 attachment, account Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows have local focused evidence on the non-review path; external Runtime metadata/statfs API, new immutable image, browser, WebSocket, live model, and deployed evidence remain pending.",
+      "currentState": "V2 attachment, account Secret, Runtime readiness gating, activation, receipt-only recovery, non-secret status, and credential flows have local focused evidence on the non-review path. Runtime metadata/statfs API and Console presentation are paused outside this release; immutable image, browser, WebSocket, live model, direct mount-marker persistence, and deployed evidence remain pending.",
       "requiredDeliverables": ["runtime readiness", "password login", "owner-only Runtime credential reveal and rotation", "static CBS mounts", "secret rotation", "immutable image"],
       "completionEvidence": ["owner isolation tests", "post-login assertion", "WebSocket 101", "Secret fingerprint", "credential revision readback", "image digest readback"]
     },

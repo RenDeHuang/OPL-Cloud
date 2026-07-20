@@ -221,7 +221,7 @@ test("Pilot V2 customer secrets stay in component memory and expire", async () =
   assert.match(app, /onBeforeUnmount\(\(\) => \{\s*clearSecrets\(\)/);
 });
 
-test("Pilot V2 customer keeps blocked Runtime file facts unavailable without mock data", async () => {
+test("Pilot V2 customer does not render the paused Runtime file facts", async () => {
   assert.equal("getWorkspaceFiles" in workspaceApi, false);
   assert.equal("getWorkspaceFilesystemUsage" in workspaceApi, false);
 
@@ -230,19 +230,11 @@ test("Pilot V2 customer keeps blocked Runtime file facts unavailable without moc
     source("apps/console-ui/src/api/workspaces-api.ts"),
     source("apps/console-ui/src/api/dtos.ts")
   ]);
-  assert.match(app, /文件与目录/);
-  assert.match(app, /实际空间用量/);
-  assert.match(app, /const filesSource: SourceEnvelope<WorkspaceFilePageDTO> = \{ source: "runtime", status: "unavailable", available: false, fetchedAt: "" \}/);
-  assert.match(app, /const filesystemSource: SourceEnvelope<WorkspaceFilesystemUsageDTO> = \{ source: "runtime", status: "unavailable", available: false, fetchedAt: "" \}/);
+  assert.doesNotMatch(app, /文件与目录|实际空间用量|filesSource|filesystemSource|WorkspaceFilePageDTO|WorkspaceFilesystemUsageDTO/);
   assert.doesNotMatch(app, /getWorkspaceFiles|getWorkspaceFilesystemUsage|loadWorkspaceFiles|loadWorkspaceFilesystemUsage|loading\.files|loading\.filesystem|errors\.files|errors\.filesystem/);
   assert.doesNotMatch(workspaceApiSource, /\/files\?|\/filesystem-usage/);
   assert.match(dtos, /export interface WorkspaceFilePageDTO/);
   assert.match(dtos, /export interface WorkspaceFilesystemUsageDTO/);
-  const filesStart = app.lastIndexOf("<section", app.indexOf("<h2>文件与目录</h2>"));
-  const filesystemStart = app.lastIndexOf("<section", app.indexOf("<h2>实际空间用量</h2>"));
-  const filesystemEnd = app.indexOf("</section>", filesystemStart) + "</section>".length;
-  const blockedViews = app.slice(filesStart, filesystemEnd);
-  assert.doesNotMatch(blockedViews, /正在读取|重试|当前目录为空|总量|已用|测量时间|mockFiles|sampleFiles|示例文件|README\.md/);
 });
 
 test("Pilot V2 customer source blocks fail independently and remain retryable", async () => {

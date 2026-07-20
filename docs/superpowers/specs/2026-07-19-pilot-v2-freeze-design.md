@@ -7,6 +7,13 @@
 > owner 批准输入：`73c0ec09f3eff301cb4df842fda804c26ed37120`
 > 日期：2026-07-19
 
+> 2026-07-20 发布 delta：本轮暂停 S9，9.4 节保留为未来目标，不进入发布。
+> Console 不提供文件/容量展示，Cloud 不提供对应 API；发布仅通过 Runtime Pod
+> 直接写入 `/data`、`/projects` 的 SHA256 标记验证持久化。固定组合为 App
+> `6b334ef7f239eb01c40578159e6df9ed2e7f97dc`、Shell
+> `dbd9d68115604673df85033d7a0ab323d65a79a2`、Framework
+> `51d16f0e93aebf3fd5ccf96082490395fcbb8711`。
+
 ## 1. 文档效力
 
 本文冻结 Pilot V2 的目标产品、业务链、用户体验、运维体验、工程归属、数据真相、

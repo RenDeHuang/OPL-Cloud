@@ -109,8 +109,6 @@ import type {
   WalletAdjustmentRequest,
   WorkspaceCredentialAccess,
   WorkspaceDTO,
-  WorkspaceFilePageDTO,
-  WorkspaceFilesystemUsageDTO,
   WorkspaceLaunchRequest,
   WorkspaceLaunchResponse,
   WorkspaceListData,
@@ -145,8 +143,6 @@ const authStatus = ref(needsSession(path.value) ? "checking" : "public");
 const authError = ref("");
 const workspaceSource = ref<SourceEnvelope<WorkspaceListData> | null>(null);
 const workspaceStatusSource = ref<SourceEnvelope<WorkspaceRuntimeDTO> | null>(null);
-const filesSource: SourceEnvelope<WorkspaceFilePageDTO> = { source: "runtime", status: "unavailable", available: false, fetchedAt: "" };
-const filesystemSource: SourceEnvelope<WorkspaceFilesystemUsageDTO> = { source: "runtime", status: "unavailable", available: false, fetchedAt: "" };
 const endpointSource = ref<SourceEnvelope<GatewayEndpointDTO> | null>(null);
 const walletSource = ref<SourceEnvelope<GatewayWallet> | null>(null);
 const keySource = ref<SourceEnvelope<GatewayKeyPageDTO> | null>(null);
@@ -1631,10 +1627,6 @@ onBeforeUnmount(() => {
                 <div class="credential-actions"><button class="button secondary" type="button" :disabled="runtimeBusy || !workspaceCanOpen" @click="rotateWorkspace"><RefreshCw :size="16" />轮换密码</button></div>
               </div>
             </section>
-            <div class="workspace-facts">
-              <section class="panel" :data-source="filesSource.source" :data-status="filesSource.status" :data-available="filesSource.available" :data-fetched-at="filesSource.fetchedAt"><div class="panel-title"><h2>文件与目录</h2></div><div class="empty-panel">暂不可用</div></section>
-              <section class="panel" :data-source="filesystemSource.source" :data-status="filesystemSource.status" :data-available="filesystemSource.available" :data-fetched-at="filesystemSource.fetchedAt"><div class="panel-title"><h2>实际空间用量</h2></div><div class="empty-panel">暂不可用</div></section>
-            </div>
           </section>
 
           <section v-else-if="apiRoute" class="api-page">

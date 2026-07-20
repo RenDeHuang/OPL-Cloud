@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "owner": "OPL Fabric",
   "purpose": "Deployment workflow, immutable Cloud and Workspace images, TKE handoff, and production-verification safety.",
   "state": "current",
@@ -670,34 +670,36 @@
       "publish_cloud_image",
       "publish_workspace_image",
       "workspace_app_main_sha",
-      "workspace_shell_main_sha"
+      "workspace_shell_main_sha",
+      "workspace_framework_main_sha"
     ],
     "outputs": ["cloud_image", "workspace_image"],
     "skippedOutput": "empty",
     "cloudCandidate": {
       "input": "ref",
-      "officialRepository": "https://github.com/gaofeng21cn/one-person-lab-cloud.git",
-      "requirements": ["40_character_git_sha", "checked_out_head_exact_match", "merged_into_official_origin_main"],
-      "mainReadback": "origin/main"
+      "repositoryAuthority": "github.repository",
+      "requirements": ["40_character_git_sha", "checked_out_head_exact_match", "merged_into_workflow_repository_main"],
+      "mainReadback": "refs/remotes/release-source/main"
     },
     "env": {
       "OPL_CLOUD_IMAGE_REPOSITORY": "uswccr.ccs.tencentyun.com/oplcloud/opl-cloud",
+      "OPL_CLOUD_SOURCE_REPOSITORY": "${{ github.repository }}",
       "OPL_WORKSPACE_IMAGE_REPOSITORY": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app"
     },
     "requiredCommandsByStep": {
       "Verify Cloud source": [
         "^[0-9a-fA-F]{40}$",
         "git rev-parse HEAD",
-        "git remote set-url origin https://github.com/gaofeng21cn/one-person-lab-cloud.git",
-        "git fetch --no-tags origin main:refs/remotes/origin/main",
-        "git rev-parse origin/main",
+        "git fetch --no-tags \"https://github.com/${OPL_CLOUD_SOURCE_REPOSITORY}.git\" main:refs/remotes/release-source/main",
+        "git rev-parse refs/remotes/release-source/main",
         "git merge-base --is-ancestor \"$cloud_head_sha\" \"$cloud_main_sha\""
       ],
       "Image metadata": [
         "^[0-9a-fA-F]{40}$",
         "REQUESTED_WORKSPACE_APP_SHA",
         "REQUESTED_WORKSPACE_SHELL_SHA",
-        "workspace_image_tag=\"${workspace_app_sha:0:12}-${workspace_shell_sha:0:12}\""
+        "REQUESTED_WORKSPACE_FRAMEWORK_SHA",
+        "workspace_image_tag=\"${workspace_app_sha:0:12}-${workspace_shell_sha:0:12}-${workspace_framework_sha:0:12}\""
       ],
       "Set up Node": [
         "actions/setup-node@v4",
@@ -707,6 +709,7 @@
         "git clone --filter=blob:none --single-branch --branch main",
         "https://github.com/gaofeng21cn/one-person-lab-app.git",
         "https://github.com/gaofeng21cn/opl-aion-shell.git",
+        "https://github.com/gaofeng21cn/one-person-lab.git",
         "merge-base --is-ancestor",
         "checkout --detach",
         "npm run ensure:shell",
@@ -717,6 +720,7 @@
         "docker login uswccr.ccs.tencentyun.com --username \"$TCR_ID\" --password-stdin",
         "docker buildx build --push -f Dockerfile -t \"$OPL_CLOUD_IMAGE_REF\" \"$OPL_CLOUD_IMAGE_CONTEXT\"",
         "-f \"$OPL_WORKSPACE_SOURCE_ROOT/shells/aionui/Dockerfile\"",
+        "--build-arg OPL_FRAMEWORK_REF=\"$OPL_WORKSPACE_FRAMEWORK_SHA\"",
         "\"$OPL_WORKSPACE_SOURCE_ROOT/shells/aionui\"",
         "docker buildx imagetools inspect \"$OPL_WORKSPACE_IMAGE_REF\""
       ]
@@ -733,11 +737,13 @@
   "workspaceImage": {
     "appRepository": "https://github.com/gaofeng21cn/one-person-lab-app.git",
     "activeShellRepository": "https://github.com/gaofeng21cn/opl-aion-shell.git",
-    "candidateAppMainSha": null,
-    "candidateActiveShellMainSha": "13ae5d1410e1a4349c14dc76e7c3446ff200cfdb",
+    "frameworkRepository": "https://github.com/gaofeng21cn/one-person-lab.git",
+    "candidateAppMainSha": "6b334ef7f239eb01c40578159e6df9ed2e7f97dc",
+    "candidateActiveShellMainSha": "dbd9d68115604673df85033d7a0ab323d65a79a2",
+    "candidateFrameworkMainSha": "51d16f0e93aebf3fd5ccf96082490395fcbb8711",
     "candidateRequirements": ["40_character_git_sha", "merged_into_repository_main"],
     "targetRepository": "uswccr.ccs.tencentyun.com/oplcloud/one-person-lab-app",
-    "candidateTagFormat": "<app-sha-12>-<active-shell-sha-12>",
+    "candidateTagFormat": "<app-sha-12>-<active-shell-sha-12>-<framework-sha-12>",
     "immutableTcrDigest": null,
     "immutableTcrDigestStatus": "pending_publication_readback",
     "readyPodImageId": null,
